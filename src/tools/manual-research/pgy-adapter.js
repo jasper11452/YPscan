@@ -2,11 +2,13 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   assertUsablePage,
+  assertMarketReady,
   clickOptional,
   cleanText,
   dismissOrdinaryPopups,
   firstResultIdentity,
   fillMenuRange,
+  hasResultRefreshEvidence,
   openFilterMenu,
   readResultCount,
   readPlatformResults,
@@ -146,10 +148,10 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
   const learnedDetailPaths = new Set();
   return {
     async prepare() {
-      await assertUsablePage(page, "pgy");
+      await assertMarketReady(page, "pgy");
       releaseDialogHandler ??= installDialogAutoDismiss(page);
       await dismissOrdinaryPopups(page, "pgy");
-      await assertUsablePage(page, "pgy");
+      await assertMarketReady(page, "pgy");
     },
     async reset() {
       await assertUsablePage(page, "pgy");
@@ -324,9 +326,16 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
         });
       });
       capturedPage = observed.capture;
+      const result = observed.action_result;
       return {
-        applied: true,
-        result_count: capturedPage?.total ?? observed.action_result.result_count,
+        applied: hasResultRefreshEvidence(result, capturedPage),
+        reason: hasResultRefreshEvidence(result, capturedPage)
+          ? null
+          : "result_refresh_not_observed",
+        result_count: capturedPage?.total ?? result.result_count,
+        result_evidence: capturedPage
+          ? { ready: true, source: "browser_response", result_count: capturedPage.total ?? null }
+          : { ...result, source: "dom" },
         collection_source: capturedPage ? "browser_response" : "dom",
       };
     },

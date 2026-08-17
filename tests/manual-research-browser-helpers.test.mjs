@@ -7,6 +7,7 @@ import {
   closeFloatingLayer,
   dismissOrdinaryPopups,
   fillMenuRange,
+  hasResultRefreshEvidence,
   openFilterMenu,
   pageMatches,
   platformRangeValue,
@@ -117,6 +118,12 @@ test("result signals and platform URLs are parsed without private APIs", () => {
     pageMatches("pgy", "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol/other"),
     false,
   );
+});
+
+test("a keyword submission needs real result-refresh evidence", () => {
+  assert.equal(hasResultRefreshEvidence({ ready: false, timed_out: true }), false);
+  assert.equal(hasResultRefreshEvidence({ ready: true, empty: true }), true);
+  assert.equal(hasResultRefreshEvidence({ ready: false }, { total: 0 }), true);
 });
 
 test("dynamic aria-controls resolves a teleported menu after real hover and click", async () => {
