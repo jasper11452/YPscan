@@ -56,6 +56,20 @@ export async function assertNoManualChallenge(page) {
 
 /** @param {import("playwright-core").Page} page */
 export async function assertUsablePage(page, platform) {
+  if (platform === "xingtu") {
+    try {
+      const current = new URL(page.url());
+      if (
+        current.hostname === PLATFORM_RULES.xingtu.host &&
+        current.pathname.replace(/\/+$/u, "") === "" &&
+        current.searchParams.get("redirect_uri") === PLATFORM_RULES.xingtu.path
+      ) {
+        await page.goto(PLATFORM_RULES.xingtu.url, { waitUntil: "domcontentloaded" });
+      }
+    } catch {
+      // The regular wrong-page error below reports malformed or unavailable URLs.
+    }
+  }
   if (!pageMatches(platform, page.url())) {
     throw manualBrowserError("YPSCAN_MANUAL_WRONG_PAGE", "当前标签页不是目标达人筛选页面", {
       actual_url: page.url(),

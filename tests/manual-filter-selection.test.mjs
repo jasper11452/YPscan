@@ -121,6 +121,32 @@ test("selection checkpoint contains normalized receipts and final-state verifica
   assert.doesNotMatch(checkpoint, /cookie|token|authorization|request_headers/iu);
 });
 
+test("a later keyword keeps the already verified filters and only changes the search", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-preserved-filters-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const actions = [];
+  const select = createManualFilterSelection({
+    workspaceDir,
+    connectOverCDP: async () => browser(),
+    createAdapter: () => adapter(actions),
+  });
+  const first = payload(await select(params()));
+  actions.length = 0;
+
+  const second = payload(
+    await select({
+      requirement_id: params().requirement_id,
+      platform: params().platform,
+      run_id: first.run_id,
+      branch_index: 1,
+    }),
+  );
+
+  assert.equal(second.status, "ready");
+  assert.deepEqual(actions, ["prepare", "prepare", "search:办公效率", "verify"]);
+  assert.equal(second.verification.actual_filters.length, 2);
+});
+
 test("an uncommitted filter has no selection_id and cannot enter actual_filters", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-failed-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));

@@ -95,6 +95,32 @@ test("a visible verify-center iframe is treated as a real CAPTCHA handoff", asyn
   );
 });
 
+test("the Xingtu redirect landing page is returned to the creator market automatically", async () => {
+  let currentUrl = "https://www.xingtu.cn/?redirect_uri=/ad/creator/market";
+  const navigations = [];
+  const hidden = {
+    first() {
+      return this;
+    },
+    isVisible: async () => false,
+  };
+  const page = {
+    url: () => currentUrl,
+    goto: async (url) => {
+      navigations.push(url);
+      currentUrl = url;
+    },
+    locator(selector) {
+      if (selector === "body") return { innerText: async () => "达人广场" };
+      return hidden;
+    },
+  };
+
+  await assertUsablePage(page, "xingtu");
+
+  assert.deepEqual(navigations, ["https://www.xingtu.cn/ad/creator/market"]);
+});
+
 test("range conversion preserves yuan, converts ratios to percent and honors 万 inputs", () => {
   assert.equal(platformRangeValue(2_000, { unit: "yuan" }), "2000");
   assert.equal(platformRangeValue(0.125, { unit: "ratio" }), "12.5");
