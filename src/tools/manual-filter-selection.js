@@ -42,14 +42,14 @@ function selectionError(code, message, details = {}) {
   return Object.assign(new Error(message), { code, details });
 }
 
-async function applySelection(adapter, branch, plan, platform) {
-  const actualFilters = [];
+async function applySelection(adapter, branch, plan, platform, preservedVerification = null) {
+  const actualFilters = [...(preservedVerification?.actual_filters ?? [])];
   const failedFilters = [];
   let failedStage = "reset";
   let failedControl = null;
   try {
     await adapter.prepare();
-    await adapter.reset();
+    if (!preservedVerification) await adapter.reset();
 
     const applyFilters = async () => {
       failedStage = "price_view";
@@ -88,7 +88,13 @@ async function applySelection(adapter, branch, plan, platform) {
 
     let keyword;
     let priceView;
-    if (platform === "pgy") {
+    if (preservedVerification) {
+      priceView = preservedVerification.price_view;
+      keyword = await applyKeyword();
+      if (platform === "pgy" && adapter.resultCount) {
+        keyword.result_count = await adapter.resultCount();
+      }
+    } else if (platform === "pgy") {
       keyword = await applyKeyword();
       priceView = await applyFilters();
       if (adapter.resultCount) keyword.result_count = await adapter.resultCount();
@@ -166,6 +172,7 @@ export function createManualFilterSelection({
     let store;
     let adapter;
     let branch;
+    let preservedVerification = null;
     let verification = {
       keyword: null,
       price_view: null,
@@ -188,6 +195,18 @@ export function createManualFilterSelection({
           platform: params.platform,
         });
         plan = loaded.plan;
+        if (params.branch_index > 0) {
+          const previousBranch = plan.branches[params.branch_index - 1];
+          const previousSelection = loaded.selections
+            .slice()
+            .reverse()
+            .find(
+              (selection) =>
+                selection.status === "ready" &&
+                selection.branch?.branch_id === previousBranch?.branch_id,
+            );
+          preservedVerification = previousSelection?.verification ?? null;
+        }
       }
       branch = plan.branches[params.branch_index];
       if (!branch) {
@@ -207,7 +226,13 @@ export function createManualFilterSelection({
       const recoveryErrors = [];
       for (let attempt = 1; attempt <= 2; attempt += 1) {
         try {
-          verification = await applySelection(adapter, branch, plan, params.platform);
+          verification = await applySelection(
+            adapter,
+            branch,
+            plan,
+            params.platform,
+            attempt === 1 ? preservedVerification : null,
+          );
           if (recoveryErrors.length) {
             verification.recovery = {
               attempted: true,

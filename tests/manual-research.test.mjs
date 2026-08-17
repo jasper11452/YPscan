@@ -867,7 +867,7 @@ test("a failed price-tier readback stops the branch before search or collection"
   );
 });
 
-test("a later price-tier failure cannot trigger native export from the unsafe page state", async () => {
+test("a preserved-filter mismatch falls back safely and a price-tier failure cannot export", async () => {
   const actions = [];
   const browser = fakeBrowser("https://www.xingtu.cn/ad/creator/market");
   const adapter = successfulAdapter(actions);
@@ -883,6 +883,7 @@ test("a later price-tier failure cannot trigger native export from the unsafe pa
           readback: "达人信息 21-60s报价",
         };
   };
+  adapter.verifySelection = async ({ branch }) => ({ valid: branch.keyword !== "露营" });
   const run = createManualResearch({
     connectOverCDP: async () => browser,
     createAdapter: () => adapter,
@@ -902,7 +903,7 @@ test("a later price-tier failure cannot trigger native export from the unsafe pa
   );
   assert.equal(
     actions.some(([action, keyword]) => action === "search" && keyword === "露营"),
-    false,
+    true,
   );
 });
 
