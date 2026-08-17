@@ -91,6 +91,11 @@ test("readResultsPage keeps Xingtu column values associated by row", async () =>
   );
 
   assert.equal(result.price_tier, "21-60s");
+  assert.equal(
+    result.rows[0].detail_url,
+    "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/123456789",
+  );
+  assert.equal(result.rows[0].detail_url_source, "dom_platform_id");
   assert.deepEqual(
     result.rows.map((row) => ({
       platform_id: row.platform_id,

@@ -102,6 +102,28 @@ test("supports the published Xingtu author-list response and metric field arrays
   assert.equal(result.rows[0].followers_raw, "235000");
   assert.equal(result.rows[0].cpm_raw, "31.6");
   assert.equal(result.rows[0].interaction_rate, "4.2%");
+  assert.equal(
+    result.rows[0].detail_url,
+    "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/6774914600774139912",
+  );
+  assert.equal(result.rows[0].detail_url_source, "list_response_author_id");
+});
+
+test("resolves relative Xingtu homepage routes returned by the creator list", () => {
+  const row = normalizeListResponseRow(
+    {
+      authorId: "7324533389695025215",
+      nickName: "WPS大老板",
+      jumpUrl: "/ad/creator/author-homepage/douyin-video/7324533389695025215",
+    },
+    "xingtu",
+  );
+
+  assert.equal(
+    row.detail_url,
+    "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/7324533389695025215",
+  );
+  assert.equal(row.detail_url_source, "list_response_url");
 });
 
 test("supports the current Xingtu creator-square response with top-level authors", () => {

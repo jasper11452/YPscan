@@ -68,22 +68,37 @@ export async function readResultsPage(input) {
   const rowData = (cells, index, values) => {
     const primary = cells[0] ?? null;
     const raw = cells.map(text).filter(Boolean).join(" | ");
+    const hrefs = cells.flatMap((cell) =>
+      cell ? [...cell.querySelectorAll("a[href]")].map((link) => link.href) : [],
+    );
     const href =
-      cells
-        .flatMap((cell) =>
-          cell ? [...cell.querySelectorAll("a[href]")].map((link) => link.href) : [],
-        )
-        .find((value) => /https?:/iu.test(value)) ?? null;
+      hrefs.find((value) => /\/author-homepage\/douyin-video\//iu.test(value)) ??
+      hrefs.find(
+        (value) =>
+          /\/(?:author|creator|kol|blogger)(?:\/detail)?\//iu.test(value) ||
+          /[?&](?:authorId|creatorId|userId|kolId|bloggerId|id)=/iu.test(value),
+      ) ??
+      null;
+    const identityHref =
+      href ??
+      hrefs.find(
+        (value) =>
+          /[?&](?:authorId|creatorId|userId|kolId|bloggerId|id)=([^&#]{6,})/iu.test(value) ||
+          /\/(?:user(?:\/profile)?|author|creator|kol|blogger)(?:\/detail)?\/([^/?#]{6,})/iu.test(
+            value,
+          ),
+      ) ??
+      "";
     const platformId =
       firstMatch(
-        href || "",
+        identityHref,
         /[?&](?:authorId|creatorId|userId|kolId|bloggerId|id)=([^&#]{6,})/iu,
       ) ||
       firstMatch(
-        href || "",
+        identityHref,
         /\/(?:user(?:\/profile)?|author|creator|kol|blogger)(?:\/detail)?\/([^/?#]{6,})/iu,
       ) ||
-      firstMatch(href || "", /\/author-homepage\/douyin-video\/([^/?#]{6,})/iu) ||
+      firstMatch(identityHref, /\/author-homepage\/douyin-video\/([^/?#]{6,})/iu) ||
       firstMatch(raw, /(?:抖音|小红书|平台)\s*(?:账号|ID)?\s*[：:]?\s*(\d{6,})/u) ||
       firstMatch(raw, /(?:^|\s)ID\s*[：:]?\s*(\d{6,})(?:\s|$)/u);
     const nickname =
@@ -123,6 +138,11 @@ export async function readResultsPage(input) {
         cell ? [...cell.querySelectorAll("[class*=tag],[role=tag]")].map(text) : [],
       ),
     ).filter((value) => value !== gender && value !== city);
+    const detailUrl =
+      href ??
+      (platform === "xingtu" && /^\d{6,}$/u.test(platformId ?? "")
+        ? `https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/${encodeURIComponent(platformId)}`
+        : null);
     return {
       ordinal: index,
       platform_id: platformId,
@@ -149,7 +169,8 @@ export async function readResultsPage(input) {
       ),
       column_values: values,
       tags,
-      detail_url: href,
+      detail_url: detailUrl,
+      detail_url_source: href ? "dom_href" : detailUrl ? "dom_platform_id" : null,
       source_url: location.href,
       raw_text: raw,
     };

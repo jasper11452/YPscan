@@ -44,9 +44,18 @@ function firstMatch(text, patterns) {
   return null;
 }
 
+function xingtuIdFromDetailUrl(value) {
+  return clean(value).match(/\/author-homepage\/douyin-video\/([^/?#]{6,})/iu)?.[1] ?? null;
+}
+
 /** @param {import("playwright-core").Page} page */
 async function readDetailDom(page, candidate, platform) {
-  const body = cleanText(await page.locator("body").innerText().catch(() => ""));
+  const body = cleanText(
+    await page
+      .locator("body")
+      .innerText()
+      .catch(() => ""),
+  );
   const fields = {
     followers_raw: firstMatch(body, [
       /粉丝(?:数|量)?\s*[:：]?\s*([\d.,]+\s*[万wWkK亿]?)/u,
@@ -62,8 +71,12 @@ async function readDetailDom(page, candidate, platform) {
       /(?:预期播放|预期阅读|预估阅读|平均播放)\s*[:：]?\s*([\d.]+\s*[万wWkK亿]?)/u,
     ]),
     audience_male_rate_raw: firstMatch(body, [/(?:男性|男)粉丝(?:占比)?\s*[:：]?\s*([\d.]+\s*%)/u]),
-    audience_female_rate_raw: firstMatch(body, [/(?:女性|女)粉丝(?:占比)?\s*[:：]?\s*([\d.]+\s*%)/u]),
-    read_median_raw: firstMatch(body, [/(?:阅读中位数|播放中位数)\s*[:：]?\s*([\d.]+\s*[万wWkK]?)/u]),
+    audience_female_rate_raw: firstMatch(body, [
+      /(?:女性|女)粉丝(?:占比)?\s*[:：]?\s*([\d.]+\s*%)/u,
+    ]),
+    read_median_raw: firstMatch(body, [
+      /(?:阅读中位数|播放中位数)\s*[:：]?\s*([\d.]+\s*[万wWkK]?)/u,
+    ]),
     interaction_median_raw: firstMatch(body, [/(?:互动中位数)\s*[:：]?\s*([\d.]+\s*[万wWkK]?)/u]),
     updated_at: firstMatch(body, [/(?:数据更新至|更新时间)\s*[:：]?\s*([\d./-]{6,20})/u]),
   };
@@ -92,7 +105,9 @@ async function readDetailDom(page, candidate, platform) {
     .evaluateAll((links) =>
       links
         .map((link) => ({
-          title: String(link.textContent ?? "").replace(/\s+/gu, " ").trim(),
+          title: String(link.textContent ?? "")
+            .replace(/\s+/gu, " ")
+            .trim(),
           url: /** @type {HTMLAnchorElement} */ (link).href,
         }))
         .filter(
@@ -106,7 +121,9 @@ async function readDetailDom(page, candidate, platform) {
   if (recentContent.length) fields.recent_content = recentContent;
   return Object.fromEntries(
     Object.entries(fields).filter(([, value]) =>
-      Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "",
+      Array.isArray(value)
+        ? value.length > 0
+        : value !== null && value !== undefined && value !== "",
     ),
   );
 }
@@ -114,10 +131,7 @@ async function readDetailDom(page, candidate, platform) {
 /** @param {import("playwright-core").Page} page */
 async function clickFirstText(page, patterns) {
   for (const pattern of patterns) {
-    const target = page
-      .getByText(pattern)
-      .filter({ visible: true })
-      .first();
+    const target = page.getByText(pattern).filter({ visible: true }).first();
     if (!(await target.isVisible().catch(() => false))) continue;
     await target.scrollIntoViewIfNeeded().catch(() => {});
     await target.click({ timeout: 2_000 });
@@ -129,9 +143,7 @@ async function clickFirstText(page, patterns) {
 /** @param {import("playwright-core").Page} listPage */
 async function clickCandidateFromList(listPage, platform, candidate) {
   const selector =
-    platform === "pgy"
-      ? "tbody tr:visible"
-      : ".base-author-list .section-wrapper:not(.sticky-header):visible";
+    platform === "pgy" ? "tbody tr:visible" : ".base-author-list .content-cell:visible";
   const rows = listPage.locator(selector);
   const count = await rows.count().catch(() => 0);
   const identity = clean(candidate.platform_id);
@@ -140,8 +152,22 @@ async function clickCandidateFromList(listPage, platform, candidate) {
     const row = rows.nth(index);
     const text = clean(await row.innerText().catch(() => ""));
     if (!(identity && text.includes(identity)) && !(nickname && text.includes(nickname))) continue;
-    const link = row.locator("a[href]:visible").first();
-    const target = (await link.isVisible().catch(() => false)) ? link : row;
+    const nicknameTarget = row
+      .locator(".author-nickname,.user-name,.nickname,[class*=nickname]")
+      .filter({ visible: true })
+      .first();
+    const avatarTarget = row.locator("img:visible,[class*=avatar]:visible").first();
+    const detailLink = row.locator("a[href*='author-homepage']:visible").first();
+    const target = (await detailLink.isVisible().catch(() => false))
+      ? detailLink
+      : (await nicknameTarget.isVisible().catch(() => false))
+        ? nicknameTarget
+        : (await avatarTarget.isVisible().catch(() => false))
+          ? avatarTarget
+          : platform === "pgy"
+            ? row
+            : null;
+    if (!target) return false;
     await target.scrollIntoViewIfNeeded();
     await target.click({ timeout: 3_000 });
     return true;
@@ -169,15 +195,21 @@ async function openDetail(listPage, platform, candidate, groups, learnedPaths) {
         });
         return true;
       }
+      const popupPromise = context?.waitForEvent
+        ? context.waitForEvent("page", { timeout: 8_000 }).catch(() => null)
+        : null;
+      const beforeUrl = listPage.url?.() ?? "";
       const clicked = await clickCandidateFromList(listPage, platform, candidate);
       if (!clicked) return false;
-      await listPage.waitForTimeout(500);
+      const awaitedPopup = popupPromise ? await popupPromise : null;
       const afterPages = context?.pages?.() ?? [listPage];
-      const popup = afterPages.find((page) => !beforePages.includes(page));
+      const popup = awaitedPopup ?? afterPages.find((page) => !beforePages.includes(page));
       if (popup) {
         detailPage = popup;
         temporary = true;
         await detailPage.waitForLoadState("domcontentloaded", { timeout: 8_000 }).catch(() => {});
+      } else if ((listPage.url?.() ?? "") === beforeUrl) {
+        return false;
       }
       return true;
     },
@@ -231,10 +263,7 @@ export async function collectCreatorDetail(
   }
   try {
     const body = await assertNoManualChallenge(detailPage);
-    if (
-      platform === "pgy" &&
-      /选择合作品牌|请先选择品牌|选择品牌后查看|暂无权限查看/u.test(body)
-    ) {
+    if (platform === "pgy" && /选择合作品牌|请先选择品牌|选择品牌后查看|暂无权限查看/u.test(body)) {
       return { ...base, status: "blocked", reason: "detail_not_accessible", fields: {} };
     }
     for (const group of groups.filter((item) => item !== "summary")) {
@@ -257,8 +286,24 @@ export async function collectCreatorDetail(
       sourceTypes.push("dom");
     }
     const detailUrl = detailPage.url?.() ?? candidate.detail_url ?? null;
+    const detailPlatformId =
+      platform === "xingtu" ? xingtuIdFromDetailUrl(detailUrl) : (candidate.platform_id ?? null);
+    if (
+      platform === "xingtu" &&
+      candidate.platform_id &&
+      detailPlatformId &&
+      clean(candidate.platform_id) !== clean(detailPlatformId)
+    ) {
+      return {
+        ...base,
+        status: "blocked",
+        reason: "detail_identity_mismatch",
+        fields: {},
+      };
+    }
     return {
       ...base,
+      platform_id: detailPlatformId ?? candidate.platform_id ?? null,
       detail_url: detailUrl,
       status: Object.keys(fields).length ? "complete" : "partial",
       reason: Object.keys(fields).length ? null : "detail_fields_missing",
@@ -268,11 +313,9 @@ export async function collectCreatorDetail(
     };
   } catch (error) {
     if (/CAPTCHA|DETAIL_RISK/u.test(error?.code ?? "")) throw error;
-    throw manualBrowserError(
-      "YPSCAN_MANUAL_DETAIL_FAILED",
-      error?.message ?? "详情页采集失败",
-      { candidate_ref: base.candidate_ref },
-    );
+    throw manualBrowserError("YPSCAN_MANUAL_DETAIL_FAILED", error?.message ?? "详情页采集失败", {
+      candidate_ref: base.candidate_ref,
+    });
   } finally {
     await closeDetail(listPage, detailPage, opened.temporary);
   }
