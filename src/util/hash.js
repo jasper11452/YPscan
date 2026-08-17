@@ -28,11 +28,6 @@ export function fingerprint(value) {
   return sha256(typeof value === "string" ? value : canonicalJson(value));
 }
 
-/** no-blind-retry action key: one tool plus semantically equal arguments. */
-export function actionKey(toolName, params) {
-  return `${toolName}:${fingerprint(canonicalJson(params ?? {}))}`;
-}
-
 export function newId(prefix) {
   return `${prefix}_${randomUUID()}`;
 }

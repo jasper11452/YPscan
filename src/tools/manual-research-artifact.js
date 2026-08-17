@@ -69,6 +69,84 @@ async function appendDurable(path, value) {
   }
 }
 
+async function readCheckpointEvents(
+  path,
+  { missingAsEmpty = false, repairTrailingPartial = false } = {},
+) {
+  let content;
+  try {
+    content = await readFile(path, "utf8");
+  } catch (error) {
+    if (missingAsEmpty && error?.code === "ENOENT") return [];
+    throw error;
+  }
+  const lines = content.split("\n");
+  const lastEventIndex = lines.findLastIndex(Boolean);
+  const events = [];
+  let validByteLength = 0;
+  for (const [index, line] of lines.entries()) {
+    const lineByteLength = Buffer.byteLength(line) + Number(index < lines.length - 1);
+    if (!line) {
+      validByteLength += lineByteLength;
+      continue;
+    }
+    try {
+      events.push(JSON.parse(line));
+      validByteLength += lineByteLength;
+    } catch {
+      if (index === lastEventIndex) {
+        if (repairTrailingPartial) {
+          const handle = await open(path, "r+");
+          try {
+            await handle.truncate(validByteLength);
+            await handle.sync();
+          } finally {
+            await handle.close();
+          }
+        }
+        break;
+      }
+      throw new Error("checkpoint_corrupt");
+    }
+  }
+  return events;
+}
+
+function replayCheckpointEvents(events, fingerprint = null) {
+  const state = {
+    candidates: [],
+    branches: [],
+    details: [],
+    reviews: [],
+    selections: [],
+    event_count: 0,
+    page_count: 0,
+    source_url: null,
+  };
+  const branchMap = new Map();
+  for (const event of events) {
+    if (fingerprint && event.fingerprint !== fingerprint) continue;
+    state.event_count += 1;
+    if (event.type === "page") {
+      state.page_count += 1;
+      state.candidates.push(...(event.candidates ?? []));
+      state.source_url = event.page?.source_url ?? state.source_url;
+    }
+    if (event.type === "branch" && event.branch?.branch_id) {
+      branchMap.set(event.branch.branch_id, event.branch);
+    }
+    if (event.type === "detail" && event.detail?.candidate_ref) state.details.push(event.detail);
+    if (event.type === "review" && event.review?.candidate_ref) state.reviews.push(event.review);
+    if (event.type === "selection" && event.selection?.branch?.branch_id) {
+      state.selections.push(event.selection);
+    }
+  }
+  state.branches = [...branchMap.values()];
+  state.details = mergeDetailRecords(state.details);
+  state.reviews = mergeReviewRecords(state.reviews);
+  return state;
+}
+
 async function writeAtomic(path, buffer) {
   const tempPath = `${path}.${randomUUID()}.tmp`;
   const handle = await open(tempPath, "wx", 0o600);
@@ -597,6 +675,91 @@ export function buildManualResearchWorkbook({
   );
 }
 
+function createArtifactMetadata({
+  runId,
+  checkpointPath,
+  excelPath,
+  candidates,
+  details,
+  reviews,
+  detailPlannedCount,
+  targetRowCount,
+  deliveryShortfall,
+  checkpointEventCount,
+  generatedAt,
+  exportFallback = null,
+  deliveryMessage,
+  extra = {},
+}) {
+  return {
+    status: "complete",
+    run_id: runId,
+    checkpoint_path: checkpointPath,
+    excel_path: excelPath,
+    target_row_count: targetRowCount,
+    candidate_row_count: candidates.length,
+    detail_planned_count: detailPlannedCount,
+    detail_completed_count: mergeDetailRecords(details).length,
+    review_completed_count: mergeReviewRecords(reviews).length,
+    ...extra,
+    delivery_shortfall: deliveryShortfall,
+    checkpoint_event_count: checkpointEventCount,
+    generated_at: generatedAt,
+    native_export_quota_consumed: Boolean(exportFallback?.quota_consumed),
+    delivery: {
+      display_required: true,
+      primary_file: "excel_path",
+      user_visible_message: deliveryMessage,
+    },
+  };
+}
+
+async function writeArtifactWorkbook({
+  params,
+  plan,
+  branches,
+  candidates,
+  details,
+  reviews,
+  status,
+  artifact,
+  failureCode = null,
+}) {
+  const workbook = buildManualResearchWorkbook({
+    params,
+    plan,
+    branches,
+    candidates,
+    details,
+    reviews,
+    status,
+    artifact,
+  });
+  try {
+    await writeAtomic(artifact.excel_path, workbook);
+  } catch (error) {
+    if (failureCode) error.code = failureCode;
+    throw error;
+  }
+  artifact.byte_count = workbook.length;
+  artifact.sha256 = createHash("sha256").update(workbook).digest("hex");
+  return artifact;
+}
+
+function finalCheckpointEvent(status, candidates, artifact) {
+  return {
+    type: "final",
+    status,
+    candidate_count: candidates.length,
+    detail_completed_count: artifact.detail_completed_count,
+    review_completed_count: artifact.review_completed_count,
+    target_row_count: artifact.target_row_count,
+    delivery_shortfall: artifact.delivery_shortfall,
+    excel_path: artifact.excel_path,
+    sha256: artifact.sha256,
+  };
+}
+
 function disabledStore() {
   return {
     enabled: false,
@@ -676,54 +839,13 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
   }
   const checkpointPath = join(runDir, "checkpoint.jsonl");
   const excelPath = join(runDir, `${runName}.xlsx`);
-  const restored = {
-    candidates: [],
-    branches: [],
-    details: [],
-    reviews: [],
-    selections: [],
-    event_count: 0,
-    page_count: 0,
-    source_url: null,
-  };
-  const branchMap = new Map();
-  try {
-    const content = await readFile(checkpointPath, "utf8");
-    const lines = content.split("\n").filter(Boolean);
-    for (const [index, line] of lines.entries()) {
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        if (index === lines.length - 1) break;
-        throw new Error("checkpoint_corrupt");
-      }
-      if (event.fingerprint !== fingerprint) continue;
-      restored.event_count += 1;
-      if (event.type === "page") {
-        restored.page_count += 1;
-        restored.candidates.push(...(event.candidates ?? []));
-        restored.source_url = event.page?.source_url ?? restored.source_url;
-      }
-      if (event.type === "branch" && event.branch?.branch_id) {
-        branchMap.set(event.branch.branch_id, event.branch);
-      }
-      if (event.type === "detail" && event.detail?.candidate_ref) {
-        restored.details.push(event.detail);
-      }
-      if (event.type === "review" && event.review?.candidate_ref) {
-        restored.reviews.push(event.review);
-      }
-      if (event.type === "selection" && event.selection?.branch?.branch_id) {
-        restored.selections.push(event.selection);
-      }
-    }
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-  restored.branches = [...branchMap.values()];
-  restored.details = mergeDetailRecords(restored.details);
-  restored.reviews = mergeReviewRecords(restored.reviews);
+  const restored = replayCheckpointEvents(
+    await readCheckpointEvents(checkpointPath, {
+      missingAsEmpty: true,
+      repairTrailingPartial: true,
+    }),
+    fingerprint,
+  );
   let eventCount = restored.event_count;
   const append = async (event) => {
     try {
@@ -774,31 +896,28 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
     const deliveryShortfall = plan.target_count
       ? Math.max(plan.target_count - selectedCandidates.length, 0)
       : 0;
-    const artifact = {
-      status: "complete",
-      run_id: runName,
-      checkpoint_path: checkpointPath,
-      excel_path: excelPath,
-      target_row_count: selectedCandidates.length,
-      candidate_row_count: candidates.length,
-      detail_planned_count: detailPlannedCount,
-      detail_completed_count: mergeDetailRecords(details).length,
-      review_completed_count: mergeReviewRecords(reviews).length,
-      eligible_candidate_count: eligibleCandidateCount,
-      rejected_candidate_count: rejectedCandidateCount,
-      needs_review_candidate_count: needsReviewCandidateCount,
-      delivery_shortfall: deliveryShortfall,
-      restored_candidate_count: restored.candidates.length,
-      checkpoint_event_count: eventCount + Number(appendFinal),
-      generated_at: generatedAt,
-      native_export_quota_consumed: Boolean(exportFallback?.quota_consumed),
-      delivery: {
-        display_required: true,
-        primary_file: "excel_path",
-        user_visible_message: "手扒详情已增量保存并刷新同一 Excel；请向用户展示 excel_path。",
+    const artifact = createArtifactMetadata({
+      runId: runName,
+      checkpointPath,
+      excelPath,
+      candidates,
+      details,
+      reviews,
+      detailPlannedCount,
+      targetRowCount: selectedCandidates.length,
+      deliveryShortfall,
+      checkpointEventCount: eventCount + Number(appendFinal),
+      generatedAt,
+      exportFallback,
+      deliveryMessage: "手扒详情已增量保存并刷新同一 Excel；请向用户展示 excel_path。",
+      extra: {
+        eligible_candidate_count: eligibleCandidateCount,
+        rejected_candidate_count: rejectedCandidateCount,
+        needs_review_candidate_count: needsReviewCandidateCount,
+        restored_candidate_count: restored.candidates.length,
       },
-    };
-    const workbook = buildManualResearchWorkbook({
+    });
+    await writeArtifactWorkbook({
       params,
       plan,
       branches,
@@ -807,27 +926,10 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
       reviews,
       status,
       artifact,
+      failureCode: "YPSCAN_MANUAL_ARTIFACT_FAILED",
     });
-    try {
-      await writeAtomic(excelPath, workbook);
-    } catch (error) {
-      error.code = "YPSCAN_MANUAL_ARTIFACT_FAILED";
-      throw error;
-    }
-    artifact.byte_count = workbook.length;
-    artifact.sha256 = createHash("sha256").update(workbook).digest("hex");
     if (appendFinal) {
-      await append({
-        type: "final",
-        status,
-        candidate_count: candidates.length,
-        detail_completed_count: artifact.detail_completed_count,
-        review_completed_count: artifact.review_completed_count,
-        target_row_count: artifact.target_row_count,
-        delivery_shortfall: deliveryShortfall,
-        excel_path: excelPath,
-        sha256: artifact.sha256,
-      });
+      await append(finalCheckpointEvent(status, candidates, artifact));
       artifact.checkpoint_event_count = eventCount;
     }
     return artifact;
@@ -878,20 +980,17 @@ export async function loadManualResearchRun({ workspaceDir, runId, requirementId
   const root = join(await realpath(workspaceDir), ARTIFACT_DIR);
   const safeId = safeRunId(runId);
   const runDir = join(root, safeId);
-  let content;
+  let events;
   try {
     if (!(await stat(runDir)).isDirectory()) throw new Error("not_directory");
-    content = await readFile(join(runDir, "checkpoint.jsonl"), "utf8");
+    events = await readCheckpointEvents(join(runDir, "checkpoint.jsonl"));
   } catch (error) {
     if (error?.code === "YPSCAN_MANUAL_WORKSPACE_UNAVAILABLE") throw error;
+    if (error?.message === "checkpoint_corrupt") throw error;
     throw Object.assign(new Error("未找到对应的手扒运行"), {
       code: "YPSCAN_MANUAL_RUN_NOT_FOUND",
     });
   }
-  const events = content
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
   const runEvent = events.find((event) => event.type === "run" && event.plan);
   if (!runEvent?.plan || !runEvent?.params) {
     throw Object.assign(new Error("该运行缺少筛选计划"), {
@@ -903,33 +1002,18 @@ export async function loadManualResearchRun({ workspaceDir, runId, requirementId
       code: "YPSCAN_MANUAL_RUN_MISMATCH",
     });
   }
-  const branchMap = new Map();
-  const candidates = [];
-  const details = [];
-  const reviews = [];
-  const selections = [];
-  for (const event of events) {
-    if (event.type === "page") candidates.push(...(event.candidates ?? []));
-    if (event.type === "branch" && event.branch?.branch_id) {
-      branchMap.set(event.branch.branch_id, event.branch);
-    }
-    if (event.type === "detail" && event.detail) details.push(event.detail);
-    if (event.type === "review" && event.review) reviews.push(event.review);
-    if (event.type === "selection" && event.selection?.branch?.branch_id) {
-      selections.push(event.selection);
-    }
-  }
+  const restored = replayCheckpointEvents(events);
   return {
     run_id: safeId,
     fingerprint: runEvent.fingerprint,
     params: runEvent.params,
     plan: runEvent.plan,
     events,
-    branches: [...branchMap.values()],
-    candidates: mergeStoredCandidates(candidates),
-    details: mergeDetailRecords(details),
-    reviews: mergeReviewRecords(reviews),
-    selections,
+    branches: restored.branches,
+    candidates: mergeStoredCandidates(restored.candidates),
+    details: restored.details,
+    reviews: restored.reviews,
+    selections: restored.selections,
   };
 }
 
@@ -989,11 +1073,7 @@ export async function applyManualResearchReviews({
   const runDir = join(root, entry.name);
   const checkpointPath = join(runDir, "checkpoint.jsonl");
   const excelPath = join(runDir, `${entry.name}.xlsx`);
-  const content = await readFile(checkpointPath, "utf8");
-  const events = content
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+  const events = await readCheckpointEvents(checkpointPath, { repairTrailingPartial: true });
   const runEvent = events.find((event) => event.type === "run" && event.plan);
   if (!runEvent?.plan || !runEvent?.params) {
     throw Object.assign(new Error("该旧运行缺少详情复核所需的计划数据"), {
@@ -1007,20 +1087,9 @@ export async function applyManualResearchReviews({
   }
   const plan = runEvent.plan;
   const params = runEvent.params;
-  const branchMap = new Map();
-  const storedCandidates = [];
-  const storedDetails = [];
-  const storedReviews = [];
-  for (const event of events) {
-    if (event.type === "page") storedCandidates.push(...(event.candidates ?? []));
-    if (event.type === "branch" && event.branch?.branch_id) {
-      branchMap.set(event.branch.branch_id, event.branch);
-    }
-    if (event.type === "detail" && event.detail) storedDetails.push(event.detail);
-    if (event.type === "review" && event.review) storedReviews.push(event.review);
-  }
-  const candidates = mergeStoredCandidates(storedCandidates);
-  const details = mergeDetailRecords(storedDetails);
+  const restored = replayCheckpointEvents(events);
+  const candidates = mergeStoredCandidates(restored.candidates);
+  const details = restored.details;
   const detailMap = detailMapFor(details);
   const candidateReferences = new Set(candidates.map(candidateReference));
   for (const review of reviews) {
@@ -1044,61 +1113,44 @@ export async function applyManualResearchReviews({
       review: { ...review, reviewed_at: capturedAt },
     });
   }
-  const mergedReviews = mergeReviewRecords([...storedReviews, ...reviews]);
+  const mergedReviews = mergeReviewRecords([...restored.reviews, ...reviews]);
   const batch = reviewBatch(candidates, details, mergedReviews);
   const status = batch.remaining > 0 ? "reviewing" : "complete";
   const selected = finalCandidates(candidates, details, mergedReviews, plan.target_count);
-  const artifact = {
-    status: "complete",
-    run_id: entry.name,
-    checkpoint_path: checkpointPath,
-    excel_path: excelPath,
-    target_row_count: selected.length,
-    candidate_row_count: candidates.length,
-    detail_planned_count: detailQueueLimit(plan),
-    detail_completed_count: details.length,
-    review_completed_count: mergedReviews.length,
-    delivery_shortfall: plan.target_count ? Math.max(plan.target_count - selected.length, 0) : 0,
-    checkpoint_event_count: events.length + reviews.length + 1,
-    generated_at: capturedAt,
-    native_export_quota_consumed: false,
-    delivery: {
-      display_required: true,
-      primary_file: "excel_path",
-      user_visible_message: "复核结果已写回同一 Excel；请向用户展示 excel_path。",
-    },
-  };
-  const workbook = buildManualResearchWorkbook({
+  const artifact = createArtifactMetadata({
+    runId: entry.name,
+    checkpointPath,
+    excelPath,
+    candidates,
+    details,
+    reviews: mergedReviews,
+    detailPlannedCount: detailQueueLimit(plan),
+    targetRowCount: selected.length,
+    deliveryShortfall: plan.target_count ? Math.max(plan.target_count - selected.length, 0) : 0,
+    checkpointEventCount: events.length + reviews.length + 1,
+    generatedAt: capturedAt,
+    deliveryMessage: "复核结果已写回同一 Excel；请向用户展示 excel_path。",
+  });
+  await writeArtifactWorkbook({
     params,
     plan,
-    branches: [...branchMap.values()],
+    branches: restored.branches,
     candidates,
     details,
     reviews: mergedReviews,
     status,
     artifact,
   });
-  await writeAtomic(excelPath, workbook);
-  artifact.byte_count = workbook.length;
-  artifact.sha256 = createHash("sha256").update(workbook).digest("hex");
   await appendDurable(checkpointPath, {
     version: CHECKPOINT_VERSION,
     fingerprint,
     captured_at: capturedAt,
-    type: "final",
-    status,
-    candidate_count: candidates.length,
-    detail_completed_count: details.length,
-    review_completed_count: mergedReviews.length,
-    target_row_count: selected.length,
-    delivery_shortfall: artifact.delivery_shortfall,
-    excel_path: excelPath,
-    sha256: artifact.sha256,
+    ...finalCheckpointEvent(status, candidates, artifact),
   });
   return {
     params,
     plan,
-    branches: [...branchMap.values()],
+    branches: restored.branches,
     candidates,
     details,
     reviews: mergedReviews,
