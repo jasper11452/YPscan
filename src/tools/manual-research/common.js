@@ -74,6 +74,36 @@ export async function assertUsablePage(page, platform) {
   }
 }
 
+/**
+ * A matching URL only proves that navigation was requested. Wait for the
+ * platform's actual market search control so callers do not start clicking a
+ * blank, redirecting, or half-rendered page.
+ *
+ * @param {import("playwright-core").Page} page
+ * @param {"xingtu"|"pgy"} platform
+ */
+export async function assertMarketReady(page, platform) {
+  await assertUsablePage(page, platform);
+  const input = page
+    .getByPlaceholder(
+      platform === "xingtu" ? /按内容关键词找达人|内容关键词/u : /按笔记关键词找博主|笔记关键词/u,
+    )
+    .first();
+  const started = Date.now();
+  while (Date.now() - started < 10_000) {
+    if (await input.isVisible().catch(() => false)) {
+      return { ready: true, url: page.url(), marker: "keyword_input" };
+    }
+    await assertUsablePage(page, platform);
+    await page.waitForTimeout(200);
+  }
+  throw manualBrowserError(
+    "YPSCAN_MANUAL_PAGE_NOT_READY",
+    "达人广场地址已打开，但页面筛选区未加载完成",
+    { actual_url: page.url(), expected_marker: "keyword_input" },
+  );
+}
+
 const ORDINARY_DIALOG_SELECTOR = [
   "[role=dialog]:visible",
   ".el-dialog:visible",
@@ -858,6 +888,10 @@ export async function firstResultIdentity(page, platform) {
   return first?.platform_id ?? first?.detail_url ?? first?.nickname ?? first?.raw_text ?? null;
 }
 
+export function hasResultRefreshEvidence(result, capturedPage = null) {
+  return Boolean(capturedPage || result?.ready);
+}
+
 /**
  * @param {import("playwright-core").Page} page
  * @param {string} platform
@@ -887,13 +921,16 @@ export async function waitForResultRefresh(
       (!requireIdentityChange && (count !== null || identity || empty)) ||
       empty
     ) {
-      return { result_count: count, first_candidate: identity };
+      return { ready: true, result_count: count, first_candidate: identity, empty };
     }
     await page.waitForTimeout(250);
   }
   return {
+    ready: false,
+    timed_out: true,
     result_count: await readResultCount(page, platform),
     first_candidate: await firstResultIdentity(page, platform),
+    empty: false,
   };
 }
 

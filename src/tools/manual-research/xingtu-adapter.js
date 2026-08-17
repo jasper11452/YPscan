@@ -1,11 +1,13 @@
 import {
   assertUsablePage,
+  assertMarketReady,
   clickFirstVisible,
   clickOptional,
   cleanText,
   dismissOrdinaryPopups,
   firstResultIdentity,
   fillMenuRange,
+  hasResultRefreshEvidence,
   hoverOptional,
   openFilterMenu,
   readPlatformResults,
@@ -213,10 +215,10 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
   const learnedDetailPaths = new Set();
   return {
     async prepare() {
-      await assertUsablePage(page, "xingtu");
+      await assertMarketReady(page, "xingtu");
       releaseDialogHandler ??= installDialogAutoDismiss(page);
       await dismissOrdinaryPopups(page, "xingtu");
-      await assertUsablePage(page, "xingtu");
+      await assertMarketReady(page, "xingtu");
     },
     async reset() {
       await assertUsablePage(page, "xingtu");
@@ -391,9 +393,16 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
         });
       });
       capturedPage = observed.capture;
+      const result = observed.action_result;
       return {
-        applied: true,
-        result_count: capturedPage?.total ?? observed.action_result.result_count,
+        applied: hasResultRefreshEvidence(result, capturedPage),
+        reason: hasResultRefreshEvidence(result, capturedPage)
+          ? null
+          : "result_refresh_not_observed",
+        result_count: capturedPage?.total ?? result.result_count,
+        result_evidence: capturedPage
+          ? { ready: true, source: "browser_response", result_count: capturedPage.total ?? null }
+          : { ...result, source: "dom" },
         collection_source: capturedPage ? "browser_response" : "dom",
       };
     },
