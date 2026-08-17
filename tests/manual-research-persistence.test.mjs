@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -520,6 +520,7 @@ test("apply_reviews returns successive batches until the same workbook is comple
     reasons: ["内容相关"],
     evidence: [task.recent_content[0].title],
   });
+  await appendFile(collect.artifact.checkpoint_path, '{"type":"review"', "utf8");
   const firstBatch = payload(
     await run({
       operation: "apply_reviews",
@@ -533,6 +534,10 @@ test("apply_reviews returns successive batches until the same workbook is comple
   assert.equal(firstBatch.review_batch.length, 5);
   assert.equal(firstBatch.review_remaining, 5);
   assert.equal(firstBatch.artifact.excel_path, collect.artifact.excel_path);
+  assert.doesNotMatch(
+    await readFile(collect.artifact.checkpoint_path, "utf8"),
+    /\{"type":"review"$/u,
+  );
 
   const finalBatch = payload(
     await run({

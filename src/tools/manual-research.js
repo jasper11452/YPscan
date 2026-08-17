@@ -427,8 +427,6 @@ function outputPayload({
   candidates,
   status,
   error = null,
-  nextBranch = null,
-  failedBranches = [],
   exportFallback = { status: "skipped", reason: "not_evaluated", quota_consumed: false },
   artifact = null,
   details = [],
@@ -458,9 +456,6 @@ function outputPayload({
     ? Math.max(plan.target_count - finalCandidateCount, 0)
     : 0;
   const runtimeUnexpressed = branches.flatMap((branch) => branch.unexpressed_filters ?? []);
-  const failedBranchUnexpressed = failedBranches.flatMap(
-    (branch) => branch.error?.details?.unexpressed_filters ?? [],
-  );
   const pendingReview = reviewBatch(annotatedCandidates, mergedDetails, mergedReviews);
   const deliveryStatus = plan.target_count
     ? pendingReview.remaining > 0
@@ -491,7 +486,7 @@ function outputPayload({
       planned_filters: plan.filters,
     },
     branches,
-    failed_branches: failedBranches,
+    failed_branches: [],
     candidates: candidatePreview,
     candidate_count: merged.length,
     eligible_candidate_count: partitioned.eligible.length,
@@ -516,11 +511,7 @@ function outputPayload({
     review_batch: pendingReview.tasks,
     review_remaining: pendingReview.remaining,
     review_completed_count: mergedReviews.length,
-    unresolved_requirements: [
-      ...plan.unexpressed,
-      ...runtimeUnexpressed,
-      ...failedBranchUnexpressed,
-    ],
+    unresolved_requirements: [...plan.unexpressed, ...runtimeUnexpressed],
     export_fallback: exportFallback,
     detail_tasks: pendingReview.tasks,
     detail_task_count: pendingReview.remaining,
@@ -531,7 +522,7 @@ function outputPayload({
       "semantic_relevance",
       "customer_price_50_to_120_percent",
     ],
-    next_branch: nextBranch,
+    next_branch: null,
     ...(status === "needs_user_action"
       ? {
           user_action: {
@@ -573,7 +564,6 @@ export function createManualResearch({
     let adapter;
     let artifactStore;
     const completedBranches = [];
-    const failedBranches = [];
     const candidates = [];
     const details = [];
     const reviews = [];
@@ -810,7 +800,6 @@ export function createManualResearch({
             details,
             reviews,
             status: "needs_user_action",
-            failedBranches,
             artifact,
             error: {
               code: error?.code ?? "YPSCAN_MANUAL_DETAIL_FAILED",
@@ -834,41 +823,21 @@ export function createManualResearch({
         quota_consumed: false,
       };
       if (fallbackReasons.length) {
-        const hasPriceViewFailure = failedBranches.some(
-          (branch) => branch.error?.code === "YPSCAN_MANUAL_PRICE_VIEW_NOT_APPLIED",
-        );
-        if (hasPriceViewFailure) {
+        try {
           exportFallback = {
-            status: "skipped",
-            reason: "price_view_not_applied",
+            ...(await adapter.export()),
+            reason: fallbackReasons[0],
             reasons: fallbackReasons,
-            quota_consumed: false,
+            quota_consumed: true,
           };
-        } else if (!adapter) {
+        } catch (error) {
           exportFallback = {
             status: "failed",
             reason: fallbackReasons[0],
             reasons: fallbackReasons,
-            error: "YPSCAN_MANUAL_EXPORT_UNAVAILABLE",
-            quota_consumed: false,
+            error: error?.code ?? error?.message ?? String(error),
+            quota_consumed: true,
           };
-        } else {
-          try {
-            exportFallback = {
-              ...(await adapter.export()),
-              reason: fallbackReasons[0],
-              reasons: fallbackReasons,
-              quota_consumed: true,
-            };
-          } catch (error) {
-            exportFallback = {
-              status: "failed",
-              reason: fallbackReasons[0],
-              reasons: fallbackReasons,
-              error: error?.code ?? error?.message ?? String(error),
-              quota_consumed: true,
-            };
-          }
         }
         const fallbackBranch = completedBranches.at(-1);
         if (fallbackBranch) fallbackBranch.export = exportFallback;
@@ -884,7 +853,6 @@ export function createManualResearch({
       const finalStatus =
         requiresExportFollowup ||
         hasUnexpressedHardFilters ||
-        failedBranches.length ||
         incompleteDetails ||
         pendingReview.remaining > 0
           ? "partial"
@@ -906,7 +874,6 @@ export function createManualResearch({
         details,
         reviews,
         status: finalStatus,
-        failedBranches,
         exportFallback,
         artifact,
       });
@@ -945,7 +912,6 @@ export function createManualResearch({
         details,
         reviews,
         status: requiresUserAction(error) ? "needs_user_action" : "failed",
-        failedBranches,
         artifact,
         error: {
           code: error?.code ?? "YPSCAN_MANUAL_RESEARCH_FAILED",
