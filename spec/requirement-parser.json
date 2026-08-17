@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 3,
+  "tool": "ypscan_parse_requirement",
+  "sideEffects": "none",
+  "inputModel": "compact-evidence-facts",
+  "factContract": {
+    "requiredMetadata": ["kind", "quote"],
+    "generatedMetadata": ["id", "source_id", "source_quote", "subject", "unit"],
+    "statuses": ["present", "missing", "ambiguous", "conflicting", "superseded"],
+    "sourcePolicy": "every non-missing fact cites an exact substring of user evidence"
+  },
+  "outputSchema": "requirement-search/v2",
+  "projections": {
+    "provider": {
+      "pricePolicy": "provider-price-retrieval-70-120/v1",
+      "readyIsIndependent": true,
+      "fieldVocabulary": "static-reviewed-provider-fields",
+      "outputs": ["basic_params", "search_jobs", "residual_conditions"],
+      "numericSearchFilterEncoding": "no-space [min,max] JSON strings, including femaleRate",
+      "softFactsAreResidual": true,
+      "multipleSegmentsRequireIndependentCounts": true
+    }
+  },
+  "audit": [
+    "source evidence",
+    "numeric equivalence",
+    "subject and scope",
+    "conflicts and supersession",
+    "business-clause residual coverage",
+    "prompt-injection exclusion"
+  ],
+  "successPolicy": "success=true means compiled; callers must also require projections.provider.ready=true",
+  "capabilityProbe": false,
+  "requirementHash": false
+}

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "tool": "ypscan_browser_assist",
+  "platforms": ["xingtu", "pgy"],
+  "actions": ["inspect", "apply_filters", "read_results", "export"],
+  "transport": "shared-browser-cdp",
+  "config": "browserCdpUrl",
+  "inspectLevels": ["overview", "detail"],
+  "filterAddressing": "control_path",
+  "scope": [
+    "discover-then-filter page inspection",
+    "overview field hierarchy without opening overlays",
+    "single-field detail inspection",
+    "control_path filter application and selected-condition readback",
+    "current rendered result extraction",
+    "native platform export"
+  ],
+  "excluded": [
+    "navigation and login",
+    "private platform APIs",
+    "pagination and workflow state",
+    "semantic creator decisions",
+    "project-generated Excel"
+  ]
+}

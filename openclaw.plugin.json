@@ -1,0 +1,68 @@
+{
+  "id": "ypscan",
+  "name": "悦普识星",
+  "version": "0.1.24-beta38",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由宿主 Browser 配合 Playwright 完成双平台手扒闭环。",
+  "author": {
+    "name": "Jasper"
+  },
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["tool", "hook"]
+  },
+  "mcpServers": {
+    "ypscan": {
+      "url": "https://mcp.eshypdata.com/sse",
+      "transport": "sse",
+      "enabled": true,
+      "connectionTimeoutMs": 5000,
+      "requestTimeoutMs": 330000,
+      "toolFilter": {
+        "include": [
+          "validate_requirement",
+          "search_creators",
+          "rank_mcns",
+          "select_inquiry_form_fields",
+          "create_with_distributions",
+          "sync_mcn_inquiry_status",
+          "ingest_mcn_submissions",
+          "rank_creators",
+          "get_creator_detail",
+          "get_creator_detail_export",
+          "get_workflow_state",
+          "create_submission_batch"
+        ]
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "testMode": {
+        "type": "boolean",
+        "default": false,
+        "description": "仅限隔离端到端测试。开启后仍要求生产形态业务 URL，但允许受控读取 loopback 测试 adapter。"
+      },
+      "testAdapterBaseUrl": {
+        "type": "string",
+        "description": "仅在 testMode=true 时使用；必须是无凭据的 loopback HTTP origin。"
+      },
+      "browserCdpUrl": {
+        "type": "string",
+        "default": "http://127.0.0.1:18800",
+        "description": "宿主 Browser 的共享本机 CDP 地址；Playwright Core 仅连接现有 Browser，不启动独立浏览器。"
+      }
+    }
+  },
+  "contracts": {
+    "tools": [
+      "ypscan_parse_requirement",
+      "ypscan_manual_select_filters",
+      "ypscan_manual_research",
+      "ypscan_save_excel_artifact"
+    ]
+  },
+  "hooks": "./index.js",
+  "skills": ["./skills/media-assistant"]
+}

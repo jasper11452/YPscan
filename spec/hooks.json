@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 2,
+  "profile": "fixed-provider-flow-native-browser-and-wecom-confirmation-v1",
+  "implementation": "src/hooks/register-wecom-confirmation-only.js",
+  "events": {
+    "before_tool_call": [
+      "normalize supported Provider argument representations",
+      "require one exact-payload user confirmation before create_with_distributions"
+    ],
+    "tool_result_persist": [
+      "ypscan_parse_requirement success carries the fixed validate_requirement next-step directive",
+      "validate_requirement success carries the fixed search_creators next-step directive",
+      "search_creators success, including zero matches, preserves creators_export_path plus exact local-save arguments and carries the fixed rank_mcns next-step directive",
+      "rank_mcns success requires the complete response-order MCN table, raw creator preview download link, local Excel save, displayed file_path, and branch AskUserQuestion directive",
+      "fixed-flow failures carry a retry/end AskUserQuestion directive",
+      "native Browser failures carry an action-specific AskUserQuestion directive"
+    ],
+    "after_tool_call": [
+      "record the matching AskUserQuestion confirmation in memory"
+    ],
+    "before_prompt_build": [
+      "request one full media-assistant Skill read per host run",
+      "inject the fixed Provider sequence and AskUserQuestion waiting rule"
+    ],
+    "gateway_start": ["clear transient confirmation state"],
+    "gateway_stop": ["clear transient confirmation state"]
+  },
+  "confirmation": {
+    "tool": "create_with_distributions",
+    "ttlSeconds": 600,
+    "singleUse": true,
+    "storage": "gateway-memory",
+    "payloadBinding": "canonical-sha256"
+  },
+  "removed": [
+    "legacy Browser workflow state",
+    "stage gates",
+    "evidence gates",
+    "SQLite ledger",
+    "runtime readiness gate",
+    "field callback capture gate"
+  ]
+}

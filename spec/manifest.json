@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "name": "ypscan",
+  "version": "0.1.24-beta13",
+  "profile": "fixed-provider-flow-native-browser-and-wecom-confirmation-v1",
+  "entry": "./index.js",
+  "specifications": {
+    "hooks": "./spec/hooks.json",
+    "requirementParser": "./spec/requirement-parser.json",
+    "excelArtifactSave": "./spec/excel-artifact-save.json",
+    "browserAssist": "./spec/browser-assist.json"
+  }
+}

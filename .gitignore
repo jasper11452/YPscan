@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+*.tgz
+
+# macOS
+.DS_Store
+
+# Understand (SciTools) analysis database
+.ua/
+
+# Runtime state / generated output (never version these)
+.ypscan/
+.ypscan-templates/
+.ypscan-*/
+
+# Logs / coverage
+*.log
+coverage/

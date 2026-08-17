@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 2,
+  "tool": "ypscan_save_excel_artifact",
+  "riskTier": "local_trusted_download",
+  "arguments": {
+    "artifact_kind": ["submission_batch", "creator_detail_export", "creator_preview"],
+    "artifact_id": "non-empty requirement, task, or batch correlation metadata",
+    "excel_file_url": "trusted fixed-endpoint Provider download URL"
+  },
+  "networkPolicy": {
+    "scheme": "https",
+    "host": "mcp.eshypdata.com",
+    "path": "/api/download",
+    "query": "exactly one non-empty file_path parameter",
+    "credentials": false,
+    "redirects": false,
+    "totalBudgetSeconds": 20,
+    "maximumBytes": 20971520,
+    "retryableStatuses": [429, 500, 502, 503, 504]
+  },
+  "filesystemPolicy": {
+    "destination": "trusted workspaceDir supplied by the tool factory",
+    "filename": "derived from the download URL",
+    "publication": "same-directory atomic no-overwrite",
+    "symbolicLinks": false,
+    "existingSameHash": "idempotent_success",
+    "existingDifferentContent": "YPSCAN_EXCEL_SAVE_CONFLICT"
+  },
+  "resultDetails": [
+    "file_name",
+    "file_path",
+    "byte_count",
+    "sha256",
+    "idempotent",
+    "download_attempts"
+  ]
+}

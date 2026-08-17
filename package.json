@@ -1,0 +1,49 @@
+{
+  "name": "ypscan",
+  "version": "0.1.24-beta38",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由宿主 Browser 配合 Playwright 完成双平台手扒闭环。",
+  "type": "module",
+  "private": true,
+  "files": [
+    "index.js",
+    "openclaw.plugin.json",
+    "README.md",
+    "skills/media-assistant",
+    "src"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.7.1"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22.22.2"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "smoke": "node scripts/smoke-test.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.1",
+    "eslint": "^10.8.1",
+    "globals": "^17.11.0",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "playwright-core": "1.62.1"
+  }
+}

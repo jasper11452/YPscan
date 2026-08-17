@@ -1,0 +1,45 @@
+{
+  "sample": "阿里千问AI_抖音星图达人初筛50人_20260814",
+  "source_files": {
+    "tsv": "Codex/2026-08-14/gen/work/qianwen_candidates.tsv",
+    "excel": "Codex/2026-08-14/gen/outputs/阿里千问AI_抖音星图达人初筛50人_20260814.xlsx"
+  },
+  "tier_rule": {
+    "requirement_tier": "60s+",
+    "list_default_tier": "21-60s",
+    "list_default_price": 6200,
+    "export_60s_plus_price": 8000,
+    "rule": "不切档就读列表会把 21-60s 的 6200 写成 60s+ 报价；60s+ 真实报价 8000"
+  },
+  "creator_anchor": {
+    "nickname": "敏敏办公室",
+    "xingtu_id": "7441118927394095141",
+    "creator_gender": "女",
+    "city": "深圳",
+    "fans": 445979,
+    "price_60s_plus": 8000,
+    "expected_views_60s_plus": 124053,
+    "expected_cpm_60s_plus": 64.4886,
+    "audience_gender": { "male": 0.58, "female": 0.42 },
+    "rule": "达人本人性别 ≠ 粉丝性别；列表 男/女 只能进达人性别"
+  },
+  "keyword_merge": {
+    "办公软件": { "recalled": 57, "after_numeric_filter": 38 },
+    "办公技巧": { "recalled": 46, "after_numeric_filter": 31 },
+    "merged_unique_by_xingtu_id": 55,
+    "delivered": 50,
+    "tiers": { "A_优先": 15, "B_复核": 20, "C_备选": 15 }
+  },
+  "hard_limits": {
+    "price_max": 20000,
+    "cpm_max": 100,
+    "fans_min": 100000
+  },
+  "delivered_extremes": {
+    "price_max_actual": 18000,
+    "cpm_max_actual": 93.769,
+    "fans_min_actual": 113620
+  },
+  "unexpressed_on_list_page": ["男性粉丝≤75% 精确档"],
+  "business_only_fields": ["8月档期", "返点≥30%", "内容基调"]
+}
