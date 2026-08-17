@@ -50,6 +50,8 @@ function fingerprintFor(params, plan) {
           platform: params.platform,
           keywords: plan.keywords,
           filters: plan.filters,
+          detail_filters: plan.detail_filters,
+          review_requirements: plan.review_requirements,
           price_view: plan.price_view,
           target_count: plan.target_count,
           collection_target: plan.collection_target,
@@ -600,6 +602,22 @@ export function buildManualResearchWorkbook({
         .map((filter) => `${filter.min ?? ""}–${filter.max ?? ""} ${filter.unit ?? ""}`.trim())
         .join("；") || "未提供达人报价条件",
     ],
+    [
+      "详情硬审条件",
+      (plan.detail_filters ?? [])
+        .map((filter) =>
+          filter.mode === "range"
+            ? `${filter.control}:${filter.min ?? ""}–${filter.max ?? ""}`
+            : `${filter.control}:${(filter.values ?? []).join("、")}`,
+        )
+        .join("；") || "无",
+    ],
+    [
+      "语义复核条件",
+      (plan.review_requirements ?? [])
+        .map((item) => item.quote || `${item.fact_kind}:${item.expected ?? ""}`)
+        .join("；") || "无",
+    ],
     ["增量Checkpoint", artifact.checkpoint_path],
     ["生成时间", timestamp],
     ["说明", "最终名单仅包含详情硬条件通过且 Agent 语义复核纳入的达人；空值按未知处理。"],
@@ -1114,7 +1132,9 @@ export async function applyManualResearchReviews({
     });
   }
   const mergedReviews = mergeReviewRecords([...restored.reviews, ...reviews]);
-  const batch = reviewBatch(candidates, details, mergedReviews);
+  const batch = reviewBatch(candidates, details, mergedReviews, {
+    requirements: plan.review_requirements,
+  });
   const status = batch.remaining > 0 ? "reviewing" : "complete";
   const selected = finalCandidates(candidates, details, mergedReviews, plan.target_count);
   const artifact = createArtifactMetadata({

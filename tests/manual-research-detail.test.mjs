@@ -72,6 +72,40 @@ test("a missing required detail field is unknown and cannot enter review", () =>
   assert.deepEqual(reviewBatch([candidate], [detail], []).tasks, []);
 });
 
+test("detail-only audience limits gate semantic review and expose review requirements", () => {
+  const candidate = { platform: "xingtu", platform_id: "creator-audience", nickname: "达人" };
+  const plan = {
+    platform: "xingtu",
+    filters: [],
+    detail_filters: [range("audience_male_rate", 0, 0.75)],
+    review_requirements: [
+      { fact_kind: "audience_city", expected: "一二线", quote: "粉丝主要在一二线" },
+    ],
+  };
+  const evaluation = evaluateCandidateDetail(
+    candidate,
+    { fields: { audience_male_rate_raw: "75%", audience_cities: ["北京", "上海"] } },
+    plan,
+  );
+  const detail = {
+    candidate_ref: candidate.platform_id,
+    fields: evaluation.fields,
+    hard_evaluation: evaluation,
+  };
+
+  assert.equal(evaluation.status, "pass");
+  assert.deepEqual(
+    reviewBatch([candidate], [detail], [], { requirements: plan.review_requirements }).tasks[0]
+      .review_requirements,
+    plan.review_requirements,
+  );
+  assert.equal(
+    evaluateCandidateDetail(candidate, { fields: { audience_male_rate_raw: "75.1%" } }, plan)
+      .status,
+    "fail",
+  );
+});
+
 test("detail planning is targeted, bounded to twice the target and reviews at most twenty", () => {
   const plan = {
     target_count: 12,

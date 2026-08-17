@@ -25,6 +25,9 @@ const hidden = {
   filter() {
     return this;
   },
+  getByText() {
+    return this;
+  },
   locator() {
     return this;
   },
@@ -333,6 +336,111 @@ test("Xingtu price view uses the labeled type trigger and verifies the table hea
   });
 });
 
+test("Xingtu price view accepts the quote label and delayed confirmation", async () => {
+  const events = [];
+  let pending = false;
+  let headerText = "达人信息 21-60s报价 预期CPM";
+  let menuId = "price-type-menu-before-open";
+  const priceTypeTrigger = {
+    innerText: async () => "全部",
+    isVisible: async () => true,
+    getAttribute: async (name) => {
+      if (name === "aria-controls") return menuId;
+      if (name === "placeholder") return "选择报价类型";
+      return null;
+    },
+    hover: async () => {},
+    click: async () => {
+      menuId = "price-type-menu-after-open";
+    },
+  };
+  const option = {
+    filter() {
+      return this;
+    },
+    first() {
+      return this;
+    },
+    isVisible: async () => true,
+    scrollIntoViewIfNeeded: async () => {},
+    hover: async () => {},
+    click: async () => {
+      events.push("option-click");
+      pending = true;
+    },
+    evaluate: async () => ({ known: false, selected: false }),
+  };
+  const priceTypeMenu = {
+    isVisible: async () => true,
+    innerText: async () => "全部 1-20s报价 21-60s报价 60s以上报价",
+    first() {
+      return this;
+    },
+    getByText(pattern) {
+      return pattern.test("60s以上报价") ? option : hidden;
+    },
+  };
+  const confirm = {
+    isVisible: async () => true,
+    click: async () => {
+      events.push("confirm");
+      if (pending) headerText = "达人信息 60s以上报价 预期CPM";
+    },
+    last() {
+      return this;
+    },
+  };
+  const quoteMenu = {
+    isVisible: async () => true,
+    first() {
+      return this;
+    },
+    locator: () => collection([priceTypeTrigger]),
+    getByRole: () => confirm,
+  };
+  const quoteTrigger = {
+    innerText: async () => "达人报价",
+    isVisible: async () => true,
+    scrollIntoViewIfNeeded: async () => {},
+    hover: async () => {},
+    click: async () => {},
+    getAttribute: async (name) => (name === "aria-controls" ? "quote-menu" : null),
+  };
+  const title = {
+    count: async () => 1,
+    innerText: async () => "合作数据",
+    first() {
+      return this;
+    },
+  };
+  const row = {
+    isVisible: async () => true,
+    innerText: async () => "合作数据 达人报价",
+    locator(selector) {
+      if (selector === "[aria-controls]") return collection([quoteTrigger]);
+      if (selector.includes("filter-title")) return title;
+      return hidden;
+    },
+  };
+  const header = { innerText: async () => headerText };
+  const page = basePage((selector) => {
+    if (selector === ".custom-selector__button:visible") return hidden;
+    if (selector.startsWith(".market-filter-wrapper")) return collection([row]);
+    if (selector === '[id="quote-menu"]') return quoteMenu;
+    if (selector === '[id="price-type-menu-after-open"]') return priceTypeMenu;
+    if (selector === ".base-author-list .section-wrapper.sticky-header") return header;
+    if (selector.includes(".el-popper:visible")) return hidden;
+    throw new Error(`unexpected locator: ${selector}`);
+  });
+
+  assert.deepEqual(await createXingtuAdapter(page).setPriceView("60s以上视频"), {
+    applied: true,
+    reason: null,
+    readback: "达人信息 60s以上报价 预期CPM",
+  });
+  assert.deepEqual(events, ["option-click", "confirm"]);
+});
+
 test("Xingtu quote range identifies the custom interval control instead of using control order", async () => {
   const events = [];
   const values = ["", ""];
@@ -519,4 +627,14 @@ test("Xingtu selection verification survives later filters changing the same row
     { control: "creator_price", valid: true },
     { control: "cpm", valid: true },
   ]);
+
+  const missingReadback = await createXingtuAdapter(page).verifySelection({
+    branch: { keyword: "办公软件" },
+    verification: {
+      price_view: { requested: "60s以上视频" },
+      actual_filters: [{ control: "cpm", readback: "", verification_readback: "" }],
+    },
+  });
+  assert.equal(missingReadback.valid, false);
+  assert.deepEqual(missingReadback.filters, [{ control: "cpm", valid: false }]);
 });

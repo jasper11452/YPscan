@@ -15,6 +15,7 @@ import {
   validateManualFilterSelectionParams,
   validateManualResearchParams,
 } from "../src/tools/manual-research-protocol.js";
+import { detailGroupsForPlan } from "../src/tools/manual-research-detail.js";
 
 function fact(id, kind, normalizedValue, extra = {}) {
   return {
@@ -341,6 +342,49 @@ test("normalized duration tiers, gender labels and cooperation qualifiers map to
       .map((item) => [item.min, item.max]),
     [[400, 960]],
   );
+});
+
+test("Xingtu keeps audience and semantic hard conditions out of unstable list controls", () => {
+  const plan = compileManualResearchPlan({
+    platform: "xingtu",
+    keywords: ["办公软件"],
+    facts: [
+      fact("duration", "video_duration", "duration_l3"),
+      fact("price", "creator_price", 20_000, { operator: "lte" }),
+      fact("followers", "follower_count", 100_000, { operator: "gte" }),
+      fact("cpm", "cpm_max", 100, { operator: "lte" }),
+      fact("male", "audience_male_rate", 75, { operator: "lte", unit: "percent" }),
+      fact("city", "audience_city", "一二线"),
+      fact("content", "content_direction", "办公软件相关"),
+      fact("excluded", "excluded_content", "低沉、都市蓝领、都市银发", {
+        operator: "not_in",
+      }),
+    ],
+  });
+
+  assert.deepEqual(plan.filters.map((item) => item.control), [
+    "creator_price",
+    "follower_count",
+    "cpm",
+  ]);
+  assert.deepEqual(plan.detail_filters, [
+    {
+      fact_id: "male",
+      fact_kind: "audience_male_rate",
+      control: "audience_male_rate",
+      mode: "range",
+      source: { id: "source-male", quote: "75" },
+      min: 0,
+      max: 0.75,
+      unit: "ratio",
+      stage: "detail",
+    },
+  ]);
+  assert.deepEqual(
+    plan.review_requirements.map((item) => item.fact_kind),
+    ["audience_city", "content_direction", "excluded_content"],
+  );
+  assert.equal(detailGroupsForPlan(plan).includes("audience"), true);
 });
 
 test("open-ended numeric facts preserve null instead of coercing it to zero", () => {
@@ -708,7 +752,7 @@ test("PGY-style 18-page result sets retain row association and deduplicate every
   assert.equal(data.candidate_count, 19);
 });
 
-test("a later branch selection failure blocks collection without requesting user action", async () => {
+test("a later branch selection failure blocks collection after one bounded retry", async () => {
   const actions = [];
   const browser = fakeBrowser("https://www.xingtu.cn/ad/creator/market");
   const run = createManualResearch({
@@ -725,7 +769,7 @@ test("a later branch selection failure blocks collection without requesting user
   assert.equal(data.failed_control, "keyword");
   assert.equal(data.error.code, "YPSCAN_MANUAL_KEYWORD_NOT_APPLIED");
   assert.equal(result.isError, true);
-  assert.equal(actions.filter((item) => item[0] === "search" && item[1] === "露营").length, 1);
+  assert.equal(actions.filter((item) => item[0] === "search" && item[1] === "露营").length, 2);
 });
 
 test("a transient ordinary UI failure recovers once and completes the same branch", async () => {
@@ -837,7 +881,7 @@ test("an unapplied hard filter blocks collection without consuming export quota"
   );
 });
 
-test("a failed price-tier readback stops the branch before search or collection", async () => {
+test("a failed price-tier readback stops before search after one bounded retry", async () => {
   const actions = [];
   const browser = fakeBrowser("https://www.xingtu.cn/ad/creator/market");
   const adapter = successfulAdapter(actions);
@@ -863,7 +907,10 @@ test("a failed price-tier readback stops the branch before search or collection"
     actions.filter(([action]) =>
       ["price_view", "search", "read", "filter", "export"].includes(action),
     ),
-    [["price_view", "60s以上视频"]],
+    [
+      ["price_view", "60s以上视频"],
+      ["price_view", "60s以上视频"],
+    ],
   );
 });
 
@@ -1170,5 +1217,18 @@ test("public protocols separate selection, collection migration and reviews", ()
         })),
       }),
     /1–20/u,
+  );
+  assert.throws(
+    () =>
+      validateManualResearchParams({
+        operation: "apply_reviews",
+        requirement_id: "requirement-1",
+        platform: "xingtu",
+        run_id: "run-1",
+        reviews: [
+          { candidate_ref: "creator-1", decision: "include", reasons: [], evidence: [] },
+        ],
+      }),
+    /不能为空/u,
   );
 });

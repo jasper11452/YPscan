@@ -31,6 +31,26 @@ const FILTER_FACTS = Object.freeze({
 });
 
 const VIEW_FACT_KINDS = new Set(["content_format", "video_duration", "creator_count"]);
+const METADATA_FACT_KINDS = new Set([
+  "project_name",
+  "schedule_window",
+  "submission_deadline",
+]);
+const SEMANTIC_REVIEW_FACT_KINDS = new Set([
+  "content_direction",
+  "preferred_content",
+  "content_feature",
+  "content_theme",
+  "excluded_content",
+]);
+const XINGTU_DETAIL_ONLY_CONTROLS = new Set([
+  "audience_gender",
+  "audience_female_rate",
+  "audience_male_rate",
+  "audience_age_18_23_rate",
+  "audience_age_24_30_rate",
+  "audience_age_31_40_rate",
+]);
 const MANUAL_CREATOR_PRICE_MIN_FACTOR = 0.5;
 const MANUAL_CREATOR_PRICE_MAX_FACTOR = 1.2;
 
@@ -95,6 +115,14 @@ function factRange(fact) {
   };
 }
 
+function normalizedRangeForMapping(fact, mapping) {
+  const range = factRange(fact);
+  if (mapping.unit !== "ratio") return range;
+  const ratio = (value) =>
+    value !== null && Math.abs(value) > 1 ? value / 100 : value;
+  return { min: ratio(range.min), max: ratio(range.max) };
+}
+
 function manualCreatorPriceRange(fact) {
   const between = fact.operator === "between";
   const minAnchor = Number(between ? fact.minimum : fact.normalized_value);
@@ -112,6 +140,17 @@ function manualCreatorPriceAnchor(fact) {
     minimum: fact.minimum ?? null,
     maximum: fact.maximum ?? null,
     qualifier: fact.qualifier ?? "generic",
+  };
+}
+
+function reviewRequirement(fact, reason) {
+  return {
+    fact_id: fact.id ?? null,
+    fact_kind: fact.kind ?? "unknown",
+    operator: fact.operator ?? null,
+    expected: fact.normalized_value ?? fact.value ?? null,
+    quote: clean(fact.quote ?? fact.source?.quote),
+    reason,
   };
 }
 
@@ -201,6 +240,8 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
     ...new Set((keywords ?? keywordValues(activeFacts)).map(clean).filter(Boolean)),
   ].slice(0, 4);
   const filters = [];
+  const detailFilters = [];
+  const reviewRequirements = [];
   const unexpressed = [];
   for (const fact of activeFacts.filter(hardFact)) {
     const mapping = FILTER_FACTS[fact.kind];
@@ -224,7 +265,9 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
       if (mapping.mode === "range") {
         Object.assign(
           filter,
-          fact.kind === "creator_price" ? manualCreatorPriceRange(fact) : factRange(fact),
+          fact.kind === "creator_price"
+            ? manualCreatorPriceRange(fact)
+            : normalizedRangeForMapping(fact, mapping),
           {
             unit: mapping.unit ?? null,
             ...(fact.kind === "creator_price"
@@ -237,10 +280,26 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
         );
       } else
         filter.values = factValues(fact).map((value) => visibleOptionValue(mapping.control, value));
+      if (platform === "xingtu" && mapping.control === "audience_city") {
+        reviewRequirements.push(reviewRequirement(fact, "detail_semantic_review"));
+        continue;
+      }
+      if (platform === "xingtu" && XINGTU_DETAIL_ONLY_CONTROLS.has(mapping.control)) {
+        detailFilters.push({ ...filter, stage: "detail" });
+        continue;
+      }
       filters.push(filter);
       continue;
     }
-    if (!KEYWORD_FACT_KINDS.includes(fact.kind) && !VIEW_FACT_KINDS.has(fact.kind)) {
+    if (SEMANTIC_REVIEW_FACT_KINDS.has(fact.kind)) {
+      reviewRequirements.push(reviewRequirement(fact, "detail_semantic_review"));
+      continue;
+    }
+    if (
+      !KEYWORD_FACT_KINDS.includes(fact.kind) &&
+      !VIEW_FACT_KINDS.has(fact.kind) &&
+      !METADATA_FACT_KINDS.has(fact.kind)
+    ) {
       unexpressed.push({
         fact_id: fact.id ?? null,
         fact_kind: fact.kind ?? "unknown",
@@ -267,6 +326,8 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
     platform,
     keywords: keywordsToRun,
     filters,
+    detail_filters: detailFilters,
+    review_requirements: reviewRequirements,
     price_view: selectedPriceView,
     price_policy: {
       creator_price: "customer_value_50_to_120_percent",

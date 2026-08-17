@@ -1025,6 +1025,37 @@ test("a one-input range uses the real upper bound for lte facts", async () => {
   assert.deepEqual(filled, ["2000"]);
 });
 
+test("a required range confirmation cannot be replaced by closing the menu", async () => {
+  const hidden = {
+    isVisible: async () => false,
+    first() {
+      return this;
+    },
+  };
+  const input = {
+    getAttribute: async () => "最高报价",
+    fill: async () => {},
+    inputValue: async () => "2000",
+  };
+  const menu = {
+    getByText: () => hidden,
+    getByRole: () => hidden,
+    locator: () => ({ count: async () => 1, nth: () => input }),
+    innerText: async () => "",
+  };
+  const page = {
+    mouse: { move: async () => {}, down: async () => {}, up: async () => {} },
+    waitForTimeout: async () => {},
+  };
+
+  assert.equal(
+    await fillMenuRange(page, { menu }, { min: 0, max: 2_000, unit: "yuan" }, {
+      requireConfirm: true,
+    }),
+    false,
+  );
+});
+
 test("range filling ignores readonly dropdown inputs instead of waiting for editability", async () => {
   const hidden = {
     isVisible: async () => false,

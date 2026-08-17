@@ -22,7 +22,7 @@ export function detailQueueLimit(plan) {
 
 export function detailGroupsForPlan(plan) {
   const groups = new Set(["summary", "recent_content"]);
-  for (const filter of plan.filters ?? []) {
+  for (const filter of [...(plan.filters ?? []), ...(plan.detail_filters ?? [])]) {
     if (String(filter.control).startsWith("audience_")) groups.add("audience");
     if (["cpm", "cpe", "interaction_rate"].includes(filter.control)) {
       groups.add("performance");
@@ -31,6 +31,15 @@ export function detailGroupsForPlan(plan) {
   for (const item of plan.unexpressed ?? []) {
     if (/growth|涨粉|粉丝增长/iu.test(`${item.fact_kind ?? ""} ${item.source?.quote ?? ""}`)) {
       groups.add("growth");
+    }
+  }
+  for (const item of plan.review_requirements ?? []) {
+    if (
+      /audience|粉丝|受众|人群|画像|男粉|女粉/iu.test(
+        `${item.fact_kind ?? ""} ${item.quote ?? ""} ${item.expected ?? ""}`,
+      )
+    ) {
+      groups.add("audience");
     }
   }
   return [...groups];
@@ -219,7 +228,7 @@ function valueForFilter(candidate, fields, filter) {
 export function evaluateCandidateDetail(candidate, detail, plan) {
   const fields = normalizeDetailFields(detail?.fields ?? {});
   const checks = [];
-  for (const filter of plan.filters ?? []) {
+  for (const filter of [...(plan.filters ?? []), ...(plan.detail_filters ?? [])]) {
     if (filter.control === "creator_price") {
       const observed = priceForPlan(candidate, fields, plan);
       const priceCheck = checkCandidatePrice(
@@ -282,7 +291,9 @@ export function mergeReviewRecords(records) {
   return [...byReference.values()];
 }
 
-export function reviewBatch(candidates, details, reviews, limit = DETAIL_REVIEW_BATCH_SIZE) {
+export function reviewBatch(candidates, details, reviews, options = {}) {
+  const limit = typeof options === "number" ? options : (options.limit ?? DETAIL_REVIEW_BATCH_SIZE);
+  const requirements = typeof options === "number" ? [] : (options.requirements ?? []);
   const detailMap = new Map(mergeDetailRecords(details).map((item) => [item.candidate_ref, item]));
   const reviewed = new Set(mergeReviewRecords(reviews).map((item) => item.candidate_ref));
   const tasks = [];
@@ -297,6 +308,7 @@ export function reviewBatch(candidates, details, reviews, limit = DETAIL_REVIEW_
       fields: detail.fields,
       recent_content: detail.fields?.recent_content ?? [],
       hard_checks: detail.hard_evaluation.checks,
+      review_requirements: requirements,
     });
   }
   return { tasks: tasks.slice(0, limit), remaining: tasks.length };

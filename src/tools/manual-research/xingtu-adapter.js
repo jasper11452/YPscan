@@ -21,7 +21,25 @@ import { captureListResponseDuring, mergeCapturedAndDomRows } from "./list-respo
 import { collectCreatorDetail } from "./detail-page.js";
 
 const PRICE_TYPE_TRIGGER_LABEL = "选择报价类型";
-const PRICE_VIEW_LABEL_PATTERN = /^(?:1-20s|21-60s|60s以上)(?:视频)?$/u;
+const PRICE_VIEW_LABEL_PATTERN = /^(?:1-20s|21-60s|60s以上)(?:视频|报价)?$/u;
+
+function normalizePriceView(value) {
+  return cleanText(value).replace(/(?:视频|报价)$/u, "");
+}
+
+function priceViewAliases(value) {
+  const normalized = normalizePriceView(value);
+  return [...new Set([cleanText(value), `${normalized}报价`, normalized].filter(Boolean))];
+}
+
+async function readPriceViewHeader(page) {
+  return cleanText(
+    await page
+      .locator(".base-author-list .section-wrapper.sticky-header")
+      .innerText()
+      .catch(() => ""),
+  );
+}
 
 async function controlGroupText(control) {
   if (typeof control.evaluate !== "function") return "";
@@ -233,6 +251,20 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
       if (await input.isVisible().catch(() => false)) await input.fill("");
       await settleAfterAction(page);
     },
+    async verifyBaseline() {
+      const active = page.locator(
+        ".market-filter-wrapper--line [aria-controls].active:visible,.market-filter-wrapper--line [aria-controls].selected-label:visible",
+      );
+      const keyword = cleanText(
+        await page
+          .getByPlaceholder(/按内容关键词找达人|内容关键词/u)
+          .first()
+          .inputValue()
+          .catch(() => ""),
+      );
+      const activeCount = await active.count().catch(() => 0);
+      return { valid: activeCount === 0 && !keyword, active_count: activeCount, keyword };
+    },
     async recover() {
       await assertUsablePage(page, "xingtu");
       const dismissed = await dismissOrdinaryPopups(page, "xingtu");
@@ -279,13 +311,13 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
         : control.valueTrigger
           ? valuesForOpenedTrigger(filter.values, opened.trigger_text)
           : filter.values;
-      const applied =
+      let applied =
         filter.mode === "range"
-          ? await fillMenuRange(page, rangeMenu, effectiveFilter)
+          ? await fillMenuRange(page, rangeMenu, effectiveFilter, { requireConfirm: true })
           : (await selectMenuValues(page, opened, optionValues)).length > 0;
       if (filter.control === "creator_price" && applied) {
         const confirm = opened.menu.getByRole("button", { name: /^(?:确定|确认)$/u }).last();
-        await clickOptional(confirm);
+        applied = await clickOptional(confirm);
       }
       await settleAfterAction(page);
       return {
@@ -317,28 +349,31 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
       if (!priceType) {
         return { applied: false, reason: "price_type_trigger_not_found" };
       }
-      const selected = await selectMenuValues(
-        page,
-        { menu: priceType.menu, row: priceType.trigger, trigger: priceType.trigger },
-        [priceView],
-        { close: false },
-      );
-      if (!selected.length) {
-        return { applied: false, reason: "price_view_option_not_found" };
+      let selected = false;
+      for (const alias of priceViewAliases(priceView)) {
+        const values = await selectMenuValues(
+          page,
+          { menu: priceType.menu, row: priceType.trigger, trigger: priceType.trigger },
+          [alias],
+          { close: false },
+        );
+        if (values.length) {
+          selected = true;
+          break;
+        }
       }
       const confirm = opened.menu.getByRole("button", { name: /^(?:确定|确认)$/u }).last();
       await clickOptional(confirm);
       await settleAfterAction(page);
-      const header = cleanText(
-        await page
-          .locator(".base-author-list .section-wrapper.sticky-header")
-          .innerText()
-          .catch(() => ""),
-      );
-      const applied = header.includes(priceView.replace("视频", ""));
+      const header = await readPriceViewHeader(page);
+      const applied = header.includes(normalizePriceView(priceView));
       return {
         applied,
-        reason: applied ? null : "price_view_readback_mismatch",
+        reason: applied
+          ? null
+          : selected
+            ? "price_view_readback_mismatch"
+            : "price_view_option_not_found",
         readback: header,
       };
     },
@@ -348,16 +383,8 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
       const keywordInput = page.getByPlaceholder(/按内容关键词找达人|内容关键词/u).first();
       const keywordValue = cleanText(await keywordInput.inputValue().catch(() => ""));
       const requestedKeyword = cleanText(selection?.branch?.keyword);
-      const header = cleanText(
-        await page
-          .locator(".base-author-list .section-wrapper.sticky-header")
-          .innerText()
-          .catch(() => ""),
-      );
-      const requestedPrice = cleanText(selection?.verification?.price_view?.requested).replace(
-        "视频",
-        "",
-      );
+      const header = await readPriceViewHeader(page);
+      const requestedPrice = normalizePriceView(selection?.verification?.price_view?.requested);
       const body = cleanText(
         await page
           .locator("body")
@@ -366,7 +393,7 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
       );
       const filters = (selection?.verification?.actual_filters ?? []).map((filter) => {
         const readback = expectedFilterReadback(filter);
-        return { control: filter.control, valid: !readback || body.includes(readback) };
+        return { control: filter.control, valid: Boolean(readback) && body.includes(readback) };
       });
       const keywordValid = keywordValue === requestedKeyword;
       const priceViewValid = !requestedPrice || header.includes(requestedPrice);
@@ -442,7 +469,11 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
         return waitForResultRefresh(page, "xingtu", before, { requireIdentityChange: true });
       });
       capturedPage = observed.capture;
-      return true;
+      const advanced = hasResultRefreshEvidence(observed.action_result, capturedPage);
+      return {
+        advanced,
+        reason: advanced ? null : "result_refresh_not_observed",
+      };
     },
     async collectDetail(candidate, { groups }) {
       return collectCreatorDetail(page, "xingtu", candidate, {

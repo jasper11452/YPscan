@@ -456,7 +456,9 @@ function outputPayload({
     ? Math.max(plan.target_count - finalCandidateCount, 0)
     : 0;
   const runtimeUnexpressed = branches.flatMap((branch) => branch.unexpressed_filters ?? []);
-  const pendingReview = reviewBatch(annotatedCandidates, mergedDetails, mergedReviews);
+  const pendingReview = reviewBatch(annotatedCandidates, mergedDetails, mergedReviews, {
+    requirements: plan.review_requirements,
+  });
   const deliveryStatus = plan.target_count
     ? pendingReview.remaining > 0
       ? "pending_review"
@@ -484,6 +486,8 @@ function outputPayload({
       collection_target: plan.collection_target ?? null,
       per_branch_target: plan.per_branch_target ?? null,
       planned_filters: plan.filters,
+      detail_filters: plan.detail_filters ?? [],
+      review_requirements: plan.review_requirements ?? [],
     },
     branches,
     failed_branches: [],
@@ -846,7 +850,9 @@ export function createManualResearch({
       const hasUnexpressedHardFilters = completedBranches.some(
         (branch) => (branch.unexpressed_filters?.length ?? 0) > 0,
       );
-      const pendingReview = reviewBatch(mergedCandidates, details, reviews);
+      const pendingReview = reviewBatch(mergedCandidates, details, reviews, {
+        requirements: plan.review_requirements,
+      });
       const incompleteDetails = mergeDetailRecords(details).some(
         (detail) => detail.status !== "complete" || detail.hard_evaluation?.status === "unknown",
       );
