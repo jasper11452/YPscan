@@ -49,7 +49,17 @@ async function applySelection(adapter, branch, plan, platform, preservedVerifica
   let failedControl = null;
   try {
     await adapter.prepare();
-    if (!preservedVerification) await adapter.reset();
+    if (!preservedVerification) {
+      await adapter.reset();
+      const baseline = await adapter.verifyBaseline?.();
+      if (baseline && !baseline.valid) {
+        throw selectionError(
+          "YPSCAN_MANUAL_RESET_NOT_APPLIED",
+          "页面旧筛选未清理干净",
+          { baseline },
+        );
+      }
+    }
 
     const applyFilters = async () => {
       failedStage = "price_view";
@@ -218,6 +228,12 @@ export function createManualFilterSelection({
         plan,
         now,
       });
+      if (!store.enabled || !store.run_id) {
+        throw selectionError(
+          "YPSCAN_MANUAL_WORKSPACE_UNAVAILABLE",
+          "手扒工作区不可用，无法持久化 selection_id",
+        );
+      }
       failedStage = "navigate";
       const browser = await connectOverCDP(cdpUrl);
       const page = await resolveManualResearchPage(browser, params.platform);
@@ -252,8 +268,7 @@ export function createManualFilterSelection({
             error?.details?.failed_control ?? verification.failed_control ?? failedControl;
           if (
             attempt === 2 ||
-            requiresUserAction(error) ||
-            /PRICE_VIEW_NOT_APPLIED|FILTER_NOT_APPLIED|KEYWORD_NOT_APPLIED/u.test(error?.code ?? "")
+            requiresUserAction(error)
           ) {
             throw error;
           }

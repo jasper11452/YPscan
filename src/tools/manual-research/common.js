@@ -830,8 +830,9 @@ export async function selectMenuValues(page, opened, values, options = {}) {
  * @param {import("playwright-core").Page} page
  * @param {any} opened
  * @param {{min: number|null, max: number|null, unit?: string|null}} filter
+ * @param {{requireConfirm?: boolean}} [options]
  */
-export async function fillMenuRange(page, opened, filter) {
+export async function fillMenuRange(page, opened, filter, options = {}) {
   const custom = opened.menu.getByText(/^(?:自定义|自定义区间)$/u).first();
   if (await custom.isVisible().catch(() => false)) {
     if (!(await clickOptional(custom))) return false;
@@ -868,7 +869,13 @@ export async function fillMenuRange(page, opened, filter) {
     }
   }
   const confirm = opened.menu.getByRole("button", { name: /^(?:确定|确认)$/u }).first();
-  if (!(await clickOptional(confirm))) await closeFloatingLayer(page);
+  const confirmVisible = await confirm.isVisible().catch(() => false);
+  if (confirmVisible) {
+    if (!(await clickOptional(confirm))) return false;
+  } else {
+    if (options.requireConfirm) return false;
+    await closeFloatingLayer(page);
+  }
   return true;
 }
 

@@ -30,13 +30,16 @@ function params() {
   };
 }
 
-function adapter(actions, { verify = true, filterApplied = true } = {}) {
+function adapter(actions, { verify = true, filterApplied = true, baseline = true } = {}) {
   return {
     async prepare() {
       actions.push("prepare");
     },
     async reset() {
       actions.push("reset");
+    },
+    async verifyBaseline() {
+      return { valid: baseline };
     },
     async setPriceView(value) {
       actions.push("price");
@@ -85,6 +88,23 @@ test("legacy collect returns migration args without connecting Browser", async (
   const result = payload(await collect(params()));
   assert.equal(result.error.code, "YPSCAN_MANUAL_SELECTION_REQUIRED");
   assert.deepEqual(result.selector_args, params());
+  assert.equal(connections, 0);
+});
+
+test("selection cannot report ready when the checkpoint workspace is unavailable", async () => {
+  let connections = 0;
+  const select = createManualFilterSelection({
+    connectOverCDP: async () => {
+      connections += 1;
+      return browser();
+    },
+  });
+
+  const selected = payload(await select(params()));
+
+  assert.equal(selected.status, "failed");
+  assert.equal(selected.ready_for_collection, false);
+  assert.equal(selected.error.code, "YPSCAN_MANUAL_WORKSPACE_UNAVAILABLE");
   assert.equal(connections, 0);
 });
 
@@ -162,6 +182,21 @@ test("an uncommitted filter has no selection_id and cannot enter actual_filters"
   assert.equal(selected.selection_id, undefined);
   assert.equal(selected.verification.actual_filters.length, 0);
   assert.equal(selected.verification.failed_filters.length, 2);
+});
+
+test("stale filters surviving reset cannot issue a selection credential", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-reset-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const select = createManualFilterSelection({
+    workspaceDir,
+    connectOverCDP: async () => browser(),
+    createAdapter: () => adapter([], { baseline: false }),
+  });
+
+  const selected = payload(await select(params()));
+
+  assert.equal(selected.ready_for_collection, false);
+  assert.equal(selected.error.code, "YPSCAN_MANUAL_RESET_NOT_APPLIED");
 });
 
 test("a final-state mismatch cannot issue a selection credential", async (t) => {

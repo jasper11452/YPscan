@@ -208,10 +208,12 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
           await input.click();
           const rangeMenu = await waitForAdditionalFilterMenu(page, menuCountBefore);
           if (!rangeMenu) return false;
-          const applied = await fillMenuRange(page, { menu: rangeMenu }, filter);
+          const applied = await fillMenuRange(page, { menu: rangeMenu }, filter, {
+            requireConfirm: true,
+          });
           if (applied) {
             const confirm = opened.menu.getByRole("button", { name: /^(?:确定|确认)$/u }).last();
-            await clickOptional(confirm);
+            if (!(await clickOptional(confirm))) return false;
           }
           await settleAfterAction(page);
           await waitForPgyTableReady(page);
@@ -229,7 +231,7 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
       const observed = await captureListResponseDuring(page, "pgy", async () => {
         const applied =
           filter.mode === "range"
-            ? await fillMenuRange(page, opened, filter)
+            ? await fillMenuRange(page, opened, filter, { requireConfirm: true })
             : (await selectMenuValues(page, opened, filter.values)).length > 0;
         await settleAfterAction(page);
         await waitForPgyTableReady(page);
@@ -295,7 +297,7 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
             : "";
       const filters = (selection?.verification?.actual_filters ?? []).map((filter) => ({
         control: filter.control,
-        valid: !filter.readback || body.includes(cleanText(filter.readback)),
+        valid: Boolean(cleanText(filter.readback)) && body.includes(cleanText(filter.readback)),
       }));
       const keywordValid = keywordValue === requestedKeyword;
       const priceViewValid = !expectedPriceReadback || body.includes(expectedPriceReadback);
@@ -375,7 +377,11 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
         return waitForResultRefresh(page, "pgy", before, { requireIdentityChange: true });
       });
       capturedPage = observed.capture;
-      return true;
+      const advanced = hasResultRefreshEvidence(observed.action_result, capturedPage);
+      return {
+        advanced,
+        reason: advanced ? null : "result_refresh_not_observed",
+      };
     },
     async collectDetail(candidate, { groups }) {
       return collectCreatorDetail(page, "pgy", candidate, {

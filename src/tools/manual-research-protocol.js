@@ -70,8 +70,8 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
         properties: {
           candidate_ref: { type: "string", minLength: 1 },
           decision: { type: "string", enum: ["include", "exclude"] },
-          reasons: { type: "array", items: { type: "string" } },
-          evidence: { type: "array", items: { type: "string" } },
+          reasons: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+          evidence: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
         },
       },
     },
@@ -88,7 +88,8 @@ export const MANUAL_FILTER_SELECTION_PARAMETERS = Object.freeze({
     platform: MANUAL_RESEARCH_PARAMETERS.properties.platform,
     facts: {
       type: "array",
-      description: "首次筛选必传的精简页面 facts；后续携带 run_id 时禁止重传。",
+      description:
+        "首次筛选必传的完整硬条件 facts；不得为规避页面控件删除受众或内容条件，工具会自动路由到页面筛选、详情硬审或语义复核。后续携带 run_id 时禁止重传。",
       items: { type: "object" },
     },
     keywords: {
@@ -191,11 +192,16 @@ export function validateManualResearchParams(params = {}) {
       if (!Array.isArray(review.reasons) || !Array.isArray(review.evidence)) {
         throw argumentError(`reviews[${index}] 的 reasons 和 evidence 必须是数组`);
       }
+      const reasons = review.reasons.map((value) => String(value).trim()).filter(Boolean);
+      const evidence = review.evidence.map((value) => String(value).trim()).filter(Boolean);
+      if (!reasons.length || !evidence.length) {
+        throw argumentError(`reviews[${index}] 的 reasons 和 evidence 不能为空`);
+      }
       return {
         candidate_ref: requiredString(review.candidate_ref, `reviews[${index}].candidate_ref`),
         decision: review.decision,
-        reasons: review.reasons.map((value) => String(value).trim()).filter(Boolean),
-        evidence: review.evidence.map((value) => String(value).trim()).filter(Boolean),
+        reasons,
+        evidence,
       };
     });
     return {

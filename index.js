@@ -36,7 +36,7 @@ export default {
         return {
           name: "ypscan_manual_select_filters",
           description:
-            "人工拓展筛选阶段：按单个关键词分支在星图或蒲公英应用关键词、报价口径、级联项和区间筛选，逐项真实回读后生成 selection_id。任何未提交筛选都会阻止抓取；只负责筛选，不读取候选、翻页、详情或导出。",
+            "人工拓展筛选阶段：首次必须保留完整硬条件 facts，工具按单个关键词分支自动拆分页面筛选、详情硬审和语义复核；不要为规避不稳定控件删除受众或内容条件。页面条件逐项真实回读后才生成 selection_id；任何未提交筛选都会阻止抓取。只负责筛选，不读取候选、翻页、详情或导出。",
           parameters: MANUAL_FILTER_SELECTION_PARAMETERS,
           async execute(_id, params) {
             return selectFilters(params);
