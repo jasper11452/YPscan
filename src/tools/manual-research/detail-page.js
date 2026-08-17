@@ -17,6 +17,50 @@ const DETAIL_TABS = Object.freeze({
   },
 });
 
+const DETAIL_GROUP_HINTS = Object.freeze({
+  audience: [/粉丝/u, /受众/u, /人群/u, /画像/u, /用户分析/u],
+  performance: [/数据/u, /表现/u, /合作/u, /商业/u, /效果/u],
+  growth: [/趋势/u, /增长/u, /涨粉/u],
+  recent_content: [/近期/u, /作品/u, /笔记/u, /内容/u, /案例/u, /视频/u],
+});
+
+const DETAIL_GROUP_FIELDS = Object.freeze({
+  audience: [
+    "audience_male_rate_raw",
+    "audience_female_rate_raw",
+    "audience_age_18_23_rate_raw",
+    "audience_age_24_30_rate_raw",
+    "audience_age_31_40_rate_raw",
+    "audience_cities",
+  ],
+  performance: [
+    "cpm_raw",
+    "cpe_raw",
+    "interaction_rate_raw",
+    "expected_views_raw",
+    "read_median_raw",
+    "interaction_median_raw",
+    "daily_read_median_raw",
+    "daily_interaction_median_raw",
+    "sponsored_read_median_raw",
+    "sponsored_interaction_median_raw",
+  ],
+  growth: ["growth", "growth_rate_raw", "updated_at"],
+  recent_content: ["recent_content"],
+});
+
+const DETAIL_CONTROL_SELECTOR = [
+  "button:visible",
+  "[role=tab]:visible",
+  "[role=menuitem]:visible",
+  "[role=option]:visible",
+  "[aria-haspopup]:visible",
+  "[aria-expanded]:visible",
+  "a[href]:visible",
+].join(",");
+const DANGEROUS_DETAIL_ACTION = /提交|确认合作|立即合作|发送|支付|删除|下单|投放|邀约/u;
+const DETAIL_ACTION_BUDGET = 6;
+
 function clean(value) {
   return String(value ?? "")
     .replace(/\s+/gu, " ")
@@ -46,7 +90,12 @@ function firstMatch(text, patterns) {
 
 /** @param {import("playwright-core").Page} page */
 async function readDetailDom(page, candidate, platform) {
-  const body = cleanText(await page.locator("body").innerText().catch(() => ""));
+  const body = cleanText(
+    await page
+      .locator("body")
+      .innerText()
+      .catch(() => ""),
+  );
   const fields = {
     followers_raw: firstMatch(body, [
       /粉丝(?:数|量)?\s*[:：]?\s*([\d.,]+\s*[万wWkK亿]?)/u,
@@ -62,8 +111,12 @@ async function readDetailDom(page, candidate, platform) {
       /(?:预期播放|预期阅读|预估阅读|平均播放)\s*[:：]?\s*([\d.]+\s*[万wWkK亿]?)/u,
     ]),
     audience_male_rate_raw: firstMatch(body, [/(?:男性|男)粉丝(?:占比)?\s*[:：]?\s*([\d.]+\s*%)/u]),
-    audience_female_rate_raw: firstMatch(body, [/(?:女性|女)粉丝(?:占比)?\s*[:：]?\s*([\d.]+\s*%)/u]),
-    read_median_raw: firstMatch(body, [/(?:阅读中位数|播放中位数)\s*[:：]?\s*([\d.]+\s*[万wWkK]?)/u]),
+    audience_female_rate_raw: firstMatch(body, [
+      /(?:女性|女)粉丝(?:占比)?\s*[:：]?\s*([\d.]+\s*%)/u,
+    ]),
+    read_median_raw: firstMatch(body, [
+      /(?:阅读中位数|播放中位数)\s*[:：]?\s*([\d.]+\s*[万wWkK]?)/u,
+    ]),
     interaction_median_raw: firstMatch(body, [/(?:互动中位数)\s*[:：]?\s*([\d.]+\s*[万wWkK]?)/u]),
     updated_at: firstMatch(body, [/(?:数据更新至|更新时间)\s*[:：]?\s*([\d./-]{6,20})/u]),
   };
@@ -92,7 +145,9 @@ async function readDetailDom(page, candidate, platform) {
     .evaluateAll((links) =>
       links
         .map((link) => ({
-          title: String(link.textContent ?? "").replace(/\s+/gu, " ").trim(),
+          title: String(link.textContent ?? "")
+            .replace(/\s+/gu, " ")
+            .trim(),
           url: /** @type {HTMLAnchorElement} */ (link).href,
         }))
         .filter(
@@ -106,7 +161,9 @@ async function readDetailDom(page, candidate, platform) {
   if (recentContent.length) fields.recent_content = recentContent;
   return Object.fromEntries(
     Object.entries(fields).filter(([, value]) =>
-      Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "",
+      Array.isArray(value)
+        ? value.length > 0
+        : value !== null && value !== undefined && value !== "",
     ),
   );
 }
@@ -114,16 +171,164 @@ async function readDetailDom(page, candidate, platform) {
 /** @param {import("playwright-core").Page} page */
 async function clickFirstText(page, patterns) {
   for (const pattern of patterns) {
-    const target = page
-      .getByText(pattern)
-      .filter({ visible: true })
-      .first();
+    const target = page.getByText(pattern).filter({ visible: true }).first();
     if (!(await target.isVisible().catch(() => false))) continue;
     await target.scrollIntoViewIfNeeded().catch(() => {});
-    await target.click({ timeout: 2_000 });
-    return true;
+    if (
+      await target.click({ timeout: 2_000 }).then(
+        () => true,
+        () => false,
+      )
+    )
+      return true;
   }
   return false;
+}
+
+function groupHasEvidence(group, fields) {
+  return (DETAIL_GROUP_FIELDS[group] ?? []).some((key) => {
+    const value = fields[key];
+    return Array.isArray(value)
+      ? value.length > 0
+      : value !== null && value !== undefined && value !== "";
+  });
+}
+
+/** @param {import("playwright-core").Page} page */
+async function visibleDetailControls(page) {
+  return page
+    .locator(DETAIL_CONTROL_SELECTOR)
+    .evaluateAll((elements) =>
+      elements.slice(0, 120).map((element, index) => ({
+        index,
+        text: String(
+          element.getAttribute("aria-label") ??
+            element.textContent ??
+            element.getAttribute("title") ??
+            "",
+        )
+          .replace(/\s+/gu, " ")
+          .trim()
+          .slice(0, 80),
+        role: element.getAttribute("role") ?? element.tagName.toLowerCase(),
+        expanded: element.getAttribute("aria-expanded"),
+        has_popup: element.getAttribute("aria-haspopup"),
+      })),
+    )
+    .catch(() => []);
+}
+
+function rankedDetailControls(controls, group, attempted) {
+  const hints = DETAIL_GROUP_HINTS[group] ?? [];
+  return controls
+    .map((control) => {
+      const identity = `${control.role}|${control.text}`;
+      if (!control.text || attempted.has(identity) || DANGEROUS_DETAIL_ACTION.test(control.text)) {
+        return null;
+      }
+      const semantic = hints.reduce(
+        (score, pattern) => score + Number(pattern.test(control.text)),
+        0,
+      );
+      if (!semantic) return null;
+      return {
+        ...control,
+        identity,
+        score:
+          semantic * 10 +
+          Number(control.role === "tab") * 3 +
+          Number(Boolean(control.has_popup)) * 2 +
+          Number(control.expanded === "false"),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score);
+}
+
+/**
+ * Explore only visible, semantically relevant detail controls. Re-inspecting after every
+ * action lets nested/teleported menus participate without relying on platform selectors.
+ *
+ * @param {import("playwright-core").Page} page
+ * @param {"xingtu"|"pgy"} platform
+ * @param {any} candidate
+ * @param {string} group
+ * @param {Set<string>} learnedPaths
+ */
+async function exploreDetailGroup(page, platform, candidate, group, learnedPaths) {
+  const attempted = new Set();
+  const actions = [];
+  const fields = {};
+  const endpoints = [];
+  const sourceTypes = [];
+  let reason = "no_matching_control";
+
+  for (let actionNumber = 0; actionNumber < DETAIL_ACTION_BUDGET; actionNumber += 1) {
+    const controls = await visibleDetailControls(page);
+    const target = rankedDetailControls(controls, group, attempted)[0];
+    if (!target) break;
+    attempted.add(target.identity);
+    const locator = page.locator(DETAIL_CONTROL_SELECTOR).nth(target.index);
+    const before = cleanText(
+      await page
+        .locator("body")
+        .innerText()
+        .catch(() => ""),
+    );
+    const beforeControls = JSON.stringify(controls);
+    const observed = await captureDetailResponsesDuring(page, {
+      platform,
+      candidate,
+      expectedGroups: [group],
+      learnedPaths,
+      action: async () => {
+        await locator.scrollIntoViewIfNeeded().catch(() => {});
+        if (target.has_popup && target.expanded !== "true") {
+          await locator.hover({ timeout: 2_000 }).catch(() => {});
+        }
+        return locator.click({ timeout: 2_000 }).then(
+          () => true,
+          () => false,
+        );
+      },
+    });
+    if (observed.capture) {
+      mergeFields(fields, observed.capture.fields);
+      endpoints.push(...observed.capture.endpoints);
+      sourceTypes.push(observed.capture.source_type);
+    }
+    const domFields = await readDetailDom(page, candidate, platform);
+    mergeFields(fields, domFields);
+    if (Object.keys(domFields).length) sourceTypes.push("dom");
+    const after = cleanText(
+      await page
+        .locator("body")
+        .innerText()
+        .catch(() => ""),
+    );
+    const afterControls = JSON.stringify(await visibleDetailControls(page));
+    const changed =
+      before !== after || beforeControls !== afterControls || Boolean(observed.capture);
+    actions.push({
+      action: target.has_popup ? "hover_click" : "click",
+      control: target.text,
+      role: target.role,
+      changed,
+    });
+    if (groupHasEvidence(group, fields)) {
+      reason = null;
+      break;
+    }
+    reason = changed ? "target_fields_missing" : "control_had_no_effect";
+  }
+
+  return {
+    fields,
+    endpoints: [...new Set(endpoints)],
+    source_types: [...new Set(sourceTypes)],
+    actions,
+    reason,
+  };
 }
 
 /** @param {import("playwright-core").Page} listPage */
@@ -224,17 +429,17 @@ export async function collectCreatorDetail(
   const fields = {};
   const endpoints = [];
   const sourceTypes = [];
+  const completedGroups = new Set();
+  const navigation = [];
   if (opened.capture) {
     mergeFields(fields, opened.capture.fields);
     endpoints.push(...opened.capture.endpoints);
     sourceTypes.push(opened.capture.source_type);
+    for (const group of opened.capture.groups ?? []) completedGroups.add(group);
   }
   try {
     const body = await assertNoManualChallenge(detailPage);
-    if (
-      platform === "pgy" &&
-      /选择合作品牌|请先选择品牌|选择品牌后查看|暂无权限查看/u.test(body)
-    ) {
+    if (platform === "pgy" && /选择合作品牌|请先选择品牌|选择品牌后查看|暂无权限查看/u.test(body)) {
       return { ...base, status: "blocked", reason: "detail_not_accessible", fields: {} };
     }
     for (const group of groups.filter((item) => item !== "summary")) {
@@ -246,10 +451,28 @@ export async function collectCreatorDetail(
         learnedPaths,
         action: () => clickFirstText(detailPage, patterns),
       });
-      if (!observed.capture) continue;
-      mergeFields(fields, observed.capture.fields);
-      endpoints.push(...observed.capture.endpoints);
-      sourceTypes.push(observed.capture.source_type);
+      if (observed.capture) {
+        mergeFields(fields, observed.capture.fields);
+        endpoints.push(...observed.capture.endpoints);
+        sourceTypes.push(observed.capture.source_type);
+      }
+      const initialDomFields = await readDetailDom(detailPage, candidate, platform);
+      mergeFields(fields, initialDomFields);
+      if (Object.keys(initialDomFields).length) sourceTypes.push("dom");
+      if (!groupHasEvidence(group, fields)) {
+        const explored = await exploreDetailGroup(
+          detailPage,
+          platform,
+          candidate,
+          group,
+          learnedPaths,
+        );
+        mergeFields(fields, explored.fields);
+        endpoints.push(...explored.endpoints);
+        sourceTypes.push(...explored.source_types);
+        navigation.push({ group, actions: explored.actions, reason: explored.reason });
+      }
+      if (groupHasEvidence(group, fields)) completedGroups.add(group);
     }
     const domFields = await readDetailDom(detailPage, candidate, platform);
     if (Object.keys(domFields).length) {
@@ -257,22 +480,26 @@ export async function collectCreatorDetail(
       sourceTypes.push("dom");
     }
     const detailUrl = detailPage.url?.() ?? candidate.detail_url ?? null;
+    if (Object.keys(fields).length) completedGroups.add("summary");
+    const requestedGroups = [...new Set(groups)];
+    const missingGroups = requestedGroups.filter((group) => !completedGroups.has(group));
     return {
       ...base,
       detail_url: detailUrl,
-      status: Object.keys(fields).length ? "complete" : "partial",
-      reason: Object.keys(fields).length ? null : "detail_fields_missing",
+      status: Object.keys(fields).length && !missingGroups.length ? "complete" : "partial",
+      reason: missingGroups.length ? "detail_groups_missing" : null,
       fields,
+      completed_groups: [...completedGroups].filter((group) => requestedGroups.includes(group)),
+      missing_groups: missingGroups,
+      navigation,
       response_endpoints: [...new Set(endpoints)],
       source_type: [...new Set(sourceTypes)].join("+") || "dom",
     };
   } catch (error) {
     if (/CAPTCHA|DETAIL_RISK/u.test(error?.code ?? "")) throw error;
-    throw manualBrowserError(
-      "YPSCAN_MANUAL_DETAIL_FAILED",
-      error?.message ?? "详情页采集失败",
-      { candidate_ref: base.candidate_ref },
-    );
+    throw manualBrowserError("YPSCAN_MANUAL_DETAIL_FAILED", error?.message ?? "详情页采集失败", {
+      candidate_ref: base.candidate_ref,
+    });
   } finally {
     await closeDetail(listPage, detailPage, opened.temporary);
   }

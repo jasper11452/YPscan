@@ -6,6 +6,9 @@ import { collectCreatorDetail } from "../src/tools/manual-research/detail-page.j
 
 function firstVisible(visible = false) {
   return {
+    filter() {
+      return this;
+    },
     first() {
       return this;
     },
@@ -32,6 +35,78 @@ function detailHarness(bodyText) {
     context: () => context,
     waitForTimeout: async () => {},
   };
+  const pages = [listPage];
+  context.pages = () => pages;
+  context.newPage = async () => {
+    pages.push(detailPage);
+    return detailPage;
+  };
+  return { listPage, wasClosed: () => closed };
+}
+
+function adaptiveDetailHarness() {
+  const context = new EventEmitter();
+  let stage = 0;
+  let closed = false;
+  const controls = () =>
+    stage === 0
+      ? [{ text: "粉丝数据", role: "button", popup: "menu", expanded: "false" }]
+      : stage === 1
+        ? [
+            { text: "粉丝数据", role: "button", popup: "menu", expanded: "true" },
+            { text: "用户分析", role: "menuitem" },
+          ]
+        : [];
+  const elements = () =>
+    controls().map((control) => ({
+      tagName: "BUTTON",
+      textContent: control.text,
+      getAttribute(name) {
+        return {
+          role: control.role,
+          "aria-haspopup": control.popup ?? null,
+          "aria-expanded": control.expanded ?? null,
+          "aria-label": null,
+          title: null,
+        }[name];
+      },
+    }));
+  const detailPage = {
+    async goto() {},
+    url: () => "https://www.xingtu.cn/ad/creator/detail/star-adaptive",
+    context: () => context,
+    getByText() {
+      return firstVisible(false);
+    },
+    locator(selector) {
+      if (selector === "body") {
+        return { innerText: async () => (stage === 2 ? "用户分析 女性粉丝占比：68%" : "达人详情") };
+      }
+      if (selector === "a[href]:visible") return { evaluateAll: async () => [] };
+      if (selector.includes("button:visible")) {
+        return {
+          evaluateAll: async (callback) => callback(elements()),
+          nth(index) {
+            return {
+              scrollIntoViewIfNeeded: async () => {},
+              hover: async () => {},
+              click: async () => {
+                const control = controls()[index];
+                if (control?.text === "粉丝数据") stage = 1;
+                if (control?.text === "用户分析") stage = 2;
+              },
+            };
+          },
+        };
+      }
+      return firstVisible(false);
+    },
+    waitForTimeout: async () => {},
+    async close() {
+      closed = true;
+    },
+  };
+  const listPage = { context: () => context, waitForTimeout: async () => {} };
   const pages = [listPage];
   context.pages = () => pages;
   context.newPage = async () => {
@@ -82,5 +157,32 @@ test("PGY brand-gated details remain inaccessible without choosing a brand", asy
   assert.equal(detail.status, "blocked");
   assert.equal(detail.reason, "detail_not_accessible");
   assert.deepEqual(detail.fields, {});
+  assert.equal(harness.wasClosed(), true);
+});
+
+test("detail collection re-inspects a cascading menu and records verified navigation", async () => {
+  const harness = adaptiveDetailHarness();
+  const detail = await collectCreatorDetail(
+    harness.listPage,
+    "xingtu",
+    {
+      platform_id: "star-adaptive",
+      nickname: "级联达人",
+      detail_url: "https://www.xingtu.cn/ad/creator/detail/star-adaptive",
+    },
+    { groups: ["summary", "audience"], capturedAt: "2026-08-17T00:00:00.000Z" },
+  );
+
+  assert.equal(detail.status, "complete");
+  assert.equal(detail.fields.audience_female_rate_raw, "68%");
+  assert.deepEqual(detail.completed_groups, ["audience", "summary"]);
+  assert.deepEqual(detail.missing_groups, []);
+  assert.deepEqual(
+    detail.navigation[0].actions.map((action) => [action.control, action.changed]),
+    [
+      ["粉丝数据", true],
+      ["用户分析", true],
+    ],
+  );
   assert.equal(harness.wasClosed(), true);
 });
