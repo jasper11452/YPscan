@@ -13,12 +13,12 @@ function firstVisible(visible = false) {
   };
 }
 
-function detailHarness(bodyText) {
+function detailHarness(bodyText, detailUrl = "https://www.xingtu.cn/ad/creator/detail/star-dom") {
   const context = new EventEmitter();
   let closed = false;
   const detailPage = {
     async goto() {},
-    url: () => "https://www.xingtu.cn/ad/creator/detail/star-dom",
+    url: () => detailUrl,
     locator(selector) {
       if (selector === "body") return { innerText: async () => bodyText };
       if (selector === "a[href]:visible") return { evaluateAll: async () => [] };
@@ -64,6 +64,38 @@ test("detail collection falls back to visible DOM when no structured response is
   assert.equal(detail.fields.interaction_rate_raw, "8.5%");
   assert.equal(detail.fields.price_by_tier["60s以上视频"], "18,000");
   assert.equal(harness.wasClosed(), true, "the temporary detail tab must be closed");
+});
+
+test("Xingtu detail URLs backfill and verify the stable creator ID", async () => {
+  const detailUrl =
+    "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/7324533389695025215";
+  const harness = detailHarness("粉丝数：261.7万 60s以上视频报价：14,300", detailUrl);
+  const detail = await collectCreatorDetail(
+    harness.listPage,
+    "xingtu",
+    { nickname: "WPS大老板", detail_url: detailUrl },
+    { groups: ["summary"], capturedAt: "2026-08-17T00:00:00.000Z" },
+  );
+
+  assert.equal(detail.status, "complete");
+  assert.equal(detail.platform_id, "7324533389695025215");
+  assert.equal(detail.detail_url, detailUrl);
+});
+
+test("Xingtu rejects a detail page whose creator ID differs from the candidate", async () => {
+  const detailUrl =
+    "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/7324533389695025215";
+  const harness = detailHarness("粉丝数：261.7万", detailUrl);
+  const detail = await collectCreatorDetail(
+    harness.listPage,
+    "xingtu",
+    { platform_id: "9999999999999999999", nickname: "错误达人", detail_url: detailUrl },
+    { groups: ["summary"], capturedAt: "2026-08-17T00:00:00.000Z" },
+  );
+
+  assert.equal(detail.status, "blocked");
+  assert.equal(detail.reason, "detail_identity_mismatch");
+  assert.deepEqual(detail.fields, {});
 });
 
 test("PGY brand-gated details remain inaccessible without choosing a brand", async () => {

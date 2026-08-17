@@ -108,14 +108,20 @@ function matchingFields(bag, pattern) {
   );
 }
 
-function normalizeUrl(value) {
+function normalizeUrl(value, platform) {
   const cleanValue = clean(value);
   if (!cleanValue) return null;
   try {
-    return new URL(cleanValue).href;
+    return new URL(cleanValue, platform === "xingtu" ? "https://www.xingtu.cn" : undefined).href;
   } catch {
     return null;
   }
+}
+
+function xingtuHomepageUrl(platformId) {
+  const id = clean(platformId);
+  if (!/^\d{6,}$/u.test(id)) return null;
+  return `https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/${encodeURIComponent(id)}`;
 }
 
 /**
@@ -128,6 +134,7 @@ function normalizeUrl(value) {
  */
 export function normalizeListResponseRow(source, platform) {
   const bag = valueBag(source);
+  const platformId = clean(pick(bag, ID_ALIASES)) || null;
   const quoteFields = matchingFields(bag, /price|quote|quotation|cpm|cpe|报价|阅读单价|互动成本/iu);
   const tagsValue = source.tags ?? source.contentTags ?? source.content_tags ?? source.personalTags;
   const tags = Array.isArray(tagsValue)
@@ -136,7 +143,7 @@ export function normalizeListResponseRow(source, platform) {
         .map(clean)
         .filter(Boolean)
     : [];
-  const detailUrl = normalizeUrl(
+  const responseDetailUrl = normalizeUrl(
     pick(bag, [
       "detailUrl",
       "detail_url",
@@ -146,9 +153,24 @@ export function normalizeListResponseRow(source, platform) {
       "homepage",
       "profileUrl",
       "profile_url",
+      "authorHomepage",
+      "author_homepage",
+      "homepageUrl",
+      "homepage_url",
+      "jumpUrl",
+      "jump_url",
+      "schemaUrl",
+      "schema_url",
+      "landingPage",
+      "landing_page",
+      "route",
+      "path",
       "url",
     ]),
+    platform,
   );
+  const detailUrl =
+    responseDetailUrl ?? (platform === "xingtu" ? xingtuHomepageUrl(platformId) : null);
   const picturePrice = pick(bag, [
     "picturePrice",
     "picture_price",
@@ -159,9 +181,14 @@ export function normalizeListResponseRow(source, platform) {
   ]);
   const videoPrice = pick(bag, ["videoPrice", "video_price", "taskPrice", "task_price", "price"]);
   return {
-    platform_id: clean(pick(bag, ID_ALIASES)) || null,
+    platform_id: platformId,
     nickname: clean(pick(bag, NAME_ALIASES)) || null,
     detail_url: detailUrl,
+    detail_url_source: responseDetailUrl
+      ? "list_response_url"
+      : detailUrl
+        ? "list_response_author_id"
+        : null,
     followers_raw:
       clean(
         pick(bag, [
