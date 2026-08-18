@@ -1,55 +1,34 @@
 export const MANUAL_RESEARCH_PLATFORMS = Object.freeze(["xingtu", "pgy"]);
 
-const LEGACY_COLLECTION_PROPERTIES = Object.freeze({
-  page_url: {
-    type: "string",
-    minLength: 1,
-    description: "旧一体化调用兼容字段；收到后只返回筛选工具迁移参数，不操作 Browser。",
-  },
-  original_brief: {
-    type: "string",
-    minLength: 1,
-    description: "旧一体化调用兼容字段；运行时不读取。",
-  },
-  facts: {
-    type: "array",
-    description: "旧一体化调用兼容字段；应改传给 ypscan_manual_select_filters。",
-    items: { type: "object" },
-  },
-  keywords: {
-    type: "array",
-    minItems: 1,
-    maxItems: 4,
-    uniqueItems: true,
-    items: { type: "string", minLength: 1 },
-  },
-  resume_from_branch: { type: "integer", minimum: 0 },
-  fresh_run: { type: "boolean" },
-});
+const PUBLIC_MANUAL_RESEARCH_OPERATIONS = Object.freeze([
+  "start",
+  "capture_list",
+  "capture_detail",
+  "finalize",
+  "apply_reviews",
+  "create_submission",
+]);
+const LEGACY_MANUAL_RESEARCH_OPERATIONS = Object.freeze([
+  ...PUBLIC_MANUAL_RESEARCH_OPERATIONS,
+  "collect",
+]);
 
 export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
   type: "object",
   additionalProperties: false,
-  required: ["requirement_id", "platform"],
+  required: ["operation", "requirement_id", "platform"],
   properties: {
     operation: {
       type: "string",
-      enum: [
-        "start",
-        "capture_list",
-        "capture_detail",
-        "finalize",
-        "apply_reviews",
-        "create_submission",
-        "collect",
-      ],
+      enum: [...PUBLIC_MANUAL_RESEARCH_OPERATIONS],
       description:
-        "原生 Browser 自助手扒协议：start 创建本地运行；Agent 自主操作页面后用 capture_list/capture_detail 只读采集当前页；finalize 生成 Excel；apply_reviews 写回复核；create_submission 生成独立提报表。collect 仅保留旧运行兼容。",
+        "Playwright 自助手扒协议：start 创建本地运行；Agent 先观察整页并等待重定向稳定，确认目标达人广场后关闭普通弹窗，再确认筛选区可用后筛选；随后操作固定 ypscan session，并把 run-code 读取的 list_snapshot/detail_snapshot 传给 capture_list/capture_detail；插件只校验和落盘，不执行 shell；finalize 生成 Excel。",
     },
     requirement_id: {
       type: "string",
       minLength: 1,
-      description: "当前 Provider 需求 ID，只用于关联本次手扒结果。",
+      description:
+        "当前 requirement ID：优先使用 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id；绝不能使用 data.demand_id。只用于关联本次手扒结果。",
     },
     platform: {
       type: "string",
@@ -59,12 +38,8 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
     run_id: {
       type: "string",
       minLength: 1,
-      description: "collect/apply_reviews 必传；使用筛选工具或 collect 返回的 run_id。",
-    },
-    selection_id: {
-      type: "string",
-      minLength: 1,
-      description: "旧 collect 兼容字段；原生 Browser 自助手扒不使用。",
+      description:
+        "capture_list/capture_detail/finalize/apply_reviews/create_submission 必传；使用 start 返回的 run_id。",
     },
     keyword: {
       type: "string",
@@ -79,6 +54,35 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
       type: "string",
       minLength: 1,
       description: "capture_detail 当前已由 Agent 打开的达人引用。",
+    },
+    list_snapshot: {
+      type: "object",
+      description:
+        "capture_list 必传；由 Agent 通过 YP Action Playwright run-code 从当前稳定列表页读取并原样传入。插件不执行 shell。",
+      required: ["source_url", "rows"],
+      properties: {
+        source_url: { type: "string", minLength: 1 },
+        page_number: { type: "integer", minimum: 1 },
+        price_tier: { type: "string" },
+        collection_source: { type: "string" },
+        response_endpoint: { type: ["string", "null"] },
+        response_path: { type: ["string", "null"] },
+        challenge: { type: "boolean" },
+        login: { type: "boolean" },
+        rows: { type: "array", maxItems: 200, items: { type: "object" } },
+      },
+    },
+    detail_snapshot: {
+      type: "object",
+      description:
+        "capture_detail 必传；由 Agent 通过 YP Action Playwright run-code 从当前达人详情页读取并原样传入。插件不执行 shell。",
+      required: ["url", "fields"],
+      properties: {
+        url: { type: "string", minLength: 1 },
+        challenge: { type: "boolean" },
+        login: { type: "boolean" },
+        fields: { type: "object" },
+      },
     },
     filter_evidence: {
       type: "array",
@@ -114,7 +118,23 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
         },
       },
     },
-    ...LEGACY_COLLECTION_PROPERTIES,
+    facts: {
+      type: "array",
+      description: "start 必传的完整硬条件 facts；后续操作不得重传。",
+      items: { type: "object" },
+    },
+    keywords: {
+      type: "array",
+      minItems: 1,
+      maxItems: 4,
+      uniqueItems: true,
+      description: "start 必传的 1–4 个关键词；后续由 Agent 在同一 Playwright session 内切换。",
+      items: { type: "string", minLength: 1 },
+    },
+    fresh_run: {
+      type: "boolean",
+      description: "仅 start 且用户明确要求重新实时手扒时传 true。",
+    },
   },
 });
 
@@ -218,18 +238,16 @@ function normalizePlatform(value) {
   return platform;
 }
 
-/** @param {Record<string, any>} [params] */
-export function validateManualResearchParams(params = {}) {
-  const operation = params.operation ?? "collect";
-  if (![
-    "start",
-    "capture_list",
-    "capture_detail",
-    "finalize",
-    "collect",
-    "apply_reviews",
-    "create_submission",
-  ].includes(operation)) {
+/**
+ * @param {Record<string, any>} [params]
+ * @param {{allowLegacyProtocol?: boolean}} [options]
+ */
+export function validateManualResearchParams(params = {}, { allowLegacyProtocol = true } = {}) {
+  const operation = params.operation ?? (allowLegacyProtocol ? "collect" : null);
+  const allowedOperations = allowLegacyProtocol
+    ? LEGACY_MANUAL_RESEARCH_OPERATIONS
+    : PUBLIC_MANUAL_RESEARCH_OPERATIONS;
+  if (!allowedOperations.includes(operation)) {
     throw argumentError("operation 不受支持");
   }
   const platform = normalizePlatform(params.platform);
@@ -238,7 +256,11 @@ export function validateManualResearchParams(params = {}) {
     if (!Array.isArray(params.facts)) throw argumentError("start 必须提供 facts");
     const facts = params.facts.map(normalizeManualSelectionFact);
     for (const fact of facts) validateCreatorPriceFact(fact);
-    if (!Array.isArray(params.keywords) || params.keywords.length < 1 || params.keywords.length > 4) {
+    if (
+      !Array.isArray(params.keywords) ||
+      params.keywords.length < 1 ||
+      params.keywords.length > 4
+    ) {
       throw argumentError("start 的 keywords 必须包含 1–4 个关键词");
     }
     return {
@@ -261,10 +283,32 @@ export function validateManualResearchParams(params = {}) {
             keyword: requiredString(params.keyword, "keyword"),
             keyword_complete: params.keyword_complete === true,
             filter_evidence: Array.isArray(params.filter_evidence) ? params.filter_evidence : [],
+            list_snapshot:
+              params.list_snapshot &&
+              typeof params.list_snapshot === "object" &&
+              !Array.isArray(params.list_snapshot) &&
+              Array.isArray(params.list_snapshot.rows)
+                ? params.list_snapshot
+                : (() => {
+                    throw argumentError("capture_list 必须提供含 rows 的 list_snapshot");
+                  })(),
           }
         : {}),
       ...(operation === "capture_detail"
-        ? { candidate_ref: requiredString(params.candidate_ref, "candidate_ref") }
+        ? {
+            candidate_ref: requiredString(params.candidate_ref, "candidate_ref"),
+            detail_snapshot:
+              params.detail_snapshot &&
+              typeof params.detail_snapshot === "object" &&
+              !Array.isArray(params.detail_snapshot) &&
+              params.detail_snapshot.fields &&
+              typeof params.detail_snapshot.fields === "object" &&
+              !Array.isArray(params.detail_snapshot.fields)
+                ? params.detail_snapshot
+                : (() => {
+                    throw argumentError("capture_detail 必须提供含 fields 的 detail_snapshot");
+                  })(),
+          }
         : {}),
     };
   }

@@ -9,11 +9,58 @@ import {
   fillMenuRange,
   hasResultRefreshEvidence,
   openFilterMenu,
+  openRangeFilterMenu,
   pageMatches,
   platformRangeValue,
   resultCountFromText,
   selectMenuValues,
 } from "../src/tools/manual-research/common.js";
+
+test("an already-open semantic range popover is adopted without toggling its trigger", async () => {
+  let clicks = 0;
+  const inputs = {
+    count: async () => 2,
+    nth: () => ({ isVisible: async () => true }),
+  };
+  const popup = {
+    isVisible: async () => true,
+    locator(selector) {
+      if (selector === "input:not([readonly]):not([disabled])") return inputs;
+      return this;
+    },
+    innerText: async () => "10w-100w 100w-300w w - w 重置 确定",
+  };
+  const buttonParent = {
+    isVisible: async () => true,
+    locator(selector) {
+      if (selector === "..") return popup;
+      return { count: async () => 0 };
+    },
+    innerText: async () => "确定",
+  };
+  const confirm = {
+    isVisible: async () => true,
+    locator: () => buttonParent,
+  };
+  const confirms = { count: async () => 1, nth: () => confirm };
+  const trigger = {
+    innerText: async () => "粉丝数量 ",
+    scrollIntoViewIfNeeded: async () => {},
+    click: async () => {
+      clicks += 1;
+    },
+  };
+  const triggers = { count: async () => 1, nth: () => trigger };
+  const page = {
+    getByRole: () => confirms,
+    locator: () => triggers,
+  };
+
+  const opened = await openRangeFilterMenu(page, "粉丝数量");
+  assert.equal(opened.menu, popup);
+  assert.equal(opened.adopted, true);
+  assert.equal(clicks, 0);
+});
 
 test("known ordinary platform prompts are closed without user handoff", async () => {
   let bodyText = "达人广场 完善基础资质信息";

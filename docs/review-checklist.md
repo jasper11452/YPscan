@@ -8,7 +8,7 @@
 - [ ] 保留本轮 `search_creators` 返回的精确保存参数并立即调用保存工具；保存成功后再执行 `rank_mcns`，按“完整机构表格 → 真实本地 `file_path` → 后续分支弹窗”顺序输出。`creators_export_path` 只作为保存工具参数，不向用户输出下载链接，也不复用其他需求或平台的历史值；禁止用其他下载或写文件方式代替保存工具。
 - [ ] 机构询价和人工拓展可并行、重复进入，互不阻塞；供给风险只提示，不默认放宽条件。
 - [ ] `select_inquiry_form_fields` 必须用当前真实需求 ID 建立字段关联；用户提交后由 Provider 直接持久化。不得调用已弃用的 `get_selected_inquiry_form_fields`，不得轮询 callback，也不得在 Agent 上下文读取、重建或缓存 `columns`。
-- [ ] `create_submission_batch`、`create_with_distributions`、`get_creator_detail_export`、`get_creator_detail` 不传 `columns`，只传当前 schema 要求的业务标识并由后端关联字段；已弃用的 `manual_source_creators` 不得调用。收到 Excel URL 后立即保存并展示真实本地路径。
+- [ ] 机构回填按 `ingest_mcn_submissions → get_ingest_job` 异步取回：只复用本轮真实 `job_id` 轮询，成功返回 Excel 后才保存并继续精排；不得重跑 ingest、猜 ID 或把 pending 当完成。`create_submission_batch`、`create_with_distributions`、`get_creator_detail_export`、`get_creator_detail` 不传 `columns`，只传当前 schema 要求的业务标识并由后端关联字段；已弃用的 `manual_source_creators` 不得调用。收到 Excel URL 后立即保存并展示真实本地路径。
 - [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；不得用普通聊天问句停住流程。
 - [ ] Agent 必须自主完成所有可执行步骤并持续推进；不得随意要求用户代为操作、整理信息、输入“完成”或帮助排错。仅在缺少必要授权、必要输入、登录或真实 CAPTCHA 等无法自主完成的情况下暂停。
 - [ ] 企微正式发送是唯一业务审批；确认绑定完整参数且仅消费一次，参数不变只发送一次，参数变化必须重新确认，其他操作不得新增审批。

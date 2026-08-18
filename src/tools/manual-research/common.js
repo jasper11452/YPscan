@@ -362,6 +362,109 @@ export async function waitForControlledMenu(page, trigger, fallbackSelector = nu
   return null;
 }
 
+async function visibleEditableInputCount(root) {
+  const inputs = root.locator("input:not([readonly]):not([disabled])");
+  const count = await inputs.count().catch(() => 0);
+  let visible = 0;
+  for (let index = 0; index < count; index += 1) {
+    if (await inputs.nth(index).isVisible().catch(() => false)) visible += 1;
+  }
+  return visible;
+}
+
+/**
+ * Adopt a range popover that is already open. Xingtu teleports these popovers
+ * outside the filter table and does not consistently expose aria-controls, so
+ * the smallest visible ancestor containing the confirm button and one or two
+ * editable inputs is a safer ownership boundary than a platform CSS class.
+ *
+ * @param {import("playwright-core").Page} page
+ */
+export async function findOpenRangeMenu(page) {
+  const confirms = page.getByRole("button", { name: /^(?:确定|确认)$/u });
+  const candidates = [];
+  const count = await confirms.count().catch(() => 0);
+  for (let index = 0; index < count; index += 1) {
+    const confirm = confirms.nth(index);
+    if (!(await confirm.isVisible().catch(() => false))) continue;
+    let root = confirm;
+    for (let depth = 0; depth < 8; depth += 1) {
+      root = root.locator("..");
+      if (!(await root.isVisible().catch(() => false))) continue;
+      const inputCount = await visibleEditableInputCount(root);
+      if (inputCount < 1 || inputCount > 2) continue;
+      const text = cleanText(await root.innerText().catch(() => ""));
+      if (!/(?:重置|自定义|[-–—~至]|万|w|元|%)/iu.test(text)) continue;
+      candidates.push(root);
+      break;
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function comparableControlText(value) {
+  return normalizedControlText(value)
+    .replace(/·\d+/gu, "")
+    .replace(/[^\p{L}\p{N}%+-]/gu, "")
+    .trim();
+}
+
+async function findSemanticFilterTrigger(page, label) {
+  const expected = comparableControlText(label);
+  const triggers = page.locator("button:visible,[role=button]:visible");
+  const matches = [];
+  const count = await triggers.count().catch(() => 0);
+  for (let index = 0; index < count; index += 1) {
+    const trigger = triggers.nth(index);
+    const actual = comparableControlText(await trigger.innerText().catch(() => ""));
+    if (actual === expected || actual.startsWith(expected)) matches.push({ trigger, actual });
+  }
+  matches.sort((left, right) => left.actual.length - right.actual.length);
+  return matches[0]?.trigger ?? null;
+}
+
+/**
+ * Resolve an Agent-chosen range control with Playwright in one operation. An
+ * existing popover is adopted before any click, preventing toggle-close races.
+ *
+ * @param {import("playwright-core").Page} page
+ * @param {string} fieldLabel
+ * @param {{triggerLabel?: string|null}} [options]
+ */
+export async function openRangeFilterMenu(page, fieldLabel, options = {}) {
+  const existing = await findOpenRangeMenu(page);
+  const trigger = await findSemanticFilterTrigger(page, options.triggerLabel || fieldLabel);
+  if (existing) {
+    return {
+      row: trigger,
+      menu: existing,
+      trigger,
+      trigger_text: trigger ? cleanText(await trigger.innerText().catch(() => "")) : null,
+      menu_id: null,
+      adopted: true,
+    };
+  }
+  if (!trigger) return null;
+  await trigger.scrollIntoViewIfNeeded();
+  if (!(await clickOptional(trigger))) return null;
+  const started = Date.now();
+  while (Date.now() - started < 2_500) {
+    const menu = await findOpenRangeMenu(page);
+    if (menu) {
+      return {
+        row: trigger,
+        menu,
+        trigger,
+        trigger_text: cleanText(await trigger.innerText().catch(() => "")),
+        menu_id: null,
+        adopted: false,
+      };
+    }
+    await page.waitForTimeout(75);
+  }
+  return null;
+}
+
 /**
  * Find a real filter row, click its trigger, then resolve the teleported menu
  * from the trigger's dynamic aria-controls value.

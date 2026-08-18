@@ -19,4 +19,8 @@ test("field selection is exposed directly from the Provider MCP", async () => {
     manifest.contracts.tools.includes("ypscan__select_inquiry_form_fields"),
     false,
   );
+  assert.equal(
+    manifest.mcpServers.ypscan.toolFilter.include.includes("get_ingest_job"),
+    true,
+  );
 });

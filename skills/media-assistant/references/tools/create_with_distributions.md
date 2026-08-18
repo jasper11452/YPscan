@@ -20,7 +20,7 @@ Resolve recipients before field selection:
 
 The normal path uses exactly two `create_with_distributions` invocations and one user confirmation:
 
-1. The first complete invocation generates one preview containing the recipient count and full message. `HITL_REQUIRED` includes both `ASK_USER_QUESTION_ARGS` in the block text and the structured `askUserQuestion` payload.
+1. The first complete invocation generates one preview containing the institution list (name and ID) and full message. `HITL_REQUIRED` includes both `ASK_USER_QUESTION_ARGS` in the block text and the structured `askUserQuestion` payload.
 2. The Hook-generated `AskUserQuestion` with `确认发送 / 取消` is the only user confirmation; it does not send by itself. The immediate retry with the exact unchanged arguments is the first real Provider send attempt.
 
 After the real attempt, `MCP_INVALID_PARAMS` proves the business tool did not run. Any ordinary business error, timeout, incomplete response, or unknown result may have sent and must not be described as definitely unsent. A Provider operation or distribution reference proves task creation; only explicit per-supplier `sent` evidence proves delivery.

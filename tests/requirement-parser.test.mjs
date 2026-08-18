@@ -111,6 +111,33 @@ test("submission deadlines with an explicit zone are converted to Asia/Shanghai"
   assert.equal(result.data.projections.provider.params.submissionDeadlineAt, "2026-09-01 18:00:00");
 });
 
+test("reference creator nickname and URL project to Provider fields", () => {
+  const referenceQuote = "参考达人：效率小王，https://www.douyin.com/user/example";
+  const result = compile({
+    original_brief: `${brief()}；${referenceQuote}`,
+    platform: "xiaohongshu",
+    facts: [
+      ...baseFacts(),
+      fact("reference", "reference_creator", referenceQuote, [
+        "效率小王",
+        "https://www.douyin.com/user/example",
+      ]),
+    ],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.projections.provider.params.refNickname, "效率小王");
+  assert.equal(
+    result.data.projections.provider.params.refUrl,
+    "https://www.douyin.com/user/example",
+  );
+  assert.equal(result.data.projections.provider.basic_params.refNickname, "效率小王");
+  assert.equal(
+    result.data.projections.provider.search_jobs[0].filters.refNickname,
+    undefined,
+  );
+});
+
 test("one-sided price facts use the same 70%-120% retrieval expansion", () => {
   const lte = compile({
     original_brief: brief(),
@@ -824,13 +851,14 @@ test("representative compact parse input is at least sixty percent smaller", () 
   );
 });
 
-test("malformed facts fail with the existing local error envelope", () => {
+test("malformed facts allow unlimited repeated Agent repairs", () => {
   const result = compile({ original_brief: "测试", platform: "xiaohongshu", facts: [{}] });
 
   assert.equal(result.success, false);
   assert.equal(result.error.code, "YPSCAN_REQUIREMENT_INVALID");
   assert.equal(result.error.details.outcome, "invalid_agent_input");
-  assert.equal(result.error.details.repair.retry_policy.max_automatic_retries, 1);
+  assert.equal(result.error.details.repair.retry_policy.automatic_retries_unlimited, true);
+  assert.equal(result.error.details.repair.retry_policy.max_automatic_retries, undefined);
   assert.ok(Array.isArray(result.error.details.violations));
 });
 

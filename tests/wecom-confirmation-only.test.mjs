@@ -40,9 +40,31 @@ test("Provider calls remain unrestricted and their params are not rewritten", as
     ),
     undefined,
   );
+
+  assert.equal(
+    await hooks.get("before_tool_call")(
+      {
+        toolName: "test__search_creators",
+        params: { id: "req-search-job-a" },
+      },
+      {},
+    ),
+    undefined,
+  );
+
+  assert.equal(
+    await hooks.get("before_tool_call")(
+      {
+        toolName: "test__rank_mcns",
+        params: { id: "req-search-job-b", platform: "douyin" },
+      },
+      {},
+    ),
+    undefined,
+  );
 });
 
-test("WeCom send requires message and recipient confirmation before one exact send", async () => {
+test("WeCom send requires one combined confirmation before one exact send", async () => {
   const hooks = registeredHooks();
   const context = { runId: "run-wecom" };
   const blocked = await hooks.get("before_tool_call")(
@@ -58,36 +80,18 @@ test("WeCom send requires message and recipient confirmation before one exact se
   assert.match(blocked.blockReason, /^HITL_REQUIRED:/u);
   assert.match(blocked.blockReason, /ASK_USER_QUESTION_ARGS=/u);
   assert.match(blocked.blockReason, /YPSCAN_BLOCK_DIRECTIVE=/u);
-  assert.equal(blocked.askUserQuestion.questions[0].header, "确认询价消息");
+  assert.equal(blocked.askUserQuestion.questions[0].header, "确认企微发送");
   assert.match(blocked.askUserQuestion.questions[0].question, /2 家机构/u);
+  assert.match(blocked.askUserQuestion.questions[0].question, /supplier-a/u);
+  assert.match(blocked.askUserQuestion.questions[0].question, /supplier-b/u);
   assert.match(blocked.askUserQuestion.questions[0].question, /您好，请协助反馈本次项目报价/u);
+  assert.equal(blocked.askUserQuestion.questions[0].options[0].label, "确认发送");
 
   await hooks.get("after_tool_call")(
     {
       toolName: "AskUserQuestion",
       params: blocked.askUserQuestion,
-      result: { answer: "确认询价消息" },
-    },
-    context,
-  );
-
-  const recipients = await hooks.get("before_tool_call")(
-    {
-      toolName: "ypmcn__create_with_distributions",
-      toolCallId: "send-message-confirmed",
-      params: inquiryParams,
-    },
-    context,
-  );
-  assert.equal(recipients.block, true);
-  assert.equal(recipients.askUserQuestion.questions[0].header, "确认发送机构");
-  assert.match(recipients.askUserQuestion.questions[0].question, /supplier-a/u);
-
-  await hooks.get("after_tool_call")(
-    {
-      toolName: "AskUserQuestion",
-      params: recipients.askUserQuestion,
-      result: { answer: "确认发送机构" },
+      result: { answer: "确认发送" },
     },
     context,
   );
@@ -127,7 +131,7 @@ test("confirmation rejects changed params and stays scoped to one session", asyn
     {
       toolName: "AskUserQuestion",
       params: blocked.askUserQuestion,
-      result: { answer: "确认询价消息" },
+      result: { answer: "确认发送" },
     },
     session,
   );
@@ -146,10 +150,10 @@ test("confirmation rejects changed params and stays scoped to one session", asyn
     { sessionKey: "session-b", runId: "run-b" },
   );
   assert.equal(otherSession.block, true);
-  assert.equal(otherSession.askUserQuestion.questions[0].header, "确认询价消息");
+  assert.equal(otherSession.askUserQuestion.questions[0].header, "确认企微发送");
 });
 
-test("confirmation binds exact params through both stages", async () => {
+test("confirmation binds exact params through the single stage", async () => {
   const hooks = registeredHooks();
   const context = { runId: "run-rewritten-question" };
   const blocked = await hooks.get("before_tool_call")(
@@ -165,22 +169,7 @@ test("confirmation binds exact params through both stages", async () => {
           { ...blocked.askUserQuestion.questions[0], question: "是否确认发送本次询价？" },
         ],
       },
-      result: { answer: "确认询价消息" },
-    },
-    context,
-  );
-
-  const recipients = await hooks.get("before_tool_call")(
-    { toolName: "create_with_distributions", params: inquiryParams },
-    context,
-  );
-  assert.equal(recipients.askUserQuestion.questions[0].header, "确认发送机构");
-
-  await hooks.get("after_tool_call")(
-    {
-      toolName: "AskUserQuestion",
-      params: recipients.askUserQuestion,
-      result: { answer: "确认发送机构" },
+      result: { answer: "确认发送" },
     },
     context,
   );
@@ -213,10 +202,10 @@ test("test MCP prefixes cannot bypass the WeCom gate", async () => {
     { sessionKey: "test-prefix-session" },
   );
   assert.equal(blocked.block, true);
-  assert.equal(blocked.askUserQuestion.questions[0].header, "确认询价消息");
+  assert.equal(blocked.askUserQuestion.questions[0].header, "确认企微发送");
 });
 
-test("fixed manual confirmation phrases advance only the current stage", async () => {
+test("fixed manual confirmation phrase authorizes the current send", async () => {
   const hooks = registeredHooks();
   const context = { sessionKey: "manual-confirm-session" };
   await hooks.get("before_tool_call")(
@@ -225,13 +214,9 @@ test("fixed manual confirmation phrases advance only the current stage", async (
   );
 
   const generic = hooks.get("before_prompt_build")({ prompt: "确认" }, context);
-  assert.doesNotMatch(generic.prependContext, /询价消息已由用户固定确认词确认/u);
-  const messageConfirmed = hooks.get("before_prompt_build")({ prompt: "确认询价消息。" }, context);
-  assert.match(messageConfirmed.prependContext, /询价消息已由用户固定确认词确认/u);
-  assert.match(messageConfirmed.prependContext, /确认机构列表/u);
-
-  const recipientsConfirmed = hooks.get("before_prompt_build")({ prompt: "确认发送机构" }, context);
-  assert.match(recipientsConfirmed.prependContext, /原样调用 create_with_distributions/u);
+  assert.doesNotMatch(generic.prependContext, /机构列表和消息内容已由用户固定确认词确认/u);
+  const confirmed = hooks.get("before_prompt_build")({ prompt: "确认发送。" }, context);
+  assert.match(confirmed.prependContext, /原样调用 create_with_distributions/u);
   assert.equal(
     await hooks.get("before_tool_call")(
       { toolName: "test__create_with_distributions", params: inquiryParams },
@@ -239,6 +224,36 @@ test("fixed manual confirmation phrases advance only the current stage", async (
     ),
     undefined,
   );
+});
+
+test("combined confirmation displays ranked institution names", async () => {
+  const hooks = registeredHooks();
+  const context = { sessionKey: "ranked-name-session" };
+  await hooks.get("tool_result_persist")(
+    {
+      toolName: "test__rank_mcns",
+      params: { id: inquiryParams.requirement_id },
+      message: {
+        content: JSON.stringify({
+          success: true,
+          data: {
+            mcns: [
+              { supplier_id: "supplier-a", agency_name: "机构甲" },
+              { supplier_id: "supplier-b", agency_name: "机构乙" },
+            ],
+          },
+        }),
+      },
+    },
+    context,
+  );
+
+  const blocked = await hooks.get("before_tool_call")(
+    { toolName: "create_with_distributions", params: inquiryParams },
+    context,
+  );
+  assert.match(blocked.askUserQuestion.questions[0].question, /机构甲（supplier-a）/u);
+  assert.match(blocked.askUserQuestion.questions[0].question, /机构乙（supplier-b）/u);
 });
 
 test("startup injects the fixed chain once without requiring a Skill read", () => {

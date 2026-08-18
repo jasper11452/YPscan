@@ -1,8 +1,8 @@
 {
   "id": "ypscan",
   "name": "悦普识星",
-  "version": "0.1.24-beta49",
-  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由 Agent 使用宿主原生 Browser 自主完成。",
+  "version": "0.1.24-beta57",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由 Agent 使用 YP Action Playwright 自主完成。",
   "author": {
     "name": "Jasper"
   },
@@ -26,6 +26,7 @@
           "create_with_distributions",
           "sync_mcn_inquiry_status",
           "ingest_mcn_submissions",
+          "get_ingest_job",
           "rank_creators",
           "get_creator_detail",
           "get_creator_detail_export",
@@ -50,18 +51,12 @@
       },
       "browserCdpUrl": {
         "type": "string",
-        "default": "http://127.0.0.1:18800",
-        "description": "宿主 Browser 的共享本机 CDP 地址；Playwright Core 仅连接现有 Browser，不启动独立浏览器。"
+        "description": "已弃用并忽略，仅保留旧配置兼容；人工拓展固定使用 YP Action Playwright CLI session。"
       }
     }
   },
   "contracts": {
-    "tools": [
-      "ypscan_parse_requirement",
-      "ypscan_select_cascade",
-      "ypscan_manual_research",
-      "ypscan_save_excel_artifact"
-    ]
+    "tools": ["ypscan_parse_requirement", "ypscan_manual_research", "ypscan_save_excel_artifact"]
   },
   "hooks": "./index.js"
 }

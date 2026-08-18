@@ -83,9 +83,16 @@ test("fixed result directives enforce parse → validate → search → save →
 
   const validate = persist({
     toolName: "ypmcn__validate_requirement",
-    message: toolMessage({ success: true, data: { id: "a".repeat(32) } }),
+    message: toolMessage({
+      success: true,
+      data: { id: "a".repeat(32), demand_id: "1787034545923844" },
+    }),
   });
-  assert.match(directiveText(validate), /下一步固定调用 search_creators/u);
+  assert.match(directiveText(validate), /下一步立即.*SEARCH_CREATORS_ARGS/u);
+  assert.match(directiveText(validate), /严禁使用 data\.demand_id/u);
+  assert.deepEqual(namedArgsFromDirective(directiveText(validate), "SEARCH_CREATORS_ARGS"), {
+    id: "a".repeat(32),
+  });
 
   const search = persist({
     toolName: "ypmcn__search_creators",
@@ -116,9 +123,9 @@ test("fixed result directives enforce parse → validate → search → save →
   });
   assert.match(directiveText(rank), /完整 MCN Markdown 表格/u);
   assert.match(directiveText(rank), /用户可见正文文本块/u);
-  assert.match(directiveText(rank), /\| 机构名 \| 返点 \| 综合分 \| 本机构预估覆盖达人数 \|/u);
+  assert.match(directiveText(rank), /\| 机构名 \| 返点 \| 综合分 \| 达人数 \|/u);
   assert.match(directiveText(rank), /禁止改成项目符号或编号列表/u);
-  assert.match(directiveText(rank), /机构名、返点、综合分、本机构预估覆盖达人数/u);
+  assert.match(directiveText(rank), /机构名、返点、综合分、达人数/u);
   assert.match(directiveText(rank), /只显示这一张四列表格/u);
   assert.match(directiveText(rank), /固定列且不得增减/u);
   assert.match(directiveText(rank), /禁止在表格内外另行展示排名、supplier_id/u);
@@ -133,7 +140,8 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
   assert.match(directiveText(rank), /ypscan_manual_research\(operation=start\)/u);
-  assert.match(directiveText(rank), /宿主原生 Browser 自主/u);
+  assert.match(directiveText(rank), /Playwright/u);
+  assert.match(directiveText(rank), /禁止调用宿主原生 Browser/u);
   assert.match(directiveText(rank), /capture_list\/capture_detail/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
   const question = argsFromDirective(directiveText(rank));
@@ -183,7 +191,7 @@ test("creator preview save keeps the local path and continues to rank", () => {
   );
 });
 
-test("institutional retrieval continues through ingest Excel save, creator rank and submission", () => {
+test("institutional retrieval polls the ingest job before Excel save, creator rank and submission", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const synced = persist({
     toolName: "test__sync_mcn_inquiry_status",
@@ -201,18 +209,43 @@ test("institutional retrieval continues through ingest Excel save, creator rank 
     params: { inquiry_ids: ["12", "13"] },
     message: toolMessage({
       success: true,
+      data: { job_id: "job-ingest-1" },
+    }),
+  });
+  assert.deepEqual(namedArgsFromDirective(directiveText(ingested), "GET_INGEST_JOB_ARGS"), {
+    job_id: "job-ingest-1",
+  });
+  assert.doesNotMatch(directiveText(ingested), /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+
+  const pending = persist({
+    toolName: "test__get_ingest_job",
+    params: { job_id: "job-ingest-1" },
+    message: toolMessage({ success: false, error: { code: "JOB_PENDING" } }),
+  });
+  assert.deepEqual(namedArgsFromDirective(directiveText(pending), "GET_INGEST_JOB_ARGS"), {
+    job_id: "job-ingest-1",
+  });
+  assert.match(directiveText(pending), /同一个 job_id/u);
+  assert.doesNotMatch(directiveText(pending), /ASK_USER_QUESTION_ARGS=/u);
+
+  const completed = persist({
+    toolName: "test__get_ingest_job",
+    params: { job_id: "job-ingest-1" },
+    message: toolMessage({
+      success: true,
       data: {
+        job_id: "job-ingest-1",
         requirement_id: "req-ingest",
         excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
       },
     }),
   });
   assert.match(
-    directiveText(ingested),
+    directiveText(completed),
     /MCN_CREATOR_PREVIEW_URL=https:\/\/files\.eshypdata\.com\/exports\/mcn-preview\.xlsx/u,
   );
-  assert.match(directiveText(ingested), /原始 URL 直接输出为单独一行用户可见正文/u);
-  assert.deepEqual(saveExcelArgsFromDirective(directiveText(ingested)), {
+  assert.match(directiveText(completed), /原始 URL 直接输出为单独一行用户可见正文/u);
+  assert.deepEqual(saveExcelArgsFromDirective(directiveText(completed)), {
     artifact_kind: "mcn_creator_preview",
     artifact_id: "req-ingest",
     excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
@@ -257,6 +290,28 @@ test("institutional retrieval continues through ingest Excel save, creator rank 
     artifact_id: "batch-1",
     excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
   });
+});
+
+test("submission enrichment choice maps directly to get_creator_detail", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const saved = persist({
+    toolName: "ypscan_save_excel_artifact",
+    params: {
+      artifact_kind: "submission_batch",
+      artifact_id: "123",
+      excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+    },
+    message: toolMessage({
+      success: true,
+      data: { file_path: "/workspace/submission.xlsx" },
+      delivery: { next_args: { questions: [] } },
+    }),
+  });
+  const text = directiveText(saved);
+  assert.match(text, /选择“补充更新达人信息”.*固定调用 get_creator_detail/u);
+  assert.match(text, /再用 get_creator_detail_export 轮询/u);
+  assert.match(text, /不得调用 select_inquiry_form_fields/u);
+  assert.match(text, /不得.*再次追问/u);
 });
 
 test("successful WeCom distribution asks whether to continue manual expansion", () => {
@@ -305,6 +360,28 @@ test("manual research success directive makes the local Excel the primary large-
   assert.match(directive, /禁止在对话粘贴完整名单/u);
   assert.match(directive, /最多 10 条预览/u);
   assert.match(directive, /不得把平台硬筛结果表述为已经完成语义复核/u);
+});
+
+test("manual research observes redirects and dismisses safe modals before filtering", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_manual_research",
+    message: toolMessage({
+      success: true,
+      status: "ready_for_playwright",
+      run_id: "run-entry-guard",
+      playwright_session: "ypscan",
+    }),
+  });
+  const directive = directiveText(result);
+
+  assert.match(directive, /snapshot 观察整页及当前 URL/u);
+  assert.match(directive, /等待稳定再重新 snapshot/u);
+  assert.match(directive, /确认当前 URL、页面内容和筛选区属于目标达人广场/u);
+  assert.match(directive, /review-wrapper 普通公告\/提示.*优先直接 click 关闭按钮/u);
+  assert.match(directive, /不必先读取完整弹窗内容或先 goto/u);
+  assert.match(directive, /仅当关闭弹窗并重新 snapshot 后仍明确不在目标达人广场时.*goto/u);
+  assert.match(directive, /弹窗若出现登录、全局验证码或安全验证信号.*绝不能关闭/u);
 });
 
 test("completed manual research asks for inquiry or a local submission workbook", () => {
@@ -383,7 +460,7 @@ test("empty rank result still outputs the Markdown table and offers manual expan
   const text = directiveText(result);
   assert.match(text, /完整 MCN Markdown 表格/u);
   assert.match(text, /用户可见正文文本块/u);
-  assert.match(text, /\| 机构名 \| 返点 \| 综合分 \| 本机构预估覆盖达人数 \|/u);
+  assert.match(text, /\| 机构名 \| 返点 \| 综合分 \| 达人数 \|/u);
   assert.match(text, /\| 暂无匹配机构 \| — \| — \| — \|/u);
   const question = argsFromDirective(text).questions[0];
   assert.deepEqual(
@@ -430,7 +507,7 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
   }
 });
 
-test("invalid parse arguments trigger one bounded Agent repair instead of asking the user", () => {
+test("invalid parse arguments allow unlimited Agent repairs instead of asking the user", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_parse_requirement",
@@ -445,12 +522,13 @@ test("invalid parse arguments trigger one bounded Agent repair instead of asking
   const text = directiveText(result);
 
   assert.match(text, /Agent 构造参数/u);
-  assert.match(text, /自动重试一次/u);
+  assert.match(text, /不限制需求解析工具的调用次数/u);
+  assert.doesNotMatch(text, /最多自动重试/u);
   assert.match(text, /external_condition 的 value 必须使用 quote 的原文/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
-test("startup instruction fixes the chain and delays Browser until the manual branch", () => {
+test("startup instruction fixes the chain and reserves Playwright for the manual branch", () => {
   const skillPath = "/plugin/skills/media-assistant/SKILL.md";
   const hooks = registeredHooks({ skillPath });
   const context = { runId: "startup-run" };
@@ -471,17 +549,44 @@ test("startup instruction fixes the chain and delays Browser until the manual br
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
-  assert.match(first.prependContext, /宿主原生 Browser 自主/u);
+  assert.match(first.prependContext, /Playwright CLI/u);
+  assert.match(first.prependContext, /禁止调用宿主原生 Browser/u);
   assert.match(first.prependContext, /capture_list\/capture_detail/u);
+  assert.match(first.prependContext, /playwright_cli\.sh/u);
+  assert.match(first.prependContext, /页面变化后重新 snapshot/u);
+  assert.match(first.prependContext, /review-wrapper 普通公告\/提示.*优先直接 click 关闭/u);
+  assert.match(first.prependContext, /仅当关闭弹窗.*仍明确不在目标达人广场时.*goto/u);
+  assert.match(first.prependContext, /常规交互优先使用 snapshot\/click\/hover\/fill/u);
+  assert.match(first.prependContext, /goto 只用于首次打开 session/u);
   assert.match(first.prependContext, /不使用 selection_id、observation_id、element_id/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
-  assert.match(first.prependContext, /普通 UI\/参数问题的一次有界自动重试不调用/u);
+  assert.match(first.prependContext, /需求解析按最新 violations 持续修正并重试/u);
+  assert.match(first.prependContext, /不限制调用次数/u);
+  assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
   assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
 
   hooks.get("before_tool_call")({ toolName: "Read", params: { path: skillPath } }, context);
   assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
+});
+
+test("verified range fallback returns control to Playwright without stale refs", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_set_filter_range",
+    message: toolMessage({
+      success: true,
+      status: "applied",
+      applied: true,
+      verified: true,
+      field_label: "粉丝数量",
+    }),
+  });
+  const text = directiveText(result);
+
+  assert.match(text, /范围筛选已验证：粉丝数量/u);
+  assert.match(text, /不要复用输入前的 ref/u);
 });
 
 test("ordinary successful delivery is not rewritten by the hook", () => {
@@ -515,8 +620,22 @@ test("manual research asks only for login/CAPTCHA and keeps ordinary UI recovery
   const filterText = directiveText(filter);
   assert.doesNotMatch(filterText, /ASK_USER_QUESTION_ARGS=/u);
   assert.match(filterText, /不得要求用户关闭普通弹窗/u);
-  assert.match(filterText, /Observer 状态/u);
+  assert.match(filterText, /Playwright CLI 同一 session 的最新 snapshot/u);
   assert.match(filterText, /不盲目重复/u);
+  assert.doesNotMatch(filterText, /ypscan_manual_select_filters|MANUAL_FILTER_SELECTION_ARGS/u);
+
+  const legacy = persist({
+    toolName: "ypscan_manual_research",
+    message: toolMessage({
+      success: false,
+      error: { code: "YPSCAN_MANUAL_SELECTION_REQUIRED" },
+      selector_args: { requirement_id: "req-1", platform: "xingtu" },
+    }),
+  });
+  const legacyText = directiveText(legacy);
+  assert.match(legacyText, /operation=start/u);
+  assert.match(legacyText, /旧筛选工具/u);
+  assert.doesNotMatch(legacyText, /ypscan_manual_select_filters|MANUAL_FILTER_SELECTION_ARGS/u);
 });
 
 test("field-selection success exposes the raw URL and keeps columns in the Provider", () => {
@@ -535,7 +654,8 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   );
   assert.match(text, /原样输出为单独一行用户可见正文/u);
   assert.match(text, /禁止 Markdown 包装、重写、用 Browser 打开/u);
-  assert.match(text, /按需求 ID 持久化到 Provider 数据库/u);
+  assert.match(text, /按 requirement ID 持久化到 Provider 数据库/u);
+  assert.match(text, /绝不是 demand_id/u);
   assert.match(text, /不得调用已弃用的 get_selected_inquiry_form_fields/u);
   assert.match(text, /不得.*把 columns 放入 Agent 上下文/u);
   assert.match(text, /等待用户完成选择后回复“好了”/u);
@@ -590,6 +710,7 @@ test("rank and startup directives ban any manual_source_creators call", () => {
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /manual_source_creators 都不得调用/u);
   assert.match(startup.prependContext, /ypscan_manual_research\(operation=start\)/u);
-  assert.match(startup.prependContext, /宿主原生 Browser 自主/u);
+  assert.match(startup.prependContext, /Playwright CLI/u);
+  assert.match(startup.prependContext, /禁止调用宿主原生 Browser/u);
   assert.match(startup.prependContext, /capture_list\/capture_detail/u);
 });

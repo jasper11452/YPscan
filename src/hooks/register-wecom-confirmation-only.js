@@ -3,8 +3,7 @@ import { normalizeToolCallParams, stripHostPrefix } from "../contract/registry.j
 
 const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
 const GRANT_TTL_MS = 10 * 60_000;
-const MESSAGE_CONFIRM_LABEL = "确认询价消息";
-const RECIPIENT_CONFIRM_LABEL = "确认发送机构";
+const SEND_CONFIRM_LABEL = "确认发送";
 const CANCEL_LABEL = "取消";
 const CHALLENGE_PATTERN = /\[悦普识星 询价确认 (wc_[0-9a-f-]+)\]/iu;
 
@@ -70,15 +69,20 @@ function requirementInputRepairDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=ypscan_parse_requirement 拒绝的是 Agent 构造参数，不是用户业务需求。不得让用户为字段形状、枚举、数值单位或引用方式纠错。",
     `PARSE_REPAIR_VIOLATIONS=${JSON.stringify(violations)}`,
-    "根据 violations 和工具 repair 示例一次性修正全部 facts，并自动重试一次；不要逐字段试探。external_condition 的 value 必须使用 quote 的原文，不得补写“受众/粉丝”等原文没有的主体。若同一原文已经自动重试过一次仍失败，停止并报告具体接入错误，不得循环重试。只有缺少或冲突的真实业务信息才调用 AskUserQuestion。",
+    "根据每次返回的 violations 和工具 repair 示例一次性修正全部 facts 并继续重试，不限制需求解析工具的调用次数；不要逐字段试探。external_condition 的 value 必须使用 quote 的原文，不得补写“受众/粉丝”等原文没有的主体。只有缺少或冲突的真实业务信息才调用 AskUserQuestion。",
   ].join("\n");
 }
 
 const MCN_MARKDOWN_TABLE_HEADER = [
-  "| 机构名 | 返点 | 综合分 | 本机构预估覆盖达人数 |",
+  "| 机构名 | 返点 | 综合分 | 达人数 |",
   "| --- | --- | --- | --- |",
 ].join("\n");
 const MCN_MARKDOWN_EMPTY_ROW = "| 暂无匹配机构 | — | — | — |";
+
+const MANUAL_BROWSER_ENTRY_POLICY =
+  "Browser 入口：① snapshot 观察整页及当前 URL；② 页面正在跳转、刷新或加载时先等待稳定再重新 snapshot，不在变化中的页面操作；③ snapshot 中若有带明确关闭按钮的阻塞弹窗（包括 review-wrapper 普通公告/提示），优先直接 click 关闭按钮，不必先读取完整弹窗内容或先 goto，关闭后立即重新 snapshot；④ 确认当前 URL、页面内容和筛选区属于目标达人广场；⑤ 仅当关闭弹窗并重新 snapshot 后仍明确不在目标达人广场时，才用 goto 固定达人广场并重新 snapshot；⑥ 再次确认无阻塞弹窗且筛选区可用，才开始任何筛选。弹窗若出现登录、全局验证码或安全验证信号，必须请求用户处理，绝不能关闭。";
+const MANUAL_BROWSER_ACTION_POLICY =
+  "常规交互优先使用 snapshot/click/hover/fill；goto 只用于首次打开 session，或关闭阻塞弹窗并重新 snapshot 后仍明确不在目标页面的恢复场景。只有级联或 teleported 浮层无法表达时才使用限定目标容器且带提交回读的 run-code。";
 
 const FIELD_SELECTION_AUTO_OPEN_FAILED = "浏览器打开请求未成功";
 
@@ -92,8 +96,8 @@ function fieldSelectionDirective(message) {
   if (!linkReady || !url) return flowPauseDirective("字段选择", message);
   return [
     "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。先把 FIELD_SELECTION_URL 里的原始 url 原样输出为单独一行用户可见正文：禁止 Markdown 包装、重写、用 Browser 打开或替用户选择字段。",
-    "用户在选择页提交后，select_inquiry_form_fields 会把所选字段按需求 ID 持久化到 Provider 数据库。不得调用已弃用的 get_selected_inquiry_form_fields，不得查询、重建、转存或把 columns 放入 Agent 上下文；后续 Provider 工具只传当前 schema 要求的业务标识，由后端关联字段。",
-    "现在停止业务调用并等待用户完成选择后回复“好了”。收到后保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、返点、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message；不得调用 create_submission_batch。消息准备好后调用 create_with_distributions，由 Hook 依次完成消息确认和机构列表确认。",
+    "用户在选择页提交后，select_inquiry_form_fields 会把所选字段按 requirement ID 持久化到 Provider 数据库；requirement ID 来自 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不是 demand_id。不得调用已弃用的 get_selected_inquiry_form_fields，不得查询、重建、转存或把 columns 放入 Agent 上下文；后续 Provider 工具只传当前 schema 要求的业务标识，由后端关联字段。",
+    "现在停止业务调用并等待用户完成选择后回复“好了”。收到后保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、返点、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message；不得调用 create_submission_batch。消息准备好后调用 create_with_distributions，由 Hook 在同一次确认中展示机构列表和完整消息。",
     `FIELD_SELECTION_URL=${url}`,
   ].join("\n");
 }
@@ -109,19 +113,22 @@ function rankMcnsDirective(message) {
     : mcns.length;
   const options = empty
     ? [
-        { label: "人工拓展并提报", description: "使用宿主 Browser 继续筛选达人" },
+        { label: "人工拓展并提报", description: "使用 Playwright 继续筛选达人" },
         { label: "结束本次", description: "保留机构表格的空结果并结束本次流程" },
       ]
     : [
         { label: "询价机构", description: "从当前真实 MCN 表格选择机构并继续询价" },
-        { label: "人工拓展并提报", description: "使用宿主 Browser 继续筛选达人" },
+        { label: "人工拓展并提报", description: "使用 Playwright 继续筛选达人" },
       ];
   return [
     "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。本 tool result 里的表头只是格式提示，不是用户可见表格。",
     "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出，再原样展示此前 ypscan_save_excel_artifact 返回的 CREATOR_PREVIEW_LOCAL_PATH，最后调用 AskUserQuestion。不要输出达人预览表下载链接；表格禁止改成项目符号或编号列表。",
-    "用户可见机构结果只显示这一张四列表格，固定列且不得增减：机构名、返点、综合分、本机构预估覆盖达人数。禁止在表格内外另行展示排名、supplier_id、候选数、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。每行覆盖人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
+    "用户可见机构结果只显示这一张四列表格，固定列且不得增减：机构名、返点、综合分、达人数。禁止在表格内外另行展示排名、supplier_id、候选数、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。每行达人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 search_creators 确实未返回 creators_export_path 或精确保存参数，必须如实说明无法保存，禁止编造或复用历史链接。",
-    "人工拓展并提报 = 先调用 ypscan_manual_research(operation=start) 创建本地运行，再由 Agent 使用宿主原生 Browser 自主导航、关闭普通弹窗、设置筛选、翻页和打开详情；只有原生 Browser 无法稳定选择级联菜单时，才调用 ypscan_select_cascade，并由 Agent 根据需求和当前页面决定 field_label、trigger_label 与 path。每到稳定列表页或详情页分别调用 capture_list/capture_detail 只读采集。首关键词先完成全部硬筛且关键词最后提交，后续关键词保留筛选集只换关键词。普通页面问题自主恢复，任何前缀的 manual_source_creators 都不得调用。",
+    "人工拓展并提报 = 先调用 ypscan_manual_research(operation=start) 创建本地运行，再读取并使用 YP Action 自带 playwright 技能，通过 Bash 调用 playwright_cli.sh，固定短 session=ypscan，首次 open 使用 --headed --persistent；禁止调用宿主原生 Browser。",
+    MANUAL_BROWSER_ENTRY_POLICY,
+    MANUAL_BROWSER_ACTION_POLICY,
+    "稳定列表页和详情页用 run-code 读取结构化数据，再分别作为 list_snapshot/detail_snapshot 传给 capture_list/capture_detail。插件不调用 shell，也不会自行读取 Playwright session。首关键词先完成全部硬筛且关键词最后提交，后续关键词保留筛选集只换关键词。普通页面问题自主恢复，任何前缀的 manual_source_creators 都不得调用。",
     MCN_MARKDOWN_TABLE_HEADER,
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
@@ -178,16 +185,25 @@ function providerExcelUrl(result) {
     result?.data?.excel_file_url,
     result?.data?.excel_url,
     result?.data?.creators_export_path,
+    result?.data?.result?.excel_file_url,
+    result?.data?.result?.excel_url,
+    result?.data?.result?.creators_export_path,
     result?.excel_file_url,
     result?.excel_url,
   );
+}
+
+function providerJobId(result) {
+  const value = result?.data?.job_id ?? result?.job_id;
+  if (nonemptyString(value)) return value.trim();
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 function distributionDirective(message) {
   const result = parsedToolResult(message);
   if (result?.success !== true) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 未确认成功。企微属于外发副作用，禁止盲目重发。先用当前 requirement_id/project_id 调用 sync_mcn_inquiry_status 核对；只有确认未创建发送记录后才能重新发起双确认。",
+      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 未确认成功。企微属于外发副作用，禁止盲目重发。先用当前 requirement_id/project_id 调用 sync_mcn_inquiry_status 核对；只有确认未创建发送记录后才能重新发起发送确认。",
     ].join("\n");
   }
   const status = result?.data?.send_status;
@@ -237,35 +253,54 @@ function syncInquiryDirective(message) {
   ].join("\n");
 }
 
-function ingestSubmissionsDirective(message, params = {}) {
+function ingestSubmissionsDirective(message) {
   const result = parsedToolResult(message);
   if (result?.success !== true) return flowPauseDirective("机构提报入库", message);
-  const excelFileUrl = providerExcelUrl(result);
-  const requirementId = firstString(
-    result?.data?.requirement_id,
-    result?.requirement_id,
-    params?.requirement_id,
-  );
-  if (!excelFileUrl || !requirementId) {
+  const jobId = providerJobId(result);
+  if (jobId == null) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=ingest_mcn_submissions 成功但缺少可信 Excel URL 或 requirement_id，无法保存机构达人预览表。不得编造链接、复用历史文件或跳过预览表直接精排。",
+      "YPSCAN_FLOW_DIRECTIVE=ingest_mcn_submissions 成功但缺少可信 job_id，无法查询异步入库结果。不得把本次响应当成最终 Excel、编造任务 ID 或跳过预览表直接精排。",
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-        askQuestion("机构预览表", "机构数据已入库，但预览表下载信息不完整，请选择下一步。", [
-          { label: "重试", description: "重新读取本轮机构提报结果" },
-          { label: "结束本次", description: "保留已入库结果并停止" },
+        askQuestion("异步入库任务", "机构入库请求已返回，但缺少任务 ID，请选择下一步。", [
+          { label: "重试", description: "使用本轮 inquiry_ids 重新发起入库" },
+          { label: "结束本次", description: "停止本次机构提报取回" },
         ]),
       )}`,
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=机构提报已入库并返回 Excel。先把 MCN_CREATOR_PREVIEW_URL 中的原始 URL 直接输出为单独一行用户可见正文，再立即逐字调用 ypscan_save_excel_artifact 保存为机构达人预览表；保存成功后继续 rank_creators。不得改写链接或用 Markdown 包装。",
-    `MCN_CREATOR_PREVIEW_URL=${excelFileUrl}`,
-    `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
-      artifact_kind: "mcn_creator_preview",
-      artifact_id: requirementId,
-      excel_file_url: excelFileUrl,
-    })}`,
+    "YPSCAN_FLOW_DIRECTIVE=ingest_mcn_submissions 仅创建了异步入库任务，尚未返回最终机构达人预览表。下一步立即逐字使用 GET_INGEST_JOB_ARGS 调用 get_ingest_job，不得保存本次响应、调用 rank_creators 或在此停下。",
+    `GET_INGEST_JOB_ARGS=${JSON.stringify({ job_id: jobId })}`,
   ].join("\n");
+}
+
+function getIngestJobDirective(message, params = {}) {
+  const result = parsedToolResult(message);
+  const jobId = providerJobId(result) ?? providerJobId({ data: params });
+  const excelFileUrl = providerExcelUrl(result);
+  const requirementId = firstString(
+    result?.data?.requirement_id,
+    result?.data?.result?.requirement_id,
+    result?.requirement_id,
+  );
+  if (result?.success === true && excelFileUrl && requirementId) {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 异步入库完成并返回 Excel。先把 MCN_CREATOR_PREVIEW_URL 中的原始 URL 直接输出为单独一行用户可见正文，再立即逐字调用 ypscan_save_excel_artifact 保存为机构达人预览表；保存成功后继续 rank_creators。不得改写链接或用 Markdown 包装。",
+      `MCN_CREATOR_PREVIEW_URL=${excelFileUrl}`,
+      `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
+        artifact_kind: "mcn_creator_preview",
+        artifact_id: requirementId,
+        excel_file_url: excelFileUrl,
+      })}`,
+    ].join("\n");
+  }
+  if (jobId != null) {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 尚未成功返回完整 Excel 结果。继续使用同一个 job_id 调用 get_ingest_job；这是异步轮询，不调用 AskUserQuestion、不重新执行 ingest_mcn_submissions，也不得猜测或更换 job_id。单轮最多查询 10 次。",
+      `GET_INGEST_JOB_ARGS=${JSON.stringify({ job_id: jobId })}`,
+    ].join("\n");
+  }
+  return flowPauseDirective("异步入库结果查询", message);
 }
 
 function rankCreatorsDirective(message, params = {}) {
@@ -313,7 +348,7 @@ function workflowStateDirective(message) {
   if (result?.success !== true) return null;
   return [
     "YPSCAN_FLOW_DIRECTIVE=get_workflow_state 只用于诊断。allowed_actions 可能滞后，不得替代本轮用户已选择的固定链路，不得因此推荐 manual_source_creators。",
-    "企微发送只使用 create_with_distributions；提报表只在 ingest_mcn_submissions → rank_creators 完成后使用 create_submission_batch。",
+    "企微发送只使用 create_with_distributions；提报表只在 ingest_mcn_submissions → get_ingest_job → rank_creators 完成后使用 create_submission_batch。",
   ].join("\n");
 }
 
@@ -348,6 +383,7 @@ function excelArtifactSaveDirective(message, params = {}) {
       ...(isRecord(nextArgs)
         ? [
             "展示路径后立即逐字调用下面的 AskUserQuestion，询问是否补充更新达人信息。",
+            "用户选择“补充更新达人信息”即已明确授权补全：下一步固定调用 get_creator_detail，再用 get_creator_detail_export 轮询结果；不得调用 select_inquiry_form_fields、提供字段调整分支或再次追问要补充什么。",
             `ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`,
           ]
         : []),
@@ -376,13 +412,39 @@ function cascadeSelectionDirective(message) {
   if (result?.applied === true && result?.verified === true) {
     return [
       `YPSCAN_FLOW_DIRECTIVE=级联菜单已验证：${result?.field_label ?? "未知筛选"} → ${(result?.selected_path ?? []).join(" / ")}。`,
-      "立即回到宿主原生 Browser 观察完整筛选区并继续剩余条件；不要重复点击已选路径，也不要把级联助手扩展成其他页面动作。",
+      "立即回到 Playwright CLI 同一 session 观察完整筛选区并继续剩余条件；不要重复点击已选路径。",
     ].join("\n");
   }
   return [
     `YPSCAN_FLOW_DIRECTIVE=级联菜单未提交（${result?.error?.code ?? result?.status ?? "未知"}），但整个手扒任务不得停止。`,
     result?.recovery_hint ??
       "重新观察页面实际筛选名、入口文字和菜单层级后最多调整参数再试一次；仍失败则将该条件转入详情硬复核并继续其他筛选。",
+  ].join("\n");
+}
+
+function filterRangeDirective(message) {
+  const result = parsedToolResult(message);
+  if (result?.status === "needs_user_action") {
+    return [
+      `YPSCAN_FLOW_DIRECTIVE=范围筛选操作被${result?.error?.code ?? "登录或全局验证"}阻止。`,
+      `ASK_USER_QUESTION_ARGS=${JSON.stringify(
+        askQuestion("Browser 验证", "当前平台需要登录或完成全局安全验证，请处理后继续。", [
+          { label: "已处理，继续", description: "重新观察页面后继续当前手扒任务" },
+          { label: "结束本次", description: "保留当前 checkpoint 并结束" },
+        ]),
+      )}`,
+    ].join("\n");
+  }
+  if (result?.applied === true && result?.verified === true) {
+    return [
+      `YPSCAN_FLOW_DIRECTIVE=范围筛选已验证：${result?.field_label ?? "未知筛选"}。`,
+      "立即回到 Playwright CLI 同一 session 重新 snapshot 并继续剩余条件；不要复用输入前的 ref，也不要重复提交已选范围。",
+    ].join("\n");
+  }
+  return [
+    `YPSCAN_FLOW_DIRECTIVE=范围筛选未提交（${result?.error?.code ?? result?.status ?? "未知"}），但整个手扒任务不得停止。`,
+    result?.recovery_hint ??
+      "重新观察页面实际筛选名、入口文字和单位后最多调整参数再试一次；仍失败则将该条件转入详情硬复核并继续其他筛选。",
   ].join("\n");
 }
 
@@ -399,23 +461,16 @@ function manualResearchDirective(message) {
     ? result.error.code
     : "YPSCAN_MANUAL_RESEARCH_FAILED";
   const loginOrCaptcha = /LOGIN|CAPTCHA/u.test(code);
-  if (code === "YPSCAN_MANUAL_SELECTION_REQUIRED" && isRecord(result?.selector_args)) {
+  if (["YPSCAN_MANUAL_SELECTION_REQUIRED", "YPSCAN_MANUAL_SELECTION_STALE"].includes(code)) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=ypscan_manual_research 拒绝旧的一体化调用；抓取尚未开始。",
-      `MANUAL_FILTER_SELECTION_ARGS=${JSON.stringify(result.selector_args)}`,
-      "下一步调用 ypscan_manual_select_filters，不得原样重试抓取工具。",
-    ].join("\n");
-  }
-  if (code === "YPSCAN_MANUAL_SELECTION_STALE") {
-    return [
-      "YPSCAN_FLOW_DIRECTIVE=ypscan_manual_research 在读页前发现筛选凭证失效，未抓取、未翻页、未导出。",
-      "必须重新调用 ypscan_manual_select_filters 选择当前关键词分支，不得让抓取工具自行修复筛选。",
+      "YPSCAN_FLOW_DIRECTIVE=收到已下线的旧筛选/collect 协议结果，当前公开流程尚未创建 Playwright CLI 运行。",
+      "重新调用 ypscan_manual_research(operation=start)，传当前 requirement_id、platform、完整 facts 和 1–4 个 keywords；不得调用旧筛选工具或继续使用 selection_id。",
     ].join("\n");
   }
   if (!loginOrCaptcha) {
     return [
       `YPSCAN_FLOW_DIRECTIVE=ypscan_manual_research 未完成（${code}）。这是 Agent 可处理的页面/参数问题，不得要求用户关闭普通弹窗、复位筛选或刷新页面，也不得调用 AskUserQuestion。`,
-      "只能根据 Observer 状态和工具 next_call 恢复；没有 next_call 时如实交付 partial/failed 证据，不盲目重复同一调用。",
+      "根据工具 next_call 或 Playwright CLI 同一 session 的最新 snapshot 恢复；没有 next_call 时如实交付 partial/failed 证据，不盲目重复同一调用。",
     ].join("\n");
   }
   const options = [
@@ -445,19 +500,21 @@ function manualResearchDirective(message) {
 
 function manualResearchSuccessDirective(message) {
   const result = parsedToolResult(message);
-  if (result?.status === "ready_for_native_browser") {
+  if (result?.status === "ready_for_playwright") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=原生 Browser 自助手扒运行已创建。现在由 Agent 自主操作宿主 Browser，不调用 ypscan_manual_browser_inspect、ypscan_manual_browser_action 或 ypscan_manual_select_filters。",
+      "YPSCAN_FLOW_DIRECTIVE=Playwright CLI 自助手扒运行已创建。读取并使用 YP Action 自带 playwright 技能，固定使用返回的 playwright_session；插件不会代为执行 shell。手扒期间禁止调用宿主原生 Browser。",
       `MANUAL_RESEARCH_RUN_ID=${result?.run_id ?? "未知"}`,
-      "先观察整个页面：错页或重定向就导航到达人广场，普通弹窗自主关闭；根据 hard_requirements 与当前可见筛选项做语义匹配。级联菜单先用原生 Browser；无法稳定悬停展开时调用 ypscan_select_cascade，field_label、trigger_label、path 必须来自当前页面与需求，不得写死。最多调整参数再试一次，仍失败就转入详情硬复核。所有硬筛完成后最后输入首个关键词；后续只换关键词。",
-      "每个稳定结果页调用 ypscan_manual_research(operation=capture_list, run_id, keyword, keyword_complete=false)；翻页由原生 Browser 完成。关键词采集完成后再以 keyword_complete=true 记录筛选证据。Agent 自主打开候选详情并调用 capture_detail；单个详情不可访问就跳过继续。完成后调用 finalize。",
+      "先使用 YP Action 自带 playwright 技能和 playwright_cli.sh，固定短 session=ypscan；若 session 未打开，用 --headed --persistent 打开目标达人广场。禁止调用宿主原生 Browser。",
+      MANUAL_BROWSER_ENTRY_POLICY,
+      "先处理 selection_plan：每个 batch 都在最新 snapshot 后原样执行其 playwright_run_code，同一菜单入口只打开和确认一次；执行后重新 snapshot，并按返回的 selected_paths/unresolved_paths 和筛选区、结果变化回读。只重试 unresolved_paths 一次，fallbacks、动态项或仍失败路径再用当前页面逐层观察，必要时转详情硬复核。其余 hard_requirements 继续按当前可见筛选项做语义匹配；打开菜单、输入、确认、关闭弹窗、导航或页面刷新后必须重新 snapshot，绝不复用旧 ref。所有硬筛完成后最后输入首个关键词；后续只换关键词。",
+      "每个稳定结果页先用 Playwright run-code 读取 source_url/page_number/price_tier/rows，再作为 list_snapshot 调用 ypscan_manual_research(operation=capture_list, run_id, keyword, keyword_complete=false, list_snapshot)；翻页由 Playwright CLI 完成。关键词采集完成后再以 keyword_complete=true 记录筛选证据。详情页用 run-code 读取 url/fields/challenge/login，并作为 detail_snapshot 调用 capture_detail；单个详情不可访问就跳过继续。完成后调用 finalize。",
     ].join("\n");
   }
   if (result?.status === "recoverable") {
     return [
       `YPSCAN_FLOW_DIRECTIVE=手扒当前步骤可恢复（${result?.page_state ?? result?.error?.code ?? "页面状态变化"}）。不得停下或询问用户。`,
       result?.recovery_hint ??
-        "重新观察整个页面，使用宿主原生 Browser 关闭普通弹窗、处理重定向、返回达人广场或重新打开目标详情，然后重试当前只读采集。",
+        "重新 snapshot 整个页面，使用 Playwright CLI 同一 session 关闭普通弹窗、处理重定向、返回达人广场或重新打开目标详情，然后重试当前只读采集。",
       "不要重复同一种无效操作；可换用文字点击、悬停后点击、键盘或重新导航。只有全局登录或全局验证码才请求用户处理。",
     ].join("\n");
   }
@@ -465,14 +522,14 @@ function manualResearchSuccessDirective(message) {
     return [
       `YPSCAN_FLOW_DIRECTIVE=当前结果页已保存：关键词=${result?.keyword ?? "未知"}，页码=${result?.page_number ?? "未知"}，本页=${result?.page_candidate_count ?? 0}，累计去重=${result?.candidate_count ?? 0}。`,
       result?.keyword_complete
-        ? "当前关键词已完成。若目标人数不足，使用原生 Browser 只替换下一个关键词并继续；否则自主进入详情复核。"
-        : "继续由原生 Browser 翻页或判断当前关键词是否完成；不要等待固定 next_call。",
+        ? "当前关键词已完成。若目标人数不足，使用 Playwright CLI 只替换下一个关键词并继续；否则自主进入详情复核。"
+        : "继续由 Playwright CLI 翻页或判断当前关键词是否完成；不要等待固定 next_call。",
     ].join("\n");
   }
   if (["detail_captured", "detail_skipped"].includes(result?.status)) {
     return [
       `YPSCAN_FLOW_DIRECTIVE=当前达人详情已${result.status === "detail_skipped" ? "记录为不可访问" : "保存"}。`,
-      "关闭或返回当前详情，继续用原生 Browser 处理下一位达人；单个详情失败、字段缺失或局部验证码不得终止整批任务。全局验证码阻止所有详情时才请求用户。",
+      "关闭或返回当前详情，继续用 Playwright CLI 同一 session 处理下一位达人；单个详情失败、字段缺失或局部验证码不得终止整批任务。全局验证码阻止所有详情时才请求用户。",
     ].join("\n");
   }
   if (result?.operation === "create_submission") {
@@ -491,14 +548,7 @@ function manualResearchSuccessDirective(message) {
       "当前工具只完成了一次只读采集；下一步必须原样调用 next_call，不得提前交付或让抓取工具自行导航。",
     ].join("\n");
   }
-  if (result?.status === "awaiting_filter_selection" && isRecord(result?.next_selection_args)) {
-    return [
-      "YPSCAN_FLOW_DIRECTIVE=ypscan_manual_research 已完成当前关键词抓取，尚未进入详情或最终交付。",
-      `MANUAL_FILTER_SELECTION_ARGS=${JSON.stringify(result.next_selection_args)}`,
-      "下一步必须调用 ypscan_manual_select_filters；不得让抓取工具自行切换关键词或筛选。",
-    ].join("\n");
-  }
-  const operation = result?.operation ?? "collect";
+  const operation = result?.operation ?? "unknown";
   const reviewRemaining = Number.isFinite(result?.review_remaining)
     ? result.review_remaining
     : null;
@@ -630,9 +680,13 @@ function flowDirective(toolName, message, params = {}) {
   if (/(?:^|__)ypscan_select_cascade$/iu.test(normalizedName)) {
     return cascadeSelectionDirective(message);
   }
+  if (/(?:^|__)ypscan_set_filter_range$/iu.test(normalizedName)) {
+    return filterRangeDirective(message);
+  }
   if (bare === "create_with_distributions") return distributionDirective(message);
   if (bare === "sync_mcn_inquiry_status") return syncInquiryDirective(message);
-  if (bare === "ingest_mcn_submissions") return ingestSubmissionsDirective(message, params);
+  if (bare === "ingest_mcn_submissions") return ingestSubmissionsDirective(message);
+  if (bare === "get_ingest_job") return getIngestJobDirective(message, params);
   if (bare === "rank_creators") return rankCreatorsDirective(message, params);
   if (bare === "create_submission_batch") return submissionBatchDirective(message, params);
   if (bare === "get_workflow_state") return workflowStateDirective(message);
@@ -680,7 +734,13 @@ function flowDirective(toolName, message, params = {}) {
     return lines.join("\n");
   }
   if (bare === "validate_requirement") {
-    return "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。下一步固定调用 search_creators；保持真实 requirement_id 和 platform，不调用 Browser 或直接结束。";
+    const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
+    if (!requirementId) return flowPauseDirective("validate_requirement", message);
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。下一步立即逐字使用 SEARCH_CREATORS_ARGS 调用 search_creators，不调用 Browser 或直接结束。",
+      "需求 ID 始终指 requirement ID：优先使用本次落库返回的 data.requirement_id，该字段缺失时兼容 data.id；search_creators.id 严禁使用 data.demand_id。",
+      `SEARCH_CREATORS_ARGS=${JSON.stringify({ id: requirementId })}`,
+    ].join("\n");
   }
   if (bare === "search_creators") {
     return searchCreatorsDirective(message, params);
@@ -769,37 +829,7 @@ function selectedLabel(result, expectedLabel) {
   return null;
 }
 
-function messageConfirmationQuestion(challengeId, params) {
-  const recipients = Array.isArray(params?.supplierIds) ? params.supplierIds.length : 0;
-  const requirement = nonemptyString(params?.requirement_id)
-    ? params.requirement_id.trim()
-    : "未提供";
-  const message = nonemptyString(params?.wechat_notification_message)
-    ? params.wechat_notification_message
-    : "（未提供企微正文）";
-  return {
-    questions: [
-      {
-        header: "确认询价消息",
-        question: [
-          `[悦普识星 询价确认 ${challengeId}] 企微尚未发送。`,
-          `需求：${requirement}`,
-          `拟发送机构：${recipients} 家机构`,
-          "请先确认完整询价消息：",
-          message,
-          "本次只确认消息内容；下一步仍需单独确认机构列表。",
-        ].join("\n"),
-        options: [
-          { label: MESSAGE_CONFIRM_LABEL, description: "消息无误，继续确认发送机构" },
-          { label: CANCEL_LABEL, description: "不执行该操作" },
-        ],
-        multiSelect: false,
-      },
-    ],
-  };
-}
-
-function recipientConfirmationQuestion(challenge, supplierNames = new Map()) {
+function sendConfirmationQuestion(challenge, supplierNames = new Map()) {
   const supplierIds = Array.isArray(challenge?.params?.supplierIds)
     ? challenge.params.supplierIds
     : [];
@@ -807,18 +837,27 @@ function recipientConfirmationQuestion(challenge, supplierNames = new Map()) {
     const name = supplierNames.get(supplierId) ?? "名称未知";
     return `${index + 1}. ${name}（${supplierId}）`;
   });
+  const requirement = nonemptyString(challenge?.params?.requirement_id)
+    ? challenge.params.requirement_id.trim()
+    : "未提供";
+  const message = nonemptyString(challenge?.params?.wechat_notification_message)
+    ? challenge.params.wechat_notification_message
+    : "（未提供企微正文）";
   return {
     questions: [
       {
-        header: "确认发送机构",
+        header: "确认企微发送",
         question: [
-          `[悦普识星 询价确认 ${challenge.id}] 企微尚未发送，询价消息已确认。`,
+          `[悦普识星 询价确认 ${challenge.id}] 企微尚未发送。`,
+          `需求：${requirement}`,
           `即将发送给 ${supplierIds.length} 家机构：`,
           ...recipients,
-          "确认仅授权以上消息和机构列表的一次发送，10 分钟内有效。",
+          "即将发送的消息内容：",
+          message,
+          "确认仅授权以上机构列表和消息内容的一次发送，10 分钟内有效。",
         ].join("\n"),
         options: [
-          { label: RECIPIENT_CONFIRM_LABEL, description: "确认向以上机构发送一次" },
+          { label: SEND_CONFIRM_LABEL, description: "确认向以上机构发送一次" },
           { label: CANCEL_LABEL, description: "不执行该操作" },
         ],
         multiSelect: false,
@@ -849,7 +888,7 @@ function currentUserReply(event) {
   return normalizedManualConfirmation(lines.at(-1));
 }
 
-/** Register the only business gate: two confirmations before one WeCom send. */
+/** Register the only business gate: one confirmation before one WeCom send. */
 export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {}) {
   const challenges = new Map();
   const rankedSuppliers = new Map();
@@ -875,9 +914,7 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
   const pendingForScope = (scope) =>
     [...challenges.values()].filter(
       (challenge) =>
-        !challenge.consumed &&
-        challenge.scope === scope &&
-        ["message_pending", "recipients_pending"].includes(challenge.stage),
+        !challenge.consumed && challenge.scope === scope && challenge.stage === "pending",
     );
 
   api.on(
@@ -910,14 +947,11 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
           createdAt: callNow,
           consumed: false,
           scope,
-          stage: "message_pending",
+          stage: "pending",
           params,
         };
         challenges.set(active.id, active);
-        const askUserQuestion =
-          active.stage === "recipients_pending"
-            ? recipientConfirmationQuestion(active, supplierNamesFor(params, scope))
-            : messageConfirmationQuestion(active.id, params);
+        const askUserQuestion = sendConfirmationQuestion(active, supplierNamesFor(params, scope));
         const recoveryDirective = {
           schema_version: 1,
           code: "HITL_REQUIRED",
@@ -932,7 +966,7 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
         return {
           block: true,
           blockReason: [
-            `HITL_REQUIRED: 【企微状态：本次未发送｜等待${active.stage === "recipients_pending" ? "机构列表" : "询价消息"}确认】`,
+            "HITL_REQUIRED: 【企微状态：本次未发送｜等待发送确认】",
             `YPSCAN_BLOCK_DIRECTIVE=${JSON.stringify(recoveryDirective)}`,
             "ASK_USER_QUESTION_REQUIRED: 必须立即调用宿主 AskUserQuestion，逐字使用下一行 JSON 参数；不得改写问题或用普通文本代替。用户确认后原样重试。",
             `ASK_USER_QUESTION_ARGS=${JSON.stringify(askUserQuestion)}`,
@@ -955,24 +989,10 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
       const scopedPending = pendingForScope(scope);
       const challenge = scopedPending.length === 1 ? scopedPending[0] : null;
       const lines = [];
-      if (challenge && reply === MESSAGE_CONFIRM_LABEL && challenge.stage === "message_pending") {
-        challenge.stage = "recipients_pending";
-        const question = recipientConfirmationQuestion(
-          challenge,
-          supplierNamesFor(challenge.params, scope),
-        );
-        lines.push(
-          "YPSCAN_CONFIRMATION_DIRECTIVE=询价消息已由用户固定确认词确认，但企微仍未发送。立即逐字调用下面的 AskUserQuestion 确认机构列表，不得先调用发送工具。",
-          `ASK_USER_QUESTION_ARGS=${JSON.stringify(question)}`,
-        );
-      } else if (
-        challenge &&
-        reply === RECIPIENT_CONFIRM_LABEL &&
-        challenge.stage === "recipients_pending"
-      ) {
+      if (challenge && reply === SEND_CONFIRM_LABEL && challenge.stage === "pending") {
         challenge.stage = "authorized";
         lines.push(
-          "YPSCAN_CONFIRMATION_DIRECTIVE=机构列表已由用户固定确认词确认。现在原样调用 create_with_distributions 一次，不得修改任何参数。",
+          "YPSCAN_CONFIRMATION_DIRECTIVE=机构列表和消息内容已由用户固定确认词确认。现在原样调用 create_with_distributions 一次，不得修改任何参数。",
           `CREATE_WITH_DISTRIBUTIONS_ARGS=${JSON.stringify(challenge.params)}`,
         );
       }
@@ -982,12 +1002,17 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → create_with_distributions 的消息确认和机构确认 → 发送后询问是否继续人工拓展。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
+          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → create_with_distributions 在同一次弹窗确认机构列表和完整消息 → 发送后询问是否继续人工拓展。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
+          "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
-          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展完成后必须询问“继续询价”或“直接生成提报表”；后者调用 ypscan_manual_research(operation=create_submission)。人工拓展先调用 ypscan_manual_research(operation=start)，随后由 Agent 使用宿主原生 Browser 自主操作页面，并用 capture_list/capture_detail 只读落盘；不使用 selection_id、observation_id、element_id、固定 next_call 或三个旧 Browser 编排工具。原生 Browser 不能稳定完成级联选择时才调用 ypscan_select_cascade，参数由 Agent 根据当前页面动态决定。首关键词先建立硬筛且关键词最后提交，后续关键词继承筛选集只换关键词；任何前缀的 manual_source_creators 都不得调用。",
-          "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion；普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
-          "需求解析性能约束：普通 fact 只传 kind/quote/value；抖音 60s+ 必须表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；女粉偏多、城市集中等无精确数值或主体不明的条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌、数量、截止时间等必填业务信息缺失时才向用户澄清。YPSCAN_REQUIREMENT_INVALID 是 Agent 参数构造错误，必须一次性修正全部 violations，最多自动重试一次。",
-          "用户选择人工拓展后，start 必须保留完整硬条件 facts。Agent 每次先用宿主原生 Browser 观察整个页面，再自主处理错页、重定向、普通弹窗、筛选、分页和详情。级联项根据需求事实与当前可见控件动态匹配；原生 Browser 无法稳定悬停展开时调用 ypscan_select_cascade，由它只负责逐层 hover/click 和提交回读。助手失败最多调整参数再试一次，仍失败则转入详情硬复核。普通失败更换交互方式或跳过单个达人继续，只有登录失效、全局 CAPTCHA 或 Browser 完全不可用才请求用户接管。",
+          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展完成后必须询问“继续询价”或“直接生成提报表”；后者调用 ypscan_manual_research(operation=create_submission)。人工拓展先调用 ypscan_manual_research(operation=start)，随后读取并使用 YP Action 自带 playwright 技能，通过 Bash 调用 playwright_cli.sh，固定短 session=ypscan，首次 open 使用 --headed --persistent；手扒期间禁止调用宿主原生 Browser，不使用 selection_id、observation_id、element_id。",
+          MANUAL_BROWSER_ENTRY_POLICY,
+          "页面变化后重新 snapshot；稳定列表/详情用 run-code 读取结构化快照，分别作为 list_snapshot/detail_snapshot 传给 capture_list/capture_detail 落盘，插件自身不执行 shell。首关键词先建立硬筛且关键词最后提交，后续关键词继承筛选集只换关键词；任何前缀的 manual_source_creators 都不得调用。",
+          "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion；需求解析按最新 violations 持续修正并重试，不限制调用次数；其他普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
+          "需求解析性能约束：普通 fact 只传 kind/quote/value；抖音 60s+ 必须表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；参考达人统一使用 reference_creator，昵称和 http/https 链接可作为两条 fact 或同一 value 数组传入，最终分别透传为 refNickname/refUrl；女粉偏多、城市集中等无精确数值或主体不明的条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌、数量、截止时间等必填业务信息缺失时才向用户澄清。YPSCAN_REQUIREMENT_INVALID 是 Agent 参数构造错误，必须按最新 violations 一次性修正并继续调用需求解析工具，不限制调用次数。",
+          "用户选择人工拓展后，start 必须保留完整硬条件 facts。Agent 使用 YP Action Playwright CLI 的同一 ypscan session 完成观察和交互，禁止调用宿主原生 Browser。每次 navigation、菜单开关、输入提交、分页或详情切换后重新 snapshot；refs 只属于最新 snapshot。",
+          MANUAL_BROWSER_ACTION_POLICY,
+          "普通失败先重新 snapshot 并更换定位方式，最多两次；登录失效或全局 CAPTCHA 才请求用户接管。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           "手扒达人价格必须从当前 ypscan_parse_requirement.data.facts 复制客户原始 operator 和原始数值；禁止把 Provider 区间或手工计算后的 50%–120% 区间再次传入。除本轮唯一 creator_count 外，不重算价格事实。",
         );
@@ -1045,12 +1070,9 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
           ? scopedPending[0]
           : null;
       if (!challenge) return;
-      const expected =
-        challenge.stage === "message_pending" ? MESSAGE_CONFIRM_LABEL : RECIPIENT_CONFIRM_LABEL;
-      const selected = selectedLabel(result, expected);
-      if (selected === expected) {
-        challenge.stage =
-          challenge.stage === "message_pending" ? "recipients_pending" : "authorized";
+      const selected = selectedLabel(result, SEND_CONFIRM_LABEL);
+      if (selected === SEND_CONFIRM_LABEL && challenge.stage === "pending") {
+        challenge.stage = "authorized";
       } else {
         challenges.delete(challenge.id);
       }

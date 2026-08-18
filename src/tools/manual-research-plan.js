@@ -1,3 +1,5 @@
+import { compileCascadeSelectionPlan } from "./manual-research/cascade-route-plan.js";
+
 const KEYWORD_FACT_KINDS = Object.freeze([
   "product_name",
   "content_direction",
@@ -14,6 +16,12 @@ const FILTER_FACTS = Object.freeze({
   growth_creator_type: { control: "creator_type", mode: "options" },
   creator_persona: { control: "creator_persona", mode: "options" },
   industry_tag: { control: "creator_category", mode: "options" },
+  content_theme: {
+    control: "content_theme",
+    mode: "options",
+    platforms: ["xingtu", "pgy"],
+  },
+  content_feature: { control: "content_feature", mode: "options", platforms: ["pgy"] },
   creator_gender: { control: "creator_gender", mode: "options" },
   creator_city: { control: "creator_city", mode: "options" },
   follower_count: { control: "follower_count", mode: "range", unit: "count" },
@@ -245,7 +253,7 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
   const unexpressed = [];
   for (const fact of activeFacts.filter(hardFact)) {
     const mapping = FILTER_FACTS[fact.kind];
-    if (mapping) {
+    if (mapping && (!mapping.platforms || mapping.platforms.includes(platform))) {
       if (!relevantCommercialFact(fact, platform, selectedPriceView)) {
         unexpressed.push({
           fact_id: fact.id ?? null,
@@ -289,6 +297,9 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
         continue;
       }
       filters.push(filter);
+      if (SEMANTIC_REVIEW_FACT_KINDS.has(fact.kind)) {
+        reviewRequirements.push(reviewRequirement(fact, "detail_semantic_review"));
+      }
       continue;
     }
     if (SEMANTIC_REVIEW_FACT_KINDS.has(fact.kind)) {
@@ -322,11 +333,13 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
       unit: filter.unit,
       input_anchor: filter.input_anchor,
     }));
+  const selectionPlan = compileCascadeSelectionPlan({ platform, filters });
   return {
     protocol_version: 3,
     platform,
     keywords: keywordsToRun,
     filters,
+    selection_plan: selectionPlan,
     detail_filters: detailFilters,
     review_requirements: reviewRequirements,
     price_view: selectedPriceView,

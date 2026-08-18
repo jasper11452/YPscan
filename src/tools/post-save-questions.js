@@ -7,7 +7,7 @@ export function submissionEnrichmentQuestionPayload() {
         options: [
           {
             label: "补充更新达人信息",
-            description: "使用当前批次和字段补齐达人信息，并导出新版提报表",
+            description: "立即调用 get_creator_detail 异步补全当前批次，不再选择字段或追问",
           },
           {
             label: "暂不补充",

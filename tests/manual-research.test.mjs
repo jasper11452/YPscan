@@ -7,6 +7,7 @@ import {
   mergeManualCandidates,
 } from "../src/tools/manual-research-plan.js";
 import {
+  MANUAL_RESEARCH_PARAMETERS,
   validateManualFilterSelectionParams,
   validateManualResearchParams,
 } from "../src/tools/manual-research-protocol.js";
@@ -1185,7 +1186,24 @@ test("a list CPM violation is rejected before any detail navigation", async () =
   assert.equal(data.list_hard_pass_candidate_count, 1);
 });
 
-test("public protocols separate selection, collection migration and reviews", () => {
+test("public protocol exposes only Playwright CLI operations while internal migration remains", () => {
+  assert.equal(MANUAL_RESEARCH_PARAMETERS.required.includes("operation"), true);
+  assert.deepEqual(MANUAL_RESEARCH_PARAMETERS.properties.operation.enum, [
+    "start",
+    "capture_list",
+    "capture_detail",
+    "finalize",
+    "apply_reviews",
+    "create_submission",
+  ]);
+  for (const legacyProperty of [
+    "selection_id",
+    "page_url",
+    "original_brief",
+    "resume_from_branch",
+  ]) {
+    assert.equal(MANUAL_RESEARCH_PARAMETERS.properties[legacyProperty], undefined);
+  }
   const params = validateManualResearchParams(baseParams());
   assert.equal(params.platform, "xingtu");
   assert.equal(params.operation, "legacy_collect");
@@ -1272,6 +1290,41 @@ test("public protocols separate selection, collection migration and reviews", ()
   });
   assert.equal(reviews.operation, "apply_reviews");
   assert.equal(reviews.facts, undefined);
+  const listCapture = validateManualResearchParams({
+    operation: "capture_list",
+    requirement_id: "requirement-1",
+    platform: "douyin",
+    run_id: "run-1",
+    keyword: "办公软件",
+    list_snapshot: {
+      source_url: "https://www.xingtu.cn/ad/creator/market",
+      rows: [{ platform_id: "creator-1" }],
+    },
+  });
+  assert.equal(listCapture.list_snapshot.rows[0].platform_id, "creator-1");
+  const detailCapture = validateManualResearchParams({
+    operation: "capture_detail",
+    requirement_id: "requirement-1",
+    platform: "douyin",
+    run_id: "run-1",
+    candidate_ref: "creator-1",
+    detail_snapshot: {
+      url: "https://www.xingtu.cn/ad/creator/detail",
+      fields: { cpm_raw: "80" },
+    },
+  });
+  assert.equal(detailCapture.detail_snapshot.fields.cpm_raw, "80");
+  assert.throws(
+    () =>
+      validateManualResearchParams({
+        operation: "capture_list",
+        requirement_id: "requirement-1",
+        platform: "douyin",
+        run_id: "run-1",
+        keyword: "办公软件",
+      }),
+    /list_snapshot/u,
+  );
   assert.throws(
     () =>
       validateManualResearchParams({

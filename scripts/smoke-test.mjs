@@ -19,6 +19,7 @@ assert.equal(
   packageJson.version,
   "manifest and package versions must stay in sync",
 );
+assert.equal(packageJson.files.includes("skills"), true, "published package must include skills");
 assert.equal(
   manifest.mcpServers.ypscan.toolFilter.include.includes("manual_source_creators"),
   false,
@@ -33,6 +34,11 @@ assert.equal(
   manifest.mcpServers.ypscan.toolFilter.include.includes("get_selected_inquiry_form_fields"),
   false,
   "deprecated field-selection reads must not be exposed",
+);
+assert.equal(
+  manifest.mcpServers.ypscan.toolFilter.include.includes("get_ingest_job"),
+  true,
+  "async ingest result polling must be exposed from the Provider MCP",
 );
 
 const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-smoke-"));
@@ -53,7 +59,6 @@ try {
 
   const toolNames = registered.tools.map((tool) => tool.name);
   assert.ok(toolNames.includes("ypscan_parse_requirement"));
-  assert.ok(toolNames.includes("ypscan_select_cascade"));
   assert.ok(toolNames.includes("ypscan_manual_research"));
   assert.ok(toolNames.includes("ypscan_save_excel_artifact"));
   assert.equal(toolNames.includes("ypscan_manual_browser_inspect"), false);
@@ -63,12 +68,22 @@ try {
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("creator_preview"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_creator_preview"));
   assert.equal(toolNames.includes("ypscan__select_inquiry_form_fields"), false);
-  assert.equal(toolNames.length, 4);
+  assert.equal(toolNames.length, 3);
   assert.equal(toolNames.includes("ypscan_runtime_status"), false);
   assert.equal(toolNames.includes("ypscan_capture_field_selection"), false);
   assert.equal(toolNames.includes("ypscan_import_manual_source_excel"), false);
   assert.equal(toolNames.includes("ypscan_commit_browser_source_batch"), false);
   assert.equal(toolNames.includes("ypscan_parse_requirement_tags"), false);
+  const manualResearch = registered.tools.find((tool) => tool.name === "ypscan_manual_research");
+  const rejectedLegacyCall = await manualResearch.execute("smoke-legacy", {
+    requirement_id: "smoke-requirement",
+    platform: "xingtu",
+    facts: [],
+    keywords: ["smoke"],
+  });
+  const rejectedLegacyPayload = JSON.parse(rejectedLegacyCall.content[0].text);
+  assert.equal(rejectedLegacyPayload.success, false);
+  assert.equal(rejectedLegacyPayload.error.code, "YPSCAN_MANUAL_ARGUMENT_INVALID");
 
   const hookNames = registered.hooks.map((hook) => hook.name);
   assert.deepEqual([...new Set(hookNames)].sort(), [

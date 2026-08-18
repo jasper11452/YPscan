@@ -1,43 +1,30 @@
 # ypscan_manual_research
 
-人工拓展抓取阶段。必须先由 `ypscan_manual_select_filters` 完成当前关键词筛选并取得 `run_id/selection_id`；本工具先只读复核筛选状态，再执行“列表采集 → 详情页被动响应采集 → 本地精筛 → Agent 分批复核 → 同一 Excel”。本工具不得重置、搜索或修改页面筛选。
+人工拓展的数据与产物工具。浏览器交互由 Agent 使用 YP Action Playwright CLI 完成；本工具不执行 shell、不连接宿主 Browser，也不会自行读取 Playwright session。
 
-必填参数：
+## 固定操作
 
-- `requirement_id`：当前真实 Provider 需求 ID。
-- `platform`：`xingtu` / `douyin` 或 `pgy` / `xiaohongshu`。
-- `run_id`、`selection_id`：原样使用选择工具的 `collection_args`。
+1. `start`：传 `requirement_id`、`platform`、完整 `facts` 和 1–4 个 `keywords`，可选 `fresh_run=true`。返回 `run_id`、固定 `playwright_session=ypscan`、目标 URL、`hard_requirements`、稳定级联的 `selection_plan` 和快照字段要求。
+2. `capture_list`：传同一 `requirement_id/platform/run_id`、当前 `keyword`、`keyword_complete`、Playwright run-code 读取的 `list_snapshot`，以及可选 `filter_evidence`。`list_snapshot` 至少包含当前 `source_url` 和同一列表行关联的 `rows`。
+3. `capture_detail`：传同一运行、`candidate_ref` 和当前详情页的 `detail_snapshot`；快照至少包含 `url` 与可见 `fields`。单个详情失败时记录后继续，不用历史数据补齐。
+4. `finalize`：传同一运行，生成或刷新 checkpoint 与 Excel，并返回待复核批次、缺口和产物路径。
+5. `apply_reviews`：每批传 1–20 条 `candidate_ref`、`decision=include|exclude`、非空 `reasons` 和 `evidence`。持续处理到 `review_remaining=0`。
+6. `create_submission`：只在用户选择直接生成提报表后调用，传同一运行，产物只包含本轮最终纳入达人。
 
-可选参数：
+公开入口没有 `collect`、`selection_id`、`page_url`、`original_brief` 或独立筛选工具。不得猜测或构造这些旧参数。
 
-- 当前分支完成但仍需其他关键词时，响应为 `awaiting_filter_selection`；把 `next_selection_args` 原样调用选择工具。
+## Playwright 快照边界
 
-复核写回参数：
+- 使用返回的固定短 session。未打开时以 `--headed --persistent` 打开目标达人广场；禁止调用宿主原生 Browser。
+- 页面发生导航、菜单开关、输入提交、分页或详情切换后必须重新 snapshot；ref 只属于最新 snapshot。
+- snapshot 中出现带明确关闭按钮的阻塞弹窗时，优先直接 click 关闭并重新 snapshot；`review-wrapper` 等普通公告/提示不必先读取完整内容或先 goto。若出现登录、验证码或安全验证信号则不得关闭。
+- 先处理 `selection_plan.batches`：每个 batch 在最新 snapshot 后原样执行 `playwright_run_code`，同一菜单入口的多路径只打开和确认一次；随后重新 snapshot，并回读 `selected_paths`、`unresolved_paths`、已选条件和结果变化。只重试失败路径一次，`fallbacks` 与动态项再按当前页面探索。
+- 其他常规交互优先使用 snapshot/click/hover/fill。goto 仅用于首次打开 session，或关闭弹窗并重新 snapshot 后仍明确不在目标达人广场的恢复场景。只有动态级联或 teleported 浮层无法表达时才自行编写限定目标容器的 run-code，并回读提交结果。
+- `capture_list` / `capture_detail` 只接受当前页面真实可见或页面自身加载得到的结构化证据。不得读取 Cookie/Token，不主动重放私有 API，不保存原始响应或敏感头。
+- 登录、全局 CAPTCHA 或安全验证返回 `needs_user_action`，必须用 `AskUserQuestion`。普通重定向、弹窗、旧 ref 和定位失败由 Agent 在同一 session 内重新 snapshot 并换策略恢复。
 
-- 抓取使用选择工具返回的 `operation=collect`。最终详情完成后返回最多 20 条 `review_batch`。
-- Agent 结合原始需求、详情字段和最多 3 条近期内容，生成 `candidate_ref`、`decision=include|exclude`、`reasons`、`evidence`。
-- 用 `operation=apply_reviews`、当前 `requirement_id`、`platform`、`artifact.run_id` 和 `reviews` 调回工具；每批最多 20 条，持续处理下一批直到 `review_remaining=0`。
+## 交付规则
 
-直接向本工具传 facts/keywords/page_url/original_brief 属于旧一体化调用；工具返回 `YPSCAN_MANUAL_SELECTION_REQUIRED` 和 `selector_args`，且不会连接 Browser。完整原文由 Agent 保留用于语义复核。
+候选按平台稳定 ID 或详情链接去重；同名但没有稳定身份的记录不自动合并。价格以客户原始事实为锚点按 50%–120% 验收并绑定正确合作形式或时长档；价格及其他硬条件失败者不进入推荐名单。证据不足必须标为缺口，人数不足如实报告。
 
-响应 `status`：
-
-- `complete`：所有本次分支完成采集与导出。
-- `awaiting_filter_selection`：当前关键词抓取完成；原样调用 `next_selection_args`。
-- `partial`：返回了真实候选或可审计的分支失败；读取 `failed_branches` / 导出状态继续，不要求用户处理普通 UI。
-- `failed`：达人广场打开失败、参数或其他 Agent 可修复问题；修正参数后做一次有界重试，不自行打开其他页面，也不调用 `AskUserQuestion`。
-- `needs_user_action`：只用于登录失效或真实 CAPTCHA；必须调用 `AskUserQuestion`。
-
-`needs_user_action` 会同时给出 `user_action.resume_tool`、`user_action.resume_args` 和 `interruption.phase`。用户完成验证后必须原样调用这些恢复参数：列表阶段返回同一关键词的筛选参数，详情阶段返回同一 run/selection 的 collect 参数；不得根据 `next_branch` 猜测恢复位置。
-
-每个分支返回已验证筛选、结果数、页数、页面摘要和导出结果。顶层候选按平台 ID 合并，缺 ID 时只按详情链接合并；没有稳定身份的同名记录不会自动合并。每页结果都会增量追加到当前项目的 `checkpoint.jsonl` 并强制落盘；同一 run 从选择工具建立的计划恢复。响应最多携带 20 条候选与 20 条详情任务预览，完整记录读取 `artifact.checkpoint_path` 或 `artifact.excel_path`。
-
-价格计划由选择工具从客户原始事实编译，达人单价独立扩展为客户值的 50%–120%；抓取工具只按 checkpoint 中的同一计划验收候选，不重算区间或报价口径。
-
-响应同时返回报价初筛和列表硬筛两组统计与 `delivery_shortfall`。CPM、粉丝等列表证据一旦失败即在详情前淘汰；字段缺失只能标记待补证。`price_check.status=rejected` 或 `list_hard_evaluation.status=fail` 不进入目标名单或详情任务，不得推荐。人数不足时必须报告缺口，不能用硬条件失败者凑数。昵称/平台 ID 搜索只用于定位响应中已有的 `detail_tasks`。
-
-工具会自动关闭已知普通弹窗，并对普通页面跳转/响应失败执行一次有限恢复；详情出现 401/403/429 或安全验证时立即暂停且不重试。工具严格串行打开当前账号可见的详情页，在点击/切换前注册响应监听，只归一化页面真实 XHR/fetch 的字段和 pathname；不主动重放私有 API，不保存原始响应、Cookie、请求头或签名。每个达人完成后追加 checkpoint 并原子刷新同一个 Excel；工作簿按正式达人推荐 List 模板排版，只含“达人推荐List”和“候选达人”两个 Sheet，最终纳入者写入前者，完整候选池集中写入后者。此本地产物不消耗平台导出额度。工具不登录、不关闭宿主 Browser，也不代替 Agent 做语义判断。
-
-详情页不会假设数据只位于固定 Tab。工具先读取首屏证据，再按当前缺失字段组观察可见 tab、button、menuitem、option 和带 `aria-haspopup/aria-expanded` 的控件；每次只对语义相关且无提交、发送、支付等副作用的控件执行真实 hover/click，并在动作后重新观察页面，因此可以逐层进入动态挂载的级联菜单。动作必须产生响应、正文或菜单状态变化才记为有效，每个字段组有固定探索预算；仍未取得证据时返回 `missing_groups` 和脱敏的 `navigation` 审计记录并标为 `partial`，不得猜值或把任意字段存在误报为详情完整。
-
-近期内容只接受真实作品卡片或页面动作产生的作品响应，达人清单、用户协议和全局导航不得作为内容证据。城市、人群画像或近期内容等复核证据缺失时，`review_batch.evidence_gaps` 会明确列出缺口，Agent 不得提交 `include`。
+每次采集增量写入当前项目的 `checkpoint.jsonl`。Excel 只含“达人推荐List”和“候选达人”两个 Sheet；最终纳入者写入前者，完整候选池写入后者。结果只来自当前需求、平台和 run，不与历史记录混用。

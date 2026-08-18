@@ -2,7 +2,7 @@
 
 Risk tier: automatic Provider operation.
 
-Call immediately after `validate_requirement` succeeds in the normal new-requirement path. Pass only `id`, using the exact returned `requirement_id`; never substitute `demand_id`, `demand_version`, a host run ID, or a historical ID.
+Call immediately after `validate_requirement` succeeds in the normal new-requirement path. Pass only `id`, using `data.requirement_id` or, only when that field is absent, compatible `data.id`. Never substitute `data.demand_id`, `demand_version`, a host run ID, or a historical ID.
 
 `contentTag` is stored on the requirement and is not a search argument. Use only real result fields such as `data.total_matched` and `data.supply_assessment`. Do not invent missing counts or repair inconsistent Provider arithmetic locally.
 
