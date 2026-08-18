@@ -113,7 +113,7 @@ function storedZipEntry(buffer, expectedName) {
   return null;
 }
 
-test("50-person runs checkpoint every page and return a compact review batch plus a five-sheet XLSX", async (t) => {
+test("50-person runs checkpoint every page and return a compact review batch plus a two-sheet XLSX", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-manual-50-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   const actions = [];
@@ -157,13 +157,19 @@ test("50-person runs checkpoint every page and return a compact review batch plu
 
   const workbook = await readFile(data.artifact.excel_path);
   assert.equal(workbook.subarray(0, 2).toString("utf8"), "PK");
-  const targetSheet = storedZipEntry(workbook, "xl/worksheets/sheet1.xml");
-  const detailSheet = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
-  const poolSheet = storedZipEntry(workbook, "xl/worksheets/sheet3.xml");
-  assert.equal((targetSheet.match(/<row /gu) ?? []).length, 1);
-  assert.equal((detailSheet.match(/<row /gu) ?? []).length, 121);
-  assert.equal((poolSheet.match(/<row /gu) ?? []).length, 121);
-  assert.match(detailSheet, /待复核/u);
+  const workbookXml = storedZipEntry(workbook, "xl/workbook.xml");
+  const recommendedSheet = storedZipEntry(workbook, "xl/worksheets/sheet1.xml");
+  const candidateSheet = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
+  assert.match(workbookXml, /sheet name="达人推荐List"/u);
+  assert.match(workbookXml, /sheet name="候选达人"/u);
+  assert.equal((workbookXml.match(/<sheet /gu) ?? []).length, 2);
+  assert.equal((recommendedSheet.match(/<row /gu) ?? []).length, 5);
+  assert.equal((candidateSheet.match(/<row /gu) ?? []).length, 125);
+  assert.match(candidateSheet, /供应商名称/u);
+  assert.match(candidateSheet, /达人名称/u);
+  assert.match(candidateSheet, /待复核/u);
+  assert.match(candidateSheet, /mergeCell ref="A1:M1"/u);
+  assert.match(candidateSheet, /pane ySplit="5"/u);
 });
 
 test("the target sheet excludes candidates below the manual price floor", async (t) => {
@@ -270,11 +276,11 @@ test("the target sheet excludes candidates below the manual price floor", async 
   assert.equal(reviewed.artifact.excel_path, data.artifact.excel_path);
 
   const workbook = await readFile(reviewed.artifact.excel_path);
-  const targetSheet = storedZipEntry(workbook, "xl/worksheets/sheet1.xml");
-  const poolSheet = storedZipEntry(workbook, "xl/worksheets/sheet3.xml");
-  assert.equal((targetSheet.match(/<row /gu) ?? []).length, 4);
-  assert.equal((poolSheet.match(/<row /gu) ?? []).length, 6);
-  assert.match(poolSheet, /报价不在要求区间，不得推荐/u);
+  const recommendedSheet = storedZipEntry(workbook, "xl/worksheets/sheet1.xml");
+  const candidateSheet = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
+  assert.equal((recommendedSheet.match(/<row /gu) ?? []).length, 8);
+  assert.equal((candidateSheet.match(/<row /gu) ?? []).length, 10);
+  assert.match(candidateSheet, /报价不在要求区间/u);
 });
 
 test("a restarted v3 run restores the same requirements and advances keyword-only planning", async (t) => {
@@ -546,7 +552,7 @@ test("apply_reviews returns successive batches until the same workbook is comple
   assert.notEqual(submission.submission_path, collect.artifact.excel_path);
   const submissionWorkbook = await readFile(submission.submission_path);
   const workbookXml = storedZipEntry(submissionWorkbook, "xl/workbook.xml");
-  assert.match(workbookXml, /sheet name="提报表"/u);
-  assert.match(workbookXml, /sheet name="需求信息"/u);
-  assert.doesNotMatch(workbookXml, /完整候选池/u);
+  assert.match(workbookXml, /sheet name="达人推荐List"/u);
+  assert.equal((workbookXml.match(/<sheet /gu) ?? []).length, 1);
+  assert.doesNotMatch(workbookXml, /候选达人/u);
 });

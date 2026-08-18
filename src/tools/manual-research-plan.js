@@ -158,6 +158,11 @@ function keywordValues(facts) {
   return [...new Set(values)].slice(0, 4);
 }
 
+function firstFactValue(facts, kinds) {
+  const fact = facts.find((candidate) => activeFact(candidate) && kinds.includes(candidate.kind));
+  return factValues(fact ?? {})[0] ?? null;
+}
+
 function requestedCreatorCount(facts) {
   const values = facts
     .filter(
@@ -334,6 +339,12 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
       applied_ranges: priceRanges,
     },
     target_count: targetCount,
+    export_summary: {
+      brand_product: firstFactValue(activeFacts, ["brand_name", "product_name"]),
+      project_name: firstFactValue(activeFacts, ["project_name"]),
+      submission_deadline: firstFactValue(activeFacts, ["submission_deadline"]),
+      responsible_media: firstFactValue(activeFacts, ["responsible_media", "media_owner"]),
+    },
     collection_target: collectionTarget,
     per_branch_target: perBranchTarget,
     unexpressed,

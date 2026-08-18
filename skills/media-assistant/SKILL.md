@@ -39,7 +39,7 @@ rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必�
 
 固定顺序为“宿主 Browser 直接打开当前平台达人广场 → `ypscan_manual_select_filters` → `ypscan_manual_research`”。星图打开 `https://www.xingtu.cn/ad/creator/market`，蒲公英打开 `https://pgy.xiaohongshu.com/solar/pre-trade/note/kol`；不得先打开首页、工作台或其他中转页。Browser 页面打开后，首次选择使用当前真实 `requirement_id`、平台、精简 facts 和本轮唯一 `creator_count`；价格 fact 从当前解析结果复制客户原始 operator 与数值，禁止复用 Provider 的 70%–120% 区间。只有选择工具返回 `ready_for_collection=true` 后才能原样传 `collection_args` 抓取；后续关键词原样传递 `next_selection_args`，不得让抓取工具修改筛选。
 
-人工拓展先用宿主 Browser 打开平台达人广场，再由本地工具连接同一个 Browser；不登录、不读取 Cookie/Token、不主动重放私有 API。平台筛选必须真实回读；价格按客户原始达人单价独立扩展为 50%–120%，并绑定正确图文/视频或星图时长档。候选必须经过详情证据和分批语义复核，持续 `apply_reviews` 到 `review_remaining=0`；价格失败者不得补数，人数不足如实报告缺口。完整结果交付本地五表 Excel。只有登录失效、真实 CAPTCHA 或详情 401/403/429 才请求用户接管；任何前缀的 `manual_source_creators` 都不得调用。
+人工拓展先用宿主 Browser 打开平台达人广场，再由本地工具连接同一个 Browser；不登录、不读取 Cookie/Token、不主动重放私有 API。平台筛选必须真实回读；价格按客户原始达人单价独立扩展为 50%–120%，并绑定正确图文/视频或星图时长档。候选必须经过详情证据和分批语义复核，持续 `apply_reviews` 到 `review_remaining=0`；价格失败者不得补数，人数不足如实报告缺口。完整结果按达人推荐 List 模板交付 Excel，仅含“达人推荐List”和“候选达人”两个 Sheet。只有登录失效、真实 CAPTCHA 或详情 401/403/429 才请求用户接管；任何前缀的 `manual_source_creators` 都不得调用。
 
 ## Provider 后续
 
