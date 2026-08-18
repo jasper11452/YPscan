@@ -1,5 +1,4 @@
 import { chromium } from "playwright-core";
-import { createPlaywrightCliRuntime, PLAYWRIGHT_SESSION } from "./playwright-cli-runtime.js";
 import { inspectManualBrowser } from "./manual-browser-state.js";
 import {
   applyManualResearchReviews,
@@ -1206,7 +1205,6 @@ async function collectIncrementalV2({
  *   createAdapter?: (platform: string, page: import("playwright-core").Page, options: any) => any,
  *   createArtifactStore?: typeof createManualResearchStore,
  *   inspectBrowser?: typeof inspectManualBrowser,
- *   createPlaywrightRuntime?: typeof createPlaywrightCliRuntime,
  *   now?: () => number,
  * }} [options]
  */
@@ -1217,7 +1215,6 @@ export function createManualResearch({
   createAdapter = createManualResearchAdapter,
   createArtifactStore = createManualResearchStore,
   inspectBrowser = inspectManualBrowser,
-  createPlaywrightRuntime = createPlaywrightCliRuntime,
   now = Date.now,
 } = {}) {
   const cdpUrl = requiredString(browserCdpUrl, "browserCdpUrl").replace(/\/$/u, "");
@@ -1237,7 +1234,6 @@ export function createManualResearch({
       params = validateManualResearchParams(rawParams);
       if (params.operation === "start") {
         plan = compileManualResearchPlan(params);
-        const playwright = createPlaywrightRuntime();
         artifactStore = await createArtifactStore({ workspaceDir, params, plan, now });
         if (!artifactStore.enabled || !artifactStore.run_id) {
           throw manualBrowserError(
@@ -1260,9 +1256,9 @@ export function createManualResearch({
           target_count: plan.target_count ?? null,
           browser_policy: {
             interaction_owner: "agent_playwright_cli",
-            playwright_session: playwright.session ?? PLAYWRIGHT_SESSION,
-            playwright_wrapper: playwright.wrapper_path ?? null,
+            playwright_session: "ypscan",
             persistent_profile_required: true,
+            snapshot_handoff_required: true,
             keyword_last: true,
             preserve_filters_between_keywords: true,
             selection_id_required: false,
@@ -1326,11 +1322,8 @@ export function createManualResearch({
           return hostToolResult(payload, { details: payload });
         }
 
-        const playwright = createPlaywrightRuntime();
         const cliSnapshot =
-          params.operation === "capture_list"
-            ? await playwright.readList(params.platform)
-            : await playwright.readDetail(params.platform);
+          params.operation === "capture_list" ? params.list_snapshot : params.detail_snapshot;
         const url = clean(cliSnapshot?.source_url ?? cliSnapshot?.url);
         const state = {
           url,

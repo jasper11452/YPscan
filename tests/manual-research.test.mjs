@@ -1272,6 +1272,41 @@ test("public protocols separate selection, collection migration and reviews", ()
   });
   assert.equal(reviews.operation, "apply_reviews");
   assert.equal(reviews.facts, undefined);
+  const listCapture = validateManualResearchParams({
+    operation: "capture_list",
+    requirement_id: "requirement-1",
+    platform: "douyin",
+    run_id: "run-1",
+    keyword: "办公软件",
+    list_snapshot: {
+      source_url: "https://www.xingtu.cn/ad/creator/market",
+      rows: [{ platform_id: "creator-1" }],
+    },
+  });
+  assert.equal(listCapture.list_snapshot.rows[0].platform_id, "creator-1");
+  const detailCapture = validateManualResearchParams({
+    operation: "capture_detail",
+    requirement_id: "requirement-1",
+    platform: "douyin",
+    run_id: "run-1",
+    candidate_ref: "creator-1",
+    detail_snapshot: {
+      url: "https://www.xingtu.cn/ad/creator/detail",
+      fields: { cpm_raw: "80" },
+    },
+  });
+  assert.equal(detailCapture.detail_snapshot.fields.cpm_raw, "80");
+  assert.throws(
+    () =>
+      validateManualResearchParams({
+        operation: "capture_list",
+        requirement_id: "requirement-1",
+        platform: "douyin",
+        run_id: "run-1",
+        keyword: "办公软件",
+      }),
+    /list_snapshot/u,
+  );
   assert.throws(
     () =>
       validateManualResearchParams({

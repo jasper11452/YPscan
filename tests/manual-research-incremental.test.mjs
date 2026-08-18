@@ -58,35 +58,12 @@ test("Playwright CLI run starts and captures the current list without a selectio
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-native-browser-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   let browserConnections = 0;
-  let detailSnapshot = { url: "https://www.xingtu.cn/ad/creator/detail", fields: {} };
   const research = createManualResearch({
     workspaceDir,
     connectOverCDP: async () => {
       browserConnections += 1;
       return { contexts: () => [] };
     },
-    createPlaywrightRuntime: () => ({
-      session: "ypscan",
-      wrapper_path: "/yp/playwright_cli.sh",
-      async readList() {
-        return {
-          source_url: "https://www.xingtu.cn/ad/creator/market",
-          page_number: 1,
-          price_tier: "60s以上视频",
-          rows: [
-            {
-              platform_id: "native-creator-1",
-              nickname: "原生达人",
-              followers_raw: "20万",
-              price_raw: "1.8万",
-            },
-          ],
-        };
-      },
-      async readDetail() {
-        return detailSnapshot;
-      },
-    }),
   });
 
   const started = payload(await research({ operation: "start", ...params() }));
@@ -103,6 +80,19 @@ test("Playwright CLI run starts and captures the current list without a selectio
       run_id: started.run_id,
       keyword: "办公软件",
       keyword_complete: true,
+      list_snapshot: {
+        source_url: "https://www.xingtu.cn/ad/creator/market",
+        page_number: 1,
+        price_tier: "60s以上视频",
+        rows: [
+          {
+            platform_id: "native-creator-1",
+            nickname: "原生达人",
+            followers_raw: "20万",
+            price_raw: "1.8万",
+          },
+        ],
+      },
       filter_evidence: [
         {
           fact: "60s以上视频报价 2 万以内",
@@ -119,7 +109,6 @@ test("Playwright CLI run starts and captures the current list without a selectio
   assert.equal(captured.candidates[0].platform_id, "native-creator-1");
   assert.equal(browserConnections, 0);
 
-  detailSnapshot = { ...detailSnapshot, challenge: true };
   const skipped = payload(
     await research({
       operation: "capture_detail",
@@ -127,6 +116,11 @@ test("Playwright CLI run starts and captures the current list without a selectio
       platform: started.platform,
       run_id: started.run_id,
       candidate_ref: "native-creator-1",
+      detail_snapshot: {
+        url: "https://www.xingtu.cn/ad/creator/detail",
+        fields: {},
+        challenge: true,
+      },
     }),
   );
   assert.equal(skipped.success, true);
@@ -139,12 +133,6 @@ test("ordinary Playwright page drift is recoverable instead of stopping the run"
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   const research = createManualResearch({
     workspaceDir,
-    createPlaywrightRuntime: () => ({
-      session: "ypscan",
-      wrapper_path: "/yp/playwright_cli.sh",
-      readList: async () => ({ source_url: "https://www.xingtu.cn/ad/creator/index", rows: [] }),
-      readDetail: async () => ({}),
-    }),
   });
   const started = payload(await research({ operation: "start", ...params() }));
   const result = payload(
@@ -154,6 +142,10 @@ test("ordinary Playwright page drift is recoverable instead of stopping the run"
       platform: started.platform,
       run_id: started.run_id,
       keyword: "办公软件",
+      list_snapshot: {
+        source_url: "https://www.xingtu.cn/ad/creator/index",
+        rows: [],
+      },
     }),
   );
   assert.equal(result.success, true);

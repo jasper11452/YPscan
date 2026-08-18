@@ -44,7 +44,7 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
         "collect",
       ],
       description:
-        "Playwright CLI 自助手扒协议：start 创建本地运行；Agent 操作固定 ypscan session 后用 capture_list/capture_detail 从同一 session 只读采集；finalize 生成 Excel；apply_reviews 写回复核；create_submission 生成独立提报表。collect 仅保留旧运行兼容。",
+        "Playwright 自助手扒协议：start 创建本地运行；Agent 操作固定 ypscan session，并把 run-code 读取的 list_snapshot/detail_snapshot 传给 capture_list/capture_detail；插件只校验和落盘，不执行 shell；finalize 生成 Excel。",
     },
     requirement_id: {
       type: "string",
@@ -79,6 +79,35 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
       type: "string",
       minLength: 1,
       description: "capture_detail 当前已由 Agent 打开的达人引用。",
+    },
+    list_snapshot: {
+      type: "object",
+      description:
+        "capture_list 必传；由 Agent 通过 YP Action Playwright run-code 从当前稳定列表页读取并原样传入。插件不执行 shell。",
+      required: ["source_url", "rows"],
+      properties: {
+        source_url: { type: "string", minLength: 1 },
+        page_number: { type: "integer", minimum: 1 },
+        price_tier: { type: "string" },
+        collection_source: { type: "string" },
+        response_endpoint: { type: ["string", "null"] },
+        response_path: { type: ["string", "null"] },
+        challenge: { type: "boolean" },
+        login: { type: "boolean" },
+        rows: { type: "array", maxItems: 200, items: { type: "object" } },
+      },
+    },
+    detail_snapshot: {
+      type: "object",
+      description:
+        "capture_detail 必传；由 Agent 通过 YP Action Playwright run-code 从当前达人详情页读取并原样传入。插件不执行 shell。",
+      required: ["url", "fields"],
+      properties: {
+        url: { type: "string", minLength: 1 },
+        challenge: { type: "boolean" },
+        login: { type: "boolean" },
+        fields: { type: "object" },
+      },
     },
     filter_evidence: {
       type: "array",
@@ -261,10 +290,32 @@ export function validateManualResearchParams(params = {}) {
             keyword: requiredString(params.keyword, "keyword"),
             keyword_complete: params.keyword_complete === true,
             filter_evidence: Array.isArray(params.filter_evidence) ? params.filter_evidence : [],
+            list_snapshot:
+              params.list_snapshot &&
+              typeof params.list_snapshot === "object" &&
+              !Array.isArray(params.list_snapshot) &&
+              Array.isArray(params.list_snapshot.rows)
+                ? params.list_snapshot
+                : (() => {
+                    throw argumentError("capture_list 必须提供含 rows 的 list_snapshot");
+                  })(),
           }
         : {}),
       ...(operation === "capture_detail"
-        ? { candidate_ref: requiredString(params.candidate_ref, "candidate_ref") }
+        ? {
+            candidate_ref: requiredString(params.candidate_ref, "candidate_ref"),
+            detail_snapshot:
+              params.detail_snapshot &&
+              typeof params.detail_snapshot === "object" &&
+              !Array.isArray(params.detail_snapshot) &&
+              params.detail_snapshot.fields &&
+              typeof params.detail_snapshot.fields === "object" &&
+              !Array.isArray(params.detail_snapshot.fields)
+                ? params.detail_snapshot
+                : (() => {
+                    throw argumentError("capture_detail 必须提供含 fields 的 detail_snapshot");
+                  })(),
+          }
         : {}),
     };
   }
