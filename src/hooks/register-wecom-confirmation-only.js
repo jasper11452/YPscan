@@ -506,7 +506,7 @@ function manualResearchSuccessDirective(message) {
       `MANUAL_RESEARCH_RUN_ID=${result?.run_id ?? "未知"}`,
       "先使用 YP Action 自带 playwright 技能和 playwright_cli.sh，固定短 session=ypscan；若 session 未打开，用 --headed --persistent 打开目标达人广场。禁止调用宿主原生 Browser。",
       MANUAL_BROWSER_ENTRY_POLICY,
-      "根据 hard_requirements 与当前可见筛选项做语义匹配。打开菜单、输入、确认、关闭弹窗、导航或页面刷新后必须重新 snapshot，绝不复用旧 ref；动态范围与级联优先用 Playwright hover/fill/click，显式命令不足时才用限定作用域的 run-code，并回读已选条件。所有硬筛完成后最后输入首个关键词；后续只换关键词。",
+      "先处理 selection_plan：每个 batch 都在最新 snapshot 后原样执行其 playwright_run_code，同一菜单入口只打开和确认一次；执行后重新 snapshot，并按返回的 selected_paths/unresolved_paths 和筛选区、结果变化回读。只重试 unresolved_paths 一次，fallbacks、动态项或仍失败路径再用当前页面逐层观察，必要时转详情硬复核。其余 hard_requirements 继续按当前可见筛选项做语义匹配；打开菜单、输入、确认、关闭弹窗、导航或页面刷新后必须重新 snapshot，绝不复用旧 ref。所有硬筛完成后最后输入首个关键词；后续只换关键词。",
       "每个稳定结果页先用 Playwright run-code 读取 source_url/page_number/price_tier/rows，再作为 list_snapshot 调用 ypscan_manual_research(operation=capture_list, run_id, keyword, keyword_complete=false, list_snapshot)；翻页由 Playwright CLI 完成。关键词采集完成后再以 keyword_complete=true 记录筛选证据。详情页用 run-code 读取 url/fields/challenge/login，并作为 detail_snapshot 调用 capture_detail；单个详情不可访问就跳过继续。完成后调用 finalize。",
     ].join("\n");
   }

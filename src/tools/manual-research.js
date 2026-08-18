@@ -1253,6 +1253,7 @@ export function createManualResearch({
           run_id: artifactStore.run_id,
           keywords: plan.keywords,
           hard_requirements: plan.filters,
+          selection_plan: plan.selection_plan,
           detail_requirements: plan.detail_filters ?? [],
           review_requirements: plan.review_requirements ?? [],
           unexpressed_conditions: plan.unexpressed ?? [],

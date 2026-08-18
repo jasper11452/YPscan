@@ -23,6 +23,7 @@ function params() {
       { kind: "creator_count", normalized_value: 1 },
       { kind: "creator_price", normalized_value: 20_000, operator: "lte" },
       { kind: "video_duration", normalized_value: "duration_l3" },
+      { id: "creator-type", kind: "creator_type", normalized_value: ["美妆教程", "护肤保养"] },
     ],
     keywords: ["办公软件"],
   };
@@ -70,6 +71,15 @@ test("Playwright CLI run starts and captures the current list without a selectio
   assert.equal(started.status, "ready_for_playwright");
   assert.equal(started.browser_policy.playwright_session, "ypscan");
   assert.equal(started.browser_policy.selection_id_required, false);
+  assert.equal(started.selection_plan.schema_version, 1);
+  assert.equal(started.selection_plan.batches.length, 1);
+  assert.deepEqual(
+    started.selection_plan.batches[0].items.map((item) => item.path),
+    [
+      ["美妆", "美妆教程"],
+      ["美妆", "护肤保养"],
+    ],
+  );
   assert.equal(browserConnections, 0);
 
   const captured = payload(
