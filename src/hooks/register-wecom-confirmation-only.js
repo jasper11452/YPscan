@@ -3,8 +3,7 @@ import { normalizeToolCallParams, stripHostPrefix } from "../contract/registry.j
 
 const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
 const GRANT_TTL_MS = 10 * 60_000;
-const MESSAGE_CONFIRM_LABEL = "确认询价消息";
-const RECIPIENT_CONFIRM_LABEL = "确认发送机构";
+const SEND_CONFIRM_LABEL = "确认发送";
 const CANCEL_LABEL = "取消";
 const CHALLENGE_PATTERN = /\[悦普识星 询价确认 (wc_[0-9a-f-]+)\]/iu;
 
@@ -98,7 +97,7 @@ function fieldSelectionDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。先把 FIELD_SELECTION_URL 里的原始 url 原样输出为单独一行用户可见正文：禁止 Markdown 包装、重写、用 Browser 打开或替用户选择字段。",
     "用户在选择页提交后，select_inquiry_form_fields 会把所选字段按 requirement ID 持久化到 Provider 数据库；requirement ID 来自 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不是 demand_id。不得调用已弃用的 get_selected_inquiry_form_fields，不得查询、重建、转存或把 columns 放入 Agent 上下文；后续 Provider 工具只传当前 schema 要求的业务标识，由后端关联字段。",
-    "现在停止业务调用并等待用户完成选择后回复“好了”。收到后保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、返点、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message；不得调用 create_submission_batch。消息准备好后调用 create_with_distributions，由 Hook 依次完成消息确认和机构列表确认。",
+    "现在停止业务调用并等待用户完成选择后回复“好了”。收到后保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、返点、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message；不得调用 create_submission_batch。消息准备好后调用 create_with_distributions，由 Hook 在同一次确认中展示机构列表和完整消息。",
     `FIELD_SELECTION_URL=${url}`,
   ].join("\n");
 }
@@ -204,7 +203,7 @@ function distributionDirective(message) {
   const result = parsedToolResult(message);
   if (result?.success !== true) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 未确认成功。企微属于外发副作用，禁止盲目重发。先用当前 requirement_id/project_id 调用 sync_mcn_inquiry_status 核对；只有确认未创建发送记录后才能重新发起双确认。",
+      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 未确认成功。企微属于外发副作用，禁止盲目重发。先用当前 requirement_id/project_id 调用 sync_mcn_inquiry_status 核对；只有确认未创建发送记录后才能重新发起发送确认。",
     ].join("\n");
   }
   const status = result?.data?.send_status;
@@ -830,37 +829,7 @@ function selectedLabel(result, expectedLabel) {
   return null;
 }
 
-function messageConfirmationQuestion(challengeId, params) {
-  const recipients = Array.isArray(params?.supplierIds) ? params.supplierIds.length : 0;
-  const requirement = nonemptyString(params?.requirement_id)
-    ? params.requirement_id.trim()
-    : "未提供";
-  const message = nonemptyString(params?.wechat_notification_message)
-    ? params.wechat_notification_message
-    : "（未提供企微正文）";
-  return {
-    questions: [
-      {
-        header: "确认询价消息",
-        question: [
-          `[悦普识星 询价确认 ${challengeId}] 企微尚未发送。`,
-          `需求：${requirement}`,
-          `拟发送机构：${recipients} 家机构`,
-          "请先确认完整询价消息：",
-          message,
-          "本次只确认消息内容；下一步仍需单独确认机构列表。",
-        ].join("\n"),
-        options: [
-          { label: MESSAGE_CONFIRM_LABEL, description: "消息无误，继续确认发送机构" },
-          { label: CANCEL_LABEL, description: "不执行该操作" },
-        ],
-        multiSelect: false,
-      },
-    ],
-  };
-}
-
-function recipientConfirmationQuestion(challenge, supplierNames = new Map()) {
+function sendConfirmationQuestion(challenge, supplierNames = new Map()) {
   const supplierIds = Array.isArray(challenge?.params?.supplierIds)
     ? challenge.params.supplierIds
     : [];
@@ -868,18 +837,27 @@ function recipientConfirmationQuestion(challenge, supplierNames = new Map()) {
     const name = supplierNames.get(supplierId) ?? "名称未知";
     return `${index + 1}. ${name}（${supplierId}）`;
   });
+  const requirement = nonemptyString(challenge?.params?.requirement_id)
+    ? challenge.params.requirement_id.trim()
+    : "未提供";
+  const message = nonemptyString(challenge?.params?.wechat_notification_message)
+    ? challenge.params.wechat_notification_message
+    : "（未提供企微正文）";
   return {
     questions: [
       {
-        header: "确认发送机构",
+        header: "确认企微发送",
         question: [
-          `[悦普识星 询价确认 ${challenge.id}] 企微尚未发送，询价消息已确认。`,
+          `[悦普识星 询价确认 ${challenge.id}] 企微尚未发送。`,
+          `需求：${requirement}`,
           `即将发送给 ${supplierIds.length} 家机构：`,
           ...recipients,
-          "确认仅授权以上消息和机构列表的一次发送，10 分钟内有效。",
+          "即将发送的消息内容：",
+          message,
+          "确认仅授权以上机构列表和消息内容的一次发送，10 分钟内有效。",
         ].join("\n"),
         options: [
-          { label: RECIPIENT_CONFIRM_LABEL, description: "确认向以上机构发送一次" },
+          { label: SEND_CONFIRM_LABEL, description: "确认向以上机构发送一次" },
           { label: CANCEL_LABEL, description: "不执行该操作" },
         ],
         multiSelect: false,
@@ -910,7 +888,7 @@ function currentUserReply(event) {
   return normalizedManualConfirmation(lines.at(-1));
 }
 
-/** Register the only business gate: two confirmations before one WeCom send. */
+/** Register the only business gate: one confirmation before one WeCom send. */
 export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {}) {
   const challenges = new Map();
   const rankedSuppliers = new Map();
@@ -936,9 +914,7 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
   const pendingForScope = (scope) =>
     [...challenges.values()].filter(
       (challenge) =>
-        !challenge.consumed &&
-        challenge.scope === scope &&
-        ["message_pending", "recipients_pending"].includes(challenge.stage),
+        !challenge.consumed && challenge.scope === scope && challenge.stage === "pending",
     );
 
   api.on(
@@ -971,14 +947,11 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
           createdAt: callNow,
           consumed: false,
           scope,
-          stage: "message_pending",
+          stage: "pending",
           params,
         };
         challenges.set(active.id, active);
-        const askUserQuestion =
-          active.stage === "recipients_pending"
-            ? recipientConfirmationQuestion(active, supplierNamesFor(params, scope))
-            : messageConfirmationQuestion(active.id, params);
+        const askUserQuestion = sendConfirmationQuestion(active, supplierNamesFor(params, scope));
         const recoveryDirective = {
           schema_version: 1,
           code: "HITL_REQUIRED",
@@ -993,7 +966,7 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
         return {
           block: true,
           blockReason: [
-            `HITL_REQUIRED: 【企微状态：本次未发送｜等待${active.stage === "recipients_pending" ? "机构列表" : "询价消息"}确认】`,
+            "HITL_REQUIRED: 【企微状态：本次未发送｜等待发送确认】",
             `YPSCAN_BLOCK_DIRECTIVE=${JSON.stringify(recoveryDirective)}`,
             "ASK_USER_QUESTION_REQUIRED: 必须立即调用宿主 AskUserQuestion，逐字使用下一行 JSON 参数；不得改写问题或用普通文本代替。用户确认后原样重试。",
             `ASK_USER_QUESTION_ARGS=${JSON.stringify(askUserQuestion)}`,
@@ -1016,24 +989,10 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
       const scopedPending = pendingForScope(scope);
       const challenge = scopedPending.length === 1 ? scopedPending[0] : null;
       const lines = [];
-      if (challenge && reply === MESSAGE_CONFIRM_LABEL && challenge.stage === "message_pending") {
-        challenge.stage = "recipients_pending";
-        const question = recipientConfirmationQuestion(
-          challenge,
-          supplierNamesFor(challenge.params, scope),
-        );
-        lines.push(
-          "YPSCAN_CONFIRMATION_DIRECTIVE=询价消息已由用户固定确认词确认，但企微仍未发送。立即逐字调用下面的 AskUserQuestion 确认机构列表，不得先调用发送工具。",
-          `ASK_USER_QUESTION_ARGS=${JSON.stringify(question)}`,
-        );
-      } else if (
-        challenge &&
-        reply === RECIPIENT_CONFIRM_LABEL &&
-        challenge.stage === "recipients_pending"
-      ) {
+      if (challenge && reply === SEND_CONFIRM_LABEL && challenge.stage === "pending") {
         challenge.stage = "authorized";
         lines.push(
-          "YPSCAN_CONFIRMATION_DIRECTIVE=机构列表已由用户固定确认词确认。现在原样调用 create_with_distributions 一次，不得修改任何参数。",
+          "YPSCAN_CONFIRMATION_DIRECTIVE=机构列表和消息内容已由用户固定确认词确认。现在原样调用 create_with_distributions 一次，不得修改任何参数。",
           `CREATE_WITH_DISTRIBUTIONS_ARGS=${JSON.stringify(challenge.params)}`,
         );
       }
@@ -1043,7 +1002,7 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → create_with_distributions 的消息确认和机构确认 → 发送后询问是否继续人工拓展。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
+          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → create_with_distributions 在同一次弹窗确认机构列表和完整消息 → 发送后询问是否继续人工拓展。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
           "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
           "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展完成后必须询问“继续询价”或“直接生成提报表”；后者调用 ypscan_manual_research(operation=create_submission)。人工拓展先调用 ypscan_manual_research(operation=start)，随后读取并使用 YP Action 自带 playwright 技能，通过 Bash 调用 playwright_cli.sh，固定短 session=ypscan，首次 open 使用 --headed --persistent；手扒期间禁止调用宿主原生 Browser，不使用 selection_id、observation_id、element_id。",
@@ -1111,12 +1070,9 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
           ? scopedPending[0]
           : null;
       if (!challenge) return;
-      const expected =
-        challenge.stage === "message_pending" ? MESSAGE_CONFIRM_LABEL : RECIPIENT_CONFIRM_LABEL;
-      const selected = selectedLabel(result, expected);
-      if (selected === expected) {
-        challenge.stage =
-          challenge.stage === "message_pending" ? "recipients_pending" : "authorized";
+      const selected = selectedLabel(result, SEND_CONFIRM_LABEL);
+      if (selected === SEND_CONFIRM_LABEL && challenge.stage === "pending") {
+        challenge.stage = "authorized";
       } else {
         challenges.delete(challenge.id);
       }
