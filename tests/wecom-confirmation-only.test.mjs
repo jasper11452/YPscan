@@ -42,7 +42,7 @@ test("Provider calls remain unrestricted and their params are not rewritten", as
   );
 });
 
-test("WeCom send requires confirmation and consumes an exact one-shot in-memory grant", async () => {
+test("WeCom send requires message and recipient confirmation before one exact send", async () => {
   const hooks = registeredHooks();
   const context = { runId: "run-wecom" };
   const blocked = await hooks.get("before_tool_call")(
@@ -58,6 +58,7 @@ test("WeCom send requires confirmation and consumes an exact one-shot in-memory 
   assert.match(blocked.blockReason, /^HITL_REQUIRED:/u);
   assert.match(blocked.blockReason, /ASK_USER_QUESTION_ARGS=/u);
   assert.match(blocked.blockReason, /YPSCAN_BLOCK_DIRECTIVE=/u);
+  assert.equal(blocked.askUserQuestion.questions[0].header, "确认询价消息");
   assert.match(blocked.askUserQuestion.questions[0].question, /2 家机构/u);
   assert.match(blocked.askUserQuestion.questions[0].question, /您好，请协助反馈本次项目报价/u);
 
@@ -65,7 +66,28 @@ test("WeCom send requires confirmation and consumes an exact one-shot in-memory 
     {
       toolName: "AskUserQuestion",
       params: blocked.askUserQuestion,
-      result: { content: [{ text: `${blocked.askUserQuestion.questions[0].question}: 确认发送` }] },
+      result: { answer: "确认询价消息" },
+    },
+    context,
+  );
+
+  const recipients = await hooks.get("before_tool_call")(
+    {
+      toolName: "ypmcn__create_with_distributions",
+      toolCallId: "send-message-confirmed",
+      params: inquiryParams,
+    },
+    context,
+  );
+  assert.equal(recipients.block, true);
+  assert.equal(recipients.askUserQuestion.questions[0].header, "确认发送机构");
+  assert.match(recipients.askUserQuestion.questions[0].question, /supplier-a/u);
+
+  await hooks.get("after_tool_call")(
+    {
+      toolName: "AskUserQuestion",
+      params: recipients.askUserQuestion,
+      result: { answer: "确认发送机构" },
     },
     context,
   );
@@ -93,20 +115,21 @@ test("WeCom send requires confirmation and consumes an exact one-shot in-memory 
   assert.equal(secondAttempt.block, true);
 });
 
-test("confirmation rejects changed params and survives host run rollover", async () => {
+test("confirmation rejects changed params and stays scoped to one session", async () => {
   const hooks = registeredHooks();
+  const session = { sessionKey: "session-a", runId: "run-a" };
   const blocked = await hooks.get("before_tool_call")(
     { toolName: "create_with_distributions", params: inquiryParams },
-    { runId: "run-a" },
+    session,
   );
 
   await hooks.get("after_tool_call")(
     {
       toolName: "AskUserQuestion",
       params: blocked.askUserQuestion,
-      result: { answer: "确认发送" },
+      result: { answer: "确认询价消息" },
     },
-    { runId: "run-a" },
+    session,
   );
 
   const changed = await hooks.get("before_tool_call")(
@@ -114,18 +137,19 @@ test("confirmation rejects changed params and survives host run rollover", async
       toolName: "create_with_distributions",
       params: { ...inquiryParams, description: "已改写的需求" },
     },
-    { runId: "run-a" },
+    session,
   );
   assert.equal(changed.block, true);
 
-  const otherRun = await hooks.get("before_tool_call")(
+  const otherSession = await hooks.get("before_tool_call")(
     { toolName: "create_with_distributions", params: inquiryParams },
-    { runId: "run-b" },
+    { sessionKey: "session-b", runId: "run-b" },
   );
-  assert.equal(otherRun, undefined);
+  assert.equal(otherSession.block, true);
+  assert.equal(otherSession.askUserQuestion.questions[0].header, "确认询价消息");
 });
 
-test("confirmation binds exact string whitespace and accepts a rewritten question in the same run", async () => {
+test("confirmation binds exact params through both stages", async () => {
   const hooks = registeredHooks();
   const context = { runId: "run-rewritten-question" };
   const blocked = await hooks.get("before_tool_call")(
@@ -141,7 +165,22 @@ test("confirmation binds exact string whitespace and accepts a rewritten questio
           { ...blocked.askUserQuestion.questions[0], question: "是否确认发送本次询价？" },
         ],
       },
-      result: { answer: "确认发送" },
+      result: { answer: "确认询价消息" },
+    },
+    context,
+  );
+
+  const recipients = await hooks.get("before_tool_call")(
+    { toolName: "create_with_distributions", params: inquiryParams },
+    context,
+  );
+  assert.equal(recipients.askUserQuestion.questions[0].header, "确认发送机构");
+
+  await hooks.get("after_tool_call")(
+    {
+      toolName: "AskUserQuestion",
+      params: recipients.askUserQuestion,
+      result: { answer: "确认发送机构" },
     },
     context,
   );
@@ -165,6 +204,40 @@ test("confirmation binds exact string whitespace and accepts a rewritten questio
     context,
   );
   assert.equal(whitespaceChanged.block, true);
+});
+
+test("test MCP prefixes cannot bypass the WeCom gate", async () => {
+  const hooks = registeredHooks();
+  const blocked = await hooks.get("before_tool_call")(
+    { toolName: "test__create_with_distributions", params: inquiryParams },
+    { sessionKey: "test-prefix-session" },
+  );
+  assert.equal(blocked.block, true);
+  assert.equal(blocked.askUserQuestion.questions[0].header, "确认询价消息");
+});
+
+test("fixed manual confirmation phrases advance only the current stage", async () => {
+  const hooks = registeredHooks();
+  const context = { sessionKey: "manual-confirm-session" };
+  await hooks.get("before_tool_call")(
+    { toolName: "test__create_with_distributions", params: inquiryParams },
+    context,
+  );
+
+  assert.equal(hooks.get("before_prompt_build")({ prompt: "确认" }, context), undefined);
+  const messageConfirmed = hooks.get("before_prompt_build")({ prompt: "确认询价消息。" }, context);
+  assert.match(messageConfirmed.prependContext, /询价消息已由用户固定确认词确认/u);
+  assert.match(messageConfirmed.prependContext, /确认机构列表/u);
+
+  const recipientsConfirmed = hooks.get("before_prompt_build")({ prompt: "确认发送机构" }, context);
+  assert.match(recipientsConfirmed.prependContext, /原样调用 create_with_distributions/u);
+  assert.equal(
+    await hooks.get("before_tool_call")(
+      { toolName: "test__create_with_distributions", params: inquiryParams },
+      context,
+    ),
+    undefined,
+  );
 });
 
 test("startup asks for the complete Skill once and keeps the fixed chain in context", () => {

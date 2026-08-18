@@ -12,6 +12,7 @@ export const HOST_PREFIXES = Object.freeze([
   "ypscan__",
   "mcp__ypmcn__",
   "ypmcn__",
+  "test__",
 ]);
 
 const BUSINESS_TOOL_NAMES = Object.freeze([
@@ -354,9 +355,15 @@ export function normalizeValidateRequirementTagArrays(params) {
 
 export function stripHostPrefix(toolName) {
   if (typeof toolName !== "string") return null;
-  const prefix = HOST_PREFIXES.find((candidate) => toolName.startsWith(candidate));
-  const bare = prefix ? toolName.slice(prefix.length) : toolName;
-  return Object.hasOwn(TOOL_REGISTRY, bare) ? bare : null;
+  const normalized = toolName.trim().toLowerCase();
+  if (Object.hasOwn(TOOL_REGISTRY, normalized)) return normalized;
+  for (const bare of BUSINESS_TOOL_NAMES) {
+    const suffix = `__${bare}`;
+    if (!normalized.endsWith(suffix)) continue;
+    const prefix = normalized.slice(0, -suffix.length);
+    if (/^[a-z0-9_-]+(?:__[a-z0-9_-]+)*$/u.test(prefix)) return bare;
+  }
+  return null;
 }
 
 export function normalizeToolCallParams(toolName, params) {

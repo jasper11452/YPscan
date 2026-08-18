@@ -531,4 +531,22 @@ test("apply_reviews returns successive batches until the same workbook is comple
   assert.equal(finalBatch.review_remaining, 0);
   assert.equal(finalBatch.artifact.target_row_count, 15);
   assert.equal(finalBatch.artifact.excel_path, collect.artifact.excel_path);
+
+  const submission = payload(
+    await run({
+      operation: "create_submission",
+      requirement_id: "review-batches",
+      platform: "xingtu",
+      run_id: collect.artifact.run_id,
+    }),
+  );
+  assert.equal(submission.success, true, JSON.stringify(submission));
+  assert.equal(submission.operation, "create_submission");
+  assert.equal(submission.row_count, 15);
+  assert.notEqual(submission.submission_path, collect.artifact.excel_path);
+  const submissionWorkbook = await readFile(submission.submission_path);
+  const workbookXml = storedZipEntry(submissionWorkbook, "xl/workbook.xml");
+  assert.match(workbookXml, /sheet name="提报表"/u);
+  assert.match(workbookXml, /sheet name="需求信息"/u);
+  assert.doesNotMatch(workbookXml, /完整候选池/u);
 });

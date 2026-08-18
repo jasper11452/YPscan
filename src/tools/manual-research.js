@@ -2,6 +2,7 @@ import { chromium } from "playwright-core";
 import { inspectManualBrowser } from "./manual-browser-state.js";
 import {
   applyManualResearchReviews,
+  createManualResearchSubmission,
   createManualResearchStore,
   loadManualResearchRun,
   MANUAL_RESEARCH_PREVIEW_LIMIT,
@@ -1246,6 +1247,28 @@ export function createManualResearch({
           },
         };
         return hostToolResult(payload, { details: payload, isError: true });
+      }
+      if (params.operation === "create_submission") {
+        const submission = await createManualResearchSubmission({
+          workspaceDir,
+          runId: params.run_id,
+          requirementId: params.requirement_id,
+          platform: params.platform,
+          now,
+        });
+        const payload = {
+          success: true,
+          status: "complete",
+          operation: "create_submission",
+          requirement_id: params.requirement_id,
+          platform: params.platform,
+          submission_path: submission.submission_path,
+          row_count: submission.row_count,
+          target_count: submission.target_count,
+          delivery_shortfall: submission.delivery_shortfall,
+          artifact: submission,
+        };
+        return hostToolResult(payload, { details: payload });
       }
       if (params.operation === "apply_reviews") {
         const result = await applyManualResearchReviews({

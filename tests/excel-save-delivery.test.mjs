@@ -49,6 +49,14 @@ test("only Provider submission save offers enrichment", async (t) => {
   assert.equal(preview.success, true);
   assert.equal(preview.delivery.next_tool, undefined);
   assert.equal(preview.delivery.next_args, undefined);
+
+  const mcnPreview = JSON.parse((await saveFixture(
+    workspaceDir,
+    "mcn_creator_preview",
+    "mcn-creator-preview.xlsx",
+  )).content[0].text);
+  assert.equal(mcnPreview.success, true);
+  assert.equal(mcnPreview.delivery.next_tool, undefined);
 });
 
 test("Excel download accepts HTTPS URLs under eshypdata.com", async (t) => {

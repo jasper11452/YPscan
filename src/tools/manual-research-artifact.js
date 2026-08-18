@@ -664,21 +664,40 @@ export function buildManualResearchWorkbook({
     ["生成时间", timestamp],
     ["说明", "最终名单仅包含详情硬条件通过且 Agent 语义复核纳入的达人；空值按未知处理。"],
   ];
-  const sheets = [
-    { name: "最终名单", rows: detailRows(finalRows, details, reviews), widths: detailWidths },
-    {
-      name: "详情补录",
-      rows: detailRows(checkedCandidates, details, reviews),
-      widths: detailWidths,
-    },
-    { name: "完整候选池", rows: candidateRows(checkedCandidates, plan), widths: poolWidths },
-    {
-      name: "条件判断",
-      rows: conditionRows(checkedCandidates, details),
-      widths: [28, 22, 22, 24, 24, 12, 16, 28],
-    },
-    { name: "运行信息", rows: metadataRows, widths: [24, 90] },
-  ];
+  const sheets = artifact.submission_only
+    ? [
+        { name: "提报表", rows: detailRows(finalRows, details, reviews), widths: detailWidths },
+        {
+          name: "需求信息",
+          rows: [
+            ["字段", "值"],
+            ["需求ID", params.requirement_id],
+            ["平台", params.platform],
+            ["运行ID", artifact.run_id ?? ""],
+            ["数据来源", "人工拓展最终复核名单"],
+            ["目标达人", targetCount],
+            ["实际达人", finalRows.length],
+            ["当前缺口", deliveryShortfall],
+            ["生成时间", timestamp],
+          ],
+          widths: [24, 90],
+        },
+      ]
+    : [
+        { name: "最终名单", rows: detailRows(finalRows, details, reviews), widths: detailWidths },
+        {
+          name: "详情补录",
+          rows: detailRows(checkedCandidates, details, reviews),
+          widths: detailWidths,
+        },
+        { name: "完整候选池", rows: candidateRows(checkedCandidates, plan), widths: poolWidths },
+        {
+          name: "条件判断",
+          rows: conditionRows(checkedCandidates, details),
+          widths: [28, 22, 22, 24, 24, 12, 16, 28],
+        },
+        { name: "运行信息", rows: metadataRows, widths: [24, 90] },
+      ];
   const sheetNames = sheets.map((sheet) => sheet.name);
   const sheetXml = sheets.map((sheet) => worksheetXml(sheet.rows, sheet.widths));
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1108,6 +1127,72 @@ export async function loadManualResearchRun({ workspaceDir, runId, requirementId
     browser_states: restored.browser_states,
     browser_actions: restored.browser_actions,
     phase_transitions: restored.phase_transitions,
+  };
+}
+
+/** Generate a compact local submission workbook from one completed manual run. */
+export async function createManualResearchSubmission({
+  workspaceDir,
+  runId,
+  requirementId,
+  platform,
+  now = Date.now,
+}) {
+  const loaded = await loadManualResearchRun({
+    workspaceDir,
+    runId,
+    requirementId,
+    platform,
+  });
+  const pending = reviewBatch(loaded.candidates, loaded.details, loaded.reviews, {
+    requirements: loaded.plan.review_requirements,
+  });
+  if (pending.remaining > 0) {
+    throw Object.assign(new Error("仍有达人尚未完成语义复核"), {
+      code: "YPSCAN_MANUAL_SUBMISSION_REVIEW_PENDING",
+    });
+  }
+  const checkedCandidates = candidatesWithPriceCheck(loaded.candidates, loaded.plan);
+  const selected = finalCandidates(
+    checkedCandidates,
+    loaded.details,
+    loaded.reviews,
+    loaded.plan.target_count,
+  );
+  if (!selected.length) {
+    throw Object.assign(new Error("当前运行没有最终纳入达人"), {
+      code: "YPSCAN_MANUAL_SUBMISSION_EMPTY",
+    });
+  }
+  const root = join(await realpath(workspaceDir), ARTIFACT_DIR, safeRunId(runId));
+  const submissionPath = join(root, `${safeRunId(runId)}-submission.xlsx`);
+  const generatedAt = new Date(now()).toISOString();
+  const workbook = buildManualResearchWorkbook({
+    params: loaded.params,
+    plan: loaded.plan,
+    branches: loaded.branches,
+    candidates: loaded.candidates,
+    details: loaded.details,
+    reviews: loaded.reviews,
+    status: "complete",
+    artifact: {
+      run_id: loaded.run_id,
+      checkpoint_path: join(root, "checkpoint.jsonl"),
+      generated_at: generatedAt,
+      submission_only: true,
+    },
+  });
+  await writeAtomic(submissionPath, workbook);
+  return {
+    submission_path: submissionPath,
+    row_count: selected.length,
+    target_count: loaded.plan.target_count ?? selected.length,
+    delivery_shortfall: loaded.plan.target_count
+      ? Math.max(loaded.plan.target_count - selected.length, 0)
+      : 0,
+    byte_count: workbook.length,
+    sha256: createHash("sha256").update(workbook).digest("hex"),
+    generated_at: generatedAt,
   };
 }
 

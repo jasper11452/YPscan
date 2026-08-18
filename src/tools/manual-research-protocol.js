@@ -34,9 +34,9 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
   properties: {
     operation: {
       type: "string",
-      enum: ["collect", "apply_reviews"],
+      enum: ["collect", "apply_reviews", "create_submission"],
       description:
-        "默认 collect；collect 必须使用 ypscan_manual_select_filters 返回的 run_id/selection_id，详情完成后用 apply_reviews 分批写回复核结论。",
+        "默认 collect；collect 必须使用筛选工具返回的 run_id/selection_id，详情完成后用 apply_reviews 分批写回复核结论；全部复核完成后可用 create_submission 生成独立本地提报表。",
     },
     requirement_id: {
       type: "string",
@@ -182,11 +182,19 @@ function normalizePlatform(value) {
 /** @param {Record<string, any>} [params] */
 export function validateManualResearchParams(params = {}) {
   const operation = params.operation ?? "collect";
-  if (!["collect", "apply_reviews"].includes(operation)) {
-    throw argumentError("operation 必须是 collect 或 apply_reviews");
+  if (!["collect", "apply_reviews", "create_submission"].includes(operation)) {
+    throw argumentError("operation 必须是 collect、apply_reviews 或 create_submission");
   }
   const platform = normalizePlatform(params.platform);
   const requirementId = requiredString(params.requirement_id, "requirement_id");
+  if (operation === "create_submission") {
+    return {
+      operation,
+      requirement_id: requirementId,
+      platform,
+      run_id: requiredString(params.run_id, "run_id"),
+    };
+  }
   if (operation === "apply_reviews") {
     if (!Array.isArray(params.reviews) || params.reviews.length < 1 || params.reviews.length > 20) {
       throw argumentError("reviews 必须包含 1–20 条复核结果");

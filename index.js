@@ -101,7 +101,7 @@ export default {
         return {
           name: "ypscan_manual_research",
           description:
-            "人工拓展数据工具：新协议下每次 collect 只读取并持久化当前结果页或详情页证据，返回下一条精确工具调用；不执行导航、筛选、翻页或详情点击。apply_reviews 继续分批写回同一 run。",
+            "人工拓展数据工具：collect 只读取并持久化当前结果页或详情页证据，返回下一条精确工具调用；apply_reviews 分批写回复核结论；复核完成后 create_submission 从同一 run 生成独立本地提报表。",
           parameters: MANUAL_RESEARCH_PARAMETERS,
           async execute(_id, params) {
             return manualResearch(params);
@@ -140,7 +140,12 @@ export default {
             properties: {
               artifact_kind: {
                 type: "string",
-                enum: ["submission_batch", "creator_detail_export", "creator_preview"],
+                enum: [
+                  "submission_batch",
+                  "creator_detail_export",
+                  "creator_preview",
+                  "mcn_creator_preview",
+                ],
               },
               artifact_id: {
                 type: "string",

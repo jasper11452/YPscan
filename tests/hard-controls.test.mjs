@@ -43,6 +43,12 @@ function saveExcelArgsFromDirective(text) {
   return JSON.parse(line.slice("SAVE_EXCEL_ARTIFACT_ARGS=".length));
 }
 
+function namedArgsFromDirective(text, name) {
+  const prefix = `${name}=`;
+  const line = text.split("\n").find((item) => item.startsWith(prefix));
+  return JSON.parse(line.slice(prefix.length));
+}
+
 test("startup skill defers Browser branch details to platform references", () => {
   const skill = readFileSync(
     new URL("../skills/media-assistant/SKILL.md", import.meta.url),
@@ -191,6 +197,99 @@ test("creator preview save keeps the local path and continues to rank", () => {
   );
 });
 
+test("institutional retrieval continues through ingest Excel save, creator rank and submission", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const synced = persist({
+    toolName: "test__sync_mcn_inquiry_status",
+    message: toolMessage({
+      success: true,
+      data: { inquiries: [{ inquiry_id: 12 }, { inquiry_id: "13" }] },
+    }),
+  });
+  assert.deepEqual(namedArgsFromDirective(directiveText(synced), "INGEST_MCN_SUBMISSIONS_ARGS"), {
+    inquiry_ids: ["12", "13"],
+  });
+
+  const ingested = persist({
+    toolName: "test__ingest_mcn_submissions",
+    params: { inquiry_ids: ["12", "13"] },
+    message: toolMessage({
+      success: true,
+      data: {
+        requirement_id: "req-ingest",
+        excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
+      },
+    }),
+  });
+  assert.deepEqual(saveExcelArgsFromDirective(directiveText(ingested)), {
+    artifact_kind: "mcn_creator_preview",
+    artifact_id: "req-ingest",
+    excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
+  });
+
+  const previewSaved = persist({
+    toolName: "ypscan_save_excel_artifact",
+    params: {
+      artifact_kind: "mcn_creator_preview",
+      artifact_id: "req-ingest",
+      excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
+    },
+    message: toolMessage({ success: true, data: { file_path: "/workspace/mcn-preview.xlsx" } }),
+  });
+  assert.deepEqual(namedArgsFromDirective(directiveText(previewSaved), "RANK_CREATORS_ARGS"), {
+    requirement_id: "req-ingest",
+  });
+
+  const ranked = persist({
+    toolName: "test__rank_creators",
+    params: { requirement_id: "req-ingest" },
+    message: toolMessage({ success: true, data: { ranked_count: 8 } }),
+  });
+  assert.deepEqual(namedArgsFromDirective(directiveText(ranked), "CREATE_SUBMISSION_BATCH_ARGS"), {
+    requirement_id: "req-ingest",
+    submission_batche_page: 1,
+  });
+
+  const submission = persist({
+    toolName: "test__create_submission_batch",
+    params: { requirement_id: "req-ingest", submission_batche_page: 1 },
+    message: toolMessage({
+      success: true,
+      data: {
+        batch_id: "batch-1",
+        excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+      },
+    }),
+  });
+  assert.deepEqual(saveExcelArgsFromDirective(directiveText(submission)), {
+    artifact_kind: "submission_batch",
+    artifact_id: "batch-1",
+    excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+  });
+});
+
+test("successful WeCom distribution asks whether to continue manual expansion", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "test__create_with_distributions",
+    message: toolMessage({
+      success: true,
+      data: {
+        send_status: {
+          sent_suppliers: [{ supplier_id: "a" }],
+          failed_suppliers: [],
+        },
+      },
+    }),
+  });
+  const question = argsFromDirective(directiveText(result)).questions[0];
+  assert.deepEqual(
+    question.options.map((option) => option.label),
+    ["继续人工拓展", "暂不拓展"],
+  );
+  assert.match(question.question, /成功机构：1 家\n失败机构：0 家/u);
+});
+
 test("manual research success directive makes the local Excel the primary large-result delivery", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
@@ -215,6 +314,39 @@ test("manual research success directive makes the local Excel the primary large-
   assert.match(directive, /禁止在对话粘贴完整名单/u);
   assert.match(directive, /最多 10 条预览/u);
   assert.match(directive, /不得把平台硬筛结果表述为已经完成语义复核/u);
+});
+
+test("completed manual research asks for inquiry or a local submission workbook", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_manual_research",
+    message: toolMessage({
+      success: true,
+      status: "complete",
+      operation: "apply_reviews",
+      requirement_id: "req-manual",
+      platform: "xingtu",
+      review_remaining: 0,
+      delivery_shortfall: 2,
+      plan: { target_count: 10 },
+      artifact: {
+        run_id: "run-manual",
+        target_row_count: 8,
+        excel_path: "/workspace/manual.xlsx",
+      },
+    }),
+  });
+  const text = directiveText(result);
+  assert.deepEqual(
+    argsFromDirective(text).questions[0].options.map((option) => option.label),
+    ["继续询价", "直接生成提报表"],
+  );
+  assert.deepEqual(namedArgsFromDirective(text, "MANUAL_SUBMISSION_ARGS"), {
+    operation: "create_submission",
+    requirement_id: "req-manual",
+    platform: "xingtu",
+    run_id: "run-manual",
+  });
 });
 
 test("manual research shortfall directive forbids padding rejected price candidates", () => {
@@ -399,6 +531,9 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /按需求 ID 持久化到 Provider 数据库/u);
   assert.match(text, /不得调用已弃用的 get_selected_inquiry_form_fields/u);
   assert.match(text, /不得.*把 columns 放入 Agent 上下文/u);
+  assert.match(text, /等待用户完成选择后回复“好了”/u);
+  assert.match(text, /调用 create_with_distributions/u);
+  assert.match(text, /不得调用 create_submission_batch/u);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });

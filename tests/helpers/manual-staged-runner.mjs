@@ -199,7 +199,7 @@ export function createStagedManualResearch(options = {}) {
   };
   const collect = createManualResearch(shared);
   return async function stagedRun(params = {}) {
-    if (params.operation === "apply_reviews") return collect(params);
+    if (["apply_reviews", "create_submission"].includes(params.operation)) return collect(params);
     let selectionResult = await selectFilters(params);
     let selection = payload(selectionResult);
     if (selection.success !== true) return selectionResult;

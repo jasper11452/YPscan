@@ -3,7 +3,12 @@
   "tool": "ypscan_save_excel_artifact",
   "riskTier": "local_trusted_download",
   "arguments": {
-    "artifact_kind": ["submission_batch", "creator_detail_export", "creator_preview"],
+    "artifact_kind": [
+      "submission_batch",
+      "creator_detail_export",
+      "creator_preview",
+      "mcn_creator_preview"
+    ],
     "artifact_id": "non-empty requirement, task, or batch correlation metadata",
     "excel_file_url": "trusted fixed-endpoint Provider download URL"
   },
