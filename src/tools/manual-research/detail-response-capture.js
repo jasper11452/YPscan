@@ -91,7 +91,9 @@ function clean(value) {
 }
 
 function normalizedKey(value) {
-  return clean(value).replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+  return clean(value)
+    .replace(/[^\p{L}\p{N}]/gu, "")
+    .toLowerCase();
 }
 
 function scalar(value) {
@@ -179,10 +181,7 @@ function candidateIdentityMatches(payload, url, candidate) {
 
 function detailLikelihood(bag) {
   const aliases = Object.values(FIELD_ALIASES).flat();
-  return aliases.reduce(
-    (score, alias) => score + Number(bag.has(normalizedKey(alias))),
-    0,
-  );
+  return aliases.reduce((score, alias) => score + Number(bag.has(normalizedKey(alias))), 0);
 }
 
 function priceByTier(bag) {
@@ -229,11 +228,34 @@ function recentContentFromPayload(payload) {
         for (const item of value.slice(0, 20)) {
           if (!item || typeof item !== "object") continue;
           const bag = valueBag(item);
-          const title = pick(bag, ["title", "noteTitle", "contentTitle", "videoTitle", "desc"]);
+          const title = pick(bag, [
+            "title",
+            "noteTitle",
+            "contentTitle",
+            "videoTitle",
+            "itemTitle",
+            "item_title",
+            "videoDesc",
+            "video_desc",
+            "awemeDesc",
+            "aweme_desc",
+            "desc",
+          ]);
           if (!clean(title)) continue;
           found.push({
             title: clean(title),
-            url: clean(pick(bag, ["url", "noteUrl", "contentUrl", "videoUrl"])) || null,
+            url:
+              clean(
+                pick(bag, [
+                  "url",
+                  "noteUrl",
+                  "contentUrl",
+                  "videoUrl",
+                  "itemUrl",
+                  "shareUrl",
+                  "playUrl",
+                ]),
+              ) || null,
             published_at:
               clean(pick(bag, ["publishTime", "publishedAt", "createTime", "date"])) || null,
             views: pick(bag, ["viewCount", "readCount", "playCount", "views"]),
@@ -256,6 +278,33 @@ function recentContentFromPayload(payload) {
       return true;
     })
     .slice(0, 3);
+}
+
+function labeledDistribution(payload, pathPattern) {
+  const found = [];
+  const visit = (value, path = "", depth = 0) => {
+    if (!value || typeof value !== "object" || depth > 7) return;
+    if (Array.isArray(value)) {
+      if (pathPattern.test(path)) {
+        for (const item of value.slice(0, 50)) {
+          if (!item || typeof item !== "object") continue;
+          const bag = valueBag(item);
+          const label = pick(bag, ["label", "name", "title", "type", "category", "city"]);
+          const rate = pick(bag, ["rate", "ratio", "proportion", "percent", "percentage", "value"]);
+          if (clean(label) && rate !== null) found.push({ name: clean(label), rate_raw: rate });
+        }
+      }
+      for (const item of value) visit(item, path, depth + 1);
+      return;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      visit(child, path ? `${path}.${key}` : key, depth + 1);
+    }
+  };
+  visit(payload);
+  return [
+    ...new Map(found.map((item) => [`${item.name}|${clean(item.rate_raw)}`, item])).values(),
+  ].slice(0, 20);
 }
 
 function audienceCities(payload) {
@@ -294,13 +343,33 @@ export function normalizeDetailResponse(payload) {
   if (recentContent.length) fields.recent_content = recentContent;
   const cities = audienceCities(payload);
   if (cities.length) fields.audience_cities = cities;
-  return { fields, likelihood: detailLikelihood(bag) };
+  const genderDistribution = labeledDistribution(payload, /gender|sex|性别/iu);
+  const male = genderDistribution.find((item) => /^(?:男|男性|male)$/iu.test(item.name));
+  const female = genderDistribution.find((item) => /^(?:女|女性|female)$/iu.test(item.name));
+  if (male && fields.audience_male_rate_raw === undefined) {
+    fields.audience_male_rate_raw = male.rate_raw;
+  }
+  if (female && fields.audience_female_rate_raw === undefined) {
+    fields.audience_female_rate_raw = female.rate_raw;
+  }
+  const cityDistribution = labeledDistribution(payload, /city|region|location|城市|地域/iu);
+  if (cityDistribution.length) fields.audience_city_distribution = cityDistribution;
+  const personaDistribution = labeledDistribution(
+    payload,
+    /persona|crowd|occupation|profession|人群|画像|职业/iu,
+  );
+  if (personaDistribution.length) fields.audience_persona_distribution = personaDistribution;
+  return { fields, likelihood: Math.max(detailLikelihood(bag), Object.keys(fields).length) };
 }
 
 function mergeFields(target, source) {
   for (const [key, value] of Object.entries(source ?? {})) {
     if (Array.isArray(value)) {
-      target[key] = [...new Map([...(target[key] ?? []), ...value].map((item) => [JSON.stringify(item), item])).values()];
+      target[key] = [
+        ...new Map(
+          [...(target[key] ?? []), ...value].map((item) => [JSON.stringify(item), item]),
+        ).values(),
+      ];
     } else if (value && typeof value === "object") {
       target[key] = { ...(target[key] ?? {}), ...value };
     } else if (target[key] === null || target[key] === undefined || target[key] === "") {

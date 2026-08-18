@@ -181,6 +181,7 @@ export function normalizeListResponseRow(source, platform) {
   ]);
   const videoPrice = pick(bag, ["videoPrice", "video_price", "taskPrice", "task_price", "price"]);
   return {
+    ordinal: pick(bag, ["ordinal", "rank", "rankIndex", "rank_index", "index"]),
     platform_id: platformId,
     nickname: clean(pick(bag, NAME_ALIASES)) || null,
     detail_url: detailUrl,
@@ -438,12 +439,48 @@ function nonEmptyEntries(value) {
 export function mergeCapturedAndDomRows(capturedRows, domRows) {
   if (!capturedRows?.length) return domRows ?? [];
   const remaining = [...(domRows ?? [])];
-  return capturedRows.map((networkRow, index) => {
+  const capturedNicknameCounts = new Map();
+  const domNicknameCounts = new Map();
+  for (const row of capturedRows) {
+    const nickname = clean(row.nickname);
+    if (nickname)
+      capturedNicknameCounts.set(nickname, (capturedNicknameCounts.get(nickname) ?? 0) + 1);
+  }
+  for (const row of remaining) {
+    const nickname = clean(row.nickname);
+    if (nickname) domNicknameCounts.set(nickname, (domNicknameCounts.get(nickname) ?? 0) + 1);
+  }
+  const merged = capturedRows.map((networkRow, index) => {
     const nickname = clean(networkRow.nickname);
-    const matchingIndex = remaining.findIndex(
-      (row) => nickname && clean(row.nickname) === nickname,
+    const stableMatch = remaining.findIndex(
+      (row) =>
+        (networkRow.platform_id && row.platform_id === networkRow.platform_id) ||
+        (networkRow.detail_url && row.detail_url === networkRow.detail_url),
     );
-    const domIndex = matchingIndex >= 0 ? matchingIndex : index < remaining.length ? index : -1;
+    const uniqueNicknameMatch = remaining.findIndex(
+      (row) =>
+        nickname &&
+        capturedNicknameCounts.get(nickname) === 1 &&
+        domNicknameCounts.get(nickname) === 1 &&
+        clean(row.nickname) === nickname,
+    );
+    const ordinalMatch = remaining.findIndex(
+      (row) =>
+        networkRow.ordinal !== null &&
+        networkRow.ordinal !== undefined &&
+        row.ordinal !== null &&
+        row.ordinal !== undefined &&
+        String(row.ordinal) === String(networkRow.ordinal),
+    );
+    const samePositionMatch =
+      index < remaining.length &&
+      (capturedRows.length === 1 || (nickname && clean(remaining[index]?.nickname) === nickname))
+        ? index
+        : -1;
+    const domIndex =
+      [stableMatch, uniqueNicknameMatch, ordinalMatch, samePositionMatch].find(
+        (value) => value >= 0,
+      ) ?? -1;
     const domRow = domIndex >= 0 ? remaining.splice(domIndex, 1)[0] : null;
     return {
       ...nonEmptyEntries(networkRow),
@@ -459,4 +496,5 @@ export function mergeCapturedAndDomRows(capturedRows, domRows) {
       tags: [...new Set([...(networkRow.tags ?? []), ...(domRow?.tags ?? [])])],
     };
   });
+  return [...merged, ...remaining];
 }

@@ -10,6 +10,7 @@ import {
   hasResultRefreshEvidence,
   hoverOptional,
   openFilterMenu,
+  platformRangeValue,
   readPlatformResults,
   selectMenuValues,
   settleAfterAction,
@@ -87,6 +88,56 @@ function expectedFilterReadback(filter) {
   const legacyReadback = cleanText(filter.readback);
   if (filter.control !== "creator_price") return legacyReadback;
   return legacyReadback.match(/达人报价(?:·\d+)?/u)?.[0] ?? legacyReadback;
+}
+
+async function readAppliedRange(page, filter) {
+  const control = FILTER_CONTROLS[filter.control];
+  if (!control) return { valid: false, reason: "platform_filter_not_supported" };
+  const opened = await openFilterMenu(page, control.rows, {
+    triggerLabels: control.valueTrigger
+      ? valueTriggerLabels(filter.values ?? [])
+      : control.triggers,
+    optionValues: control.valueTrigger ? (filter.values ?? []) : [],
+  });
+  if (!opened) return { valid: false, reason: "filter_row_not_found" };
+  let rangeMenu = opened;
+  if (filter.control === "creator_price") {
+    const interval = await findPriceRangeMenu(page, opened.menu);
+    if (!interval) return { valid: false, reason: "price_range_trigger_not_found" };
+    rangeMenu = { ...opened, menu: interval.menu, menu_id: interval.menu_id };
+  }
+  const custom = rangeMenu.menu.getByText(/^(?:自定义|自定义区间)$/u).first();
+  if (await custom.isVisible().catch(() => false)) {
+    if (!(await clickOptional(custom))) return { valid: false, reason: "custom_range_not_opened" };
+    await page.waitForTimeout(180);
+  }
+  const inputs = rangeMenu.menu.locator("input:visible:not([readonly]):not([disabled])");
+  const count = await inputs.count().catch(() => 0);
+  if (!count || count > 2) return { valid: false, reason: "range_inputs_not_found" };
+  const displayText = cleanText(await rangeMenu.menu.innerText().catch(() => ""));
+  const requested = count === 1 ? [filter.max ?? filter.min] : [filter.min, filter.max];
+  const readback = [];
+  const expected = [];
+  for (let index = 0; index < count; index += 1) {
+    const input = inputs.nth(index);
+    const placeholder = (await input.getAttribute("placeholder").catch(() => "")) ?? "";
+    expected.push(
+      platformRangeValue(requested[index], {
+        unit: filter.unit,
+        placeholder,
+        displayText,
+      }) ?? "",
+    );
+    readback.push(cleanText(await input.inputValue().catch(() => "")).replace(/,/gu, ""));
+  }
+  await page.keyboard.press("Escape").catch(() => {});
+  if (filter.control === "creator_price") await page.keyboard.press("Escape").catch(() => {});
+  const normalizedExpected = expected.map((value) => value.replace(/,/gu, ""));
+  return {
+    valid: readback.every((value, index) => value === normalizedExpected[index]),
+    expected: normalizedExpected,
+    readback,
+  };
 }
 
 /** @param {import("playwright-core").Locator} menu */
@@ -391,10 +442,18 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
           .innerText()
           .catch(() => ""),
       );
-      const filters = (selection?.verification?.actual_filters ?? []).map((filter) => {
+      const filters = [];
+      for (const filter of selection?.verification?.actual_filters ?? []) {
+        if (filter.mode === "range") {
+          filters.push({ control: filter.control, ...(await readAppliedRange(page, filter)) });
+          continue;
+        }
         const readback = expectedFilterReadback(filter);
-        return { control: filter.control, valid: Boolean(readback) && body.includes(readback) };
-      });
+        filters.push({
+          control: filter.control,
+          valid: Boolean(readback) && body.includes(readback),
+        });
+      }
       const keywordValid = keywordValue === requestedKeyword;
       const priceViewValid = !requestedPrice || header.includes(requestedPrice);
       return {
@@ -433,11 +492,22 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
         collection_source: capturedPage ? "browser_response" : "dom",
       };
     },
-    async readPage(pageNumber) {
+    listSnapshot() {
+      if (!capturedPage?.rows?.length) return null;
+      return {
+        rows: capturedPage.rows,
+        total: capturedPage.total ?? null,
+        page_number: 1,
+        endpoint: capturedPage.endpoint ?? null,
+        response_path: capturedPage.response_path ?? null,
+        captured_at: new Date(now()).toISOString(),
+      };
+    },
+    async readPage(pageNumber, initialSnapshot = null) {
       await assertUsablePage(page, "xingtu");
       await hydrateXingtuRows(page);
       const result = await readPlatformResults(page, "xingtu");
-      const captured = capturedPage;
+      const captured = capturedPage ?? (pageNumber === 1 ? initialSnapshot : null);
       return {
         page_number: pageNumber,
         price_tier: result.price_tier ?? null,

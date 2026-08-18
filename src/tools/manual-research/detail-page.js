@@ -32,6 +32,8 @@ const DETAIL_GROUP_FIELDS = Object.freeze({
     "audience_age_24_30_rate_raw",
     "audience_age_31_40_rate_raw",
     "audience_cities",
+    "audience_city_distribution",
+    "audience_persona_distribution",
   ],
   performance: [
     "cpm_raw",
@@ -56,6 +58,11 @@ const DETAIL_CONTROL_SELECTOR = [
   "[role=option]:visible",
   "[aria-haspopup]:visible",
   "[aria-expanded]:visible",
+  "[tabindex]:visible",
+  ".el-tabs__item:visible",
+  "[class*=tab-item]:visible",
+  "[class*=nav-item]:visible",
+  "[class*=menu-item]:visible",
   "a[href]:visible",
 ].join(",");
 const DANGEROUS_DETAIL_ACTION = /提交|确认合作|立即合作|发送|支付|删除|下单|投放|邀约/u;
@@ -157,7 +164,9 @@ async function readDetailDom(page, candidate, platform) {
         .filter(
           (item) =>
             item.title.length >= 4 &&
-            /note|video|content|item|author|douyin|xiaohongshu/iu.test(item.url),
+            /note|video|content|item|douyin|xiaohongshu/iu.test(item.url) &&
+            !/达人清单|用户协议|隐私政策|帮助中心|联系我们/u.test(item.title) &&
+            !/author-lists|user-agreement|privacy|author-homepage/iu.test(item.url),
         )
         .slice(0, 3),
     )
@@ -266,9 +275,11 @@ async function exploreDetailGroup(page, platform, candidate, group, learnedPaths
   const endpoints = [];
   const sourceTypes = [];
   let reason = "no_matching_control";
+  let observedControls = [];
 
   for (let actionNumber = 0; actionNumber < DETAIL_ACTION_BUDGET; actionNumber += 1) {
     const controls = await visibleDetailControls(page);
+    observedControls = controls;
     const target = rankedDetailControls(controls, group, attempted)[0];
     if (!target) break;
     attempted.add(target.identity);
@@ -332,6 +343,10 @@ async function exploreDetailGroup(page, platform, candidate, group, learnedPaths
     source_types: [...new Set(sourceTypes)],
     actions,
     reason,
+    observed_controls: observedControls
+      .filter((control) => control.text)
+      .slice(0, 12)
+      .map(({ text, role }) => ({ text, role })),
   };
 }
 
@@ -492,7 +507,12 @@ export async function collectCreatorDetail(
         mergeFields(fields, explored.fields);
         endpoints.push(...explored.endpoints);
         sourceTypes.push(...explored.source_types);
-        navigation.push({ group, actions: explored.actions, reason: explored.reason });
+        navigation.push({
+          group,
+          actions: explored.actions,
+          reason: explored.reason,
+          observed_controls: explored.observed_controls,
+        });
       }
       if (groupHasEvidence(group, fields)) completedGroups.add(group);
     }

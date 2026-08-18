@@ -7,6 +7,7 @@ import {
   evaluateCandidateDetail,
   parseDetailCount,
   parseDetailRatio,
+  reviewEvidenceGaps,
   reviewBatch,
 } from "../src/tools/manual-research-detail.js";
 import { createPgyAdapter } from "../src/tools/manual-research/pgy-adapter.js";
@@ -50,7 +51,10 @@ test("detail values normalize Chinese units and inclusive range boundaries", () 
   );
 
   assert.equal(result.status, "pass");
-  assert.deepEqual(result.checks.map((item) => item.verdict), ["pass", "pass", "pass"]);
+  assert.deepEqual(
+    result.checks.map((item) => item.verdict),
+    ["pass", "pass", "pass"],
+  );
 });
 
 test("a missing required detail field is unknown and cannot enter review", () => {
@@ -106,6 +110,32 @@ test("detail-only audience limits gate semantic review and expose review require
   );
 });
 
+test("review evidence gaps distinguish content, city and audience persona requirements", () => {
+  const requirements = [
+    { fact_kind: "content_direction", quote: "办公软件相关" },
+    { fact_kind: "audience_city", quote: "城市主要集中在一二线" },
+    { fact_kind: "excluded_content", quote: "粉丝画像不要都市蓝领、都市银发" },
+  ];
+  assert.deepEqual(reviewEvidenceGaps({ fields: {} }, requirements), [
+    "recent_content",
+    "audience_city_distribution",
+    "audience_persona_distribution",
+  ]);
+  assert.deepEqual(
+    reviewEvidenceGaps(
+      {
+        fields: {
+          recent_content: [{ title: "AI办公实测" }],
+          audience_city_distribution: [{ name: "上海", rate_raw: "31%" }],
+          audience_persona_distribution: [{ name: "都市白领", rate_raw: "44%" }],
+        },
+      },
+      requirements,
+    ),
+    [],
+  );
+});
+
 test("detail planning is targeted, bounded to twice the target and reviews at most twenty", () => {
   const plan = {
     target_count: 12,
@@ -142,9 +172,12 @@ test("both platform adapters enforce a two-second gap between creator starts", a
   await createXingtuAdapter({
     waitForTimeout: async (milliseconds) => xingtuWaits.push(milliseconds),
   }).paceDetail();
-  await createPgyAdapter({
-    waitForTimeout: async (milliseconds) => pgyWaits.push(milliseconds),
-  }, {}).paceDetail();
+  await createPgyAdapter(
+    {
+      waitForTimeout: async (milliseconds) => pgyWaits.push(milliseconds),
+    },
+    {},
+  ).paceDetail();
   assert.deepEqual(xingtuWaits, [2_000]);
   assert.deepEqual(pgyWaits, [2_000]);
 });

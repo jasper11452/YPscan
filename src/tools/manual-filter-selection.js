@@ -53,11 +53,9 @@ async function applySelection(adapter, branch, plan, platform, preservedVerifica
       await adapter.reset();
       const baseline = await adapter.verifyBaseline?.();
       if (baseline && !baseline.valid) {
-        throw selectionError(
-          "YPSCAN_MANUAL_RESET_NOT_APPLIED",
-          "页面旧筛选未清理干净",
-          { baseline },
-        );
+        throw selectionError("YPSCAN_MANUAL_RESET_NOT_APPLIED", "页面旧筛选未清理干净", {
+          baseline,
+        });
       }
     }
 
@@ -266,10 +264,7 @@ export function createManualFilterSelection({
           failedStage = error?.details?.failed_stage ?? verification.failed_stage ?? failedStage;
           failedControl =
             error?.details?.failed_control ?? verification.failed_control ?? failedControl;
-          if (
-            attempt === 2 ||
-            requiresUserAction(error)
-          ) {
+          if (attempt === 2 || requiresUserAction(error)) {
             throw error;
           }
           await adapter.recover?.(error);
@@ -285,6 +280,10 @@ export function createManualFilterSelection({
         actual_filters: verification.actual_filters,
       };
       verification.state_hash = stateHash(normalizedState);
+      const listSnapshot =
+        params.platform === "xingtu" && typeof adapter.listSnapshot === "function"
+          ? adapter.listSnapshot()
+          : null;
       const selection = {
         selection_id: selectionId,
         status: "ready",
@@ -293,6 +292,7 @@ export function createManualFilterSelection({
         branch,
         page_url: page.url(),
         verification,
+        ...(listSnapshot ? { list_snapshot: listSnapshot } : {}),
         selected_at: new Date(now()).toISOString(),
       };
       await store.saveSelection(selection);

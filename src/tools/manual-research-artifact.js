@@ -5,8 +5,10 @@ import { checkCandidatePrice } from "./manual-research-price-check.js";
 import {
   candidateReference,
   detailQueueLimit,
+  evaluateCandidateList,
   mergeDetailRecords,
   mergeReviewRecords,
+  reviewEvidenceGaps,
   reviewBatch,
 } from "./manual-research-detail.js";
 
@@ -124,6 +126,7 @@ function replayCheckpointEvents(events, fingerprint = null) {
     event_count: 0,
     page_count: 0,
     source_url: null,
+    interruption: null,
   };
   const branchMap = new Map();
   for (const event of events) {
@@ -141,6 +144,9 @@ function replayCheckpointEvents(events, fingerprint = null) {
     if (event.type === "review" && event.review?.candidate_ref) state.reviews.push(event.review);
     if (event.type === "selection" && event.selection?.branch?.branch_id) {
       state.selections.push(event.selection);
+    }
+    if (event.type === "interruption" && event.interruption) {
+      state.interruption = event.interruption;
     }
   }
   state.branches = [...branchMap.values()];
@@ -316,6 +322,7 @@ function candidatesWithPriceCheck(candidates, plan) {
   return candidates.map((candidate) => ({
     ...candidate,
     price_check: checkCandidatePrice(candidate, plan),
+    list_hard_evaluation: candidate.list_hard_evaluation ?? evaluateCandidateList(candidate, plan),
   }));
 }
 
@@ -346,6 +353,8 @@ function candidateRows(candidates, plan) {
     "报价",
     "价格校验状态",
     "价格校验原因",
+    "列表硬筛状态",
+    "列表硬筛失败/待补证",
     "标准化报价（元）",
     "要求报价区间",
     "要求报价档位",
@@ -377,6 +386,11 @@ function candidateRows(candidates, plan) {
       candidate.price_raw,
       candidate.price_check?.status,
       candidate.price_check?.reason,
+      candidate.list_hard_evaluation?.status,
+      (candidate.list_hard_evaluation?.checks ?? [])
+        .filter((check) => check.verdict !== "pass")
+        .map((check) => `${check.control}:${check.reason ?? check.verdict}`)
+        .join("；"),
       candidate.price_check?.observed_yuan,
       candidate.price_check?.required_min === null
         ? ""
@@ -438,6 +452,7 @@ function detailRows(candidates, details, reviews) {
     "24-30岁占比",
     "31-40岁占比",
     "受众城市",
+    "受众人群画像",
     "阅读中位数",
     "互动中位数",
     "近期内容（最多3条）",
@@ -488,7 +503,12 @@ function detailRows(candidates, details, reviews) {
         fields.audience_age_18_23_rate_raw ?? fields.audience_age_18_23_rate,
         fields.audience_age_24_30_rate_raw ?? fields.audience_age_24_30_rate,
         fields.audience_age_31_40_rate_raw ?? fields.audience_age_31_40_rate,
-        (fields.audience_cities ?? []).join("、"),
+        (fields.audience_city_distribution ?? fields.audience_cities ?? [])
+          .map((item) => (typeof item === "string" ? item : `${item.name}:${item.rate_raw ?? ""}`))
+          .join("、"),
+        (fields.audience_persona_distribution ?? [])
+          .map((item) => `${item.name}:${item.rate_raw ?? ""}`)
+          .join("、"),
         fields.read_median_raw ?? fields.read_median,
         fields.interaction_median_raw ?? fields.interaction_median,
         (fields.recent_content ?? [])
@@ -508,6 +528,20 @@ function conditionRows(candidates, details) {
     candidates.map((candidate) => [candidateReference(candidate), candidate]),
   );
   const rows = [["达人引用", "达人昵称", "条件", "期望值", "实际值", "结果", "来源", "原因"]];
+  for (const candidate of candidates) {
+    for (const check of candidate.list_hard_evaluation?.checks ?? []) {
+      rows.push([
+        candidateReference(candidate),
+        candidate.nickname,
+        check.control,
+        Array.isArray(check.expected) ? check.expected.join("、") : check.expected,
+        Array.isArray(check.actual) ? check.actual.join("、") : check.actual,
+        check.verdict,
+        check.source_type,
+        check.reason,
+      ]);
+    }
+  }
   for (const detail of mergeDetailRecords(details)) {
     const candidate = candidateMap.get(detail.candidate_ref);
     for (const check of detail.hard_evaluation?.checks ?? []) {
@@ -793,6 +827,7 @@ function disabledStore() {
     async savePage() {},
     async saveBranch() {},
     async saveDetail() {},
+    async saveInterruption() {},
     async saveSelection() {},
     async snapshot() {
       return { status: "unavailable", reason: "workspace_dir_unavailable" };
@@ -910,6 +945,15 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
     const needsReviewCandidateCount = checkedCandidates.filter(
       (candidate) => candidate.price_check.status === "needs_review",
     ).length;
+    const listHardPassCandidateCount = checkedCandidates.filter(
+      (candidate) => candidate.list_hard_evaluation.status === "pass",
+    ).length;
+    const listHardRejectedCandidateCount = checkedCandidates.filter(
+      (candidate) => candidate.list_hard_evaluation.status === "fail",
+    ).length;
+    const listHardPendingCandidateCount = checkedCandidates.filter(
+      (candidate) => candidate.list_hard_evaluation.status === "unknown",
+    ).length;
     const selectedCandidates = finalCandidates(candidates, details, reviews, plan.target_count);
     const deliveryShortfall = plan.target_count
       ? Math.max(plan.target_count - selectedCandidates.length, 0)
@@ -932,6 +976,9 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
         eligible_candidate_count: eligibleCandidateCount,
         rejected_candidate_count: rejectedCandidateCount,
         needs_review_candidate_count: needsReviewCandidateCount,
+        list_hard_pass_candidate_count: listHardPassCandidateCount,
+        list_hard_rejected_candidate_count: listHardRejectedCandidateCount,
+        list_hard_pending_candidate_count: listHardPendingCandidateCount,
         restored_candidate_count: restored.candidates.length,
       },
     });
@@ -970,6 +1017,9 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
     async saveDetail({ detail, ...state }) {
       await append({ type: "detail", detail });
       return materialize({ ...state, appendFinal: false });
+    },
+    async saveInterruption(interruption) {
+      await append({ type: "interruption", interruption });
     },
     async finalize(state) {
       return materialize({ ...state, appendFinal: true });
@@ -1117,6 +1167,14 @@ export async function applyManualResearchReviews({
     ) {
       throw Object.assign(new Error(`达人不在当前待复核批次：${review.candidate_ref}`), {
         code: "YPSCAN_MANUAL_REVIEW_CANDIDATE_INVALID",
+      });
+    }
+    if (
+      review.decision === "include" &&
+      reviewEvidenceGaps(detailMap.get(review.candidate_ref), plan.review_requirements).length
+    ) {
+      throw Object.assign(new Error(`达人缺少必要复核证据：${review.candidate_ref}`), {
+        code: "YPSCAN_MANUAL_REVIEW_EVIDENCE_MISSING",
       });
     }
   }

@@ -56,10 +56,9 @@ test("frozen PGY detail families are collected only from page-triggered response
         }),
       );
       page.emit(
-        response(
-          "https://pgy.xiaohongshu.com/api/solar/kol/data/kol-1/fans_overall_new_history",
-          { data: { kolId: "kol-1", updateTime: "2026-08-16" } },
-        ),
+        response("https://pgy.xiaohongshu.com/api/solar/kol/data/kol-1/fans_overall_new_history", {
+          data: { kolId: "kol-1", updateTime: "2026-08-16" },
+        }),
       );
     },
   });
@@ -147,4 +146,26 @@ test("normalization keeps only mapped detail fields instead of raw payloads", ()
   assert.equal(normalized.fields.followers_raw, "9.8万");
   assert.equal("secretToken" in normalized.fields, false);
   assert.equal(normalized.fields.recent_content[0].title, "办公效率实测");
+});
+
+test("normalization extracts labeled Xingtu audience distributions", () => {
+  const normalized = normalizeDetailResponse({
+    data: {
+      authorId: "star-audience",
+      genderDistribution: [
+        { label: "男性", rate: "62%" },
+        { label: "女性", rate: "38%" },
+      ],
+      cityDistribution: [{ city: "上海", rate: "31%" }],
+      personaDistribution: [{ name: "都市白领", proportion: "44%" }],
+    },
+  });
+  assert.equal(normalized.fields.audience_male_rate_raw, "62%");
+  assert.equal(normalized.fields.audience_female_rate_raw, "38%");
+  assert.deepEqual(normalized.fields.audience_city_distribution, [
+    { name: "上海", rate_raw: "31%" },
+  ]);
+  assert.deepEqual(normalized.fields.audience_persona_distribution, [
+    { name: "都市白领", rate_raw: "44%" },
+  ]);
 });

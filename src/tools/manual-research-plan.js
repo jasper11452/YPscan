@@ -31,11 +31,7 @@ const FILTER_FACTS = Object.freeze({
 });
 
 const VIEW_FACT_KINDS = new Set(["content_format", "video_duration", "creator_count"]);
-const METADATA_FACT_KINDS = new Set([
-  "project_name",
-  "schedule_window",
-  "submission_deadline",
-]);
+const METADATA_FACT_KINDS = new Set(["project_name", "schedule_window", "submission_deadline"]);
 const SEMANTIC_REVIEW_FACT_KINDS = new Set([
   "content_direction",
   "preferred_content",
@@ -118,8 +114,7 @@ function factRange(fact) {
 function normalizedRangeForMapping(fact, mapping) {
   const range = factRange(fact);
   if (mapping.unit !== "ratio") return range;
-  const ratio = (value) =>
-    value !== null && Math.abs(value) > 1 ? value / 100 : value;
+  const ratio = (value) => (value !== null && Math.abs(value) > 1 ? value / 100 : value);
   return { min: ratio(range.min), max: ratio(range.max) };
 }
 
@@ -354,11 +349,19 @@ export function mergeManualCandidates(candidates) {
   const merged = [];
   const byIdentity = new Map();
   for (const candidate of candidates) {
-    const identity = candidate.platform_id
+    const stableIdentity = candidate.platform_id
       ? `${candidate.platform}:id:${candidate.platform_id}`
       : candidate.detail_url
         ? `${candidate.platform}:url:${candidate.detail_url}`
         : null;
+    const branch = candidate.source_branches?.[0];
+    const page = candidate.source_pages?.[0];
+    const ordinal = candidate.list_fields?.ordinal;
+    const retryIdentity =
+      !stableIdentity && branch && page !== undefined && ordinal !== undefined && candidate.nickname
+        ? `${candidate.platform}:slot:${branch}:${page}:${ordinal}:${clean(candidate.nickname)}`
+        : null;
+    const identity = stableIdentity ?? retryIdentity;
     if (!identity || !byIdentity.has(identity)) {
       const value = {
         ...candidate,
