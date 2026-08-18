@@ -6,7 +6,6 @@ import test from "node:test";
 
 import { createStagedManualResearch as createManualResearch } from "./helpers/manual-staged-runner.mjs";
 import { createManualFilterSelection } from "../src/tools/manual-filter-selection.js";
-import { createManualResearch as createCollector } from "../src/tools/manual-research.js";
 
 function payload(result) {
   return JSON.parse(result.content[0].text);
@@ -278,67 +277,45 @@ test("the target sheet excludes candidates below the manual price floor", async 
   assert.match(poolSheet, /报价不在要求区间，不得推荐/u);
 });
 
-test("a restarted 50-person run restores its checkpoint and skips completed keyword branches", async (t) => {
+test("a restarted v2 run restores the same plan and advances to the requested branch", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-manual-resume-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const browser = fakeBrowser("https://www.xingtu.cn/ad/creator/market");
-  const firstActions = [];
-  const firstAdapter = pagedAdapter(firstActions, { captchaKeyword: "办公软件" });
-  firstAdapter.verifySelection = async () => ({ valid: true });
-  const firstOptions = {
+  let browserConnections = 0;
+  const firstSelect = createManualFilterSelection({
     workspaceDir,
-    connectOverCDP: async () => browser,
-    createAdapter: () => firstAdapter,
+    connectOverCDP: async () => {
+      browserConnections += 1;
+      return fakeBrowser("https://www.xingtu.cn/ad/creator/market");
+    },
     now: () => Date.UTC(2026, 7, 17, 2, 0, 0),
-  };
-  const firstSelect = createManualFilterSelection(firstOptions);
-  const firstCollect = createCollector(firstOptions);
-  const firstSelection = payload(await firstSelect(params()));
-  const firstBranch = payload(await firstCollect(firstSelection.collection_args));
-  assert.equal(firstBranch.status, "awaiting_filter_selection");
-  assert.equal(firstBranch.candidate_count, 40);
-  const interrupted = payload(await firstSelect(firstBranch.next_selection_args));
-  assert.equal(interrupted.status, "needs_user_action");
-  assert.equal(interrupted.run_id, firstSelection.run_id);
-  assert.equal(interrupted.branch.branch_index, 1);
+  });
+  const first = payload(await firstSelect(params()));
+  assert.equal(first.status, "awaiting_browser_actions");
+  assert.equal(first.branch.branch_index, 0);
 
-  const resumedActions = [];
-  const resumedAdapter = pagedAdapter(resumedActions);
-  resumedAdapter.verifySelection = async () => ({ valid: true });
-  const resumedOptions = {
+  const resumedSelect = createManualFilterSelection({
     workspaceDir,
-    connectOverCDP: async () => browser,
-    createAdapter: () => resumedAdapter,
+    connectOverCDP: async () => {
+      browserConnections += 1;
+      return fakeBrowser("https://www.xingtu.cn/ad/creator/market");
+    },
     now: () => Date.UTC(2026, 7, 17, 2, 1, 0),
-  };
-  const resumedSelect = createManualFilterSelection(resumedOptions);
-  const resumedCollect = createCollector(resumedOptions);
-  let resumedSelection = payload(
+  });
+  const resumed = payload(
     await resumedSelect({
+      operation: "plan",
       requirement_id: params().requirement_id,
       platform: params().platform,
-      run_id: interrupted.run_id,
+      run_id: first.run_id,
       branch_index: 1,
     }),
   );
-  let resumed = payload(await resumedCollect(resumedSelection.collection_args));
-  while (resumed.status === "awaiting_filter_selection") {
-    resumedSelection = payload(await resumedSelect(resumed.next_selection_args));
-    resumed = payload(await resumedCollect(resumedSelection.collection_args));
-  }
-
-  assert.equal(resumed.status, "partial");
-  assert.equal(resumed.candidate_count, 120);
-  assert.equal(resumed.artifact.restored_candidate_count, 80);
-  assert.equal(resumed.artifact.target_row_count, 0);
-  assert.equal(resumed.artifact.detail_completed_count, 100);
-  assert.equal(resumed.candidates_truncated, true);
-  assert.deepEqual(
-    resumedActions.filter(([kind]) => kind === "search").map(([, keyword]) => keyword),
-    ["办公软件", "效率办公"],
-    "the completed first branch must not be repeated after restart",
-  );
-  assert.equal(resumedActions.filter(([kind]) => kind === "export").length, 0);
+  assert.equal(resumed.status, "awaiting_browser_actions");
+  assert.equal(resumed.run_id, first.run_id);
+  assert.equal(resumed.branch.branch_index, 1);
+  assert.equal(resumed.branch.keyword, "办公软件");
+  assert.equal(resumed.planned_actions.at(-1).keyword, "办公软件");
+  assert.equal(browserConnections, 0, "planning and restart recovery must remain Browser-free");
 });
 
 test("fresh_run creates an isolated live run instead of restoring a completed checkpoint", async (t) => {

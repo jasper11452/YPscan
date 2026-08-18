@@ -207,6 +207,10 @@ function groupHasEvidence(group, fields) {
   });
 }
 
+export function detailGroupHasEvidence(group, fields) {
+  return groupHasEvidence(group, fields);
+}
+
 /** @param {import("playwright-core").Page} page */
 async function visibleDetailControls(page) {
   return page
@@ -428,6 +432,76 @@ async function openDetail(listPage, platform, candidate, groups, learnedPaths) {
     return { opened: false, detailPage, temporary, capture: observed.capture };
   }
   return { opened: true, detailPage, temporary, capture: observed.capture };
+}
+
+/** Open one persisted candidate without automatically closing the resulting detail page. */
+export async function openCreatorDetailPage(
+  listPage,
+  platform,
+  candidate,
+  { groups = [], learnedPaths = new Set() } = {},
+) {
+  return openDetail(listPage, platform, candidate, groups, learnedPaths);
+}
+
+/** Read only the evidence currently visible on an already-open detail page. */
+export async function readCreatorDetailSnapshot(page, platform, candidate) {
+  const body = await assertNoManualChallenge(page);
+  if (platform === "pgy" && /选择合作品牌|请先选择品牌|选择品牌后查看|暂无权限查看/u.test(body)) {
+    return { status: "blocked", reason: "detail_not_accessible", fields: {} };
+  }
+  const fields = await readDetailDom(page, candidate, platform);
+  const detailUrl = page.url?.() ?? candidate.detail_url ?? null;
+  const detailPlatformId =
+    platform === "xingtu" ? xingtuIdFromDetailUrl(detailUrl) : (candidate.platform_id ?? null);
+  if (
+    platform === "xingtu" &&
+    candidate.platform_id &&
+    detailPlatformId &&
+    clean(candidate.platform_id) !== clean(detailPlatformId)
+  ) {
+    return { status: "blocked", reason: "detail_identity_mismatch", fields: {} };
+  }
+  return {
+    status: Object.keys(fields).length ? "captured" : "empty",
+    reason: Object.keys(fields).length ? null : "visible_fields_missing",
+    platform_id: detailPlatformId ?? candidate.platform_id ?? null,
+    detail_url: detailUrl,
+    fields,
+  };
+}
+
+/** Activate one semantic detail section and return the evidence produced by that action. */
+export async function activateCreatorDetailSection(
+  page,
+  platform,
+  candidate,
+  group,
+  { learnedPaths = new Set() } = {},
+) {
+  const patterns = DETAIL_TABS[platform]?.[group] ?? [];
+  if (!patterns.length) {
+    return { applied: false, reason: "detail_section_not_supported", group, fields: {} };
+  }
+  const observed = await captureDetailResponsesDuring(page, {
+    platform,
+    candidate,
+    expectedGroups: [group],
+    learnedPaths,
+    action: () => clickFirstText(page, patterns),
+  });
+  const fields = {};
+  if (observed.capture?.fields) mergeFields(fields, observed.capture.fields);
+  mergeFields(fields, await readDetailDom(page, candidate, platform));
+  return {
+    applied: Boolean(observed.action_result),
+    reason: observed.action_result ? null : "detail_section_target_not_found",
+    group,
+    verified: groupHasEvidence(group, fields),
+    fields,
+    response_endpoints: observed.capture?.endpoints ?? [],
+    source_type: observed.capture?.source_type ?? (Object.keys(fields).length ? "dom" : null),
+  };
 }
 
 async function closeDetail(listPage, detailPage, temporary) {

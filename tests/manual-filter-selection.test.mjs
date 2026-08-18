@@ -5,6 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createManualFilterSelection } from "../src/tools/manual-filter-selection.js";
+import {
+  createManualResearchStore,
+  loadManualResearchRun,
+} from "../src/tools/manual-research-artifact.js";
 import { createManualResearch } from "../src/tools/manual-research.js";
 
 function payload(result) {
@@ -30,51 +34,65 @@ function params() {
   };
 }
 
-function adapter(actions, { verify = true, filterApplied = true, baseline = true } = {}) {
+function readyInspection(fakeBrowser = browser()) {
   return {
-    async prepare() {
-      actions.push("prepare");
-    },
-    async reset() {
-      actions.push("reset");
-    },
-    async verifyBaseline() {
-      return { valid: baseline };
-    },
-    async setPriceView(value) {
-      actions.push("price");
-      return { applied: true, readback: value };
-    },
-    async applyFilter(filter) {
-      actions.push(`filter:${filter.control}`);
-      return filterApplied
-        ? { applied: true, readback: filter.control }
-        : { applied: false, reason: "no_commit_marker" };
-    },
-    async search(value) {
-      actions.push(`search:${value}`);
-      return { applied: true, result_count: 3 };
-    },
-    async verifySelection() {
-      actions.push("verify");
-      return { valid: verify, reason: verify ? null : "keyword_mismatch" };
-    },
-    async readPage() {
-      actions.push("read");
-      return { rows: [], source_url: "https://www.xingtu.cn/ad/creator/market" };
-    },
-    async nextPage() {
-      actions.push("next");
-      return false;
-    },
-    async collectDetail() {
-      actions.push("detail");
-    },
-    async export() {
-      actions.push("export");
-      return { status: "complete" };
+    page: fakeBrowser.page,
+    state: {
+      state_id: "ready-state",
+      page_state: "RESULTS_READY",
+      url: "https://www.xingtu.cn/ad/creator/market",
+      market: { keyword: "AI工具" },
+      modal: { present: false },
+      challenge: { present: false },
+      tabs: [],
     },
   };
+}
+
+async function seedVerifiedActions(workspaceDir, planned, { searchSnapshot = null } = {}) {
+  const loaded = await loadManualResearchRun({
+    workspaceDir,
+    runId: planned.run_id,
+    requirementId: planned.requirement_id,
+    platform: planned.platform,
+  });
+  const store = await createManualResearchStore({
+    workspaceDir,
+    params: { ...loaded.params, run_id: planned.run_id },
+    plan: loaded.plan,
+  });
+  for (const action of planned.planned_actions) {
+    const receipt =
+      action.action === "search_keyword"
+        ? {
+            applied: true,
+            result_count: 3,
+            ...(searchSnapshot ? { list_snapshot: searchSnapshot } : {}),
+          }
+        : action.action === "reset_filters"
+          ? { applied: true, valid: true }
+          : action.action === "set_price_view"
+            ? { applied: true, readback: action.price_view }
+            : action.action === "apply_filter"
+              ? { applied: true, readback: action.filter.control }
+              : { applied: true };
+    await store.saveBrowserAction({
+      action_id: `test-${action.plan_action_id}`,
+      action: action.action,
+      plan_action_id: action.plan_action_id,
+      branch_index: planned.branch.branch_index,
+      candidate_ref: null,
+      ok: true,
+      verified: true,
+      changed: true,
+      receipt,
+    });
+  }
+}
+
+async function planSelection(workspaceDir, extra = {}) {
+  const select = createManualFilterSelection({ workspaceDir, ...extra });
+  return { select, planned: payload(await select(params())) };
 }
 
 test("legacy collect returns migration args without connecting Browser", async () => {
@@ -91,7 +109,7 @@ test("legacy collect returns migration args without connecting Browser", async (
   assert.equal(connections, 0);
 });
 
-test("selection cannot report ready when the checkpoint workspace is unavailable", async () => {
+test("selection planning requires a checkpoint workspace and never connects Browser", async () => {
   let connections = 0;
   const select = createManualFilterSelection({
     connectOverCDP: async () => {
@@ -99,75 +117,100 @@ test("selection cannot report ready when the checkpoint workspace is unavailable
       return browser();
     },
   });
-
   const selected = payload(await select(params()));
-
   assert.equal(selected.status, "failed");
-  assert.equal(selected.ready_for_collection, false);
   assert.equal(selected.error.code, "YPSCAN_MANUAL_WORKSPACE_UNAVAILABLE");
   assert.equal(connections, 0);
 });
 
-test("selection checkpoint contains normalized receipts and final-state verification", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-checkpoint-"));
+test("plan returns ordered semantic actions without touching Browser", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-plan-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const actions = [];
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => browser(),
-    createAdapter: () => adapter(actions),
+  let connections = 0;
+  const { planned } = await planSelection(workspaceDir, {
+    connectOverCDP: async () => {
+      connections += 1;
+      return browser();
+    },
   });
-  const selected = payload(await select(params()));
-  assert.equal(selected.status, "ready");
-  assert.equal(selected.ready_for_collection, true);
-  assert.ok(selected.selection_id);
-  assert.equal(selected.verification.actual_filters.length, 2);
-  assert.equal(selected.verification.failed_filters.length, 0);
-  assert.equal(selected.verification.final_state.valid, true);
-  assert.ok(selected.verification.state_hash);
-  const checkpointPath = join(
-    workspaceDir,
-    "ypscan-manual-research",
-    selected.run_id,
-    "checkpoint.jsonl",
+  assert.equal(planned.status, "awaiting_browser_actions");
+  assert.equal(planned.ready_for_collection, false);
+  assert.equal(planned.protocol_version, 2);
+  assert.deepEqual(
+    planned.planned_actions.map((action) => action.action),
+    [
+      "ensure_market_ready",
+      "reset_filters",
+      "set_price_view",
+      "apply_filter",
+      "apply_filter",
+      "search_keyword",
+    ],
   );
-  const checkpoint = await readFile(checkpointPath, "utf8");
-  const selectionEvent = checkpoint
-    .trim()
-    .split("\n")
-    .map(JSON.parse)
-    .find((event) => event.type === "selection");
-  assert.equal(selectionEvent.selection.selection_id, selected.selection_id);
-  assert.doesNotMatch(checkpoint, /cookie|token|authorization|request_headers/iu);
+  assert.equal(planned.next_call.tool, "ypscan_manual_browser_inspect");
+  assert.equal(connections, 0);
 });
 
-test("Xingtu selection keeps a normalized first-page snapshot only in the checkpoint", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-snapshot-"));
+test("commit refuses incomplete action receipts before Browser access", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-incomplete-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const actions = [];
-  const fakeAdapter = adapter(actions);
-  fakeAdapter.listSnapshot = () => ({
-    page_number: 1,
-    total: 1,
-    endpoint: "https://www.xingtu.cn/gw/api/gsearch/search_for_author_square",
-    response_path: "authors",
-    rows: [
-      {
-        platform_id: "snapshot-1",
-        nickname: "快照达人",
-        detail_url: "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/snapshot-1",
+  let connections = 0;
+  const { select, planned } = await planSelection(workspaceDir, {
+    connectOverCDP: async () => {
+      connections += 1;
+      return browser();
+    },
+  });
+  const committed = payload(
+    await select({
+      operation: "commit",
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
+      branch_index: 0,
+    }),
+  );
+  assert.equal(committed.ready_for_collection, false);
+  assert.equal(committed.error.code, "YPSCAN_MANUAL_ACTIONS_INCOMPLETE");
+  assert.equal(committed.selection_id, undefined);
+  assert.equal(connections, 0);
+});
+
+test("commit signs a credential only after action receipts and final readback agree", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-commit-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const fakeBrowser = browser();
+  const { select, planned } = await planSelection(workspaceDir, {
+    connectOverCDP: async () => fakeBrowser,
+    inspectBrowser: async () => readyInspection(fakeBrowser),
+    createAdapter: () => ({
+      async verifySelection() {
+        return { valid: true };
       },
-    ],
+      async dispose() {},
+    }),
   });
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => browser(),
-    createAdapter: () => fakeAdapter,
-  });
-  const selected = payload(await select(params()));
-  assert.equal(selected.list_snapshot, undefined);
+  const snapshot = {
+    page_number: 1,
+    rows: [{ platform_id: "snapshot-1", nickname: "快照达人" }],
+  };
+  await seedVerifiedActions(workspaceDir, planned, { searchSnapshot: snapshot });
+  const committed = payload(
+    await select({
+      operation: "commit",
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
+      branch_index: 0,
+    }),
+  );
+  assert.equal(committed.status, "ready");
+  assert.equal(committed.ready_for_collection, true);
+  assert.ok(committed.selection_id);
+  assert.equal(committed.verification.actual_filters.length, 2);
+  assert.equal(committed.list_snapshot, undefined);
   const checkpoint = await readFile(
-    join(workspaceDir, "ypscan-manual-research", selected.run_id, "checkpoint.jsonl"),
+    join(workspaceDir, "ypscan-manual-research", committed.run_id, "checkpoint.jsonl"),
     "utf8",
   );
   const selection = checkpoint
@@ -175,192 +218,36 @@ test("Xingtu selection keeps a normalized first-page snapshot only in the checkp
     .split("\n")
     .map(JSON.parse)
     .find((event) => event.type === "selection").selection;
+  assert.equal(selection.protocol_version, 2);
   assert.equal(selection.list_snapshot.rows[0].platform_id, "snapshot-1");
   assert.doesNotMatch(checkpoint, /cookie|token|authorization|request_headers/iu);
 });
 
-test("collector receives the persisted first-page snapshot in a fresh adapter", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-snapshot-resume-"));
-  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const selectionAdapter = adapter([]);
-  selectionAdapter.listSnapshot = () => ({
-    page_number: 1,
-    total: 1,
-    rows: [{ platform_id: "snapshot-collector-1", nickname: "跨阶段达人" }],
-  });
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => browser(),
-    createAdapter: () => selectionAdapter,
-  });
-  const selected = payload(await select(params()));
-  let receivedSnapshot = null;
-  const collect = createManualResearch({
-    workspaceDir,
-    connectOverCDP: async () => browser(),
-    createAdapter: () => ({
-      async prepare() {},
-      async verifySelection() {
-        return { valid: true };
-      },
-      async readPage(_pageNumber, snapshot) {
-        receivedSnapshot = snapshot;
-        return {
-          rows: snapshot.rows,
-          source_url: "https://www.xingtu.cn/ad/creator/market",
-        };
-      },
-      async nextPage() {
-        return false;
-      },
-      async collectDetail(candidate) {
-        return {
-          candidate_ref: candidate.platform_id,
-          status: "complete",
-          fields: { recent_content: [{ title: "办公效率内容" }] },
-        };
-      },
-      async export() {
-        return { status: "complete" };
-      },
-    }),
-  });
-  await collect(selected.collection_args);
-  assert.equal(receivedSnapshot.rows[0].platform_id, "snapshot-collector-1");
-});
-
-test("a later keyword keeps the already verified filters and only changes the search", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-preserved-filters-"));
-  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const actions = [];
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => browser(),
-    createAdapter: () => adapter(actions),
-  });
-  const first = payload(await select(params()));
-  actions.length = 0;
-
-  const second = payload(
-    await select({
-      requirement_id: params().requirement_id,
-      platform: params().platform,
-      run_id: first.run_id,
-      branch_index: 1,
-    }),
-  );
-
-  assert.equal(second.status, "ready");
-  assert.deepEqual(actions, ["prepare", "prepare", "search:办公效率", "verify"]);
-  assert.equal(second.verification.actual_filters.length, 2);
-});
-
-test("an uncommitted filter has no selection_id and cannot enter actual_filters", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-failed-"));
-  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const actions = [];
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => browser(),
-    createAdapter: () => adapter(actions, { filterApplied: false }),
-  });
-  const selected = payload(await select(params()));
-  assert.equal(selected.status, "failed");
-  assert.equal(selected.ready_for_collection, false);
-  assert.equal(selected.selection_id, undefined);
-  assert.equal(selected.verification.actual_filters.length, 0);
-  assert.equal(selected.verification.failed_filters.length, 2);
-});
-
-test("stale filters surviving reset cannot issue a selection credential", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-reset-"));
-  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => browser(),
-    createAdapter: () => adapter([], { baseline: false }),
-  });
-
-  const selected = payload(await select(params()));
-
-  assert.equal(selected.ready_for_collection, false);
-  assert.equal(selected.error.code, "YPSCAN_MANUAL_RESET_NOT_APPLIED");
-});
-
 test("a final-state mismatch cannot issue a selection credential", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-final-state-"));
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-mismatch-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => browser(),
-    createAdapter: () => adapter([], { verify: false }),
+  const fakeBrowser = browser();
+  const { select, planned } = await planSelection(workspaceDir, {
+    connectOverCDP: async () => fakeBrowser,
+    inspectBrowser: async () => readyInspection(fakeBrowser),
+    createAdapter: () => ({
+      async verifySelection() {
+        return { valid: false, reason: "keyword_mismatch" };
+      },
+      async dispose() {},
+    }),
   });
-
-  const selected = payload(await select(params()));
-
-  assert.equal(selected.status, "failed");
-  assert.equal(selected.ready_for_collection, false);
-  assert.equal(selected.selection_id, undefined);
-  assert.equal(selected.failed_stage, "verify");
-  assert.equal(selected.verification.final_state.valid, false);
-  assert.equal(selected.error.code, "YPSCAN_MANUAL_SELECTION_READBACK_MISMATCH");
-});
-
-test("a newer same-branch selection invalidates the old credential before Browser access", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-stale-"));
-  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const actions = [];
-  const sharedBrowser = browser();
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => sharedBrowser,
-    createAdapter: () => adapter(actions),
-  });
-  const first = payload(await select(params()));
-  const second = payload(
+  await seedVerifiedActions(workspaceDir, planned);
+  const committed = payload(
     await select({
-      requirement_id: params().requirement_id,
-      platform: params().platform,
-      run_id: first.run_id,
+      operation: "commit",
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
       branch_index: 0,
     }),
   );
-  assert.notEqual(first.selection_id, second.selection_id);
-  let collectorConnections = 0;
-  const collect = createManualResearch({
-    workspaceDir,
-    connectOverCDP: async () => {
-      collectorConnections += 1;
-      return sharedBrowser;
-    },
-    createAdapter: () => adapter(actions),
-  });
-  const stale = payload(await collect(first.collection_args));
-  assert.equal(stale.error.code, "YPSCAN_MANUAL_SELECTION_STALE");
-  assert.equal(collectorConnections, 0);
-});
-
-test("selection readback mismatch causes zero list, page, detail and export actions", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-readback-"));
-  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const sharedBrowser = browser();
-  const selectActions = [];
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => sharedBrowser,
-    createAdapter: () => adapter(selectActions),
-  });
-  const selected = payload(await select(params()));
-  const collectActions = [];
-  const collect = createManualResearch({
-    workspaceDir,
-    connectOverCDP: async () => sharedBrowser,
-    createAdapter: () => adapter(collectActions, { verify: false }),
-  });
-  const stale = payload(await collect(selected.collection_args));
-  assert.equal(stale.error.code, "YPSCAN_MANUAL_SELECTION_STALE");
-  assert.deepEqual(
-    collectActions.filter((action) => ["read", "next", "detail", "export"].includes(action)),
-    [],
-  );
+  assert.equal(committed.status, "failed");
+  assert.equal(committed.error.code, "YPSCAN_MANUAL_SELECTION_READBACK_MISMATCH");
+  assert.equal(committed.selection_id, undefined);
 });

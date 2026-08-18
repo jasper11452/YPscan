@@ -7,6 +7,14 @@ import {
 } from "./src/tools/parse-requirement.js";
 import { createExcelArtifactSaver } from "./src/tools/save-excel-artifact.js";
 import {
+  createManualBrowserAction,
+  MANUAL_BROWSER_ACTION_PARAMETERS,
+} from "./src/tools/manual-browser-action.js";
+import {
+  createManualBrowserInspector,
+  MANUAL_BROWSER_INSPECT_PARAMETERS,
+} from "./src/tools/manual-browser-inspect.js";
+import {
   createManualFilterSelection,
   MANUAL_FILTER_SELECTION_PARAMETERS,
 } from "./src/tools/manual-filter-selection.js";
@@ -29,6 +37,44 @@ export default {
 
     api.registerTool(
       (context) => {
+        const inspectBrowser = createManualBrowserInspector({
+          browserCdpUrl: api.pluginConfig?.browserCdpUrl,
+          workspaceDir: context?.workspaceDir,
+        });
+        return {
+          name: "ypscan_manual_browser_inspect",
+          description:
+            "只读识别人工拓展 Browser 当前状态：错页、登录、加载、普通/受保护弹窗、验证码、达人广场、结果页或达人详情。任何 Browser 动作前先调用；不导航、不点击、不关闭弹窗、不返回原始 DOM。",
+          parameters: MANUAL_BROWSER_INSPECT_PARAMETERS,
+          async execute(_id, params) {
+            return inspectBrowser(params);
+          },
+        };
+      },
+      { name: "ypscan_manual_browser_inspect" },
+    );
+
+    api.registerTool(
+      (context) => {
+        const browserAction = createManualBrowserAction({
+          browserCdpUrl: api.pluginConfig?.browserCdpUrl,
+          workspaceDir: context?.workspaceDir,
+        });
+        return {
+          name: "ypscan_manual_browser_action",
+          description:
+            "执行一个有后置验证的人工拓展语义动作。必须携带 inspect/上一动作返回的 expected_state_id；筛选动作必须引用 plan_action_id。登录、验证码和受保护弹窗作为状态立即暂停，绝不内部盲重试。",
+          parameters: MANUAL_BROWSER_ACTION_PARAMETERS,
+          async execute(_id, params) {
+            return browserAction(params);
+          },
+        };
+      },
+      { name: "ypscan_manual_browser_action" },
+    );
+
+    api.registerTool(
+      (context) => {
         const selectFilters = createManualFilterSelection({
           browserCdpUrl: api.pluginConfig?.browserCdpUrl,
           workspaceDir: context?.workspaceDir,
@@ -36,7 +82,7 @@ export default {
         return {
           name: "ypscan_manual_select_filters",
           description:
-            "人工拓展筛选阶段：首次必须保留完整硬条件 facts，工具按单个关键词分支自动拆分页面筛选、详情硬审和语义复核；不要为规避不稳定控件删除受众或内容条件。页面条件逐项真实回读后才生成 selection_id；任何未提交筛选都会阻止抓取。只负责筛选，不读取候选、翻页、详情或导出。",
+            "人工拓展筛选凭证工具：operation=plan 只生成当前关键词分支的语义动作计划，不操作 Browser；Agent 用 inspect/action 逐步执行后，operation=commit 只读复核全部页面条件并签发 selection_id。",
           parameters: MANUAL_FILTER_SELECTION_PARAMETERS,
           async execute(_id, params) {
             return selectFilters(params);
@@ -55,7 +101,7 @@ export default {
         return {
           name: "ypscan_manual_research",
           description:
-            "人工拓展抓取阶段：只接受 ypscan_manual_select_filters 返回的 run_id/selection_id，先只读复核当前页面筛选状态，再分页抓取、去重、补详情、增量保存 checkpoint 并生成五表 Excel。抓取阶段绝不重置、搜索或修改筛选；状态漂移时拒绝抓取。apply_reviews 继续分批写回同一 run。",
+            "人工拓展数据工具：新协议下每次 collect 只读取并持久化当前结果页或详情页证据，返回下一条精确工具调用；不执行导航、筛选、翻页或详情点击。apply_reviews 继续分批写回同一 run。",
           parameters: MANUAL_RESEARCH_PARAMETERS,
           async execute(_id, params) {
             return manualResearch(params);

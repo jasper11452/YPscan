@@ -430,7 +430,6 @@ export function createXingtuAdapter(page, { now = Date.now } = {}) {
     },
     async verifySelection(selection) {
       await assertUsablePage(page, "xingtu");
-      await dismissOrdinaryPopups(page, "xingtu");
       const keywordInput = page.getByPlaceholder(/按内容关键词找达人|内容关键词/u).first();
       const keywordValue = cleanText(await keywordInput.inputValue().catch(() => ""));
       const requestedKeyword = cleanText(selection?.branch?.keyword);

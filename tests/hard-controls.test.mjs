@@ -140,16 +140,9 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /CREATOR_PREVIEW_LOCAL_PATH/u);
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
-  assert.match(directiveText(rank), /https:\/\/www\.xingtu\.cn\/ad\/creator\/market/u);
-  assert.match(
-    directiveText(rank),
-    /https:\/\/pgy\.xiaohongshu\.com\/solar\/pre-trade\/note\/kol/u,
-  );
-  assert.match(directiveText(rank), /不先打开首页、工作台或其他中转页/u);
-  assert.match(
-    directiveText(rank),
-    /先用宿主 Browser 直接打开当前平台达人广场，再调用 ypscan_manual_select_filters/u,
-  );
+  assert.match(directiveText(rank), /ypscan_manual_select_filters\(operation=plan\)/u);
+  assert.match(directiveText(rank), /inspect\/action next_call/u);
+  assert.match(directiveText(rank), /post-condition/u);
   const question = argsFromDirective(directiveText(rank));
   assert.deepEqual(
     question.questions[0].options.map((option) => option.label),
@@ -338,14 +331,10 @@ test("startup instruction fixes the chain and delays Browser until the manual br
   assert.match(first.prependContext, /立即调用保存工具/u);
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
-  assert.match(first.prependContext, /先用宿主 Browser 直接打开当前平台达人广场/u);
-  assert.match(first.prependContext, /再调用 ypscan_manual_select_filters/u);
-  assert.match(first.prependContext, /https:\/\/www\.xingtu\.cn\/ad\/creator\/market/u);
-  assert.match(
-    first.prependContext,
-    /https:\/\/pgy\.xiaohongshu\.com\/solar\/pre-trade\/note\/kol/u,
-  );
-  assert.match(first.prependContext, /不先打开首页、工作台或其他中转页/u);
+  assert.match(first.prependContext, /ypscan_manual_select_filters\(operation=plan\)/u);
+  assert.match(first.prependContext, /ypscan_manual_browser_inspect/u);
+  assert.match(first.prependContext, /ypscan_manual_browser_action/u);
+  assert.match(first.prependContext, /expected_state_id/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /普通 UI\/参数问题的一次有界自动重试不调用/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
@@ -385,7 +374,8 @@ test("manual research asks only for login/CAPTCHA and keeps ordinary UI recovery
   const filterText = directiveText(filter);
   assert.doesNotMatch(filterText, /ASK_USER_QUESTION_ARGS=/u);
   assert.match(filterText, /不得要求用户关闭普通弹窗/u);
-  assert.match(filterText, /有界重试/u);
+  assert.match(filterText, /Observer 状态/u);
+  assert.match(filterText, /不盲目重复/u);
 });
 
 test("field-selection success exposes the raw URL and keeps columns in the Provider", () => {
@@ -455,6 +445,6 @@ test("rank and startup directives ban any manual_source_creators call", () => {
   const hooks = registeredHooks({ skillPath });
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /manual_source_creators 都不得调用/u);
-  assert.match(startup.prependContext, /人工拓展与手扒先用宿主 Browser/u);
-  assert.match(startup.prependContext, /再调用 ypscan_manual_select_filters/u);
+  assert.match(startup.prependContext, /ypscan_manual_select_filters\(operation=plan\)/u);
+  assert.match(startup.prependContext, /inspect\/action/u);
 });
