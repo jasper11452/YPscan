@@ -133,7 +133,8 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
   assert.match(directiveText(rank), /ypscan_manual_research\(operation=start\)/u);
-  assert.match(directiveText(rank), /宿主原生 Browser 自主/u);
+  assert.match(directiveText(rank), /Playwright/u);
+  assert.match(directiveText(rank), /禁止调用宿主原生 Browser/u);
   assert.match(directiveText(rank), /capture_list\/capture_detail/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
   const question = argsFromDirective(directiveText(rank));
@@ -430,7 +431,7 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
   }
 });
 
-test("invalid parse arguments trigger one bounded Agent repair instead of asking the user", () => {
+test("invalid parse arguments trigger bounded repeated Agent repairs instead of asking the user", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_parse_requirement",
@@ -445,12 +446,13 @@ test("invalid parse arguments trigger one bounded Agent repair instead of asking
   const text = directiveText(result);
 
   assert.match(text, /Agent 构造参数/u);
-  assert.match(text, /自动重试一次/u);
+  assert.match(text, /最多自动重试三次/u);
+  assert.match(text, /violations 与上一次完全相同/u);
   assert.match(text, /external_condition 的 value 必须使用 quote 的原文/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
-test("startup instruction fixes the chain and delays Browser until the manual branch", () => {
+test("startup instruction fixes the chain and reserves Playwright for the manual branch", () => {
   const skillPath = "/plugin/skills/media-assistant/SKILL.md";
   const hooks = registeredHooks({ skillPath });
   const context = { runId: "startup-run" };
@@ -471,17 +473,39 @@ test("startup instruction fixes the chain and delays Browser until the manual br
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
-  assert.match(first.prependContext, /宿主原生 Browser 自主/u);
+  assert.match(first.prependContext, /Playwright CLI/u);
+  assert.match(first.prependContext, /禁止调用宿主原生 Browser/u);
   assert.match(first.prependContext, /capture_list\/capture_detail/u);
+  assert.match(first.prependContext, /playwright_cli\.sh/u);
+  assert.match(first.prependContext, /页面变化后重新 snapshot/u);
   assert.match(first.prependContext, /不使用 selection_id、observation_id、element_id/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
-  assert.match(first.prependContext, /普通 UI\/参数问题的一次有界自动重试不调用/u);
+  assert.match(first.prependContext, /需求解析可按 violations 有界重试/u);
+  assert.match(first.prependContext, /最多自动重试三次/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
   assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
 
   hooks.get("before_tool_call")({ toolName: "Read", params: { path: skillPath } }, context);
   assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
+});
+
+test("verified range fallback returns control to Playwright without stale refs", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_set_filter_range",
+    message: toolMessage({
+      success: true,
+      status: "applied",
+      applied: true,
+      verified: true,
+      field_label: "粉丝数量",
+    }),
+  });
+  const text = directiveText(result);
+
+  assert.match(text, /范围筛选已验证：粉丝数量/u);
+  assert.match(text, /不要复用输入前的 ref/u);
 });
 
 test("ordinary successful delivery is not rewritten by the hook", () => {
@@ -590,6 +614,7 @@ test("rank and startup directives ban any manual_source_creators call", () => {
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /manual_source_creators 都不得调用/u);
   assert.match(startup.prependContext, /ypscan_manual_research\(operation=start\)/u);
-  assert.match(startup.prependContext, /宿主原生 Browser 自主/u);
+  assert.match(startup.prependContext, /Playwright CLI/u);
+  assert.match(startup.prependContext, /禁止调用宿主原生 Browser/u);
   assert.match(startup.prependContext, /capture_list\/capture_detail/u);
 });

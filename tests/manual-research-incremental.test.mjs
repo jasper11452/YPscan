@@ -54,22 +54,24 @@ function resultState() {
   };
 }
 
-test("native Browser run starts and captures the current list without a selection credential", async (t) => {
+test("Playwright CLI run starts and captures the current list without a selection credential", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-native-browser-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   let browserConnections = 0;
-  let state = resultState();
+  let detailSnapshot = { url: "https://www.xingtu.cn/ad/creator/detail", fields: {} };
   const research = createManualResearch({
     workspaceDir,
     connectOverCDP: async () => {
       browserConnections += 1;
       return { contexts: () => [] };
     },
-    inspectBrowser: async () => ({ page: {}, state }),
-    createAdapter: () => ({
-      async readPage() {
+    createPlaywrightRuntime: () => ({
+      session: "ypscan",
+      wrapper_path: "/yp/playwright_cli.sh",
+      async readList() {
         return {
           source_url: "https://www.xingtu.cn/ad/creator/market",
+          page_number: 1,
           price_tier: "60s以上视频",
           rows: [
             {
@@ -81,12 +83,15 @@ test("native Browser run starts and captures the current list without a selectio
           ],
         };
       },
-      async dispose() {},
+      async readDetail() {
+        return detailSnapshot;
+      },
     }),
   });
 
   const started = payload(await research({ operation: "start", ...params() }));
-  assert.equal(started.status, "ready_for_native_browser");
+  assert.equal(started.status, "ready_for_playwright");
+  assert.equal(started.browser_policy.playwright_session, "ypscan");
   assert.equal(started.browser_policy.selection_id_required, false);
   assert.equal(browserConnections, 0);
 
@@ -112,9 +117,9 @@ test("native Browser run starts and captures the current list without a selectio
   assert.equal(captured.status, "list_captured");
   assert.equal(captured.candidate_count, 1);
   assert.equal(captured.candidates[0].platform_id, "native-creator-1");
-  assert.equal(browserConnections, 1);
+  assert.equal(browserConnections, 0);
 
-  state = { ...state, page_state: "CAPTCHA_BLOCKED" };
+  detailSnapshot = { ...detailSnapshot, challenge: true };
   const skipped = payload(
     await research({
       operation: "capture_detail",
@@ -129,17 +134,19 @@ test("native Browser run starts and captures the current list without a selectio
   assert.equal(skipped.user_action_required, undefined);
 });
 
-test("ordinary native Browser page drift is recoverable instead of stopping the run", async (t) => {
+test("ordinary Playwright page drift is recoverable instead of stopping the run", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-native-recovery-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  let state = resultState();
   const research = createManualResearch({
     workspaceDir,
-    connectOverCDP: async () => ({ contexts: () => [] }),
-    inspectBrowser: async () => ({ page: {}, state }),
+    createPlaywrightRuntime: () => ({
+      session: "ypscan",
+      wrapper_path: "/yp/playwright_cli.sh",
+      readList: async () => ({ source_url: "https://www.xingtu.cn/ad/creator/index", rows: [] }),
+      readDetail: async () => ({}),
+    }),
   });
   const started = payload(await research({ operation: "start", ...params() }));
-  state = { ...state, page_state: "MODAL_BLOCKED" };
   const result = payload(
     await research({
       operation: "capture_list",
@@ -151,7 +158,7 @@ test("ordinary native Browser page drift is recoverable instead of stopping the 
   );
   assert.equal(result.success, true);
   assert.equal(result.status, "recoverable");
-  assert.match(result.recovery_hint, /原生 Browser/u);
+  assert.match(result.recovery_hint, /Playwright CLI/u);
 });
 
 async function committedRun(workspaceDir, page) {

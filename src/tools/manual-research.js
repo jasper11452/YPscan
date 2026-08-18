@@ -1,4 +1,5 @@
 import { chromium } from "playwright-core";
+import { createPlaywrightCliRuntime, PLAYWRIGHT_SESSION } from "./playwright-cli-runtime.js";
 import { inspectManualBrowser } from "./manual-browser-state.js";
 import {
   applyManualResearchReviews,
@@ -1205,6 +1206,7 @@ async function collectIncrementalV2({
  *   createAdapter?: (platform: string, page: import("playwright-core").Page, options: any) => any,
  *   createArtifactStore?: typeof createManualResearchStore,
  *   inspectBrowser?: typeof inspectManualBrowser,
+ *   createPlaywrightRuntime?: typeof createPlaywrightCliRuntime,
  *   now?: () => number,
  * }} [options]
  */
@@ -1215,6 +1217,7 @@ export function createManualResearch({
   createAdapter = createManualResearchAdapter,
   createArtifactStore = createManualResearchStore,
   inspectBrowser = inspectManualBrowser,
+  createPlaywrightRuntime = createPlaywrightCliRuntime,
   now = Date.now,
 } = {}) {
   const cdpUrl = requiredString(browserCdpUrl, "browserCdpUrl").replace(/\/$/u, "");
@@ -1234,6 +1237,7 @@ export function createManualResearch({
       params = validateManualResearchParams(rawParams);
       if (params.operation === "start") {
         plan = compileManualResearchPlan(params);
+        const playwright = createPlaywrightRuntime();
         artifactStore = await createArtifactStore({ workspaceDir, params, plan, now });
         if (!artifactStore.enabled || !artifactStore.run_id) {
           throw manualBrowserError(
@@ -1243,7 +1247,7 @@ export function createManualResearch({
         }
         const payload = {
           success: true,
-          status: "ready_for_native_browser",
+          status: "ready_for_playwright",
           operation: "start",
           requirement_id: params.requirement_id,
           platform: params.platform,
@@ -1255,7 +1259,10 @@ export function createManualResearch({
           unexpressed_conditions: plan.unexpressed ?? [],
           target_count: plan.target_count ?? null,
           browser_policy: {
-            interaction_owner: "agent_native_browser",
+            interaction_owner: "agent_playwright_cli",
+            playwright_session: playwright.session ?? PLAYWRIGHT_SESSION,
+            playwright_wrapper: playwright.wrapper_path ?? null,
+            persistent_profile_required: true,
             keyword_last: true,
             preserve_filters_between_keywords: true,
             selection_id_required: false,
@@ -1298,7 +1305,7 @@ export function createManualResearch({
             status,
             exportFallback: {
               status: "skipped",
-              reason: "agent_native_browser_collection",
+              reason: "agent_playwright_cli_collection",
               quota_consumed: false,
             },
             detailPlannedCount: Math.min(
@@ -1319,9 +1326,29 @@ export function createManualResearch({
           return hostToolResult(payload, { details: payload });
         }
 
-        const browser = await connectOverCDP(cdpUrl);
-        const observed = await inspectBrowser(browser, params.platform);
-        const { page, state } = observed;
+        const playwright = createPlaywrightRuntime();
+        const cliSnapshot =
+          params.operation === "capture_list"
+            ? await playwright.readList(params.platform)
+            : await playwright.readDetail(params.platform);
+        const url = clean(cliSnapshot?.source_url ?? cliSnapshot?.url);
+        const state = {
+          url,
+          page_state: cliSnapshot?.challenge
+            ? "CAPTCHA_BLOCKED"
+            : cliSnapshot?.login
+              ? "LOGIN_REQUIRED"
+              : params.operation === "capture_list"
+                ? pageMatches(params.platform, url)
+                  ? (cliSnapshot?.rows?.length ?? 0) > 0
+                    ? "RESULTS_READY"
+                    : "MARKET_READY"
+                  : "WRONG_PAGE"
+                : /author-homepage|\/(?:creator|kol|blogger)\/(?:detail|profile)|\/detail(?:\/|\?|$)/iu.test(url)
+                  ? "CREATOR_DETAIL_READY"
+                  : "WRONG_PAGE",
+          market: { page_number: cliSnapshot?.page_number ?? 1 },
+        };
         if (
           params.operation === "capture_detail" &&
           state.page_state === "CAPTCHA_BLOCKED"
@@ -1345,7 +1372,7 @@ export function createManualResearch({
             reason: "detail_captcha_blocked",
             fields: {},
             hard_evaluation: { ...evaluation, status: "unknown" },
-            source_type: "agent_native_browser",
+            source_type: "agent_playwright_cli",
             captured_at: new Date(now()).toISOString(),
           };
           await artifactStore.saveDetail({
@@ -1372,7 +1399,7 @@ export function createManualResearch({
           return hostToolResult(payload, { details: payload });
         }
         const humanBlocked = ["LOGIN_REQUIRED", "CAPTCHA_BLOCKED"].includes(state.page_state);
-        if (!page || humanBlocked) {
+        if (humanBlocked) {
           const payload = {
             success: false,
             status: humanBlocked ? "needs_user_action" : "recoverable",
@@ -1385,7 +1412,7 @@ export function createManualResearch({
               code: state.page_state ?? "BROWSER_UNAVAILABLE",
               message: humanBlocked
                 ? "当前平台需要用户完成登录或全局安全验证"
-                : "当前页面暂时不可采集，请由 Agent 使用原生 Browser 恢复后继续",
+                : "当前 Playwright 页面暂时不可采集，请由 Agent 在同一 session 恢复后继续",
               details: { state },
             },
           };
@@ -1403,7 +1430,7 @@ export function createManualResearch({
               run_id: params.run_id,
               page_state: state.page_state,
               recovery_hint:
-                "使用原生 Browser 关闭普通弹窗、返回达人广场或等待页面稳定，然后再次 capture_list；不要结束任务。",
+                "使用 Playwright CLI 同一 session 关闭普通弹窗、返回达人广场或等待页面稳定，然后再次 capture_list；不要结束任务。",
             };
             return hostToolResult(payload, { details: payload });
           }
@@ -1422,10 +1449,8 @@ export function createManualResearch({
             };
             return hostToolResult(payload, { details: payload });
           }
-          const adapter = createAdapter(params.platform, page, { workspaceDir, now });
           const pageNumber = state.market?.page_number ?? 1;
-          const pageData = await adapter.readPage(pageNumber);
-          await adapter.dispose?.().catch(() => {});
+          const pageData = cliSnapshot;
           const pageRecord = {
             page_number: pageNumber,
             row_count: pageData.rows.length,
@@ -1503,7 +1528,7 @@ export function createManualResearch({
             run_id: params.run_id,
             candidate_ref: params.candidate_ref,
             recovery_hint:
-              "当前不是达人详情页；使用原生 Browser 打开对应达人详情后再次 capture_detail，或跳过该达人继续下一位。",
+              "当前不是达人详情页；使用 Playwright CLI 同一 session 打开对应达人详情后再次 capture_detail，或跳过该达人继续下一位。",
           };
           return hostToolResult(payload, { details: payload });
         }
@@ -1516,7 +1541,13 @@ export function createManualResearch({
             "candidate_ref 不属于当前运行",
           );
         }
-        const snapshot = await readCreatorDetailSnapshot(page, params.platform, candidate);
+        const snapshot = {
+          status: Object.keys(cliSnapshot?.fields ?? {}).length ? "captured" : "empty",
+          reason: Object.keys(cliSnapshot?.fields ?? {}).length ? null : "visible_fields_missing",
+          platform_id: candidate.platform_id ?? null,
+          detail_url: cliSnapshot?.url ?? candidate.detail_url ?? null,
+          fields: cliSnapshot?.fields ?? {},
+        };
         const previous = loaded.details.find(
           (item) => item.candidate_ref === params.candidate_ref,
         );
@@ -1539,7 +1570,7 @@ export function createManualResearch({
           fields: evaluation.fields,
           hard_evaluation:
             snapshot.status === "blocked" ? { ...evaluation, status: "unknown" } : evaluation,
-          source_type: "agent_native_browser+dom",
+          source_type: "agent_playwright_cli+dom",
           captured_at: new Date(now()).toISOString(),
         };
         const detailsNow = mergeDetailRecords([...loaded.details, detail]);

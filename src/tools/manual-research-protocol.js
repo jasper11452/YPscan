@@ -44,7 +44,7 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
         "collect",
       ],
       description:
-        "原生 Browser 自助手扒协议：start 创建本地运行；Agent 自主操作页面后用 capture_list/capture_detail 只读采集当前页；finalize 生成 Excel；apply_reviews 写回复核；create_submission 生成独立提报表。collect 仅保留旧运行兼容。",
+        "Playwright CLI 自助手扒协议：start 创建本地运行；Agent 操作固定 ypscan session 后用 capture_list/capture_detail 从同一 session 只读采集；finalize 生成 Excel；apply_reviews 写回复核；create_submission 生成独立提报表。collect 仅保留旧运行兼容。",
     },
     requirement_id: {
       type: "string",
@@ -64,7 +64,7 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
     selection_id: {
       type: "string",
       minLength: 1,
-      description: "旧 collect 兼容字段；原生 Browser 自助手扒不使用。",
+      description: "旧 collect 兼容字段；Playwright CLI 自助手扒不使用。",
     },
     keyword: {
       type: "string",

@@ -6,7 +6,6 @@ import {
 } from "./src/tools/parse-requirement.js";
 import { createExcelArtifactSaver } from "./src/tools/save-excel-artifact.js";
 import { createManualResearch, MANUAL_RESEARCH_PARAMETERS } from "./src/tools/manual-research.js";
-import { createCascadeSelector, SELECT_CASCADE_PARAMETERS } from "./src/tools/select-cascade.js";
 import { resolveTestAdapterBaseUrl } from "./src/tools/test-adapter.js";
 
 /** Entry point for the YPscan client integration layer. */
@@ -18,24 +17,6 @@ export default {
     const hookRuntime = registerWecomConfirmationOnlyHooks(api);
 
     api.registerTool(
-      () => {
-        const selectCascade = createCascadeSelector({
-          browserCdpUrl: api.pluginConfig?.browserCdpUrl,
-        });
-        return {
-          name: "ypscan_select_cascade",
-          description:
-            "通用级联菜单助手：仅执行 Agent 根据当前页面决定的 field_label/path，负责悬停父项、等待子列、点击叶子和验证提交；不决定业务筛选、不导航、不创建状态机。普通 Browser 操作优先，仅在级联菜单无法稳定选择时调用。",
-          parameters: SELECT_CASCADE_PARAMETERS,
-          async execute(_id, params) {
-            return selectCascade(params);
-          },
-        };
-      },
-      { name: "ypscan_select_cascade" },
-    );
-
-    api.registerTool(
       (context) => {
         const manualResearch = createManualResearch({
           browserCdpUrl: api.pluginConfig?.browserCdpUrl,
@@ -44,7 +25,7 @@ export default {
         return {
           name: "ypscan_manual_research",
           description:
-            "原生 Browser 自助手扒的数据工具：start 创建运行；Agent 自主操作宿主 Browser 后，capture_list/capture_detail 只读当前页面并持久化；finalize 生成 Excel；不负责导航、筛选、翻页或详情点击，也不需要 selection_id。",
+            "Playwright 自助手扒的数据工具：start 创建运行并返回固定 CLI session；Agent 使用 YP Action playwright 技能操作该 session，capture_list/capture_detail 从同一 session 只读并持久化，finalize 生成 Excel；不调用宿主 Browser，也不需要 selection_id。",
           parameters: MANUAL_RESEARCH_PARAMETERS,
           async execute(_id, params) {
             return manualResearch(params);

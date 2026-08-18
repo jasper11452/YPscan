@@ -1,6 +1,6 @@
 {
   "name": "ypscan",
-  "version": "0.1.24-beta49",
+  "version": "0.1.24-beta51",
   "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由 Agent 使用宿主原生 Browser 自主完成。",
   "type": "module",
   "private": true,

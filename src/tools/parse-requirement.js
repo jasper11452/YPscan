@@ -615,7 +615,8 @@ function invalid(violations) {
           instruction:
             "逐项替换 violations 指向的 facts 字段后重试；百分比保留原始百分点，例如 70% 传 value=70。",
           retry_policy: {
-            max_automatic_retries: 1,
+            max_automatic_retries: 3,
+            stop_when_violations_unchanged: true,
             ask_user_only_for_business_ambiguity: true,
           },
           rebate_example: REBATE_REPAIR_EXAMPLE,
@@ -639,6 +640,15 @@ function sourceSegments(sourceId, text) {
 function textValues(value) {
   const values = Array.isArray(value) ? value : [value];
   return [...new Set(values.map((item) => String(item ?? "").trim()).filter(Boolean))];
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && Boolean(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function normalizedGender(value) {
@@ -1363,6 +1373,16 @@ function providerTextFactValues(facts, kind, segment = null) {
   ];
 }
 
+function referenceCreatorParams(facts, segment = null) {
+  const generic = providerTextFactValues(facts, "reference_creator", segment);
+  const nicknames = generic.filter((value) => !isHttpUrl(value));
+  const urls = generic.filter(isHttpUrl);
+  return {
+    nickname: [...new Set(nicknames)][0] ?? null,
+    url: [...new Set(urls)][0] ?? null,
+  };
+}
+
 function numericRange(fact, { unrestrictedMaximum = 999_999_999 } = {}) {
   if (!fact) return null;
   if (fact.operator === "any") return { minimum: 0, maximum: unrestrictedMaximum };
@@ -1826,6 +1846,9 @@ function providerJobProjection(input, facts, now, globalIssues, segment) {
     params[input.platform === "xiaohongshu" ? "growBloggerTypeLabel" : "growTalentTypeLabel"] =
       growthCreatorTypes;
   }
+  const referenceCreator = referenceCreatorParams(facts, segment);
+  if (referenceCreator.nickname) params.refNickname = referenceCreator.nickname;
+  if (referenceCreator.url) params.refUrl = referenceCreator.url;
   params.platform = input.platform;
   params.rawMessagesJson = JSON.stringify([{ role: "user", content: input.original_brief }]);
   params.description = activeFactSummary(facts);
@@ -1895,6 +1918,7 @@ const PROVIDER_HANDLED_KINDS = new Set([
   "creator_url_keyword",
   "platform_creator_type",
   "growth_creator_type",
+  "reference_creator",
   "cpm_max",
   "cpe_max",
   ...Object.keys(PROVIDER_RANGE_FIELDS),
@@ -1906,6 +1930,7 @@ const PROVIDER_BASIC_KINDS = new Set([
   "project_name",
   "product_name",
   "submission_deadline",
+  "reference_creator",
 ]);
 
 function parseScheduleMonth(value) {

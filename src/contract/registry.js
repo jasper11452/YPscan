@@ -98,6 +98,8 @@ export const VALIDATE_REQUIREMENT_PARAMS = Object.freeze([
   "kolOfficialPriceL2",
   "kolOfficialPriceL3",
   "originalBrief",
+  "refNickname",
+  "refUrl",
 ]);
 
 const REQUIRED_VALIDATE_PARAMS = new Set([
