@@ -19,6 +19,7 @@ assert.equal(
   packageJson.version,
   "manifest and package versions must stay in sync",
 );
+assert.equal(packageJson.files.includes("skills"), true, "published package must include skills");
 assert.equal(
   manifest.mcpServers.ypscan.toolFilter.include.includes("manual_source_creators"),
   false,
@@ -68,6 +69,16 @@ try {
   assert.equal(toolNames.includes("ypscan_import_manual_source_excel"), false);
   assert.equal(toolNames.includes("ypscan_commit_browser_source_batch"), false);
   assert.equal(toolNames.includes("ypscan_parse_requirement_tags"), false);
+  const manualResearch = registered.tools.find((tool) => tool.name === "ypscan_manual_research");
+  const rejectedLegacyCall = await manualResearch.execute("smoke-legacy", {
+    requirement_id: "smoke-requirement",
+    platform: "xingtu",
+    facts: [],
+    keywords: ["smoke"],
+  });
+  const rejectedLegacyPayload = JSON.parse(rejectedLegacyCall.content[0].text);
+  assert.equal(rejectedLegacyPayload.success, false);
+  assert.equal(rejectedLegacyPayload.error.code, "YPSCAN_MANUAL_ARGUMENT_INVALID");
 
   const hookNames = registered.hooks.map((hook) => hook.name);
   assert.deepEqual([...new Set(hookNames)].sort(), [

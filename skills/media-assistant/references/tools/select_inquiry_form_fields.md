@@ -10,7 +10,7 @@ Call when the current institutional inquiry or submission request needs a persis
 
 Call the directly exposed Provider MCP `select_inquiry_form_fields` using its current published schema. In the current workflow:
 
-- Pass the exact current requirement ID using the live Provider schema's field name so the submitted selection is associated with the correct requirement.
+- Pass the exact current requirement ID using the live Provider schema's field name so the submitted selection is associated with the correct requirement. It comes from `validate_requirement.data.requirement_id`, falling back to `data.id` only when absent; never use `data.demand_id`.
 - `platform`: `xiaohongshu` or `douyin` when required by the live schema.
 - Pass optional link/wait parameters only when the Provider contract requires them.
 

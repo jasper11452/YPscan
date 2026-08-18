@@ -615,8 +615,7 @@ function invalid(violations) {
           instruction:
             "逐项替换 violations 指向的 facts 字段后重试；百分比保留原始百分点，例如 70% 传 value=70。",
           retry_policy: {
-            max_automatic_retries: 3,
-            stop_when_violations_unchanged: true,
+            automatic_retries_unlimited: true,
             ask_user_only_for_business_ambiguity: true,
           },
           rebate_example: REBATE_REPAIR_EXAMPLE,

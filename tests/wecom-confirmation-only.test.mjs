@@ -40,6 +40,28 @@ test("Provider calls remain unrestricted and their params are not rewritten", as
     ),
     undefined,
   );
+
+  assert.equal(
+    await hooks.get("before_tool_call")(
+      {
+        toolName: "test__search_creators",
+        params: { id: "req-search-job-a" },
+      },
+      {},
+    ),
+    undefined,
+  );
+
+  assert.equal(
+    await hooks.get("before_tool_call")(
+      {
+        toolName: "test__rank_mcns",
+        params: { id: "req-search-job-b", platform: "douyin" },
+      },
+      {},
+    ),
+    undefined,
+  );
 });
 
 test("WeCom send requires message and recipient confirmation before one exact send", async () => {

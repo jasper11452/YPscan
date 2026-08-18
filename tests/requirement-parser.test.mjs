@@ -851,14 +851,14 @@ test("representative compact parse input is at least sixty percent smaller", () 
   );
 });
 
-test("malformed facts allow bounded repeated Agent repairs", () => {
+test("malformed facts allow unlimited repeated Agent repairs", () => {
   const result = compile({ original_brief: "测试", platform: "xiaohongshu", facts: [{}] });
 
   assert.equal(result.success, false);
   assert.equal(result.error.code, "YPSCAN_REQUIREMENT_INVALID");
   assert.equal(result.error.details.outcome, "invalid_agent_input");
-  assert.equal(result.error.details.repair.retry_policy.max_automatic_retries, 3);
-  assert.equal(result.error.details.repair.retry_policy.stop_when_violations_unchanged, true);
+  assert.equal(result.error.details.repair.retry_policy.automatic_retries_unlimited, true);
+  assert.equal(result.error.details.repair.retry_policy.max_automatic_retries, undefined);
   assert.ok(Array.isArray(result.error.details.violations));
 });
 

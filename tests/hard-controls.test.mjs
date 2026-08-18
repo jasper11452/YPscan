@@ -83,9 +83,16 @@ test("fixed result directives enforce parse → validate → search → save →
 
   const validate = persist({
     toolName: "ypmcn__validate_requirement",
-    message: toolMessage({ success: true, data: { id: "a".repeat(32) } }),
+    message: toolMessage({
+      success: true,
+      data: { id: "a".repeat(32), demand_id: "1787034545923844" },
+    }),
   });
-  assert.match(directiveText(validate), /下一步固定调用 search_creators/u);
+  assert.match(directiveText(validate), /下一步立即.*SEARCH_CREATORS_ARGS/u);
+  assert.match(directiveText(validate), /严禁使用 data\.demand_id/u);
+  assert.deepEqual(namedArgsFromDirective(directiveText(validate), "SEARCH_CREATORS_ARGS"), {
+    id: "a".repeat(32),
+  });
 
   const search = persist({
     toolName: "ypmcn__search_creators",
@@ -308,6 +315,27 @@ test("manual research success directive makes the local Excel the primary large-
   assert.match(directive, /不得把平台硬筛结果表述为已经完成语义复核/u);
 });
 
+test("manual research observes redirects and dismisses safe modals before filtering", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_manual_research",
+    message: toolMessage({
+      success: true,
+      status: "ready_for_playwright",
+      run_id: "run-entry-guard",
+      playwright_session: "ypscan",
+    }),
+  });
+  const directive = directiveText(result);
+
+  assert.match(directive, /snapshot 观察整页及当前 URL/u);
+  assert.match(directive, /等待稳定再重新 snapshot/u);
+  assert.match(directive, /同时确认正确页面和筛选区/u);
+  assert.match(directive, /关闭可安全关闭的普通公告\/资质弹窗/u);
+  assert.match(directive, /再次确认仍在达人广场.*才开始任何筛选/u);
+  assert.match(directive, /登录页、全局验证码或安全验证.*绝不能当普通弹窗关闭/u);
+});
+
 test("completed manual research asks for inquiry or a local submission workbook", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
@@ -431,7 +459,7 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
   }
 });
 
-test("invalid parse arguments trigger bounded repeated Agent repairs instead of asking the user", () => {
+test("invalid parse arguments allow unlimited Agent repairs instead of asking the user", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_parse_requirement",
@@ -446,8 +474,8 @@ test("invalid parse arguments trigger bounded repeated Agent repairs instead of 
   const text = directiveText(result);
 
   assert.match(text, /Agent 构造参数/u);
-  assert.match(text, /最多自动重试三次/u);
-  assert.match(text, /violations 与上一次完全相同/u);
+  assert.match(text, /不限制需求解析工具的调用次数/u);
+  assert.doesNotMatch(text, /最多自动重试/u);
   assert.match(text, /external_condition 的 value 必须使用 quote 的原文/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
@@ -480,8 +508,9 @@ test("startup instruction fixes the chain and reserves Playwright for the manual
   assert.match(first.prependContext, /页面变化后重新 snapshot/u);
   assert.match(first.prependContext, /不使用 selection_id、observation_id、element_id/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
-  assert.match(first.prependContext, /需求解析可按 violations 有界重试/u);
-  assert.match(first.prependContext, /最多自动重试三次/u);
+  assert.match(first.prependContext, /需求解析按最新 violations 持续修正并重试/u);
+  assert.match(first.prependContext, /不限制调用次数/u);
+  assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
   assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
@@ -539,8 +568,22 @@ test("manual research asks only for login/CAPTCHA and keeps ordinary UI recovery
   const filterText = directiveText(filter);
   assert.doesNotMatch(filterText, /ASK_USER_QUESTION_ARGS=/u);
   assert.match(filterText, /不得要求用户关闭普通弹窗/u);
-  assert.match(filterText, /Observer 状态/u);
+  assert.match(filterText, /Playwright CLI 同一 session 的最新 snapshot/u);
   assert.match(filterText, /不盲目重复/u);
+  assert.doesNotMatch(filterText, /ypscan_manual_select_filters|MANUAL_FILTER_SELECTION_ARGS/u);
+
+  const legacy = persist({
+    toolName: "ypscan_manual_research",
+    message: toolMessage({
+      success: false,
+      error: { code: "YPSCAN_MANUAL_SELECTION_REQUIRED" },
+      selector_args: { requirement_id: "req-1", platform: "xingtu" },
+    }),
+  });
+  const legacyText = directiveText(legacy);
+  assert.match(legacyText, /operation=start/u);
+  assert.match(legacyText, /旧筛选工具/u);
+  assert.doesNotMatch(legacyText, /ypscan_manual_select_filters|MANUAL_FILTER_SELECTION_ARGS/u);
 });
 
 test("field-selection success exposes the raw URL and keeps columns in the Provider", () => {
@@ -559,7 +602,8 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   );
   assert.match(text, /原样输出为单独一行用户可见正文/u);
   assert.match(text, /禁止 Markdown 包装、重写、用 Browser 打开/u);
-  assert.match(text, /按需求 ID 持久化到 Provider 数据库/u);
+  assert.match(text, /按 requirement ID 持久化到 Provider 数据库/u);
+  assert.match(text, /绝不是 demand_id/u);
   assert.match(text, /不得调用已弃用的 get_selected_inquiry_form_fields/u);
   assert.match(text, /不得.*把 columns 放入 Agent 上下文/u);
   assert.match(text, /等待用户完成选择后回复“好了”/u);

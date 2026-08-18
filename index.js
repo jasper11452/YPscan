@@ -19,7 +19,7 @@ export default {
     api.registerTool(
       (context) => {
         const manualResearch = createManualResearch({
-          browserCdpUrl: api.pluginConfig?.browserCdpUrl,
+          allowLegacyProtocol: false,
           workspaceDir: context?.workspaceDir,
         });
         return {

@@ -1195,8 +1195,9 @@ async function collectIncrementalV2({
 }
 
 /**
- * Create the checkpointed two-platform research runner. It connects to the
- * host's existing Browser over CDP and deliberately never closes that Browser.
+ * Create the checkpointed two-platform research runner. Public Playwright CLI
+ * operations only persist snapshots; optional legacy operations may connect to
+ * the host's existing Browser over CDP and never close that Browser.
  *
  * @param {{
  *   browserCdpUrl?: string,
@@ -1205,6 +1206,7 @@ async function collectIncrementalV2({
  *   createAdapter?: (platform: string, page: import("playwright-core").Page, options: any) => any,
  *   createArtifactStore?: typeof createManualResearchStore,
  *   inspectBrowser?: typeof inspectManualBrowser,
+ *   allowLegacyProtocol?: boolean,
  *   now?: () => number,
  * }} [options]
  */
@@ -1215,6 +1217,7 @@ export function createManualResearch({
   createAdapter = createManualResearchAdapter,
   createArtifactStore = createManualResearchStore,
   inspectBrowser = inspectManualBrowser,
+  allowLegacyProtocol = true,
   now = Date.now,
 } = {}) {
   const cdpUrl = requiredString(browserCdpUrl, "browserCdpUrl").replace(/\/$/u, "");
@@ -1231,7 +1234,7 @@ export function createManualResearch({
     let activeBranchIndex = null;
     let activeCandidate = null;
     try {
-      params = validateManualResearchParams(rawParams);
+      params = validateManualResearchParams(rawParams, { allowLegacyProtocol });
       if (params.operation === "start") {
         plan = compileManualResearchPlan(params);
         artifactStore = await createArtifactStore({ workspaceDir, params, plan, now });
@@ -1304,10 +1307,7 @@ export function createManualResearch({
               reason: "agent_playwright_cli_collection",
               quota_consumed: false,
             },
-            detailPlannedCount: Math.min(
-              detailQueueLimit(plan),
-              loaded.candidates.length,
-            ),
+            detailPlannedCount: Math.min(detailQueueLimit(plan), loaded.candidates.length),
           });
           const payload = outputPayload({
             params: { ...loaded.params, ...params, page_url: null },
@@ -1337,15 +1337,14 @@ export function createManualResearch({
                     ? "RESULTS_READY"
                     : "MARKET_READY"
                   : "WRONG_PAGE"
-                : /author-homepage|\/(?:creator|kol|blogger)\/(?:detail|profile)|\/detail(?:\/|\?|$)/iu.test(url)
+                : /author-homepage|\/(?:creator|kol|blogger)\/(?:detail|profile)|\/detail(?:\/|\?|$)/iu.test(
+                      url,
+                    )
                   ? "CREATOR_DETAIL_READY"
                   : "WRONG_PAGE",
           market: { page_number: cliSnapshot?.page_number ?? 1 },
         };
-        if (
-          params.operation === "capture_detail" &&
-          state.page_state === "CAPTCHA_BLOCKED"
-        ) {
+        if (params.operation === "capture_detail" && state.page_state === "CAPTCHA_BLOCKED") {
           const candidate = loaded.candidates.find(
             (item) => candidateReference(item) === params.candidate_ref,
           );
@@ -1541,9 +1540,7 @@ export function createManualResearch({
           detail_url: cliSnapshot?.url ?? candidate.detail_url ?? null,
           fields: cliSnapshot?.fields ?? {},
         };
-        const previous = loaded.details.find(
-          (item) => item.candidate_ref === params.candidate_ref,
-        );
+        const previous = loaded.details.find((item) => item.candidate_ref === params.candidate_ref);
         const fields = { ...(previous?.fields ?? {}), ...(snapshot.fields ?? {}) };
         const evaluation = evaluateCandidateDetail(candidate, { fields }, plan);
         const detail = {

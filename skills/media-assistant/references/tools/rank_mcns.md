@@ -2,7 +2,7 @@
 
 Risk tier: automatic Provider operation.
 
-This is the fourth fixed Provider call. Call after the successful `search_creators` result has been saved locally with `ypscan_save_excel_artifact` (including a successful zero-match result), then pass the exact current `id` and platform. Do not mix platform or requirement IDs.
+This is the fourth fixed Provider call. Call after the successful `search_creators` result has been saved locally with `ypscan_save_excel_artifact` (including a successful zero-match result), then pass the exact current requirement ID as `id` and the current platform. The requirement ID is the `validate_requirement` result's `data.requirement_id`, falling back to `data.id` only when absent; never use `data.demand_id`, `demand_version`, or another workflow's ID.
 
 Provider risk labels, supply multipliers, institution count, and `recommended_action` are internal response context. They do not prohibit, shrink, or preselect institutional inquiry, and they are not user-visible ranking output. Never invent `medium_risk_confirmation` or recommend loosening the user's requirements merely because supply is low.
 

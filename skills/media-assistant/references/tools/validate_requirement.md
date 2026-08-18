@@ -9,7 +9,7 @@ Risk tier: automatic internal business write. A complete, unambiguous requiremen
 - Do not display a confirmation-only summary and do not offer `确认创建` / `返回修改`. If clarification is genuinely required, call `AskUserQuestion` with only the unresolved items; denial/cancel/close/timeout/missing answer/callback error stops that turn and no answer/default may be inferred.
 - Every missing user-required field must be asked; never fabricate one. Omit optional fields the user did not volunteer.
 - Each new call creates an independent requirement attempt. Existing sessions, project names, descriptions, `originalBrief`, and historical manifests never identify the new order or block this tool.
-- After success, preserve the real returned `requirement_id`; every downstream operation routes by that ID. For the normal new-requirement flow, do not stop or ask another question: immediately call `search_creators({id: requirement_id})`, save its creator preview with `ypscan_save_excel_artifact`, then call `rank_mcns` with the same ID and current platform. The MCN list and branch question come only after ranking.
+- After success, bind the current requirement ID from `data.requirement_id`, falling back to `data.id` only when `data.requirement_id` is absent. `data.demand_id` is a different identifier and must never be used as the requirement ID. For the normal new-requirement flow, do not stop or ask another question: immediately call `search_creators({id: requirement_id})`, save its creator preview with `ypscan_save_excel_artifact`, then call `rank_mcns` with the same requirement ID and current platform. The MCN list and branch question come only after ranking.
 
 ## Argument contract
 
@@ -116,6 +116,6 @@ Top-level arguments must remain semantically equivalent to the user's stated req
 
 ## Result and stop conditions
 
-Success requires envelope `success === true` and a 32-character hexadecimal `data.id`, which binds as `requirement_id`. Preserve the real response and use only that ID downstream. Record real `data.status` (`draft`, `ready`, `split_required`, or `clarification_required`) without inferring a state. A verified success is not a turn-ending result in the normal new-requirement flow; continue through search and MCN ranking without an intervening final reply or `AskUserQuestion`.
+Success requires envelope `success === true` and a real requirement identifier: prefer `data.requirement_id`, or use the compatible `data.id` only when that field is absent. Never substitute `data.demand_id`. Preserve that exact requirement ID downstream. Record real `data.status` (`draft`, `ready`, `split_required`, or `clarification_required`) without inferring a state. A verified success is not a turn-ending result in the normal new-requirement flow; continue through search and MCN ranking without an intervening final reply or `AskUserQuestion`.
 
 Stop on unresolved required information, arguments that differ from the user's stated or clarified requirements, unsupported fields, envelope failure, missing success evidence, or conflicting Provider business fields. Do not explain a 10-versus-5 conflict as system-selected actual data, calculate from the conflicting value, or continue downstream. After a successful requirement ID is returned, do not create another requirement for the same request unless the user explicitly starts a new one.

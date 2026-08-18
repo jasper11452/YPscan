@@ -1,7 +1,7 @@
 {
   "id": "ypscan",
   "name": "悦普识星",
-  "version": "0.1.24-beta51",
+  "version": "0.1.24-beta53",
   "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由 Agent 使用 YP Action Playwright 自主完成。",
   "author": {
     "name": "Jasper"
@@ -50,17 +50,12 @@
       },
       "browserCdpUrl": {
         "type": "string",
-        "default": "http://127.0.0.1:18800",
-        "description": "仅供旧 collect 兼容路径使用的宿主 CDP 地址；人工拓展使用 YP Action Playwright CLI 独立持久 session。"
+        "description": "已弃用并忽略，仅保留旧配置兼容；人工拓展固定使用 YP Action Playwright CLI session。"
       }
     }
   },
   "contracts": {
-    "tools": [
-      "ypscan_parse_requirement",
-      "ypscan_manual_research",
-      "ypscan_save_excel_artifact"
-    ]
+    "tools": ["ypscan_parse_requirement", "ypscan_manual_research", "ypscan_save_excel_artifact"]
   },
   "hooks": "./index.js"
 }
