@@ -5,7 +5,9 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 # YPscan Media Assistant
 
-读取 Skill 只是启动准备，不是业务门禁。所有达人筛选都遵循同一条固定业务链；需求解析阶段内部固定两次调用（`ypscan_parse_requirement`、`validate_requirement`），随后第二个业务阶段永远是 `search_creators`：
+所有达人筛选遵循同一固定链路；需求解析阶段调用 `ypscan_parse_requirement`、`validate_requirement`，随后进入 `search_creators`：
+
+工具能力只按宿主完整名称中最后一个 `__` 后的实际工具名判断；前面的命名空间（包括 `test`）不区分正式、测试或旁路，不得因前缀拒绝调用或宣称工具未开放。实际工具名单一匹配时直接使用宿主展示的完整名称；多个可用工具映射到同一实际名称时才调用 `AskUserQuestion` 请用户选择；无匹配时才报告缺失。
 
 `ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 输出完整 MCN Markdown 表格 → 展示本地路径 → AskUserQuestion`
 
@@ -13,7 +15,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 固定 Provider 链路
 
-1. **需求解析**：从用户原文提取完整事实，调用 `ypscan_parse_requirement`。普通 fact 只传 `kind`、原文 `quote` 和归一化 `value`；仅范围或特殊语义补传可选字段，禁止补写工具可推导的 ID、来源、subject 或 unit。保留 `provider` 参数、搜索分组和 residual conditions；若解析结果存在必须补充的条件，立即调用 `AskUserQuestion`，不得用普通文本停住。
+1. **需求解析**：提取原文事实并调用 `ypscan_parse_requirement`。普通 fact 只传 `kind`、原文 `quote`、归一化 `value`；抖音 `60s+` 拆成 `video` 与 `duration_l3`。无精确数值或主体的条件只作 soft/preferred_content 或原文 external_condition，禁止猜数值、补主体。仅真实必填信息缺失或冲突时询问用户；`YPSCAN_REQUIREMENT_INVALID` 属于 Agent 参数错误，按全部 violations 最多自动修正一次。保留 Provider 参数、搜索分组和 residual conditions。
 2. **创建需求**：按解析结果调用 `validate_requirement`，保留真实 `requirement_id` 和 `platform`。成功后立即进入 `search_creators`。
 3. **搜索达人并保存预览表**：用同一个 `requirement_id` 调用 `search_creators`，保留 Hook 给出的 `SAVE_EXCEL_ARTIFACT_ARGS` 并立即逐字调用 `ypscan_save_excel_artifact`；不得向用户输出 `creators_export_path` 或 Excel 下载链接，也不得用 Browser、shell、curl、Python 或其他下载/写文件方式代替保存工具。包括 0 命中也先保存再继续。
 4. **机构排序**：保存成功后用同一个 ID 和平台调用 `rank_mcns`。成功后按响应顺序输出全部 MCN，不得只说“已完成”或只列部分机构；表格后原样展示保存工具返回的真实本地路径。
@@ -41,6 +43,6 @@ rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必�
 
 ## Provider 后续
 
-用户选择“询价机构”后，继续使用真实 MCN 名称/ID、企微确认和询价工具链。按 Provider 当前 schema 调用远端 MCP `select_inquiry_form_fields`，传入当前真实需求 ID；返回后把原始 `url` 原样单独输出一行用户可见正文（禁止 Markdown 包装、禁止用 Browser 打开）。用户在选择页提交时，Provider 会把字段按需求 ID 持久化；不得调用已弃用的 `get_selected_inquiry_form_fields`，不得读取、重建、缓存或向后续工具传 `columns`。`create_submission_batch`、`create_with_distributions`、`get_creator_detail_export` 和 `get_creator_detail` 只传各自当前 schema 要求的业务参数，由后端关联字段；任何前缀的 `manual_source_creators` 都不得调用。Provider 返回 Excel 下载 URL 时，使用 `ypscan_save_excel_artifact` 保存并原样交付 `file_path`；Browser 人工拓展不走该工具。
+用户选择“询价机构”后，继续使用真实 MCN 名称/ID、企微确认和询价工具链。按 Provider 当前 schema 调用实际名称为 `select_inquiry_form_fields` 的可用工具，传入当前真实需求 ID；返回后把原始 `url` 原样单独输出一行用户可见正文（禁止 Markdown 包装、禁止用 Browser 打开）。用户在选择页提交时，Provider 会把字段按需求 ID 持久化；不得调用已弃用的 `get_selected_inquiry_form_fields`，不得读取、重建、缓存或向后续工具传 `columns`。`create_submission_batch`、`create_with_distributions`、`get_creator_detail_export` 和 `get_creator_detail` 只传各自当前 schema 要求的业务参数，由后端关联字段；任何前缀的 `manual_source_creators` 都不得调用。Provider 返回 Excel 下载 URL 时，使用 `ypscan_save_excel_artifact` 保存并原样交付 `file_path`；Browser 人工拓展不走该工具。
 
 所有结果只使用本轮真实 Provider 或 Browser 证据，不跨需求、平台、账号或历史 run 混用。

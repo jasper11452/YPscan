@@ -119,7 +119,7 @@ function rankMcnsDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。本 tool result 里的表头只是格式提示，不是用户可见表格。",
     "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出，再原样展示此前 ypscan_save_excel_artifact 返回的 CREATOR_PREVIEW_LOCAL_PATH，最后调用 AskUserQuestion。不要输出达人预览表下载链接；表格禁止改成项目符号或编号列表。",
-    "表格固定列：机构名、返点、综合分、本机构预估覆盖达人数；每行覆盖人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
+    "用户可见机构结果只显示这一张四列表格，固定列且不得增减：机构名、返点、综合分、本机构预估覆盖达人数。禁止在表格内外另行展示排名、supplier_id、候选数、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。每行覆盖人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 search_creators 确实未返回 creators_export_path 或精确保存参数，必须如实说明无法保存，禁止编造或复用历史链接。",
     "人工拓展并提报 = 先调用 ypscan_manual_research(operation=start) 创建本地运行，再由 Agent 使用宿主原生 Browser 自主导航、关闭普通弹窗、设置筛选、翻页和打开详情；只有原生 Browser 无法稳定选择级联菜单时，才调用 ypscan_select_cascade，并由 Agent 根据需求和当前页面决定 field_label、trigger_label 与 path。每到稳定列表页或详情页分别调用 capture_list/capture_detail 只读采集。首关键词先完成全部硬筛且关键词最后提交，后续关键词保留筛选集只换关键词。普通页面问题自主恢复，任何前缀的 manual_source_creators 都不得调用。",
     MCN_MARKDOWN_TABLE_HEADER,

@@ -123,6 +123,10 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /\| 机构名 \| 返点 \| 综合分 \| 本机构预估覆盖达人数 \|/u);
   assert.match(directiveText(rank), /禁止改成项目符号或编号列表/u);
   assert.match(directiveText(rank), /机构名、返点、综合分、本机构预估覆盖达人数/u);
+  assert.match(directiveText(rank), /只显示这一张四列表格/u);
+  assert.match(directiveText(rank), /固定列且不得增减/u);
+  assert.match(directiveText(rank), /禁止在表格内外另行展示排名、supplier_id/u);
+  assert.match(directiveText(rank), /MCN:人工、推荐理由/u);
   assert.match(directiveText(rank), /candidate_count 原值/u);
   assert.match(directiveText(rank), /严禁使用累计字段 mcn_covered_creator_count/u);
   assert.match(directiveText(rank), /严禁与前序机构累加/u);
