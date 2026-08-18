@@ -35,6 +35,11 @@ assert.equal(
   false,
   "deprecated field-selection reads must not be exposed",
 );
+assert.equal(
+  manifest.mcpServers.ypscan.toolFilter.include.includes("get_ingest_job"),
+  true,
+  "async ingest result polling must be exposed from the Provider MCP",
+);
 
 const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-smoke-"));
 const registered = { tools: [], hooks: [] };

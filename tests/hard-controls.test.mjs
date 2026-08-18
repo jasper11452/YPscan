@@ -191,7 +191,7 @@ test("creator preview save keeps the local path and continues to rank", () => {
   );
 });
 
-test("institutional retrieval continues through ingest Excel save, creator rank and submission", () => {
+test("institutional retrieval polls the ingest job before Excel save, creator rank and submission", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const synced = persist({
     toolName: "test__sync_mcn_inquiry_status",
@@ -209,18 +209,43 @@ test("institutional retrieval continues through ingest Excel save, creator rank 
     params: { inquiry_ids: ["12", "13"] },
     message: toolMessage({
       success: true,
+      data: { job_id: "job-ingest-1" },
+    }),
+  });
+  assert.deepEqual(namedArgsFromDirective(directiveText(ingested), "GET_INGEST_JOB_ARGS"), {
+    job_id: "job-ingest-1",
+  });
+  assert.doesNotMatch(directiveText(ingested), /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+
+  const pending = persist({
+    toolName: "test__get_ingest_job",
+    params: { job_id: "job-ingest-1" },
+    message: toolMessage({ success: false, error: { code: "JOB_PENDING" } }),
+  });
+  assert.deepEqual(namedArgsFromDirective(directiveText(pending), "GET_INGEST_JOB_ARGS"), {
+    job_id: "job-ingest-1",
+  });
+  assert.match(directiveText(pending), /同一个 job_id/u);
+  assert.doesNotMatch(directiveText(pending), /ASK_USER_QUESTION_ARGS=/u);
+
+  const completed = persist({
+    toolName: "test__get_ingest_job",
+    params: { job_id: "job-ingest-1" },
+    message: toolMessage({
+      success: true,
       data: {
+        job_id: "job-ingest-1",
         requirement_id: "req-ingest",
         excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
       },
     }),
   });
   assert.match(
-    directiveText(ingested),
+    directiveText(completed),
     /MCN_CREATOR_PREVIEW_URL=https:\/\/files\.eshypdata\.com\/exports\/mcn-preview\.xlsx/u,
   );
-  assert.match(directiveText(ingested), /原始 URL 直接输出为单独一行用户可见正文/u);
-  assert.deepEqual(saveExcelArgsFromDirective(directiveText(ingested)), {
+  assert.match(directiveText(completed), /原始 URL 直接输出为单独一行用户可见正文/u);
+  assert.deepEqual(saveExcelArgsFromDirective(directiveText(completed)), {
     artifact_kind: "mcn_creator_preview",
     artifact_id: "req-ingest",
     excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",

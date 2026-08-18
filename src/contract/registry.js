@@ -23,6 +23,7 @@ const BUSINESS_TOOL_NAMES = Object.freeze([
   "create_with_distributions",
   "sync_mcn_inquiry_status",
   "ingest_mcn_submissions",
+  "get_ingest_job",
   "rank_creators",
   "get_creator_detail",
   "get_creator_detail_export",
