@@ -54,6 +54,106 @@ function resultState() {
   };
 }
 
+test("native Browser run starts and captures the current list without a selection credential", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-native-browser-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  let browserConnections = 0;
+  let state = resultState();
+  const research = createManualResearch({
+    workspaceDir,
+    connectOverCDP: async () => {
+      browserConnections += 1;
+      return { contexts: () => [] };
+    },
+    inspectBrowser: async () => ({ page: {}, state }),
+    createAdapter: () => ({
+      async readPage() {
+        return {
+          source_url: "https://www.xingtu.cn/ad/creator/market",
+          price_tier: "60s以上视频",
+          rows: [
+            {
+              platform_id: "native-creator-1",
+              nickname: "原生达人",
+              followers_raw: "20万",
+              price_raw: "1.8万",
+            },
+          ],
+        };
+      },
+      async dispose() {},
+    }),
+  });
+
+  const started = payload(await research({ operation: "start", ...params() }));
+  assert.equal(started.status, "ready_for_native_browser");
+  assert.equal(started.browser_policy.selection_id_required, false);
+  assert.equal(browserConnections, 0);
+
+  const captured = payload(
+    await research({
+      operation: "capture_list",
+      requirement_id: started.requirement_id,
+      platform: started.platform,
+      run_id: started.run_id,
+      keyword: "办公软件",
+      keyword_complete: true,
+      filter_evidence: [
+        {
+          fact: "60s以上视频报价 2 万以内",
+          page_control: "达人报价",
+          selected_path: ["60s以上视频"],
+          verified: true,
+          evidence: "筛选栏显示 60s以上视频",
+        },
+      ],
+    }),
+  );
+  assert.equal(captured.status, "list_captured");
+  assert.equal(captured.candidate_count, 1);
+  assert.equal(captured.candidates[0].platform_id, "native-creator-1");
+  assert.equal(browserConnections, 1);
+
+  state = { ...state, page_state: "CAPTCHA_BLOCKED" };
+  const skipped = payload(
+    await research({
+      operation: "capture_detail",
+      requirement_id: started.requirement_id,
+      platform: started.platform,
+      run_id: started.run_id,
+      candidate_ref: "native-creator-1",
+    }),
+  );
+  assert.equal(skipped.success, true);
+  assert.equal(skipped.status, "detail_skipped");
+  assert.equal(skipped.user_action_required, undefined);
+});
+
+test("ordinary native Browser page drift is recoverable instead of stopping the run", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-native-recovery-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  let state = resultState();
+  const research = createManualResearch({
+    workspaceDir,
+    connectOverCDP: async () => ({ contexts: () => [] }),
+    inspectBrowser: async () => ({ page: {}, state }),
+  });
+  const started = payload(await research({ operation: "start", ...params() }));
+  state = { ...state, page_state: "MODAL_BLOCKED" };
+  const result = payload(
+    await research({
+      operation: "capture_list",
+      requirement_id: started.requirement_id,
+      platform: started.platform,
+      run_id: started.run_id,
+      keyword: "办公软件",
+    }),
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.status, "recoverable");
+  assert.match(result.recovery_hint, /原生 Browser/u);
+});
+
 async function committedRun(workspaceDir, page) {
   const inspector = async () => ({ page, state: resultState() });
   const select = createManualFilterSelection({

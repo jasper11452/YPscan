@@ -466,9 +466,10 @@ export const PARSE_REQUIREMENT_PARAMETERS = Object.freeze({
 export const PARSE_REQUIREMENT_OUTPUT_SCHEMA = Object.freeze({
   type: "object",
   additionalProperties: false,
-  required: ["schema_version", "platform", "facts", "projections", "audit"],
+  required: ["schema_version", "outcome", "platform", "facts", "projections", "audit"],
   properties: {
     schema_version: { type: "string", const: "requirement-search/v2" },
+    outcome: { type: "string", enum: ["ready", "clarification_required"] },
     platform: { type: "string", enum: ["xiaohongshu", "douyin"] },
     facts: { type: "array", items: { type: "object" } },
     projections: {
@@ -608,10 +609,15 @@ function invalid(violations) {
       message:
         "需求事实输入无效；请逐项按 violations 修正 facts 后重试，不要把 Provider 参数倒填为事实",
       details: {
+        outcome: "invalid_agent_input",
         violations,
         repair: {
           instruction:
             "逐项替换 violations 指向的 facts 字段后重试；百分比保留原始百分点，例如 70% 传 value=70。",
+          retry_policy: {
+            max_automatic_retries: 1,
+            ask_user_only_for_business_ambiguity: true,
+          },
           rebate_example: REBATE_REPAIR_EXAMPLE,
           numeric_range_examples: NUMERIC_RANGE_REPAIR_EXAMPLES,
         },
@@ -668,6 +674,7 @@ function normalizedContentFormat(value) {
     .toLowerCase();
   if (["picture", "图文", "笔记"].includes(normalized)) return "picture";
   if (["video", "视频"].includes(normalized)) return "video";
+  if (/\d+\s*(?:s|秒)\s*(?:\+|以上)/iu.test(normalized)) return "video";
   return null;
 }
 
@@ -683,6 +690,13 @@ function normalizedDurationTier(value) {
   }
   if (["duration_l3", "l3", "60+", "60s+", "60秒以上", "60秒+"].includes(normalized)) {
     return "duration_l3";
+  }
+  if (/(?:^|[^\d])60\s*(?:s|秒)?\s*(?:\+|以上)/iu.test(normalized)) return "duration_l3";
+  if (/(?:21\s*(?:-|–|~|～|至|到)\s*60)\s*(?:s|秒)?/iu.test(normalized)) {
+    return "duration_l2";
+  }
+  if (/(?:1\s*(?:-|–|~|～|至|到)\s*20)\s*(?:s|秒)?/iu.test(normalized)) {
+    return "duration_l1";
   }
   return null;
 }
@@ -976,25 +990,69 @@ function inferredRole(rawFact, quote) {
   return rawFact.kind === "creator_price" ? "target" : "generic";
 }
 
+function compactFactValue(rawFact, quote) {
+  if (rawFact.kind === "video_duration" && rawFact.value === undefined) {
+    return normalizedDurationTier(rawFact.qualifier) ?? normalizedDurationTier(quote) ?? undefined;
+  }
+  return rawFact.value;
+}
+
+function isQualitativeAudiencePreference(rawFact, quote) {
+  return (
+    ["audience_female_rate", "audience_male_rate"].includes(rawFact.kind) &&
+    rawFact.strength !== "hard" &&
+    /偏多|为主|较多|倾向|优先|可放宽/u.test(quote) &&
+    !/\d|%|成/u.test(quote)
+  );
+}
+
+function derivedDurationFact(rawFact, quote, platform, hasDurationFact) {
+  if (hasDurationFact || platform !== "douyin" || rawFact.kind !== "content_format") return null;
+  const duration = normalizedDurationTier(rawFact.value) ?? normalizedDurationTier(quote);
+  if (!duration) return null;
+  return {
+    kind: "video_duration",
+    quote,
+    value: duration,
+    scope: rawFact.scope,
+    strength: rawFact.strength,
+  };
+}
+
 function expandCompactFacts(input, sources) {
   const inputFacts = Array.isArray(input.facts) ? input.facts : [];
+  const hasDurationFact = inputFacts.some(
+    (fact) => isRecord(fact) && fact.kind === "video_duration",
+  );
+  const expandedFacts = inputFacts.flatMap((rawFact) => {
+    if (!isRecord(rawFact)) return [rawFact];
+    const quote = String(rawFact.quote ?? "").trim();
+    const derived = derivedDurationFact(rawFact, quote, input.platform, hasDurationFact);
+    return derived ? [rawFact, derived] : [rawFact];
+  });
   return {
     ...input,
-    facts: inputFacts.map((rawFact, index) => {
+    facts: expandedFacts.map((rawFact, index) => {
       if (!isRecord(rawFact)) return rawFact;
       const quote = String(rawFact.quote ?? "").trim();
+      const kind = rawFact.kind;
+      const qualitativeAudiencePreference = isQualitativeAudiencePreference(rawFact, quote);
       return {
         id: `fact-${index + 1}`,
-        kind: rawFact.kind,
+        kind,
         status: rawFact.status ?? "present",
         strength: rawFact.strength ?? "hard",
         scope: rawFact.scope ?? "shared",
-        operator: inferredOperator(rawFact, quote),
+        operator: qualitativeAudiencePreference
+          ? "preference"
+          : inferredOperator({ ...rawFact, kind }, quote),
         qualifier: inferredQualifier(rawFact, quote),
-        role: inferredRole(rawFact, quote),
+        role: inferredRole({ ...rawFact, kind }, quote),
         segment: rawFact.segment,
-        unit: defaultUnitFor(rawFact.kind),
-        value: rawFact.value,
+        unit: defaultUnitFor(kind),
+        value: qualitativeAudiencePreference
+          ? undefined
+          : compactFactValue({ ...rawFact, kind }, quote),
         minimum: rawFact.minimum,
         maximum: rawFact.maximum,
         source_id: sourceIdForQuote(sources, quote),
@@ -1071,7 +1129,15 @@ function normalizeFacts(input, sources) {
     const numericFact =
       NUMERIC_KINDS.has(fact.kind) ||
       (fact.kind === "audience_gender" && ["ratio", "percent"].includes(fact.unit));
-    if (fact.status === "present" && numericFact) {
+    const qualitativeRatePreference =
+      fact.status === "present" &&
+      numericFact &&
+      fact.strength !== "hard" &&
+      fact.operator === "preference" &&
+      (fact.value === null || fact.value === undefined || fact.value === "");
+    if (qualitativeRatePreference) {
+      normalizedValue = fact.source_quote;
+    } else if (fact.status === "present" && numericFact) {
       if (fact.operator === "between") {
         if (!Number.isFinite(Number(fact.minimum)) || !Number.isFinite(Number(fact.maximum))) {
           violations.push(`${path} 的 between 必须同时提供有限 minimum/maximum`);
@@ -1157,9 +1223,13 @@ function normalizeFacts(input, sources) {
       }
       if (fact.kind === "content_format" && !normalizedContentFormat(normalizedValue)) {
         violations.push(`${path}.value 不是 picture/video`);
+      } else if (fact.kind === "content_format") {
+        normalizedValue = normalizedContentFormat(normalizedValue);
       }
       if (fact.kind === "video_duration" && !normalizedDurationTier(normalizedValue)) {
         violations.push(`${path}.value 不是可识别的抖音时长档`);
+      } else if (fact.kind === "video_duration") {
+        normalizedValue = normalizedDurationTier(normalizedValue);
       }
       if (fact.kind === "submission_deadline") {
         const text = String(normalizedValue ?? "");
@@ -2105,6 +2175,7 @@ export function compileRequirementFacts(input, { now = new Date() } = {}) {
   const provider = providerProjection(input, facts, now, globalIssues, coverage.uncoveredSegments);
   const data = {
     schema_version: "requirement-search/v2",
+    outcome: provider.ready ? "ready" : "clarification_required",
     platform: input.platform,
     facts,
     projections: { provider },

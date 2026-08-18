@@ -1,8 +1,8 @@
 {
   "id": "ypscan",
   "name": "悦普识星",
-  "version": "0.1.24-beta45",
-  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由宿主 Browser 配合 Playwright 完成双平台手扒闭环。",
+  "version": "0.1.24-beta47",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由 Agent 使用宿主原生 Browser 自主完成。",
   "author": {
     "name": "Jasper"
   },
@@ -58,13 +58,10 @@
   "contracts": {
     "tools": [
       "ypscan_parse_requirement",
-      "ypscan_manual_browser_inspect",
-      "ypscan_manual_browser_action",
-      "ypscan_manual_select_filters",
+      "ypscan_select_cascade",
       "ypscan_manual_research",
       "ypscan_save_excel_artifact"
     ]
   },
-  "hooks": "./index.js",
-  "skills": ["./skills/media-assistant"]
+  "hooks": "./index.js"
 }

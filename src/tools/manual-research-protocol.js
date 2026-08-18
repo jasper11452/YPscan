@@ -34,9 +34,17 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
   properties: {
     operation: {
       type: "string",
-      enum: ["collect", "apply_reviews", "create_submission"],
+      enum: [
+        "start",
+        "capture_list",
+        "capture_detail",
+        "finalize",
+        "apply_reviews",
+        "create_submission",
+        "collect",
+      ],
       description:
-        "默认 collect；collect 必须使用筛选工具返回的 run_id/selection_id，详情完成后用 apply_reviews 分批写回复核结论；全部复核完成后可用 create_submission 生成独立本地提报表。",
+        "原生 Browser 自助手扒协议：start 创建本地运行；Agent 自主操作页面后用 capture_list/capture_detail 只读采集当前页；finalize 生成 Excel；apply_reviews 写回复核；create_submission 生成独立提报表。collect 仅保留旧运行兼容。",
     },
     requirement_id: {
       type: "string",
@@ -56,7 +64,38 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
     selection_id: {
       type: "string",
       minLength: 1,
-      description: "首次 collect 必传；后续增量 collect 可从 run 的最新已验证分支恢复。",
+      description: "旧 collect 兼容字段；原生 Browser 自助手扒不使用。",
+    },
+    keyword: {
+      type: "string",
+      minLength: 1,
+      description: "capture_list 当前页面实际使用的关键词。",
+    },
+    keyword_complete: {
+      type: "boolean",
+      description: "当前关键词无需继续翻页时传 true；不影响 Agent 后续重新采集。",
+    },
+    candidate_ref: {
+      type: "string",
+      minLength: 1,
+      description: "capture_detail 当前已由 Agent 打开的达人引用。",
+    },
+    filter_evidence: {
+      type: "array",
+      maxItems: 30,
+      description: "Agent 从当前页面观察到的已应用筛选证据；只作审计，不作为采集门禁。",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["fact", "verified"],
+        properties: {
+          fact: { type: "string", minLength: 1 },
+          page_control: { type: "string" },
+          selected_path: { type: "array", items: { type: "string" } },
+          verified: { type: "boolean" },
+          evidence: { type: "string" },
+        },
+      },
     },
     reviews: {
       type: "array",
@@ -182,11 +221,53 @@ function normalizePlatform(value) {
 /** @param {Record<string, any>} [params] */
 export function validateManualResearchParams(params = {}) {
   const operation = params.operation ?? "collect";
-  if (!["collect", "apply_reviews", "create_submission"].includes(operation)) {
-    throw argumentError("operation 必须是 collect、apply_reviews 或 create_submission");
+  if (![
+    "start",
+    "capture_list",
+    "capture_detail",
+    "finalize",
+    "collect",
+    "apply_reviews",
+    "create_submission",
+  ].includes(operation)) {
+    throw argumentError("operation 不受支持");
   }
   const platform = normalizePlatform(params.platform);
   const requirementId = requiredString(params.requirement_id, "requirement_id");
+  if (operation === "start") {
+    if (!Array.isArray(params.facts)) throw argumentError("start 必须提供 facts");
+    const facts = params.facts.map(normalizeManualSelectionFact);
+    for (const fact of facts) validateCreatorPriceFact(fact);
+    if (!Array.isArray(params.keywords) || params.keywords.length < 1 || params.keywords.length > 4) {
+      throw argumentError("start 的 keywords 必须包含 1–4 个关键词");
+    }
+    return {
+      operation,
+      requirement_id: requirementId,
+      platform,
+      facts,
+      keywords: params.keywords.map((value, index) => requiredString(value, `keywords[${index}]`)),
+      fresh_run: params.fresh_run === true,
+    };
+  }
+  if (["capture_list", "capture_detail", "finalize"].includes(operation)) {
+    return {
+      operation,
+      requirement_id: requirementId,
+      platform,
+      run_id: requiredString(params.run_id, "run_id"),
+      ...(operation === "capture_list"
+        ? {
+            keyword: requiredString(params.keyword, "keyword"),
+            keyword_complete: params.keyword_complete === true,
+            filter_evidence: Array.isArray(params.filter_evidence) ? params.filter_evidence : [],
+          }
+        : {}),
+      ...(operation === "capture_detail"
+        ? { candidate_ref: requiredString(params.candidate_ref, "candidate_ref") }
+        : {}),
+    };
+  }
   if (operation === "create_submission") {
     return {
       operation,

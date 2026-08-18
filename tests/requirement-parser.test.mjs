@@ -166,6 +166,7 @@ test("target and submission counts require clarification instead of silently cho
   });
 
   assert.equal(result.success, true);
+  assert.equal(result.data.outcome, "clarification_required");
   assert.equal(result.data.projections.provider.ready, false);
   assert.equal(
     result.data.projections.provider.issues.some(
@@ -828,6 +829,8 @@ test("malformed facts fail with the existing local error envelope", () => {
 
   assert.equal(result.success, false);
   assert.equal(result.error.code, "YPSCAN_REQUIREMENT_INVALID");
+  assert.equal(result.error.details.outcome, "invalid_agent_input");
+  assert.equal(result.error.details.repair.retry_policy.max_automatic_retries, 1);
   assert.ok(Array.isArray(result.error.details.violations));
 });
 
@@ -963,6 +966,59 @@ test("douyin 60s+ video facts project price and CPM into the L3 tier", () => {
   assert.equal(result.data.projections.provider.params.kolOfficialPriceL2, undefined);
 });
 
+test("a compact Douyin 60s+ format safely derives the video duration tier", () => {
+  const originalBrief = `${brief("抖音")}；合作形式：星图60s+`;
+  const facts = [
+    ...baseFacts({ platform: "douyin" }).filter((item) => item.kind !== "creator_price"),
+    fact("format", "content_format", "合作形式：星图60s+", "星图60s+", {
+      scope: "douyin",
+    }),
+    fact("price", "creator_price", "单价2万以内", 20_000, {
+      operator: "lte",
+      scope: "douyin",
+    }),
+  ];
+  const result = compile({ original_brief: originalBrief, platform: "douyin", facts });
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.outcome, "ready");
+  assert.equal(
+    result.data.facts.find((item) => item.kind === "content_format").normalized_value,
+    "video",
+  );
+  assert.equal(
+    result.data.facts.find((item) => item.kind === "video_duration").normalized_value,
+    "duration_l3",
+  );
+  assert.equal(result.data.projections.provider.params.kolOfficialPriceL3, "[14000,24000]");
+});
+
+test("a qualitative soft audience preference stays residual without inventing a percentage", () => {
+  const result = compile({
+    original_brief: `${brief()}；需要女粉偏多，数据优质可放宽`,
+    platform: "xiaohongshu",
+    facts: [
+      ...baseFacts(),
+      fact("female-soft", "audience_female_rate", "需要女粉偏多", 50, {
+        operator: "gte",
+        strength: "soft",
+      }),
+    ],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.outcome, "ready");
+  assert.equal(result.data.projections.provider.params.femaleRate, undefined);
+  const preference = result.data.facts.find((item) => item.kind === "audience_female_rate");
+  assert.equal(preference.operator, "preference");
+  assert.equal(preference.normalized_value, "需要女粉偏多");
+  assert.ok(
+    result.data.projections.provider.residual_conditions.some(
+      (item) => item.kind === "audience_female_rate" && item.value === "需要女粉偏多",
+    ),
+  );
+});
+
 test("frozen 阿里千问 brief compiles ready with L3 price, CPM and residual schedule", () => {
   const originalBrief = [
     "项目：阿里-千问AI 8月传播项目",
@@ -1038,6 +1094,7 @@ test("frozen 阿里千问 brief compiles ready with L3 price, CPM and residual s
   const result = compile({ original_brief: originalBrief, platform: "douyin", facts });
 
   assert.equal(result.success, true);
+  assert.equal(result.data.outcome, "ready");
   const provider = result.data.projections.provider;
   assert.equal(provider.ready, true);
   assert.equal(provider.params.kolOfficialPriceL3, "[14000,24000]");

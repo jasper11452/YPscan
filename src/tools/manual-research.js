@@ -7,7 +7,7 @@ import {
   loadManualResearchRun,
   MANUAL_RESEARCH_PREVIEW_LIMIT,
 } from "./manual-research-artifact.js";
-import { mergeManualCandidates } from "./manual-research-plan.js";
+import { compileManualResearchPlan, mergeManualCandidates } from "./manual-research-plan.js";
 import { checkCandidatePrice } from "./manual-research-price-check.js";
 import {
   MANUAL_RESEARCH_PARAMETERS,
@@ -1232,6 +1232,339 @@ export function createManualResearch({
     let activeCandidate = null;
     try {
       params = validateManualResearchParams(rawParams);
+      if (params.operation === "start") {
+        plan = compileManualResearchPlan(params);
+        artifactStore = await createArtifactStore({ workspaceDir, params, plan, now });
+        if (!artifactStore.enabled || !artifactStore.run_id) {
+          throw manualBrowserError(
+            "YPSCAN_MANUAL_WORKSPACE_UNAVAILABLE",
+            "当前项目目录不可用，无法保存手扒 checkpoint",
+          );
+        }
+        const payload = {
+          success: true,
+          status: "ready_for_native_browser",
+          operation: "start",
+          requirement_id: params.requirement_id,
+          platform: params.platform,
+          run_id: artifactStore.run_id,
+          keywords: plan.keywords,
+          hard_requirements: plan.filters,
+          detail_requirements: plan.detail_filters ?? [],
+          review_requirements: plan.review_requirements ?? [],
+          unexpressed_conditions: plan.unexpressed ?? [],
+          target_count: plan.target_count ?? null,
+          browser_policy: {
+            interaction_owner: "agent_native_browser",
+            keyword_last: true,
+            preserve_filters_between_keywords: true,
+            selection_id_required: false,
+            stop_only_for: ["LOGIN_REQUIRED", "CAPTCHA_BLOCKED", "BROWSER_UNAVAILABLE"],
+          },
+        };
+        return hostToolResult(payload, { details: payload });
+      }
+      if (["capture_list", "capture_detail", "finalize"].includes(params.operation)) {
+        const loaded = await loadManualResearchRun({
+          workspaceDir,
+          runId: params.run_id,
+          requirementId: params.requirement_id,
+          platform: params.platform,
+        });
+        plan = loaded.plan;
+        artifactStore = await createArtifactStore({
+          workspaceDir,
+          params: { ...loaded.params, ...params, fresh_run: false },
+          plan,
+          now,
+        });
+        if (params.operation === "finalize") {
+          const pendingReview = reviewBatch(loaded.candidates, loaded.details, loaded.reviews, {
+            requirements: plan.review_requirements,
+          });
+          const incompleteDetails = loaded.details.some(
+            (detail) =>
+              detail.status !== "complete" || detail.hard_evaluation?.status === "unknown",
+          );
+          const status =
+            incompleteDetails || pendingReview.remaining > 0 || (plan.unexpressed ?? []).length
+              ? "partial"
+              : "complete";
+          const artifact = await artifactStore.finalize({
+            branches: loaded.branches,
+            candidates: loaded.candidates,
+            details: loaded.details,
+            reviews: loaded.reviews,
+            status,
+            exportFallback: {
+              status: "skipped",
+              reason: "agent_native_browser_collection",
+              quota_consumed: false,
+            },
+            detailPlannedCount: Math.min(
+              detailQueueLimit(plan),
+              loaded.candidates.length,
+            ),
+          });
+          const payload = outputPayload({
+            params: { ...loaded.params, ...params, page_url: null },
+            plan,
+            branches: loaded.branches,
+            candidates: loaded.candidates,
+            details: loaded.details,
+            reviews: loaded.reviews,
+            status,
+            artifact,
+          });
+          return hostToolResult(payload, { details: payload });
+        }
+
+        const browser = await connectOverCDP(cdpUrl);
+        const observed = await inspectBrowser(browser, params.platform);
+        const { page, state } = observed;
+        if (
+          params.operation === "capture_detail" &&
+          state.page_state === "CAPTCHA_BLOCKED"
+        ) {
+          const candidate = loaded.candidates.find(
+            (item) => candidateReference(item) === params.candidate_ref,
+          );
+          if (!candidate) {
+            throw manualBrowserError(
+              "YPSCAN_MANUAL_CANDIDATE_NOT_FOUND",
+              "candidate_ref 不属于当前运行",
+            );
+          }
+          const evaluation = evaluateCandidateDetail(candidate, { fields: {} }, plan);
+          const detail = {
+            candidate_ref: params.candidate_ref,
+            platform_id: candidate.platform_id ?? null,
+            nickname: candidate.nickname ?? null,
+            detail_url: candidate.detail_url ?? state.url ?? null,
+            status: "blocked",
+            reason: "detail_captcha_blocked",
+            fields: {},
+            hard_evaluation: { ...evaluation, status: "unknown" },
+            source_type: "agent_native_browser",
+            captured_at: new Date(now()).toISOString(),
+          };
+          await artifactStore.saveDetail({
+            detail,
+            branches: loaded.branches,
+            candidates: loaded.candidates,
+            details: mergeDetailRecords([...loaded.details, detail]),
+            reviews: loaded.reviews,
+            status: "collecting_details",
+            detailPlannedCount: Math.min(detailQueueLimit(plan), loaded.candidates.length),
+          });
+          const payload = {
+            success: true,
+            status: "detail_skipped",
+            operation: "capture_detail",
+            requirement_id: params.requirement_id,
+            platform: params.platform,
+            run_id: params.run_id,
+            candidate_ref: params.candidate_ref,
+            detail,
+            recovery_hint:
+              "关闭当前详情并继续下一位达人；若返回列表后仍是全局验证码，再请求用户处理。",
+          };
+          return hostToolResult(payload, { details: payload });
+        }
+        const humanBlocked = ["LOGIN_REQUIRED", "CAPTCHA_BLOCKED"].includes(state.page_state);
+        if (!page || humanBlocked) {
+          const payload = {
+            success: false,
+            status: humanBlocked ? "needs_user_action" : "recoverable",
+            operation: params.operation,
+            requirement_id: params.requirement_id,
+            platform: params.platform,
+            run_id: params.run_id,
+            user_action_required: humanBlocked,
+            error: {
+              code: state.page_state ?? "BROWSER_UNAVAILABLE",
+              message: humanBlocked
+                ? "当前平台需要用户完成登录或全局安全验证"
+                : "当前页面暂时不可采集，请由 Agent 使用原生 Browser 恢复后继续",
+              details: { state },
+            },
+          };
+          return hostToolResult(payload, { details: payload, isError: humanBlocked });
+        }
+
+        if (params.operation === "capture_list") {
+          if (!["MARKET_READY", "RESULTS_READY"].includes(state.page_state)) {
+            const payload = {
+              success: true,
+              status: "recoverable",
+              operation: "capture_list",
+              requirement_id: params.requirement_id,
+              platform: params.platform,
+              run_id: params.run_id,
+              page_state: state.page_state,
+              recovery_hint:
+                "使用原生 Browser 关闭普通弹窗、返回达人广场或等待页面稳定，然后再次 capture_list；不要结束任务。",
+            };
+            return hostToolResult(payload, { details: payload });
+          }
+          const branch = plan.branches.find(
+            (item) => clean(item.keyword) === clean(params.keyword),
+          );
+          if (!branch) {
+            const payload = {
+              success: true,
+              status: "recoverable",
+              operation: "capture_list",
+              requirement_id: params.requirement_id,
+              platform: params.platform,
+              run_id: params.run_id,
+              recovery_hint: `当前关键词不在计划中；请使用以下关键词之一：${plan.keywords.join("、")}`,
+            };
+            return hostToolResult(payload, { details: payload });
+          }
+          const adapter = createAdapter(params.platform, page, { workspaceDir, now });
+          const pageNumber = state.market?.page_number ?? 1;
+          const pageData = await adapter.readPage(pageNumber);
+          await adapter.dispose?.().catch(() => {});
+          const pageRecord = {
+            page_number: pageNumber,
+            row_count: pageData.rows.length,
+            first_candidate:
+              pageData.rows[0]?.platform_id ??
+              pageData.rows[0]?.detail_url ??
+              pageData.rows[0]?.nickname ??
+              null,
+            signature: pageSignature(pageData),
+            source_url: pageData.source_url,
+            price_tier: pageData.price_tier,
+            collection_source: pageData.collection_source ?? "dom",
+            response_endpoint: pageData.response_endpoint ?? null,
+            response_path: pageData.response_path ?? null,
+          };
+          const pageCandidates = pageData.rows.map((row) =>
+            candidateFromRow(row, {
+              platform: params.platform,
+              branchId: branch.branch_id,
+              pageNumber,
+              priceTier: pageData.price_tier,
+              sourceUrl: pageData.source_url,
+            }),
+          );
+          const duplicate = branchPages(loaded.events, branch.branch_id).some(
+            (item) => item.signature === pageRecord.signature && item.page_number === pageNumber,
+          );
+          if (!duplicate) {
+            await artifactStore.savePage({ branch, page: pageRecord, candidates: pageCandidates });
+          }
+          const candidatesNow = mergeManualCandidates([
+            ...loaded.candidates,
+            ...(duplicate ? [] : pageCandidates),
+          ]);
+          if (params.keyword_complete) {
+            await artifactStore.saveBranch({
+              ...branch,
+              actual_filters: params.filter_evidence,
+              unexpressed_filters: params.filter_evidence.filter((item) => !item.verified),
+              page_count: branchPages(loaded.events, branch.branch_id).length + Number(!duplicate),
+              collection: {
+                status: "complete",
+                stop_reason: "agent_completed_keyword",
+                candidate_count: candidatesNow.filter((candidate) =>
+                  candidate.source_branches?.includes(branch.branch_id),
+                ).length,
+              },
+            });
+          }
+          const payload = {
+            success: true,
+            status: "list_captured",
+            operation: "capture_list",
+            requirement_id: params.requirement_id,
+            platform: params.platform,
+            run_id: params.run_id,
+            keyword: params.keyword,
+            page_number: pageNumber,
+            page_candidate_count: pageCandidates.length,
+            candidate_count: candidatesNow.length,
+            duplicate_page: duplicate,
+            candidates: candidatesNow.map(publicCandidate).slice(0, 20),
+            keyword_complete: params.keyword_complete,
+          };
+          return hostToolResult(payload, { details: payload });
+        }
+
+        if (state.page_state !== "CREATOR_DETAIL_READY") {
+          const payload = {
+            success: true,
+            status: "recoverable",
+            operation: "capture_detail",
+            requirement_id: params.requirement_id,
+            platform: params.platform,
+            run_id: params.run_id,
+            candidate_ref: params.candidate_ref,
+            recovery_hint:
+              "当前不是达人详情页；使用原生 Browser 打开对应达人详情后再次 capture_detail，或跳过该达人继续下一位。",
+          };
+          return hostToolResult(payload, { details: payload });
+        }
+        const candidate = loaded.candidates.find(
+          (item) => candidateReference(item) === params.candidate_ref,
+        );
+        if (!candidate) {
+          throw manualBrowserError(
+            "YPSCAN_MANUAL_CANDIDATE_NOT_FOUND",
+            "candidate_ref 不属于当前运行",
+          );
+        }
+        const snapshot = await readCreatorDetailSnapshot(page, params.platform, candidate);
+        const previous = loaded.details.find(
+          (item) => item.candidate_ref === params.candidate_ref,
+        );
+        const fields = { ...(previous?.fields ?? {}), ...(snapshot.fields ?? {}) };
+        const evaluation = evaluateCandidateDetail(candidate, { fields }, plan);
+        const detail = {
+          candidate_ref: params.candidate_ref,
+          platform_id: snapshot.platform_id ?? candidate.platform_id ?? null,
+          nickname: candidate.nickname ?? null,
+          detail_url: snapshot.detail_url ?? candidate.detail_url ?? null,
+          status:
+            snapshot.status === "blocked"
+              ? "blocked"
+              : Object.keys(fields).length
+                ? evaluation.status === "unknown"
+                  ? "partial"
+                  : "complete"
+                : "partial",
+          reason: snapshot.reason ?? null,
+          fields: evaluation.fields,
+          hard_evaluation:
+            snapshot.status === "blocked" ? { ...evaluation, status: "unknown" } : evaluation,
+          source_type: "agent_native_browser+dom",
+          captured_at: new Date(now()).toISOString(),
+        };
+        const detailsNow = mergeDetailRecords([...loaded.details, detail]);
+        const artifact = await artifactStore.saveDetail({
+          detail,
+          branches: loaded.branches,
+          candidates: loaded.candidates,
+          details: detailsNow,
+          reviews: loaded.reviews,
+          status: "collecting_details",
+          detailPlannedCount: Math.min(detailQueueLimit(plan), loaded.candidates.length),
+        });
+        const payload = {
+          success: true,
+          status: snapshot.status === "blocked" ? "detail_skipped" : "detail_captured",
+          operation: "capture_detail",
+          requirement_id: params.requirement_id,
+          platform: params.platform,
+          run_id: params.run_id,
+          candidate_ref: params.candidate_ref,
+          detail,
+          artifact,
+        };
+        return hostToolResult(payload, { details: payload });
+      }
       if (params.operation === "legacy_collect") {
         const payload = {
           success: false,

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { registerWecomConfirmationOnlyHooks } from "../src/hooks/register-wecom-confirmation-only.js";
@@ -48,19 +47,6 @@ function namedArgsFromDirective(text, name) {
   const line = text.split("\n").find((item) => item.startsWith(prefix));
   return JSON.parse(line.slice(prefix.length));
 }
-
-test("startup skill defers Browser branch details to platform references", () => {
-  const skill = readFileSync(
-    new URL("../skills/media-assistant/SKILL.md", import.meta.url),
-    "utf8",
-  );
-
-  assert.ok(Buffer.byteLength(skill) <= 8_000);
-  assert.match(skill, /references\/xingtu-browser-handpick\.md/u);
-  assert.match(skill, /references\/pgy-browser-handpick\.md/u);
-  assert.match(skill, /references\/tools\/ypscan_manual_select_filters\.md/u);
-  assert.match(skill, /references\/tools\/ypscan_manual_research\.md/u);
-});
 
 test("fixed result directives enforce parse → validate → search → save → rank", () => {
   const persist = registeredHooks().get("tool_result_persist");
@@ -146,10 +132,10 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /CREATOR_PREVIEW_LOCAL_PATH/u);
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
-  assert.match(directiveText(rank), /ypscan_manual_select_filters\(operation=plan\)/u);
-  assert.match(directiveText(rank), /inspect 全页元素/u);
-  assert.match(directiveText(rank), /element_id/u);
-  assert.match(directiveText(rank), /post-condition/u);
+  assert.match(directiveText(rank), /ypscan_manual_research\(operation=start\)/u);
+  assert.match(directiveText(rank), /宿主原生 Browser 自主/u);
+  assert.match(directiveText(rank), /capture_list\/capture_detail/u);
+  assert.doesNotMatch(directiveText(rank), /selection_id/u);
   const question = argsFromDirective(directiveText(rank));
   assert.deepEqual(
     question.questions[0].options.map((option) => option.label),
@@ -221,6 +207,11 @@ test("institutional retrieval continues through ingest Excel save, creator rank 
       },
     }),
   });
+  assert.match(
+    directiveText(ingested),
+    /MCN_CREATOR_PREVIEW_URL=https:\/\/files\.eshypdata\.com\/exports\/mcn-preview\.xlsx/u,
+  );
+  assert.match(directiveText(ingested), /原始 URL 直接输出为单独一行用户可见正文/u);
   assert.deepEqual(saveExcelArgsFromDirective(directiveText(ingested)), {
     artifact_kind: "mcn_creator_preview",
     artifact_id: "req-ingest",
@@ -425,12 +416,7 @@ test("not-ready parse results pause instead of exposing validate args", () => {
 
 test("fixed-flow failures pause through AskUserQuestion instead of a plain-text stop", () => {
   const persist = registeredHooks().get("tool_result_persist");
-  for (const toolName of [
-    "ypscan_parse_requirement",
-    "validate_requirement",
-    "search_creators",
-    "rank_mcns",
-  ]) {
+  for (const toolName of ["validate_requirement", "search_creators", "rank_mcns"]) {
     const result = persist({
       toolName,
       message: toolMessage({ success: false, error: { code: "PROVIDER_FAILED" } }),
@@ -442,6 +428,26 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
       ["重试", "结束本次"],
     );
   }
+});
+
+test("invalid parse arguments trigger one bounded Agent repair instead of asking the user", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_parse_requirement",
+    message: toolMessage({
+      success: false,
+      error: {
+        code: "YPSCAN_REQUIREMENT_INVALID",
+        details: { violations: ["facts[2].value 不是 picture/video"] },
+      },
+    }),
+  });
+  const text = directiveText(result);
+
+  assert.match(text, /Agent 构造参数/u);
+  assert.match(text, /自动重试一次/u);
+  assert.match(text, /external_condition 的 value 必须使用 quote 的原文/u);
+  assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
 test("startup instruction fixes the chain and delays Browser until the manual branch", () => {
@@ -464,14 +470,15 @@ test("startup instruction fixes the chain and delays Browser until the manual br
   assert.match(first.prependContext, /立即调用保存工具/u);
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
-  assert.match(first.prependContext, /ypscan_manual_select_filters\(operation=plan\)/u);
-  assert.match(first.prependContext, /ypscan_manual_browser_inspect/u);
-  assert.match(first.prependContext, /ypscan_manual_browser_action/u);
-  assert.match(first.prependContext, /observation_id/u);
-  assert.match(first.prependContext, /element_id/u);
+  assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
+  assert.match(first.prependContext, /宿主原生 Browser 自主/u);
+  assert.match(first.prependContext, /capture_list\/capture_detail/u);
+  assert.match(first.prependContext, /不使用 selection_id、observation_id、element_id/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /普通 UI\/参数问题的一次有界自动重试不调用/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
+  assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
+  assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
 
   hooks.get("before_tool_call")({ toolName: "Read", params: { path: skillPath } }, context);
   assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
@@ -582,6 +589,7 @@ test("rank and startup directives ban any manual_source_creators call", () => {
   const hooks = registeredHooks({ skillPath });
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /manual_source_creators 都不得调用/u);
-  assert.match(startup.prependContext, /ypscan_manual_select_filters\(operation=plan\)/u);
-  assert.match(startup.prependContext, /inspect → Agent 选择 element_id → Action/u);
+  assert.match(startup.prependContext, /ypscan_manual_research\(operation=start\)/u);
+  assert.match(startup.prependContext, /宿主原生 Browser 自主/u);
+  assert.match(startup.prependContext, /capture_list\/capture_detail/u);
 });
