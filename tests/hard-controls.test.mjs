@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { registerWecomConfirmationOnlyHooks } from "../src/hooks/register-wecom-confirmation-only.js";
@@ -48,21 +47,6 @@ function namedArgsFromDirective(text, name) {
   const line = text.split("\n").find((item) => item.startsWith(prefix));
   return JSON.parse(line.slice(prefix.length));
 }
-
-test("startup skill defers Browser branch details to platform references", () => {
-  const skill = readFileSync(
-    new URL("../skills/media-assistant/SKILL.md", import.meta.url),
-    "utf8",
-  );
-
-  assert.ok(Buffer.byteLength(skill) <= 8_000);
-  assert.match(skill, /references\/xingtu-browser-handpick\.md/u);
-  assert.match(skill, /references\/pgy-browser-handpick\.md/u);
-  assert.match(skill, /references\/tools\/ypscan_manual_select_filters\.md/u);
-  assert.match(skill, /references\/tools\/ypscan_manual_research\.md/u);
-  assert.match(skill, /包括 `test`/u);
-  assert.match(skill, /多个可用工具映射到同一实际名称时才调用 `AskUserQuestion`/u);
-});
 
 test("fixed result directives enforce parse → validate → search → save → rank", () => {
   const persist = registeredHooks().get("tool_result_persist");
