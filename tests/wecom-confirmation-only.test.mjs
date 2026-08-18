@@ -224,7 +224,8 @@ test("fixed manual confirmation phrases advance only the current stage", async (
     context,
   );
 
-  assert.equal(hooks.get("before_prompt_build")({ prompt: "确认" }, context), undefined);
+  const generic = hooks.get("before_prompt_build")({ prompt: "确认" }, context);
+  assert.doesNotMatch(generic.prependContext, /询价消息已由用户固定确认词确认/u);
   const messageConfirmed = hooks.get("before_prompt_build")({ prompt: "确认询价消息。" }, context);
   assert.match(messageConfirmed.prependContext, /询价消息已由用户固定确认词确认/u);
   assert.match(messageConfirmed.prependContext, /确认机构列表/u);
@@ -240,17 +241,14 @@ test("fixed manual confirmation phrases advance only the current stage", async (
   );
 });
 
-test("startup asks for the complete Skill once and keeps the fixed chain in context", () => {
-  const skillPath = "/plugin/skills/media-assistant/SKILL.md";
-  const hooks = registeredHooks(() => 1, skillPath);
+test("startup injects the fixed chain once without requiring a Skill read", () => {
+  const hooks = registeredHooks(() => 1);
   const context = { runId: "skill-run" };
   const prompt = hooks.get("before_prompt_build")({}, context);
-  assert.match(prompt.prependContext, /Before the first YPscan/u);
+  assert.doesNotMatch(prompt.prependContext, /read the complete Skill/iu);
   assert.match(
     prompt.prependContext,
     /ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns/u,
   );
-
-  hooks.get("before_tool_call")({ toolName: "Read", params: { path: skillPath } }, context);
   assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
 });

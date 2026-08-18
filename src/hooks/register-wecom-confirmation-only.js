@@ -62,6 +62,18 @@ function flowPauseDirective(stage, message) {
   ].join("\n");
 }
 
+function requirementInputRepairDirective(message) {
+  const result = parsedToolResult(message);
+  const violations = Array.isArray(result?.error?.details?.violations)
+    ? result.error.details.violations.filter(nonemptyString)
+    : [];
+  return [
+    "YPSCAN_FLOW_DIRECTIVE=ypscan_parse_requirement 拒绝的是 Agent 构造参数，不是用户业务需求。不得让用户为字段形状、枚举、数值单位或引用方式纠错。",
+    `PARSE_REPAIR_VIOLATIONS=${JSON.stringify(violations)}`,
+    "根据 violations 和工具 repair 示例一次性修正全部 facts，并自动重试一次；不要逐字段试探。external_condition 的 value 必须使用 quote 的原文，不得补写“受众/粉丝”等原文没有的主体。若同一原文已经自动重试过一次仍失败，停止并报告具体接入错误，不得循环重试。只有缺少或冲突的真实业务信息才调用 AskUserQuestion。",
+  ].join("\n");
+}
+
 const MCN_MARKDOWN_TABLE_HEADER = [
   "| 机构名 | 返点 | 综合分 | 本机构预估覆盖达人数 |",
   "| --- | --- | --- | --- |",
@@ -109,7 +121,7 @@ function rankMcnsDirective(message) {
     "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出，再原样展示此前 ypscan_save_excel_artifact 返回的 CREATOR_PREVIEW_LOCAL_PATH，最后调用 AskUserQuestion。不要输出达人预览表下载链接；表格禁止改成项目符号或编号列表。",
     "表格固定列：机构名、返点、综合分、本机构预估覆盖达人数；每行覆盖人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 search_creators 确实未返回 creators_export_path 或精确保存参数，必须如实说明无法保存，禁止编造或复用历史链接。",
-    "人工拓展并提报 = 先调用 ypscan_manual_select_filters(operation=plan)，再 inspect 全页元素、由 Agent 选择 element_id 调用 Action 并检查局部 post-condition；commit 生成 selection_id 后才进入增量 ypscan_manual_research。首关键词先完成全部硬筛且关键词最后提交，后续关键词保留筛选集只换关键词。任何前缀的 manual_source_creators 都不得调用。",
+    "人工拓展并提报 = 先调用 ypscan_manual_research(operation=start) 创建本地运行，再由 Agent 使用宿主原生 Browser 自主导航、关闭普通弹窗、设置筛选、翻页和打开详情；只有原生 Browser 无法稳定选择级联菜单时，才调用 ypscan_select_cascade，并由 Agent 根据需求和当前页面决定 field_label、trigger_label 与 path。每到稳定列表页或详情页分别调用 capture_list/capture_detail 只读采集。首关键词先完成全部硬筛且关键词最后提交，后续关键词保留筛选集只换关键词。普通页面问题自主恢复，任何前缀的 manual_source_creators 都不得调用。",
     MCN_MARKDOWN_TABLE_HEADER,
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
@@ -246,7 +258,8 @@ function ingestSubmissionsDirective(message, params = {}) {
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=机构提报已入库并返回 Excel。下一步立即逐字调用 ypscan_save_excel_artifact 保存为机构达人预览表，不向用户展示下载 URL；保存成功后继续 rank_creators。",
+    "YPSCAN_FLOW_DIRECTIVE=机构提报已入库并返回 Excel。先把 MCN_CREATOR_PREVIEW_URL 中的原始 URL 直接输出为单独一行用户可见正文，再立即逐字调用 ypscan_save_excel_artifact 保存为机构达人预览表；保存成功后继续 rank_creators。不得改写链接或用 Markdown 包装。",
+    `MCN_CREATOR_PREVIEW_URL=${excelFileUrl}`,
     `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
       artifact_kind: "mcn_creator_preview",
       artifact_id: requirementId,
@@ -347,111 +360,29 @@ function excelArtifactSaveDirective(message, params = {}) {
   ].join("\n");
 }
 
-function manualFilterSelectionDirective(message) {
+function cascadeSelectionDirective(message) {
   const result = parsedToolResult(message);
-  if (isRecord(result?.next_call)) {
+  if (result?.status === "needs_user_action") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=筛选凭证尚未生成，但工具提供了可验证恢复动作。",
-      `YPSCAN_NEXT_CALL=${JSON.stringify(result.next_call)}`,
-      "下一步原样执行 next_call，不得重放整套筛选。",
-    ].join("\n");
-  }
-  const code = nonemptyString(result?.error?.code)
-    ? result.error.code
-    : "YPSCAN_MANUAL_FILTER_SELECTION_FAILED";
-  const loginOrCaptcha = /LOGIN|CAPTCHA/u.test(code);
-  if (!loginOrCaptcha) {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=ypscan_manual_select_filters 未就绪（${code}），失败阶段=${result?.failed_stage ?? "未知"}，失败控件=${result?.failed_control ?? "未知"}。`,
-      "不得调用 ypscan_manual_research；不得把未验证动作写成 actual_filters。没有 next_call 时停止并报告证据，不得重放整套筛选。",
-    ].join("\n");
-  }
-  const options = [
-    { label: "已处理，继续", description: "在当前 Browser 页面完成登录或安全验证后继续" },
-    { label: "结束本次", description: "保留当前筛选证据并结束本次流程" },
-  ];
-  return [
-    `YPSCAN_FLOW_DIRECTIVE=ypscan_manual_select_filters 已暂停（${code}）。不得调用抓取工具。`,
-    `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-      askQuestion("悦普识星 Browser 下一步", "当前平台筛选页面无法继续，请选择下一步。", options),
-    )}`,
-  ].join("\n");
-}
-
-function manualFilterSelectionSuccessDirective(message) {
-  const result = parsedToolResult(message);
-  if (result?.status === "awaiting_browser_actions" && isRecord(result?.next_call)) {
-    return [
-      "YPSCAN_FLOW_DIRECTIVE=筛选计划已创建，尚未操作 Browser，也没有 selection_id。",
-      `YPSCAN_NEXT_CALL=${JSON.stringify(result.next_call)}`,
-      "下一步先原样调用 inspect；Observer 只返回页面与元素，不替 Agent 决策。Agent 必须根据 interaction_plan 选择 element_id 调用 Action，不得退回一体化筛选调用。",
-    ].join("\n");
-  }
-  if (result?.ready_for_collection !== true || !isRecord(result?.collection_args)) {
-    return manualFilterSelectionDirective(message);
-  }
-  return [
-    "YPSCAN_FLOW_DIRECTIVE=ypscan_manual_select_filters 已完成真实筛选回读。下一步必须原样调用 ypscan_manual_research，不得修改页面或重算参数。",
-    `MANUAL_RESEARCH_COLLECTION_ARGS=${JSON.stringify(result.collection_args)}`,
-  ].join("\n");
-}
-
-function manualBrowserDirective(message) {
-  const result = parsedToolResult(message);
-  const state = result?.state ?? result?.after_state ?? result?.before_state ?? null;
-  const pageState = state?.page_state ?? null;
-  const code = result?.error?.code ?? pageState ?? "YPSCAN_MANUAL_BROWSER_FAILED";
-  const human = /LOGIN|CAPTCHA/u.test(code);
-  if (human) {
-    const resume = isRecord(result?.next_call)
-      ? result.next_call
-      : {
-          tool: "ypscan_manual_browser_inspect",
-          args: {
-            requirement_id: result?.requirement_id,
-            platform: result?.platform,
-            run_id: result?.run_id,
-          },
-          reason: "用户处理后重新观察",
-        };
-    const options = [
-      { label: "已处理，继续", description: "在当前 Browser 页面完成登录或安全验证后继续" },
-      { label: "结束本次", description: "保留当前 checkpoint 并结束本次流程" },
-    ];
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=Browser 已暂停（${code}），禁止重试刚才的动作。`,
-      `YPSCAN_NEXT_CALL=${JSON.stringify(resume)}`,
-      "用户确认处理完成后必须先原样调用上面的 inspect，不得直接重放筛选或打开详情。",
+      `YPSCAN_FLOW_DIRECTIVE=级联菜单操作被${result?.error?.code ?? "登录或全局验证"}阻止。`,
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-        askQuestion(
-          "悦普识星 Browser 下一步",
-          "当前页面需要登录或安全验证，请选择下一步。",
-          options,
-        ),
+        askQuestion("Browser 验证", "当前平台需要登录或完成全局安全验证，请处理后继续。", [
+          { label: "已处理，继续", description: "重新观察页面后继续当前手扒任务" },
+          { label: "结束本次", description: "保留当前 checkpoint 并结束" },
+        ]),
       )}`,
     ].join("\n");
   }
-  if (
-    result?.success === true &&
-    result?.protocol_version === 3 &&
-    result?.operation === "inspect"
-  ) {
+  if (result?.applied === true && result?.verified === true) {
     return [
-      `YPSCAN_FLOW_DIRECTIVE=Observer 已完成一次全页快照，observation_id=${state?.observation_id ?? "未知"}。`,
-      "Observer 不决定下一步。必须结合当前 interaction_plan 或 research next_call.intent，检查 URL/重定向/登录/弹窗及全部 elements，由 Agent 选择 element_id、purpose 和 expected_effect 调用 ypscan_manual_browser_action。",
-      "任何 Action 后必须重新 inspect；不得使用 selector、坐标或未出现在本 observation 的元素。首分支关键词必须最后提交；后续分支禁止 reset，只换关键词，漂移时仅修复差异项。",
-    ].join("\n");
-  }
-  if (isRecord(result?.next_call)) {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=Browser 状态/动作已返回（${pageState ?? code}）。`,
-      `YPSCAN_NEXT_CALL=${JSON.stringify(result.next_call)}`,
-      "下一步必须原样调用 next_call；v3 inspect 后由 Agent 根据全页元素决定动作，不得自行拼 selector、坐标点击或重复上一动作。",
+      `YPSCAN_FLOW_DIRECTIVE=级联菜单已验证：${result?.field_label ?? "未知筛选"} → ${(result?.selected_path ?? []).join(" / ")}。`,
+      "立即回到宿主原生 Browser 观察完整筛选区并继续剩余条件；不要重复点击已选路径，也不要把级联助手扩展成其他页面动作。",
     ].join("\n");
   }
   return [
-    `YPSCAN_FLOW_DIRECTIVE=Browser 无法继续（${code}）。`,
-    "没有可验证的 next_call；停止本轮 Browser 动作并如实报告 before_state/after_state 与错误证据，不盲目重试。",
+    `YPSCAN_FLOW_DIRECTIVE=级联菜单未提交（${result?.error?.code ?? result?.status ?? "未知"}），但整个手扒任务不得停止。`,
+    result?.recovery_hint ??
+      "重新观察页面实际筛选名、入口文字和菜单层级后最多调整参数再试一次；仍失败则将该条件转入详情硬复核并继续其他筛选。",
   ].join("\n");
 }
 
@@ -514,6 +445,36 @@ function manualResearchDirective(message) {
 
 function manualResearchSuccessDirective(message) {
   const result = parsedToolResult(message);
+  if (result?.status === "ready_for_native_browser") {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=原生 Browser 自助手扒运行已创建。现在由 Agent 自主操作宿主 Browser，不调用 ypscan_manual_browser_inspect、ypscan_manual_browser_action 或 ypscan_manual_select_filters。",
+      `MANUAL_RESEARCH_RUN_ID=${result?.run_id ?? "未知"}`,
+      "先观察整个页面：错页或重定向就导航到达人广场，普通弹窗自主关闭；根据 hard_requirements 与当前可见筛选项做语义匹配。级联菜单先用原生 Browser；无法稳定悬停展开时调用 ypscan_select_cascade，field_label、trigger_label、path 必须来自当前页面与需求，不得写死。最多调整参数再试一次，仍失败就转入详情硬复核。所有硬筛完成后最后输入首个关键词；后续只换关键词。",
+      "每个稳定结果页调用 ypscan_manual_research(operation=capture_list, run_id, keyword, keyword_complete=false)；翻页由原生 Browser 完成。关键词采集完成后再以 keyword_complete=true 记录筛选证据。Agent 自主打开候选详情并调用 capture_detail；单个详情不可访问就跳过继续。完成后调用 finalize。",
+    ].join("\n");
+  }
+  if (result?.status === "recoverable") {
+    return [
+      `YPSCAN_FLOW_DIRECTIVE=手扒当前步骤可恢复（${result?.page_state ?? result?.error?.code ?? "页面状态变化"}）。不得停下或询问用户。`,
+      result?.recovery_hint ??
+        "重新观察整个页面，使用宿主原生 Browser 关闭普通弹窗、处理重定向、返回达人广场或重新打开目标详情，然后重试当前只读采集。",
+      "不要重复同一种无效操作；可换用文字点击、悬停后点击、键盘或重新导航。只有全局登录或全局验证码才请求用户处理。",
+    ].join("\n");
+  }
+  if (result?.status === "list_captured") {
+    return [
+      `YPSCAN_FLOW_DIRECTIVE=当前结果页已保存：关键词=${result?.keyword ?? "未知"}，页码=${result?.page_number ?? "未知"}，本页=${result?.page_candidate_count ?? 0}，累计去重=${result?.candidate_count ?? 0}。`,
+      result?.keyword_complete
+        ? "当前关键词已完成。若目标人数不足，使用原生 Browser 只替换下一个关键词并继续；否则自主进入详情复核。"
+        : "继续由原生 Browser 翻页或判断当前关键词是否完成；不要等待固定 next_call。",
+    ].join("\n");
+  }
+  if (["detail_captured", "detail_skipped"].includes(result?.status)) {
+    return [
+      `YPSCAN_FLOW_DIRECTIVE=当前达人详情已${result.status === "detail_skipped" ? "记录为不可访问" : "保存"}。`,
+      "关闭或返回当前详情，继续用原生 Browser 处理下一位达人；单个详情失败、字段缺失或局部验证码不得终止整批任务。全局验证码阻止所有详情时才请求用户。",
+    ].join("\n");
+  }
   if (result?.operation === "create_submission") {
     const submissionPath = firstString(result?.submission_path, result?.artifact?.submission_path);
     if (!submissionPath) return flowPauseDirective("手扒提报表生成", message);
@@ -666,6 +627,9 @@ function flowDirective(toolName, message, params = {}) {
   if (/(?:^|__)ypscan_save_excel_artifact$/iu.test(normalizedName)) {
     return excelArtifactSaveDirective(message, params);
   }
+  if (/(?:^|__)ypscan_select_cascade$/iu.test(normalizedName)) {
+    return cascadeSelectionDirective(message);
+  }
   if (bare === "create_with_distributions") return distributionDirective(message);
   if (bare === "sync_mcn_inquiry_status") return syncInquiryDirective(message);
   if (bare === "ingest_mcn_submissions") return ingestSubmissionsDirective(message, params);
@@ -674,13 +638,10 @@ function flowDirective(toolName, message, params = {}) {
   if (bare === "get_workflow_state") return workflowStateDirective(message);
   if (result?.success !== true) {
     if (
-      /(?:^|__)ypscan_manual_browser_inspect$/iu.test(normalizedName) ||
-      /(?:^|__)ypscan_manual_browser_action$/iu.test(normalizedName)
+      /(?:^|__)ypscan_parse_requirement$/iu.test(normalizedName) &&
+      result?.error?.code === "YPSCAN_REQUIREMENT_INVALID"
     ) {
-      return manualBrowserDirective(message);
-    }
-    if (/(?:^|__)ypscan_manual_select_filters$/iu.test(normalizedName)) {
-      return manualFilterSelectionDirective(message);
+      return requirementInputRepairDirective(message);
     }
     if (/(?:^|__)ypscan_manual_research$/iu.test(normalizedName)) {
       if (params?.operation === "create_submission") {
@@ -725,15 +686,6 @@ function flowDirective(toolName, message, params = {}) {
     return searchCreatorsDirective(message, params);
   }
   if (bare === "rank_mcns") return rankMcnsDirective(message);
-  if (
-    /(?:^|__)ypscan_manual_browser_inspect$/iu.test(normalizedName) ||
-    /(?:^|__)ypscan_manual_browser_action$/iu.test(normalizedName)
-  ) {
-    return manualBrowserDirective(message);
-  }
-  if (/(?:^|__)ypscan_manual_select_filters$/iu.test(normalizedName)) {
-    return manualFilterSelectionSuccessDirective(message);
-  }
   if (/(?:^|__)ypscan_manual_research$/iu.test(normalizedName)) {
     return manualResearchSuccessDirective(message);
   }
@@ -898,10 +850,10 @@ function currentUserReply(event) {
 }
 
 /** Register the only business gate: two confirmations before one WeCom send. */
-export function registerWecomConfirmationOnlyHooks(api, { now = Date.now, skillPath = null } = {}) {
+export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {}) {
   const challenges = new Map();
   const rankedSuppliers = new Map();
-  const skillReadScopes = new Set();
+  const startupScopes = new Set();
 
   const prune = (callNow) => {
     for (const [challengeId, challenge] of challenges) {
@@ -937,16 +889,6 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now, skillP
       const normalizedName = toolName.toLowerCase();
       const params = normalizeToolCallParams(normalizedName, paramsFromEvent(event));
       const bare = stripHostPrefix(normalizedName);
-
-      if (
-        nonemptyString(skillPath) &&
-        /(^|__)read$/iu.test(normalizedName) &&
-        [params?.path, params?.file_path, params?.filePath].some(
-          (value) => nonemptyString(value) && value.trim() === skillPath,
-        )
-      ) {
-        skillReadScopes.add(scopeKey(event, context));
-      }
 
       if (bare === "create_with_distributions") {
         const key = inquiryFingerprint(params);
@@ -1035,15 +977,17 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now, skillP
         );
       }
 
-      if (nonemptyString(skillPath) && !skillReadScopes.has(scope)) {
+      if (!startupScopes.has(scope)) {
+        startupScopes.add(scope);
         lines.push(
           "[YPscan startup instruction]",
-          `Before the first YPscan or media-assistant action in this run, read the complete Skill exactly once with the host Read tool: ${skillPath}`,
+          "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
           "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → create_with_distributions 的消息确认和机构确认 → 发送后询问是否继续人工拓展。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
           "search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
-          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展完成后必须询问“继续询价”或“直接生成提报表”；后者调用 ypscan_manual_research(operation=create_submission)。人工拓展先调用 ypscan_manual_select_filters(operation=plan)，再执行 inspect → Agent 选择 element_id → Action → inspect；只有 commit 返回 ready_for_collection=true 后才进入 ypscan_manual_research。首关键词先建立硬筛且关键词最后提交，后续关键词继承筛选集只换关键词；任何前缀的 manual_source_creators 都不得调用。",
+          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展完成后必须询问“继续询价”或“直接生成提报表”；后者调用 ypscan_manual_research(operation=create_submission)。人工拓展先调用 ypscan_manual_research(operation=start)，随后由 Agent 使用宿主原生 Browser 自主操作页面，并用 capture_list/capture_detail 只读落盘；不使用 selection_id、observation_id、element_id、固定 next_call 或三个旧 Browser 编排工具。原生 Browser 不能稳定完成级联选择时才调用 ypscan_select_cascade，参数由 Agent 根据当前页面动态决定。首关键词先建立硬筛且关键词最后提交，后续关键词继承筛选集只换关键词；任何前缀的 manual_source_creators 都不得调用。",
           "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion；普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
-          "用户选择人工拓展后，首次 ypscan_manual_select_filters 必须保留完整硬条件 facts。Browser 的错页、重定向、登录、弹窗、结果页和详情页一律先由 ypscan_manual_browser_inspect 做一次性全页观测；Observer 不等待具体元素也不决定动作。Agent 从 elements 选择目标，ypscan_manual_browser_action 必须传 observation_id、element_id、purpose 和 expected_effect。任何动作后重新 inspect，不得自行拼 selector 或坐标点击；只有登录失效或真实 CAPTCHA 才请求用户接管。",
+          "需求解析性能约束：普通 fact 只传 kind/quote/value；抖音 60s+ 必须表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；女粉偏多、城市集中等无精确数值或主体不明的条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌、数量、截止时间等必填业务信息缺失时才向用户澄清。YPSCAN_REQUIREMENT_INVALID 是 Agent 参数构造错误，必须一次性修正全部 violations，最多自动重试一次。",
+          "用户选择人工拓展后，start 必须保留完整硬条件 facts。Agent 每次先用宿主原生 Browser 观察整个页面，再自主处理错页、重定向、普通弹窗、筛选、分页和详情。级联项根据需求事实与当前可见控件动态匹配；原生 Browser 无法稳定悬停展开时调用 ypscan_select_cascade，由它只负责逐层 hover/click 和提交回读。助手失败最多调整参数再试一次，仍失败则转入详情硬复核。普通失败更换交互方式或跳过单个达人继续，只有登录失效、全局 CAPTCHA 或 Browser 完全不可用才请求用户接管。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           "手扒达人价格必须从当前 ypscan_parse_requirement.data.facts 复制客户原始 operator 和原始数值；禁止把 Provider 区间或手工计算后的 50%–120% 区间再次传入。除本轮唯一 creator_count 外，不重算价格事实。",
         );
@@ -1118,7 +1062,7 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now, skillP
     resetTransientState() {
       challenges.clear();
       rankedSuppliers.clear();
-      skillReadScopes.clear();
+      startupScopes.clear();
     },
   };
 }

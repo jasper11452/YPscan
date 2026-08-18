@@ -1,15 +1,18 @@
 {
   "name": "ypscan",
-  "version": "0.1.24-beta45",
-  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由宿主 Browser 配合 Playwright 完成双平台手扒闭环。",
+  "version": "0.1.24-beta47",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由 Agent 使用宿主原生 Browser 自主完成。",
   "type": "module",
   "private": true,
   "files": [
     "index.js",
     "openclaw.plugin.json",
     "README.md",
-    "skills/media-assistant",
-    "src"
+    "src",
+    "!src/tools/manual-browser-action.js",
+    "!src/tools/manual-browser-inspect.js",
+    "!src/tools/manual-browser-plan.js",
+    "!src/tools/manual-filter-selection.js"
   ],
   "openclaw": {
     "extensions": [

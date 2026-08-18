@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import { registerWecomConfirmationOnlyHooks } from "./src/hooks/register-wecom-confirmation-only.js";
 import {
   createRequirementParser,
@@ -6,24 +5,9 @@ import {
   PARSE_REQUIREMENT_PARAMETERS,
 } from "./src/tools/parse-requirement.js";
 import { createExcelArtifactSaver } from "./src/tools/save-excel-artifact.js";
-import {
-  createManualBrowserAction,
-  MANUAL_BROWSER_ACTION_PARAMETERS,
-} from "./src/tools/manual-browser-action.js";
-import {
-  createManualBrowserInspector,
-  MANUAL_BROWSER_INSPECT_PARAMETERS,
-} from "./src/tools/manual-browser-inspect.js";
-import {
-  createManualFilterSelection,
-  MANUAL_FILTER_SELECTION_PARAMETERS,
-} from "./src/tools/manual-filter-selection.js";
 import { createManualResearch, MANUAL_RESEARCH_PARAMETERS } from "./src/tools/manual-research.js";
+import { createCascadeSelector, SELECT_CASCADE_PARAMETERS } from "./src/tools/select-cascade.js";
 import { resolveTestAdapterBaseUrl } from "./src/tools/test-adapter.js";
-
-const MEDIA_ASSISTANT_SKILL_PATH = fileURLToPath(
-  new URL("./skills/media-assistant/SKILL.md", import.meta.url),
-);
 
 /** Entry point for the YPscan client integration layer. */
 export default {
@@ -31,65 +15,24 @@ export default {
   register(api) {
     const testAdapterBaseUrl = resolveTestAdapterBaseUrl(api.pluginConfig ?? {});
     const parseRequirement = createRequirementParser();
-    const hookRuntime = registerWecomConfirmationOnlyHooks(api, {
-      skillPath: MEDIA_ASSISTANT_SKILL_PATH,
-    });
+    const hookRuntime = registerWecomConfirmationOnlyHooks(api);
 
     api.registerTool(
-      (context) => {
-        const inspectBrowser = createManualBrowserInspector({
+      () => {
+        const selectCascade = createCascadeSelector({
           browserCdpUrl: api.pluginConfig?.browserCdpUrl,
-          workspaceDir: context?.workspaceDir,
         });
         return {
-          name: "ypscan_manual_browser_inspect",
+          name: "ypscan_select_cascade",
           description:
-            "一次性只读观测人工拓展 Browser 的整体状态和当前标签页全部可见可交互元素。返回 observation_id、稳定页面上下文、重定向/登录/弹窗/验证码信号、区域与 element_id；不等待具体元素、不决定下一步、不返回原始 DOM。",
-          parameters: MANUAL_BROWSER_INSPECT_PARAMETERS,
+            "通用级联菜单助手：仅执行 Agent 根据当前页面决定的 field_label/path，负责悬停父项、等待子列、点击叶子和验证提交；不决定业务筛选、不导航、不创建状态机。普通 Browser 操作优先，仅在级联菜单无法稳定选择时调用。",
+          parameters: SELECT_CASCADE_PARAMETERS,
           async execute(_id, params) {
-            return inspectBrowser(params);
+            return selectCascade(params);
           },
         };
       },
-      { name: "ypscan_manual_browser_inspect" },
-    );
-
-    api.registerTool(
-      (context) => {
-        const browserAction = createManualBrowserAction({
-          browserCdpUrl: api.pluginConfig?.browserCdpUrl,
-          workspaceDir: context?.workspaceDir,
-        });
-        return {
-          name: "ypscan_manual_browser_action",
-          description:
-            "执行一个带局部后置验证的人工拓展元素语义动作。v3 必须引用 Observer 的 observation_id/element_id，并声明 purpose/expected_effect；页面其他元素变化不阻止动作，目标变化则要求重新观测。禁止 selector 和坐标。",
-          parameters: MANUAL_BROWSER_ACTION_PARAMETERS,
-          async execute(_id, params) {
-            return browserAction(params);
-          },
-        };
-      },
-      { name: "ypscan_manual_browser_action" },
-    );
-
-    api.registerTool(
-      (context) => {
-        const selectFilters = createManualFilterSelection({
-          browserCdpUrl: api.pluginConfig?.browserCdpUrl,
-          workspaceDir: context?.workspaceDir,
-        });
-        return {
-          name: "ypscan_manual_select_filters",
-          description:
-            "人工拓展筛选凭证工具：v3 plan 只返回硬筛需求和关键词顺序，不指定页面控件；Agent 观测全页元素后逐项操作。首关键词硬筛完成后最后提交关键词，后续关键词继承筛选集只换关键词；commit 复核后签发 selection_id。",
-          parameters: MANUAL_FILTER_SELECTION_PARAMETERS,
-          async execute(_id, params) {
-            return selectFilters(params);
-          },
-        };
-      },
-      { name: "ypscan_manual_select_filters" },
+      { name: "ypscan_select_cascade" },
     );
 
     api.registerTool(
@@ -101,7 +44,7 @@ export default {
         return {
           name: "ypscan_manual_research",
           description:
-            "人工拓展数据工具：collect 只读取并持久化当前结果页或详情页证据，返回下一条精确工具调用；apply_reviews 分批写回复核结论；复核完成后 create_submission 从同一 run 生成独立本地提报表。",
+            "原生 Browser 自助手扒的数据工具：start 创建运行；Agent 自主操作宿主 Browser 后，capture_list/capture_detail 只读当前页面并持久化；finalize 生成 Excel；不负责导航、筛选、翻页或详情点击，也不需要 selection_id。",
           parameters: MANUAL_RESEARCH_PARAMETERS,
           async execute(_id, params) {
             return manualResearch(params);
