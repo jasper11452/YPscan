@@ -80,7 +80,7 @@ const MCN_MARKDOWN_TABLE_HEADER = [
 const MCN_MARKDOWN_EMPTY_ROW = "| 暂无匹配机构 | — | — | — |";
 
 const MANUAL_BROWSER_ENTRY_POLICY =
-  "Browser 入口：① snapshot 观察整页及当前 URL；② 页面正在跳转、刷新或加载时先等待稳定再重新 snapshot，不在变化中的页面操作；③ snapshot 中若有带明确关闭按钮的阻塞弹窗（包括 review-wrapper 普通公告/提示），优先直接 click 关闭按钮，不必先读取完整弹窗内容或先 goto，关闭后立即重新 snapshot；④ 确认当前 URL、页面内容和筛选区属于目标达人广场；⑤ 仅当关闭弹窗并重新 snapshot 后仍明确不在目标达人广场时，才用 goto 固定达人广场并重新 snapshot；⑥ 再次确认无阻塞弹窗且筛选区可用，才开始任何筛选。弹窗若出现登录、全局验证码或安全验证信号，必须请求用户处理，绝不能关闭。";
+  "Browser 入口：只使用 ypscan_manual_research(operation=start) 返回的 target_url，禁止自行搜索、猜测域名、改用平台官网首页或其他入口；① snapshot 观察整页及当前 URL；② 页面正在跳转、刷新或加载时先等待稳定再重新 snapshot，不在变化中的页面操作；③ snapshot 中若有带明确关闭按钮的阻塞弹窗（包括 review-wrapper 普通公告/提示），优先直接 click 关闭按钮，不必先读取完整弹窗内容或先 goto，关闭后立即重新 snapshot；④ 确认当前 URL、页面内容和筛选区属于目标达人广场；⑤ 仅当关闭弹窗并重新 snapshot 后仍明确不在目标达人广场时，才用 goto 原样导航到返回的 target_url 并重新 snapshot；⑥ 再次确认无阻塞弹窗且筛选区可用，才开始任何筛选。星图固定地址只能是 https://www.xingtu.cn/ad/creator/market，禁止使用 star.jinritemai.com、buyin.jinritemai.com 或 https://www.xingtu.cn/ 首页。弹窗若出现登录、全局验证码或安全验证信号，必须请求用户处理，绝不能关闭。";
 const MANUAL_BROWSER_ACTION_POLICY =
   "常规交互优先使用 snapshot/click/hover/fill；goto 只用于首次打开 session，或关闭阻塞弹窗并重新 snapshot 后仍明确不在目标页面的恢复场景。只有级联或 teleported 浮层无法表达时才使用限定目标容器且带提交回读的 run-code。";
 
@@ -504,10 +504,12 @@ function manualResearchSuccessDirective(message) {
     return [
       "YPSCAN_FLOW_DIRECTIVE=Playwright CLI 自助手扒运行已创建。读取并使用 YP Action 自带 playwright 技能，固定使用返回的 playwright_session；插件不会代为执行 shell。手扒期间禁止调用宿主原生 Browser。",
       `MANUAL_RESEARCH_RUN_ID=${result?.run_id ?? "未知"}`,
-      "先使用 YP Action 自带 playwright 技能和 playwright_cli.sh，固定短 session=ypscan；若 session 未打开，用 --headed --persistent 打开目标达人广场。禁止调用宿主原生 Browser。",
+      `MANUAL_RESEARCH_TARGET_URL=${result?.target_url ?? "缺失"}`,
+      "先使用 YP Action 自带 playwright 技能和 playwright_cli.sh，固定短 session=ypscan；若 session 未打开，用 --headed --persistent 原样打开 MANUAL_RESEARCH_TARGET_URL。若 target_url 缺失则重新调用 start，禁止猜测入口。禁止调用宿主原生 Browser。",
       MANUAL_BROWSER_ENTRY_POLICY,
-      "先处理 selection_plan：每个 batch 都在最新 snapshot 后原样执行其 playwright_run_code，同一菜单入口只打开和确认一次；执行后重新 snapshot，并按返回的 selected_paths/unresolved_paths 和筛选区、结果变化回读。只重试 unresolved_paths 一次，fallbacks、动态项或仍失败路径再用当前页面逐层观察，必要时转详情硬复核。其余 hard_requirements 继续按当前可见筛选项做语义匹配；打开菜单、输入、确认、关闭弹窗、导航或页面刷新后必须重新 snapshot，绝不复用旧 ref。所有硬筛完成后最后输入首个关键词；后续只换关键词。",
-      "每个稳定结果页先用 Playwright run-code 读取 source_url/page_number/price_tier/rows，再作为 list_snapshot 调用 ypscan_manual_research(operation=capture_list, run_id, keyword, keyword_complete=false, list_snapshot)；翻页由 Playwright CLI 完成。关键词采集完成后再以 keyword_complete=true 记录筛选证据。详情页用 run-code 读取 url/fields/challenge/login，并作为 detail_snapshot 调用 capture_detail；单个详情不可访问就跳过继续。完成后调用 finalize。",
+      "先处理 selection_plan：每个 batch 都在最新 snapshot 后原样执行其 playwright_run_code，同一菜单入口只打开和确认一次；执行后重新 snapshot，并按返回的 selected_paths/unresolved_paths 和筛选区、结果变化回读。只重试 unresolved_paths 一次，fallbacks、动态项或仍失败路径再用当前页面逐层观察；硬条件没有精确可见选项时不得用近义项替代，记录未表达并转详情硬复核。其余 hard_requirements 继续按当前可见筛选项做精确匹配。数值范围按 range_execution_plan 执行稳定预设档分轮召回，每轮把实际档位放入 filter_evidence；不要把自定义输入作为必经路径。打开菜单、输入、确认、关闭弹窗、导航或页面刷新后必须重新 snapshot，绝不复用旧 ref。所有硬筛完成后最后输入首个关键词；后续只换关键词。",
+      "星图达人报价是两级独立控件：先把报价类型切换并回读为 plan.price_view（60s+ 必须是“60s以上视频”，绝不能保留默认“21-60s视频”），再按 range_execution_plan 选择报价区间预设档。工具会按精确 min/max 做行级二次硬筛，因此不要求操作自定义输入。",
+      "每个稳定结果页先用 Playwright run-code 读取 source_url/page_number/price_tier/rows，再作为 list_snapshot 调用 ypscan_manual_research(operation=capture_list, run_id, keyword, keyword_complete=false, list_snapshot)；工具会拒绝错误报价档，并在落盘候选前剔除报价、粉丝量等已可见的硬筛失败行。翻页由 Playwright CLI 完成。最后一页可直接以 keyword_complete=true 提交；若该页此前已提交，可用 rows=[] 只标记完成，工具不会追加空页或覆盖已有候选。详情页用 run-code 读取 url/fields/challenge/login，并作为 detail_snapshot 调用 capture_detail；单个详情不可访问就跳过继续。完成后调用 finalize。",
     ].join("\n");
   }
   if (result?.status === "recoverable") {
@@ -521,6 +523,12 @@ function manualResearchSuccessDirective(message) {
   if (result?.status === "list_captured") {
     return [
       `YPSCAN_FLOW_DIRECTIVE=当前结果页已保存：关键词=${result?.keyword ?? "未知"}，页码=${result?.page_number ?? "未知"}，本页=${result?.page_candidate_count ?? 0}，累计去重=${result?.candidate_count ?? 0}。`,
+      ...(Array.isArray(result?.remaining_preset_rounds) && result.remaining_preset_rounds.length
+        ? [
+            `RANGE_PRESET_ROUNDS_REMAINING=${JSON.stringify(result.remaining_preset_rounds)}`,
+            "关键词尚未完成；按上面的剩余预设档逐轮筛选、采集并在 filter_evidence 记录实际档位，全部覆盖后再提交 keyword_complete=true。",
+          ]
+        : []),
       result?.keyword_complete
         ? "当前关键词已完成。若目标人数不足，使用 Playwright CLI 只替换下一个关键词并继续；否则自主进入详情复核。"
         : "继续由 Playwright CLI 翻页或判断当前关键词是否完成；不要等待固定 next_call。",

@@ -75,7 +75,10 @@ test("same-field routes are deduplicated into one executable batch", () => {
   );
   assert.deepEqual(plan.batches[0].items[0].fact_ids, ["type-1", "type-2"]);
   assert.match(plan.batches[0].playwright_run_code, /selected_paths/u);
-  assert.equal((plan.batches[0].playwright_run_code.match(/name: \/\^\(\?:确定\|确认\)\$\/u/gu) ?? []).length, 1);
+  assert.equal(
+    (plan.batches[0].playwright_run_code.match(/name: \/\^\(\?:确定\|确认\)\$\/u/gu) ?? []).length,
+    1,
+  );
 });
 
 test("Xingtu paths under different first-level triggers become separate menu batches", () => {
@@ -88,7 +91,10 @@ test("Xingtu paths under different first-level triggers become separate menu bat
     plan.batches.map((batch) => batch.trigger_labels),
     [["美妆"], ["时尚"]],
   );
-  assert.equal(plan.batches.every((batch) => batch.root_as_trigger === true), true);
+  assert.equal(
+    plan.batches.every((batch) => batch.root_as_trigger === true),
+    true,
+  );
 });
 
 test("dynamic and missing leaves remain explicit live-page fallbacks", () => {
@@ -110,6 +116,48 @@ test("dynamic and missing leaves remain explicit live-page fallbacks", () => {
   assert.equal(plan.batches.length, 0);
 });
 
+test("ambiguous Xingtu workplace intent is not forced into the drama theme", () => {
+  const plan = compileManualResearchPlan({
+    platform: "xingtu",
+    facts: [fact("theme", "content_theme", "职场")],
+    keywords: ["办公软件"],
+  });
+
+  assert.equal(plan.selection_plan.batches.length, 0);
+  assert.deepEqual(
+    plan.selection_plan.fallbacks.map((item) => item.reason),
+    ["missing"],
+  );
+});
+
+test("Xingtu CPM uses the smallest stable preset superset instead of requiring custom input", () => {
+  const plan = compileManualResearchPlan({
+    platform: "xingtu",
+    facts: [
+      {
+        ...fact("cpm", "cpm_max", 100),
+        operator: "lte",
+        qualifier: "duration_l3",
+      },
+      { ...fact("duration", "video_duration", "duration_l3") },
+    ],
+    keywords: ["办公软件"],
+  });
+
+  assert.deepEqual(
+    plan.range_execution_plan.find((item) => item.control === "cpm"),
+    {
+      control: "cpm",
+      required_min: 0,
+      required_max: 100,
+      strategy: "preset_rounds_then_row_filter",
+      preset_rounds: ["100以下"],
+      row_filter_required: true,
+      custom_input_required: false,
+    },
+  );
+});
+
 test("content taxonomy becomes a list filter without replacing semantic review", () => {
   const plan = compileManualResearchPlan({
     platform: "xingtu",
@@ -120,10 +168,7 @@ test("content taxonomy becomes a list filter without replacing semantic review",
   assert.deepEqual(plan.filters[0].values, ["AI应用"]);
   assert.equal(plan.filters[0].control, "content_theme");
   assert.equal(plan.review_requirements[0].fact_id, "theme");
-  assert.deepEqual(plan.selection_plan.batches[0].items[0].path, [
-    "手机/数码/家电分享",
-    "AI应用",
-  ]);
+  assert.deepEqual(plan.selection_plan.batches[0].items[0].path, ["手机/数码/家电分享", "AI应用"]);
 });
 
 test("run-code payload JSON-escapes untrusted visible labels", () => {

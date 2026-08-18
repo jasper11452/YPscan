@@ -8,7 +8,7 @@ import {
   MANUAL_RESEARCH_PREVIEW_LIMIT,
 } from "./manual-research-artifact.js";
 import { compileManualResearchPlan, mergeManualCandidates } from "./manual-research-plan.js";
-import { checkCandidatePrice } from "./manual-research-price-check.js";
+import { checkCandidatePrice, normalizeManualQuoteTier } from "./manual-research-price-check.js";
 import {
   MANUAL_RESEARCH_PARAMETERS,
   MANUAL_RESEARCH_PLATFORMS,
@@ -133,6 +133,53 @@ function pageSignature(pageData) {
     .slice(0, 5)
     .map((row) => row.platform_id ?? row.detail_url ?? row.nickname ?? row.raw_text)
     .join("|");
+}
+
+function filterEvidenceSignature(evidence) {
+  return JSON.stringify(
+    (evidence ?? [])
+      .filter((entry) => entry?.verified === true)
+      .map((entry) => ({
+        control: clean(entry.control ?? entry.page_control),
+        selected_path: (entry.selected_path ?? []).map(clean),
+      }))
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right), "zh-CN")),
+  );
+}
+
+const RANGE_EVIDENCE_LABELS = Object.freeze({
+  creator_price: "达人报价",
+  follower_count: "粉丝数",
+  cpm: "预期CPM",
+});
+
+function remainingPresetRounds(rangePlan, pageRecords, currentEvidence) {
+  const evidence = [
+    ...pageRecords.flatMap((record) => record.filter_evidence ?? []),
+    ...(currentEvidence ?? []),
+  ];
+  return (rangePlan ?? []).flatMap((item) => {
+    if (!item.preset_rounds?.length) return [];
+    const controlEvidence = evidence.filter((entry) => {
+      const control = clean(entry?.control);
+      const pageControl = clean(entry?.page_control);
+      return (
+        control === item.control ||
+        pageControl.includes(RANGE_EVIDENCE_LABELS[item.control] ?? item.control)
+      );
+    });
+    return item.preset_rounds
+      .filter(
+        (round) =>
+          !controlEvidence.some(
+            (entry) =>
+              entry?.verified === true &&
+              Array.isArray(entry.selected_path) &&
+              entry.selected_path.some((value) => clean(value) === clean(round)),
+          ),
+      )
+      .map((round) => ({ control: item.control, preset: round }));
+  });
 }
 
 /**
@@ -1237,6 +1284,7 @@ export function createManualResearch({
       params = validateManualResearchParams(rawParams, { allowLegacyProtocol });
       if (params.operation === "start") {
         plan = compileManualResearchPlan(params);
+        const targetUrl = PLATFORM_RULES[params.platform].url;
         artifactStore = await createArtifactStore({ workspaceDir, params, plan, now });
         if (!artifactStore.enabled || !artifactStore.run_id) {
           throw manualBrowserError(
@@ -1250,10 +1298,13 @@ export function createManualResearch({
           operation: "start",
           requirement_id: params.requirement_id,
           platform: params.platform,
+          target_url: targetUrl,
           run_id: artifactStore.run_id,
           keywords: plan.keywords,
+          price_view: plan.price_view,
           hard_requirements: plan.filters,
           selection_plan: plan.selection_plan,
+          range_execution_plan: plan.range_execution_plan,
           detail_requirements: plan.detail_filters ?? [],
           review_requirements: plan.review_requirements ?? [],
           unexpressed_conditions: plan.unexpressed ?? [],
@@ -1261,6 +1312,7 @@ export function createManualResearch({
           browser_policy: {
             interaction_owner: "agent_playwright_cli",
             playwright_session: "ypscan",
+            target_url: targetUrl,
             persistent_profile_required: true,
             snapshot_handoff_required: true,
             keyword_last: true,
@@ -1442,6 +1494,28 @@ export function createManualResearch({
             };
             return hostToolResult(payload, { details: payload });
           }
+          const existingBranchPages = branchPages(loaded.events, branch.branch_id);
+          const completionOnly =
+            params.keyword_complete &&
+            cliSnapshot.rows.length === 0 &&
+            existingBranchPages.length > 0;
+          const requiredTier = normalizeManualQuoteTier(params.platform, plan.price_view);
+          const observedTier = normalizeManualQuoteTier(params.platform, cliSnapshot.price_tier);
+          if (!completionOnly && requiredTier && observedTier !== requiredTier) {
+            const payload = {
+              success: true,
+              status: "recoverable",
+              operation: "capture_list",
+              requirement_id: params.requirement_id,
+              platform: params.platform,
+              run_id: params.run_id,
+              page_state: "QUOTE_TIER_MISMATCH",
+              required_price_tier: plan.price_view,
+              observed_price_tier: cliSnapshot.price_tier ?? null,
+              recovery_hint: `报价档位不匹配：必须先切换并回读“${plan.price_view}”列表表头，再重新 capture_list；当前页面不得落盘。`,
+            };
+            return hostToolResult(payload, { details: payload });
+          }
           const pageNumber = state.market?.page_number ?? 1;
           const pageData = cliSnapshot;
           const pageRecord = {
@@ -1458,8 +1532,10 @@ export function createManualResearch({
             collection_source: pageData.collection_source ?? "dom",
             response_endpoint: pageData.response_endpoint ?? null,
             response_path: pageData.response_path ?? null,
+            filter_evidence: params.filter_evidence,
+            filter_signature: filterEvidenceSignature(params.filter_evidence),
           };
-          const pageCandidates = pageData.rows.map((row) =>
+          const rawPageCandidates = pageData.rows.map((row) =>
             candidateFromRow(row, {
               platform: params.platform,
               branchId: branch.branch_id,
@@ -1468,22 +1544,57 @@ export function createManualResearch({
               sourceUrl: pageData.source_url,
             }),
           );
-          const duplicate = branchPages(loaded.events, branch.branch_id).some(
-            (item) => item.signature === pageRecord.signature && item.page_number === pageNumber,
+          const pageCandidates = [];
+          const rejectedPageCandidates = [];
+          for (const candidate of rawPageCandidates) {
+            const priceCheck = checkCandidatePrice(candidate, plan);
+            const listHardEvaluation = evaluateCandidateList(candidate, plan);
+            const rejected =
+              priceCheck.status === "rejected" || listHardEvaluation.status === "fail";
+            if (rejected) {
+              rejectedPageCandidates.push({
+                ...candidate,
+                price_check: priceCheck,
+                list_hard_evaluation: listHardEvaluation,
+              });
+            } else {
+              pageCandidates.push(candidate);
+            }
+          }
+          pageRecord.accepted_candidate_count = pageCandidates.length;
+          pageRecord.rejected_candidate_count = rejectedPageCandidates.length;
+          const duplicate = existingBranchPages.some(
+            (item) =>
+              item.signature === pageRecord.signature &&
+              item.page_number === pageNumber &&
+              (item.filter_signature ?? "") === pageRecord.filter_signature,
           );
-          if (!duplicate) {
-            await artifactStore.savePage({ branch, page: pageRecord, candidates: pageCandidates });
+          if (!completionOnly && !duplicate) {
+            await artifactStore.savePage({
+              branch,
+              page: pageRecord,
+              candidates: pageCandidates,
+              rejectedCandidates: rejectedPageCandidates,
+            });
           }
           const candidatesNow = mergeManualCandidates([
             ...loaded.candidates,
-            ...(duplicate ? [] : pageCandidates),
+            ...(completionOnly || duplicate ? [] : pageCandidates),
           ]);
-          if (params.keyword_complete) {
+          const remainingRangeRounds = params.keyword_complete
+            ? remainingPresetRounds(
+                plan.range_execution_plan,
+                existingBranchPages,
+                completionOnly || duplicate ? [] : params.filter_evidence,
+              )
+            : [];
+          const keywordComplete = params.keyword_complete && remainingRangeRounds.length === 0;
+          if (keywordComplete) {
             await artifactStore.saveBranch({
               ...branch,
               actual_filters: params.filter_evidence,
               unexpressed_filters: params.filter_evidence.filter((item) => !item.verified),
-              page_count: branchPages(loaded.events, branch.branch_id).length + Number(!duplicate),
+              page_count: existingBranchPages.length + Number(!completionOnly && !duplicate),
               collection: {
                 status: "complete",
                 stop_reason: "agent_completed_keyword",
@@ -1502,11 +1613,17 @@ export function createManualResearch({
             run_id: params.run_id,
             keyword: params.keyword,
             page_number: pageNumber,
+            page_row_count: rawPageCandidates.length,
             page_candidate_count: pageCandidates.length,
+            page_rejected_candidate_count: rejectedPageCandidates.length,
+            rejected_candidates: rejectedPageCandidates.map(publicCandidate).slice(0, 20),
             candidate_count: candidatesNow.length,
-            duplicate_page: duplicate,
+            duplicate_page: completionOnly || duplicate,
+            completion_only: completionOnly,
             candidates: candidatesNow.map(publicCandidate).slice(0, 20),
-            keyword_complete: params.keyword_complete,
+            keyword_complete: keywordComplete,
+            requested_keyword_complete: params.keyword_complete,
+            remaining_preset_rounds: remainingRangeRounds,
           };
           return hostToolResult(payload, { details: payload });
         }

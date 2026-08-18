@@ -58,6 +58,32 @@ const XINGTU_DETAIL_ONLY_CONTROLS = new Set([
 const MANUAL_CREATOR_PRICE_MIN_FACTOR = 0.5;
 const MANUAL_CREATOR_PRICE_MAX_FACTOR = 1.2;
 
+const XINGTU_PRESET_RANGES = Object.freeze({
+  creator_price: [
+    { label: "0.2w以下", min: 0, max: 2_000 },
+    { label: "0.2w-0.5w", min: 2_000, max: 5_000 },
+    { label: "0.5w-1w", min: 5_000, max: 10_000 },
+    { label: "1w-5w", min: 10_000, max: 50_000 },
+    { label: "5w-10w", min: 50_000, max: 100_000 },
+    { label: "10w以上", min: 100_000, max: null },
+  ],
+  follower_count: [
+    { label: "10w以下", min: 0, max: 100_000 },
+    { label: "10w-100w", min: 100_000, max: 1_000_000 },
+    { label: "100w-300w", min: 1_000_000, max: 3_000_000 },
+    { label: "300w-500w", min: 3_000_000, max: 5_000_000 },
+    { label: "500w-1000w", min: 5_000_000, max: 10_000_000 },
+    { label: "1000w以上", min: 10_000_000, max: null },
+  ],
+});
+const XINGTU_CPM_PRESETS = Object.freeze([
+  { label: "10以下", max: 10 },
+  { label: "20以下", max: 20 },
+  { label: "30以下", max: 30 },
+  { label: "50以下", max: 50 },
+  { label: "100以下", max: 100 },
+]);
+
 function clean(value) {
   return String(value ?? "")
     .replace(/\s+/gu, " ")
@@ -232,6 +258,60 @@ function relevantCommercialFact(fact, platform, selectedPriceView) {
   return qualifier === expected;
 }
 
+function overlapsRange(preset, filter) {
+  const presetMax = preset.max ?? Number.POSITIVE_INFINITY;
+  const filterMax = filter.max ?? Number.POSITIVE_INFINITY;
+  return presetMax > (filter.min ?? 0) && filterMax >= preset.min;
+}
+
+function rangeExecutionPlan(platform, filters) {
+  return filters
+    .filter((filter) => filter.mode === "range")
+    .map((filter) => {
+      const presets = platform === "xingtu" ? XINGTU_PRESET_RANGES[filter.control] : null;
+      if (platform === "xingtu" && filter.control === "cpm") {
+        const upperBound = filter.max ?? Number.POSITIVE_INFINITY;
+        const singlePreset =
+          (filter.min ?? 0) <= 0
+            ? XINGTU_CPM_PRESETS.find((preset) => preset.max >= upperBound)
+            : null;
+        return {
+          control: filter.control,
+          required_min: filter.min ?? null,
+          required_max: filter.max ?? null,
+          strategy: "preset_rounds_then_row_filter",
+          preset_rounds: singlePreset
+            ? [singlePreset.label]
+            : [XINGTU_CPM_PRESETS.at(-1).label, "100以上"],
+          row_filter_required: true,
+          custom_input_required: false,
+        };
+      }
+      if (!presets) {
+        return {
+          control: filter.control,
+          required_min: filter.min ?? null,
+          required_max: filter.max ?? null,
+          strategy: "visible_superset_then_row_filter",
+          preset_rounds: [],
+          row_filter_required: true,
+          custom_input_required: false,
+        };
+      }
+      return {
+        control: filter.control,
+        required_min: filter.min ?? null,
+        required_max: filter.max ?? null,
+        strategy: "preset_rounds_then_row_filter",
+        preset_rounds: presets
+          .filter((preset) => overlapsRange(preset, filter))
+          .map((item) => item.label),
+        row_filter_required: true,
+        custom_input_required: false,
+      };
+    });
+}
+
 /**
  * Convert parser facts into a deterministic, platform-neutral browser plan.
  * Provider-expanded projections are deliberately ignored. Browser creator
@@ -340,6 +420,7 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
     keywords: keywordsToRun,
     filters,
     selection_plan: selectionPlan,
+    range_execution_plan: rangeExecutionPlan(platform, filters),
     detail_filters: detailFilters,
     review_requirements: reviewRequirements,
     price_view: selectedPriceView,

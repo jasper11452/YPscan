@@ -918,8 +918,14 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
     restored,
     checkpoint_path: checkpointPath,
     excel_path: excelPath,
-    async savePage({ branch, page, candidates }) {
-      await append({ type: "page", branch, page, candidates });
+    async savePage({ branch, page, candidates, rejectedCandidates = [] }) {
+      await append({
+        type: "page",
+        branch,
+        page,
+        candidates,
+        rejected_candidates: rejectedCandidates,
+      });
     },
     async saveBranch(branch) {
       await append({ type: "branch", branch });

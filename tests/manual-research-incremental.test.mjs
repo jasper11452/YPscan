@@ -23,6 +23,7 @@ function params() {
       { kind: "creator_count", normalized_value: 1 },
       { kind: "creator_price", normalized_value: 20_000, operator: "lte" },
       { kind: "video_duration", normalized_value: "duration_l3" },
+      { kind: "follower_count", normalized_value: 100_000, operator: "gte" },
       { id: "creator-type", kind: "creator_type", normalized_value: ["美妆教程", "护肤保养"] },
     ],
     keywords: ["办公软件"],
@@ -69,8 +70,19 @@ test("Playwright CLI run starts and captures the current list without a selectio
 
   const started = payload(await research({ operation: "start", ...params() }));
   assert.equal(started.status, "ready_for_playwright");
+  assert.equal(started.target_url, "https://www.xingtu.cn/ad/creator/market");
+  assert.equal(started.price_view, "60s以上视频");
   assert.equal(started.browser_policy.playwright_session, "ypscan");
+  assert.equal(started.browser_policy.target_url, started.target_url);
   assert.equal(started.browser_policy.selection_id_required, false);
+  assert.deepEqual(
+    started.range_execution_plan.find((item) => item.control === "creator_price").preset_rounds,
+    ["1w-5w"],
+  );
+  assert.deepEqual(
+    started.range_execution_plan.find((item) => item.control === "follower_count").preset_rounds,
+    ["10w-100w", "100w-300w", "300w-500w", "500w-1000w", "1000w以上"],
+  );
   assert.equal(started.selection_plan.schema_version, 1);
   assert.equal(started.selection_plan.batches.length, 1);
   assert.deepEqual(
@@ -89,7 +101,7 @@ test("Playwright CLI run starts and captures the current list without a selectio
       platform: started.platform,
       run_id: started.run_id,
       keyword: "办公软件",
-      keyword_complete: true,
+      keyword_complete: false,
       list_snapshot: {
         source_url: "https://www.xingtu.cn/ad/creator/market",
         page_number: 1,
@@ -110,6 +122,20 @@ test("Playwright CLI run starts and captures the current list without a selectio
           selected_path: ["60s以上视频"],
           verified: true,
           evidence: "筛选栏显示 60s以上视频",
+        },
+        {
+          control: "creator_price",
+          page_control: "达人报价",
+          selected_path: ["1w-5w"],
+          verified: true,
+          evidence: "报价区间显示 1w-5w",
+        },
+        {
+          control: "follower_count",
+          page_control: "粉丝数",
+          selected_path: ["10w-100w"],
+          verified: true,
+          evidence: "粉丝数本轮为 10w-100w",
         },
       ],
     }),
@@ -161,6 +187,128 @@ test("ordinary Playwright page drift is recoverable instead of stopping the run"
   assert.equal(result.success, true);
   assert.equal(result.status, "recoverable");
   assert.match(result.recovery_hint, /Playwright CLI/u);
+});
+
+test("capture_list blocks a wrong quote tier, rejects visible hard failures, and completes without an empty page", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-native-hard-guard-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const research = createManualResearch({ workspaceDir });
+  const started = payload(await research({ operation: "start", ...params() }));
+  const priceRangeEvidence = {
+    control: "creator_price",
+    page_control: "达人报价",
+    selected_path: ["1w-5w"],
+    verified: true,
+  };
+  const followerPresets = ["10w-100w", "100w-300w", "300w-500w", "500w-1000w", "1000w以上"];
+  const rangeEvidenceFor = (preset) => [
+    priceRangeEvidence,
+    {
+      control: "follower_count",
+      page_control: "粉丝数",
+      selected_path: [preset],
+      verified: true,
+    },
+  ];
+  const capture = (list_snapshot, keyword_complete = false, filter_evidence = []) =>
+    research({
+      operation: "capture_list",
+      requirement_id: started.requirement_id,
+      platform: started.platform,
+      run_id: started.run_id,
+      keyword: "办公软件",
+      keyword_complete,
+      filter_evidence,
+      list_snapshot,
+    });
+
+  const wrongTier = payload(
+    await capture({
+      source_url: "https://www.xingtu.cn/ad/creator/market",
+      price_tier: "21-60s视频",
+      rows: [{ platform_id: "wrong-tier", price_raw: "18000", followers_raw: "20万" }],
+    }),
+  );
+  assert.equal(wrongTier.status, "recoverable");
+  assert.equal(wrongTier.page_state, "QUOTE_TIER_MISMATCH");
+  assert.equal(wrongTier.required_price_tier, "60s以上视频");
+
+  const captured = payload(
+    await capture(
+      {
+        source_url: "https://www.xingtu.cn/ad/creator/market",
+        price_tier: "60s以上视频",
+        rows: [
+          { platform_id: "eligible", price_raw: "18000", followers_raw: "20万" },
+          { platform_id: "over-price", price_raw: "45000", followers_raw: "20万" },
+          { platform_id: "under-followers", price_raw: "18000", followers_raw: "8万" },
+        ],
+      },
+      false,
+      rangeEvidenceFor(followerPresets[0]),
+    ),
+  );
+  assert.equal(captured.page_row_count, 3);
+  assert.equal(captured.page_candidate_count, 1);
+  assert.equal(captured.page_rejected_candidate_count, 2);
+  assert.deepEqual(
+    captured.candidates.map((item) => item.platform_id),
+    ["eligible"],
+  );
+
+  const incompleteCoverage = payload(
+    await capture(
+      { source_url: "https://www.xingtu.cn/ad/creator/market", rows: [] },
+      true,
+      followerPresets.flatMap(rangeEvidenceFor),
+    ),
+  );
+  assert.equal(incompleteCoverage.keyword_complete, false);
+  assert.deepEqual(incompleteCoverage.remaining_preset_rounds, [
+    { control: "follower_count", preset: "100w-300w" },
+    { control: "follower_count", preset: "300w-500w" },
+    { control: "follower_count", preset: "500w-1000w" },
+    { control: "follower_count", preset: "1000w以上" },
+  ]);
+
+  for (const preset of followerPresets.slice(1)) {
+    const round = payload(
+      await capture(
+        {
+          source_url: "https://www.xingtu.cn/ad/creator/market",
+          page_number: 1,
+          price_tier: "60s以上视频",
+          rows: [],
+        },
+        false,
+        rangeEvidenceFor(preset),
+      ),
+    );
+    assert.equal(round.keyword_complete, false);
+  }
+
+  const completed = payload(
+    await capture({ source_url: "https://www.xingtu.cn/ad/creator/market", rows: [] }, true),
+  );
+  assert.equal(completed.completion_only, true);
+  assert.equal(completed.candidate_count, 1);
+
+  const restored = await loadManualResearchRun({
+    workspaceDir,
+    runId: started.run_id,
+    requirementId: started.requirement_id,
+    platform: started.platform,
+  });
+  assert.equal(restored.events.filter((event) => event.type === "page").length, 5);
+  assert.deepEqual(
+    restored.candidates.map((item) => item.platform_id),
+    ["eligible"],
+  );
+  const pageEvent = restored.events.find((event) => event.type === "page");
+  assert.deepEqual(
+    pageEvent.rejected_candidates.map((item) => item.platform_id),
+    ["over-price", "under-followers"],
+  );
 });
 
 async function committedRun(workspaceDir, page) {

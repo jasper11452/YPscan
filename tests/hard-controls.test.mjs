@@ -371,10 +371,18 @@ test("manual research observes redirects and dismisses safe modals before filter
       status: "ready_for_playwright",
       run_id: "run-entry-guard",
       playwright_session: "ypscan",
+      target_url: "https://www.xingtu.cn/ad/creator/market",
     }),
   });
   const directive = directiveText(result);
 
+  assert.match(
+    directive,
+    /MANUAL_RESEARCH_TARGET_URL=https:\/\/www\.xingtu\.cn\/ad\/creator\/market/u,
+  );
+  assert.match(directive, /--headed --persistent 原样打开 MANUAL_RESEARCH_TARGET_URL/u);
+  assert.match(directive, /禁止自行搜索、猜测域名、改用平台官网首页/u);
+  assert.match(directive, /禁止使用 star\.jinritemai\.com/u);
   assert.match(directive, /snapshot 观察整页及当前 URL/u);
   assert.match(directive, /等待稳定再重新 snapshot/u);
   assert.match(directive, /确认当前 URL、页面内容和筛选区属于目标达人广场/u);
