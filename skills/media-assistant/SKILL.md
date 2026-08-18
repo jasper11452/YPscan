@@ -47,4 +47,6 @@ Browser 入口先 snapshot；遇到带明确关闭按钮的 `review-wrapper` 等
 
 用户选择“询价机构”后，继续使用真实 MCN 名称/ID、企微确认和询价工具链。按 Provider 当前 schema 调用实际名称为 `select_inquiry_form_fields` 的可用工具，传入当前 requirement ID，绝不传 `demand_id`；返回后把原始 `url` 原样单独输出一行用户可见正文（禁止 Markdown 包装、禁止用 Browser 打开）。用户在选择页提交时，Provider 会把字段按 requirement ID 持久化；不得调用已弃用的 `get_selected_inquiry_form_fields`，不得读取、重建、缓存或向后续工具传 `columns`。`create_submission_batch`、`create_with_distributions`、`get_creator_detail_export` 和 `get_creator_detail` 只传各自当前 schema 要求的业务参数，由后端关联字段；任何前缀的 `manual_source_creators` 都不得调用。Provider 返回 Excel 下载 URL 时，使用 `ypscan_save_excel_artifact` 保存并原样交付 `file_path`；Browser 人工拓展不走该工具。
 
+提报表保存后，用户在弹窗选择“补充更新达人信息”本身就是对达人信息补全的明确请求。该选项唯一映射到 `get_creator_detail`：立即按当前 schema 使用本轮 `create_submission_batch` 返回的真实 batch 调用它，接受后用同一 batch 调用 `get_creator_detail_export` 轮询，并保存、交付新版提报表。不得把该选项解释成提报字段配置，不得调用 `select_inquiry_form_fields`，不得提供“达人详情补充 / 调整展示字段”等二次分支，也不得再次追问用户要补充什么。
+
 所有结果只使用本轮真实 Provider 或 Browser 证据，不跨需求、平台、账号或历史 run 混用。

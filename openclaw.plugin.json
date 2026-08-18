@@ -1,7 +1,7 @@
 {
   "id": "ypscan",
   "name": "悦普识星",
-  "version": "0.1.24-beta54",
+  "version": "0.1.24-beta55",
   "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由 Agent 使用 YP Action Playwright 自主完成。",
   "author": {
     "name": "Jasper"

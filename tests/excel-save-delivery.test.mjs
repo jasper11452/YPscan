@@ -32,6 +32,10 @@ test("only Provider submission save offers enrichment", async (t) => {
   )).content[0].text);
   assert.equal(initial.delivery.next_tool, "AskUserQuestion");
   assert.deepEqual(initial.delivery.next_args, submissionEnrichmentQuestionPayload());
+  const enrichmentOption = initial.delivery.next_args.questions[0].options[0];
+  assert.equal(enrichmentOption.label, "补充更新达人信息");
+  assert.match(enrichmentOption.description, /立即调用 get_creator_detail/u);
+  assert.match(enrichmentOption.description, /不再选择字段或追问/u);
 
   const enriched = JSON.parse((await saveFixture(
     workspaceDir,

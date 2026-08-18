@@ -267,6 +267,28 @@ test("institutional retrieval continues through ingest Excel save, creator rank 
   });
 });
 
+test("submission enrichment choice maps directly to get_creator_detail", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const saved = persist({
+    toolName: "ypscan_save_excel_artifact",
+    params: {
+      artifact_kind: "submission_batch",
+      artifact_id: "123",
+      excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+    },
+    message: toolMessage({
+      success: true,
+      data: { file_path: "/workspace/submission.xlsx" },
+      delivery: { next_args: { questions: [] } },
+    }),
+  });
+  const text = directiveText(saved);
+  assert.match(text, /选择“补充更新达人信息”.*固定调用 get_creator_detail/u);
+  assert.match(text, /再用 get_creator_detail_export 轮询/u);
+  assert.match(text, /不得调用 select_inquiry_form_fields/u);
+  assert.match(text, /不得.*再次追问/u);
+});
+
 test("successful WeCom distribution asks whether to continue manual expansion", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
