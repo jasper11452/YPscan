@@ -229,8 +229,21 @@ function manualResearchDirective(message) {
     { label: "已处理，继续", description: "在当前 Browser 页面完成登录或安全验证后继续" },
     { label: "结束本次", description: "保留当前结果并结束本次流程" },
   ];
+  const resumeTool = nonemptyString(result?.user_action?.resume_tool)
+    ? result.user_action.resume_tool.trim()
+    : null;
+  const resumeArgs = isRecord(result?.user_action?.resume_args)
+    ? result.user_action.resume_args
+    : null;
   return [
     `YPSCAN_FLOW_DIRECTIVE=ypscan_manual_research 已暂停（${code}）。不得用普通文本提问后结束本轮。`,
+    ...(resumeTool && resumeArgs
+      ? [
+          `MANUAL_RESEARCH_RESUME_TOOL=${resumeTool}`,
+          `MANUAL_RESEARCH_RESUME_ARGS=${JSON.stringify(resumeArgs)}`,
+          "用户确认已完成验证后，必须原样调用上面的恢复工具和参数；不得根据 next_branch 猜测恢复位置。",
+        ]
+      : []),
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
       askQuestion("悦普识星 Browser 下一步", "当前平台页面无法继续，请选择下一步。", options),
     )}`,
@@ -267,6 +280,15 @@ function manualResearchSuccessDirective(message) {
   const needsReviewCount = Number.isFinite(result?.needs_review_candidate_count)
     ? result.needs_review_candidate_count
     : null;
+  const listHardPassCount = Number.isFinite(result?.list_hard_pass_candidate_count)
+    ? result.list_hard_pass_candidate_count
+    : null;
+  const listHardRejectedCount = Number.isFinite(result?.list_hard_rejected_candidate_count)
+    ? result.list_hard_rejected_candidate_count
+    : null;
+  const listHardPendingCount = Number.isFinite(result?.list_hard_pending_candidate_count)
+    ? result.list_hard_pending_candidate_count
+    : null;
   const deliveryShortfall = Number.isFinite(result?.delivery_shortfall)
     ? result.delivery_shortfall
     : null;
@@ -284,7 +306,7 @@ function manualResearchSuccessDirective(message) {
       : [
           "最终回复必须先说明候选池数量、最终名单行数、未表达条件和缺口；不得把平台硬筛结果表述为已经完成语义复核，只有写入 include 的达人属于最终名单。",
         ]),
-    `价格交付统计：目标 ${targetCount ?? "未知"}，价格合格 ${eligibleCount ?? "未知"}，价格淘汰 ${rejectedCount ?? "未知"}，价格待复核 ${needsReviewCount ?? "未知"}，缺口 ${deliveryShortfall ?? "未知"}。`,
+    `筛选统计：目标 ${targetCount ?? "未知"}，报价区间初筛通过 ${eligibleCount ?? "未知"}，报价淘汰 ${rejectedCount ?? "未知"}，报价待补证 ${needsReviewCount ?? "未知"}；列表硬条件通过 ${listHardPassCount ?? "未知"}，列表硬条件淘汰 ${listHardRejectedCount ?? "未知"}，列表待补证 ${listHardPendingCount ?? "未知"}；最终缺口 ${deliveryShortfall ?? "未知"}。`,
     ...(priceRanges.length ? [`本轮实际手扒报价区间：${priceRanges.join("；")}。`] : []),
     "最终推荐只能来自本工具返回的 candidates/detail_tasks；昵称或平台 ID 搜索只允许定位已有详情任务，不得重新建立绕过价格筛选的候选池。",
     "price_check.status=rejected 的达人不得推荐或包装为备选；needs_review 只能标为待确认，不能计入已通过人数。",

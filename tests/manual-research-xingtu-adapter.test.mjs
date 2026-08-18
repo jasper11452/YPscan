@@ -558,8 +558,15 @@ test("Xingtu quote range identifies the custom interval control instead of using
     return hidden;
   });
   page.keyboard = { press: async () => events.push("escape") };
+  page.getByPlaceholder = () => ({
+    first() {
+      return this;
+    },
+    inputValue: async () => "办公软件",
+  });
 
-  const receipt = await createXingtuAdapter(page).applyFilter({
+  const adapter = createXingtuAdapter(page);
+  const receipt = await adapter.applyFilter({
     control: "creator_price",
     mode: "range",
     min: 50_000,
@@ -580,6 +587,28 @@ test("Xingtu quote range identifies the custom interval control instead of using
     "range-confirm",
     "outer-confirm",
   ]);
+
+  const selection = {
+    branch: { keyword: "办公软件" },
+    verification: {
+      price_view: {},
+      actual_filters: [
+        {
+          ...receipt,
+          control: "creator_price",
+          mode: "range",
+          min: 50_000,
+          max: 120_000,
+          unit: "yuan",
+        },
+      ],
+    },
+  };
+  assert.equal((await adapter.verifySelection(selection)).valid, true);
+  values[1] = "999";
+  const mismatch = await adapter.verifySelection(selection);
+  assert.equal(mismatch.valid, false);
+  assert.deepEqual(mismatch.filters[0].readback, ["50000", "999"]);
 });
 
 test("Xingtu selection verification survives later filters changing the same row", async () => {

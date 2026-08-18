@@ -41,15 +41,48 @@ export async function assertNoManualChallenge(page) {
       .innerText()
       .catch(() => ""),
   );
+  const challengeSelector =
+    "#captcha_container:visible,iframe[src*=verifycenter]:visible,iframe[src*=captcha]:visible,[class*=captcha]:visible,[class*=slide-verify]:visible";
   const challengeVisible = await page
-    .locator(
-      "#captcha_container:visible,iframe[src*=verifycenter]:visible,iframe[src*=captcha]:visible,[class*=captcha]:visible,[class*=slide-verify]:visible",
-    )
+    .locator(challengeSelector)
     .first()
     .isVisible()
     .catch(() => false);
-  if (challengeVisible || /安全验证|滑块验证|人机验证|图形验证/u.test(body)) {
-    throw manualBrowserError("YPSCAN_MANUAL_CAPTCHA_REQUIRED", "平台要求用户完成安全验证");
+  const pageUrl = page.url?.() ?? "";
+  if (challengeVisible || /verifycenter|captcha|challenge/iu.test(pageUrl)) {
+    throw manualBrowserError("YPSCAN_MANUAL_CAPTCHA_REQUIRED", "平台要求用户完成安全验证", {
+      signal: challengeVisible ? "visible_challenge_component" : "challenge_url",
+      ...(challengeVisible ? { selector: challengeSelector } : {}),
+      page_url: pageUrl,
+    });
+  }
+  const overlays = (() => {
+    try {
+      return page.locator(
+        "[role=dialog]:visible,.el-dialog:visible,.ant-modal:visible,.semi-modal:visible,.arco-modal:visible,[class*=verify]:visible",
+      );
+    } catch {
+      return null;
+    }
+  })();
+  const overlayCount = Math.min(
+    typeof overlays?.count === "function" ? await overlays.count().catch(() => 0) : 0,
+    12,
+  );
+  for (let index = 0; index < overlayCount; index += 1) {
+    const overlay = overlays.nth(index);
+    if (!(await overlay.isVisible().catch(() => false))) continue;
+    const text = cleanText(await overlay.innerText().catch(() => ""));
+    if (
+      /安全验证|滑块验证|人机验证|图形验证/u.test(text) &&
+      /拖动|滑块|拼图|点击验证|完成验证|刷新验证/u.test(text)
+    ) {
+      throw manualBrowserError("YPSCAN_MANUAL_CAPTCHA_REQUIRED", "平台要求用户完成安全验证", {
+        signal: "challenge_overlay_text",
+        text_excerpt: text.slice(0, 120),
+        page_url: pageUrl,
+      });
+    }
   }
   return body;
 }

@@ -95,6 +95,26 @@ test("a visible verify-center iframe is treated as a real CAPTCHA handoff", asyn
   );
 });
 
+test("a harmless security-verification phrase in page text does not pause collection", async () => {
+  const hidden = {
+    first() {
+      return this;
+    },
+    isVisible: async () => false,
+    count: async () => 0,
+  };
+  const page = {
+    url: () => "https://www.xingtu.cn/ad/creator/market",
+    locator(selector) {
+      if (selector === "body") {
+        return { innerText: async () => "达人广场 用户协议中的安全验证说明" };
+      }
+      return hidden;
+    },
+  };
+  await assert.doesNotReject(() => assertUsablePage(page, "xingtu"));
+});
+
 test("the Xingtu redirect landing page is returned to the creator market automatically", async () => {
   let currentUrl = "https://www.xingtu.cn/?redirect_uri=/ad/creator/market";
   const navigations = [];
@@ -1049,9 +1069,14 @@ test("a required range confirmation cannot be replaced by closing the menu", asy
   };
 
   assert.equal(
-    await fillMenuRange(page, { menu }, { min: 0, max: 2_000, unit: "yuan" }, {
-      requireConfirm: true,
-    }),
+    await fillMenuRange(
+      page,
+      { menu },
+      { min: 0, max: 2_000, unit: "yuan" },
+      {
+        requireConfirm: true,
+      },
+    ),
     false,
   );
 });

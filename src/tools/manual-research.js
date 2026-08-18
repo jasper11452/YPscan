@@ -20,6 +20,7 @@ import {
   candidateReference,
   detailGroupsForPlan,
   detailQueueLimit,
+  evaluateCandidateList,
   evaluateCandidateDetail,
   mergeDetailRecords,
   mergeReviewRecords,
@@ -202,6 +203,19 @@ function partitionCandidatesByPrice(candidates, plan) {
   return { eligible, rejected, needsReview };
 }
 
+function partitionCandidatesByListHard(candidates, plan) {
+  const passed = [];
+  const rejected = [];
+  const pending = [];
+  for (const candidate of candidates) {
+    const value = { ...candidate, list_hard_evaluation: evaluateCandidateList(candidate, plan) };
+    if (value.list_hard_evaluation.status === "pass") passed.push(value);
+    else if (value.list_hard_evaluation.status === "fail") rejected.push(value);
+    else pending.push(value);
+  }
+  return { passed, rejected, pending, viable: [...passed, ...pending] };
+}
+
 export function createManualResearchAdapter(platform, page, options) {
   return platform === "xingtu"
     ? createXingtuAdapter(page, { now: options.now })
@@ -232,7 +246,10 @@ async function collectSelectedBranch(
   const seen = new Set();
   let stopReason = "end_of_results";
   for (let pageNumber = 1; pageNumber <= MAX_PAGES_PER_BRANCH; pageNumber += 1) {
-    const pageData = await adapter.readPage(pageNumber);
+    const pageData = await adapter.readPage(
+      pageNumber,
+      pageNumber === 1 ? (selection.list_snapshot ?? null) : null,
+    );
     const signature = pageSignature(pageData);
     if (seen.has(signature)) {
       stopReason = "repeated_page_signature";
@@ -266,7 +283,7 @@ async function collectSelectedBranch(
     candidates.push(...pageCandidates);
     await onPage({ branch, page: pageRecord, candidates: pageCandidates });
     const merged = mergeManualCandidates(candidates);
-    if (partitionCandidatesByPrice(merged, plan).eligible.length >= plan.per_branch_target) {
+    if (partitionCandidatesByListHard(merged, plan).viable.length >= plan.per_branch_target) {
       stopReason = "candidate_target_reached";
       break;
     }
@@ -387,7 +404,7 @@ function exportFallbackReasons(plan, branches, candidates, details = []) {
     reasons.push("list_collection_incomplete");
   }
   const merged = mergeManualCandidates(candidates);
-  const eligible = partitionCandidatesByPrice(merged, plan).eligible;
+  const eligible = partitionCandidatesByListHard(merged, plan).viable;
   const platformMayHaveResults = branches.some(
     (branch) => branch.result_count === null || branch.result_count > 0,
   );
@@ -420,6 +437,31 @@ function exportFallbackReasons(plan, branches, candidates, details = []) {
   return reasons;
 }
 
+function interruptionFor(error, params, phase, branchIndex = null, candidate = null) {
+  const detailPhase = phase === "detail";
+  return {
+    phase,
+    branch_index: branchIndex,
+    candidate_ref: candidate ? candidateReference(candidate) : null,
+    evidence: error?.details ?? {},
+    resume_tool: detailPhase ? "ypscan_manual_research" : "ypscan_manual_select_filters",
+    resume_args: detailPhase
+      ? {
+          operation: "collect",
+          requirement_id: params.requirement_id,
+          platform: params.platform,
+          run_id: params.run_id,
+          selection_id: params.selection_id,
+        }
+      : {
+          requirement_id: params.requirement_id,
+          platform: params.platform,
+          run_id: params.run_id,
+          branch_index: branchIndex ?? 0,
+        },
+  };
+}
+
 function outputPayload({
   params,
   plan,
@@ -431,12 +473,15 @@ function outputPayload({
   artifact = null,
   details = [],
   reviews = [],
+  interruption = null,
 }) {
   const merged = mergeManualCandidates(candidates);
   const partitioned = partitionCandidatesByPrice(merged, plan);
+  const listPartitioned = partitionCandidatesByListHard(merged, plan);
   const annotatedCandidates = merged.map((candidate) => ({
     ...candidate,
     price_check: checkCandidatePrice(candidate, plan),
+    list_hard_evaluation: evaluateCandidateList(candidate, plan),
   }));
   const publicCandidates = annotatedCandidates.map(publicCandidate);
   const previewLimit = plan.target_count > 20 ? 10 : MANUAL_RESEARCH_PREVIEW_LIMIT;
@@ -494,8 +539,16 @@ function outputPayload({
     candidates: candidatePreview,
     candidate_count: merged.length,
     eligible_candidate_count: partitioned.eligible.length,
+    eligible_candidate_basis: "creator_price_only_legacy",
+    price_eligible_candidate_count: partitioned.eligible.length,
     rejected_candidate_count: partitioned.rejected.length,
     needs_review_candidate_count: partitioned.needsReview.length,
+    list_hard_pass_candidate_count: listPartitioned.passed.length,
+    list_hard_rejected_candidate_count: listPartitioned.rejected.length,
+    list_hard_pending_candidate_count: listPartitioned.pending.length,
+    identity_blocked_candidate_count: annotatedCandidates.filter(
+      (candidate) => !candidate.platform_id && !candidate.detail_url,
+    ).length,
     delivery_shortfall: deliveryShortfall,
     delivery_status: deliveryStatus,
     candidate_returned_count: candidatePreview.length,
@@ -504,8 +557,11 @@ function outputPayload({
     detail_collection: {
       planned_count: Math.min(
         detailLimit,
-        annotatedCandidates.filter((candidate) => candidate.price_check.status !== "rejected")
-          .length,
+        annotatedCandidates.filter(
+          (candidate) =>
+            candidate.list_hard_evaluation.status !== "fail" &&
+            (candidate.platform_id || candidate.detail_url),
+        ).length,
       ),
       completed_count: mergedDetails.length,
       complete_count: mergedDetails.filter((detail) => detail.status === "complete").length,
@@ -531,9 +587,15 @@ function outputPayload({
       ? {
           user_action: {
             preserve_current_page: true,
-            instruction:
-              "请在当前 Browser 页面完成登录、安全验证或页面处理后，从 next_branch 继续。",
+            instruction: "请在当前 Browser 页面完成登录或安全验证后，原样使用恢复参数继续。",
+            ...(interruption
+              ? {
+                  resume_tool: interruption.resume_tool,
+                  resume_args: interruption.resume_args,
+                }
+              : {}),
           },
+          ...(interruption ? { interruption } : {}),
         }
       : {}),
     ...(error ? { error } : {}),
@@ -571,6 +633,9 @@ export function createManualResearch({
     const candidates = [];
     const details = [];
     const reviews = [];
+    let activePhase = "arguments";
+    let activeBranchIndex = null;
+    let activeCandidate = null;
     try {
       params = validateManualResearchParams(rawParams);
       if (params.operation === "legacy_collect") {
@@ -662,6 +727,8 @@ export function createManualResearch({
       );
       const branchAlreadyCollected = completedBranchIds.has(selection.branch.branch_id);
       if (!branchAlreadyCollected) {
+        activePhase = "list";
+        activeBranchIndex = selection.branch.branch_index;
         const browser = await connectOverCDP(cdpUrl);
         const page = await resolveManualResearchPage(browser, params.platform);
         params.page_url = page.url();
@@ -694,7 +761,7 @@ export function createManualResearch({
       }
 
       const mergedAfterBranch = mergeManualCandidates(candidates);
-      const eligibleAfterBranch = partitionCandidatesByPrice(mergedAfterBranch, plan).eligible
+      const eligibleAfterBranch = partitionCandidatesByListHard(mergedAfterBranch, plan).viable
         .length;
       const completedAfterBranch = new Set(
         completedBranches.map((branch) => branch.branch_id).filter(Boolean),
@@ -734,6 +801,7 @@ export function createManualResearch({
       }
 
       if (!adapter) {
+        activePhase = "detail";
         const browser = await connectOverCDP(cdpUrl);
         const page = await resolveManualResearchPage(browser, params.platform);
         params.page_url = page.url();
@@ -744,9 +812,14 @@ export function createManualResearch({
       const mergedCandidates = mergeManualCandidates(candidates).map((candidate) => ({
         ...candidate,
         price_check: checkCandidatePrice(candidate, plan),
+        list_hard_evaluation: evaluateCandidateList(candidate, plan),
       }));
       const detailQueue = mergedCandidates
-        .filter((candidate) => candidate.price_check.status !== "rejected")
+        .filter(
+          (candidate) =>
+            candidate.list_hard_evaluation.status !== "fail" &&
+            (candidate.platform_id || candidate.detail_url),
+        )
         .slice(0, detailQueueLimit(plan));
       const existingDetails = new Set(
         mergeDetailRecords(details).map((detail) => detail.candidate_ref),
@@ -756,6 +829,8 @@ export function createManualResearch({
       );
       const detailGroups = detailGroupsForPlan(plan);
       for (const [index, candidate] of pendingDetails.entries()) {
+        activePhase = "detail";
+        activeCandidate = candidate;
         try {
           const collected = adapter?.collectDetail
             ? await collectDetailWithRecovery(adapter, candidate, detailGroups)
@@ -788,6 +863,14 @@ export function createManualResearch({
           if (index < pendingDetails.length - 1) await adapter?.paceDetail?.();
         } catch (error) {
           if (!requiresUserAction(error)) throw error;
+          const interruption = interruptionFor(
+            error,
+            params,
+            "detail",
+            selection.branch.branch_index,
+            candidate,
+          );
+          await artifactStore.saveInterruption?.(interruption);
           const artifact = await artifactStore.finalize({
             branches: completedBranches,
             candidates: mergedCandidates,
@@ -810,6 +893,7 @@ export function createManualResearch({
               message: error?.message ?? String(error),
               details: error?.details ?? {},
             },
+            interruption,
           });
           return hostToolResult(payload, { details: payload, isError: true });
         }
@@ -900,15 +984,34 @@ export function createManualResearch({
         per_branch_target: null,
       };
       const artifact = artifactStore?.enabled
-        ? await artifactStore
-            .finalize({
+        ? await (async () => {
+            const interruption = requiresUserAction(error)
+              ? interruptionFor(
+                  error,
+                  fallbackParams,
+                  activePhase === "detail" ? "detail" : "list",
+                  activeBranchIndex,
+                  activeCandidate,
+                )
+              : null;
+            if (interruption) await artifactStore.saveInterruption?.(interruption);
+            return artifactStore.finalize({
               branches: completedBranches,
               candidates: mergeManualCandidates(candidates),
               details: mergeDetailRecords(details),
               reviews: mergeReviewRecords(reviews),
               status: requiresUserAction(error) ? "needs_user_action" : "failed",
-            })
-            .catch(() => null)
+            });
+          })().catch(() => null)
+        : null;
+      const interruption = requiresUserAction(error)
+        ? interruptionFor(
+            error,
+            fallbackParams,
+            activePhase === "detail" ? "detail" : "list",
+            activeBranchIndex,
+            activeCandidate,
+          )
         : null;
       const payload = outputPayload({
         params: fallbackParams,
@@ -924,6 +1027,7 @@ export function createManualResearch({
           message: error?.message ?? String(error),
           details: error?.details ?? {},
         },
+        interruption,
       });
       return hostToolResult(payload, { details: payload, isError: true });
     } finally {

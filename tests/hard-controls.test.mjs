@@ -247,7 +247,7 @@ test("manual research shortfall directive forbids padding rejected price candida
     }),
   });
   const directive = directiveText(result);
-  assert.match(directive, /目标 5，价格合格 3，价格淘汰 2/u);
+  assert.match(directive, /目标 5，报价区间初筛通过 3，报价淘汰 2，报价待补证 0/u);
   assert.match(directive, /缺口为 2/u);
   assert.match(directive, /不得声称已凑满/u);
   assert.match(directive, /price_check\.status=rejected 的达人不得推荐或包装为备选/u);

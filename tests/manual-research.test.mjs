@@ -362,11 +362,10 @@ test("Xingtu keeps audience and semantic hard conditions out of unstable list co
     ],
   });
 
-  assert.deepEqual(plan.filters.map((item) => item.control), [
-    "creator_price",
-    "follower_count",
-    "cpm",
-  ]);
+  assert.deepEqual(
+    plan.filters.map((item) => item.control),
+    ["creator_price", "follower_count", "cpm"],
+  );
   assert.deepEqual(plan.detail_filters, [
     {
       fact_id: "male",
@@ -1111,8 +1110,93 @@ test("detail risk signals stop the batch immediately and are never retried", asy
   const data = payload(await run({ ...baseParams(), keywords: ["办公软件"] }));
   assert.equal(data.status, "needs_user_action");
   assert.equal(data.error.code, "YPSCAN_MANUAL_DETAIL_RISK_SIGNAL");
+  assert.equal(data.interruption.phase, "detail");
+  assert.equal(data.user_action.resume_tool, "ypscan_manual_research");
+  assert.deepEqual(data.user_action.resume_args, {
+    operation: "collect",
+    requirement_id: "requirement-1",
+    platform: "xingtu",
+    run_id: data.artifact.run_id,
+    selection_id: data.user_action.resume_args.selection_id,
+  });
   assert.equal(attempts, 1);
   assert.equal(recoveries, 0);
+});
+
+test("a list CPM violation is rejected before any detail navigation", async () => {
+  const detailIds = [];
+  const browser = fakeBrowser("https://www.xingtu.cn/ad/creator/market");
+  const run = createManualResearch({
+    connectOverCDP: async () => browser,
+    createAdapter: () => ({
+      async prepare() {},
+      async reset() {},
+      async verifyBaseline() {
+        return { valid: true };
+      },
+      async setPriceView(value) {
+        return { applied: true, readback: value };
+      },
+      async applyFilter(filter) {
+        return { applied: true, readback: filter.control };
+      },
+      async search() {
+        return { applied: true, result_count: 2 };
+      },
+      async verifySelection() {
+        return { valid: true };
+      },
+      async readPage() {
+        return {
+          price_tier: "60s以上视频",
+          source_url: browser.page.url(),
+          rows: [
+            {
+              platform_id: "cpm-rejected",
+              nickname: "高CPM达人",
+              price_raw: "1800",
+              cpm_raw: "187",
+            },
+            {
+              platform_id: "cpm-passed",
+              nickname: "合规达人",
+              price_raw: "1800",
+              cpm_raw: "80",
+            },
+          ],
+        };
+      },
+      async nextPage() {
+        return false;
+      },
+      async collectDetail(candidate) {
+        detailIds.push(candidate.platform_id);
+        return {
+          candidate_ref: candidate.platform_id,
+          status: "complete",
+          fields: { cpm_raw: candidate.cpm_raw, recent_content: [{ title: "办公内容" }] },
+        };
+      },
+      async export() {
+        return { status: "complete" };
+      },
+    }),
+  });
+  const data = payload(
+    await run({
+      ...baseParams(),
+      keywords: ["办公软件"],
+      facts: [
+        ...baseParams().facts.map((item) =>
+          item.kind === "creator_count" ? { ...item, normalized_value: 1 } : item,
+        ),
+        fact("cpm", "cpm_max", 100, { operator: "lte" }),
+      ],
+    }),
+  );
+  assert.deepEqual(detailIds, ["cpm-passed"]);
+  assert.equal(data.list_hard_rejected_candidate_count, 1);
+  assert.equal(data.list_hard_pass_candidate_count, 1);
 });
 
 test("public protocols separate selection, collection migration and reviews", () => {
@@ -1225,9 +1309,7 @@ test("public protocols separate selection, collection migration and reviews", ()
         requirement_id: "requirement-1",
         platform: "xingtu",
         run_id: "run-1",
-        reviews: [
-          { candidate_ref: "creator-1", decision: "include", reasons: [], evidence: [] },
-        ],
+        reviews: [{ candidate_ref: "creator-1", decision: "include", reasons: [], evidence: [] }],
       }),
     /不能为空/u,
   );

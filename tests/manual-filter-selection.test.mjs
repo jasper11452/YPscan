@@ -141,6 +141,94 @@ test("selection checkpoint contains normalized receipts and final-state verifica
   assert.doesNotMatch(checkpoint, /cookie|token|authorization|request_headers/iu);
 });
 
+test("Xingtu selection keeps a normalized first-page snapshot only in the checkpoint", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-snapshot-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const actions = [];
+  const fakeAdapter = adapter(actions);
+  fakeAdapter.listSnapshot = () => ({
+    page_number: 1,
+    total: 1,
+    endpoint: "https://www.xingtu.cn/gw/api/gsearch/search_for_author_square",
+    response_path: "authors",
+    rows: [
+      {
+        platform_id: "snapshot-1",
+        nickname: "快照达人",
+        detail_url: "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/snapshot-1",
+      },
+    ],
+  });
+  const select = createManualFilterSelection({
+    workspaceDir,
+    connectOverCDP: async () => browser(),
+    createAdapter: () => fakeAdapter,
+  });
+  const selected = payload(await select(params()));
+  assert.equal(selected.list_snapshot, undefined);
+  const checkpoint = await readFile(
+    join(workspaceDir, "ypscan-manual-research", selected.run_id, "checkpoint.jsonl"),
+    "utf8",
+  );
+  const selection = checkpoint
+    .trim()
+    .split("\n")
+    .map(JSON.parse)
+    .find((event) => event.type === "selection").selection;
+  assert.equal(selection.list_snapshot.rows[0].platform_id, "snapshot-1");
+  assert.doesNotMatch(checkpoint, /cookie|token|authorization|request_headers/iu);
+});
+
+test("collector receives the persisted first-page snapshot in a fresh adapter", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-snapshot-resume-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const selectionAdapter = adapter([]);
+  selectionAdapter.listSnapshot = () => ({
+    page_number: 1,
+    total: 1,
+    rows: [{ platform_id: "snapshot-collector-1", nickname: "跨阶段达人" }],
+  });
+  const select = createManualFilterSelection({
+    workspaceDir,
+    connectOverCDP: async () => browser(),
+    createAdapter: () => selectionAdapter,
+  });
+  const selected = payload(await select(params()));
+  let receivedSnapshot = null;
+  const collect = createManualResearch({
+    workspaceDir,
+    connectOverCDP: async () => browser(),
+    createAdapter: () => ({
+      async prepare() {},
+      async verifySelection() {
+        return { valid: true };
+      },
+      async readPage(_pageNumber, snapshot) {
+        receivedSnapshot = snapshot;
+        return {
+          rows: snapshot.rows,
+          source_url: "https://www.xingtu.cn/ad/creator/market",
+        };
+      },
+      async nextPage() {
+        return false;
+      },
+      async collectDetail(candidate) {
+        return {
+          candidate_ref: candidate.platform_id,
+          status: "complete",
+          fields: { recent_content: [{ title: "办公效率内容" }] },
+        };
+      },
+      async export() {
+        return { status: "complete" };
+      },
+    }),
+  });
+  await collect(selected.collection_args);
+  assert.equal(receivedSnapshot.rows[0].platform_id, "snapshot-collector-1");
+});
+
 test("a later keyword keeps the already verified filters and only changes the search", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-selection-preserved-filters-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));

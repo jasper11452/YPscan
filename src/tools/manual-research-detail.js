@@ -56,14 +56,15 @@ export function parseDetailCount(raw) {
   const value = numericText(raw).toLowerCase();
   const match = value.match(/^(-?\d+(?:\.\d+)?)\s*(亿|千万|百万|万|w|k)?(?:人|次|个)?$/iu);
   if (!match) return null;
-  const multiplier = {
-    亿: 100_000_000,
-    千万: 10_000_000,
-    百万: 1_000_000,
-    万: 10_000,
-    w: 10_000,
-    k: 1_000,
-  }[match[2]?.toLowerCase()] ?? 1;
+  const multiplier =
+    {
+      亿: 100_000_000,
+      千万: 10_000_000,
+      百万: 1_000_000,
+      万: 10_000,
+      w: 10_000,
+      k: 1_000,
+    }[match[2]?.toLowerCase()] ?? 1;
   const result = Number(match[1]) * multiplier;
   return Number.isFinite(result) ? result : null;
 }
@@ -136,7 +137,10 @@ export function normalizeDetailFields(fields = {}) {
     normalized.price_by_tier = Object.fromEntries(
       Object.entries(normalized.price_by_tier).map(([key, value]) => [
         key,
-        { raw: typeof value === "object" ? value.raw : value, value: parseManualPrice(value?.raw ?? value) },
+        {
+          raw: typeof value === "object" ? value.raw : value,
+          value: parseManualPrice(value?.raw ?? value),
+        },
       ]),
     );
   }
@@ -144,6 +148,9 @@ export function normalizeDetailFields(fields = {}) {
   normalized.audience_cities = [
     ...new Set((normalized.audience_cities ?? []).map(clean).filter(Boolean)),
   ];
+  for (const key of ["audience_city_distribution", "audience_persona_distribution"]) {
+    normalized[key] = (normalized[key] ?? []).slice(0, 20);
+  }
   normalized.recent_content = (normalized.recent_content ?? []).slice(0, 3);
   return normalized;
 }
@@ -184,7 +191,12 @@ function priceForPlan(candidate, fields, plan) {
 }
 
 function valueForFilter(candidate, fields, filter) {
-  const textTags = [candidate.content_type, fields.content_type, ...(candidate.tags ?? []), ...(fields.tags ?? [])];
+  const textTags = [
+    candidate.content_type,
+    fields.content_type,
+    ...(candidate.tags ?? []),
+    ...(fields.tags ?? []),
+  ];
   switch (filter.control) {
     case "follower_count":
       return fields.followers ?? parseDetailCount(fields.followers_raw ?? candidate.followers_raw);
@@ -193,7 +205,10 @@ function valueForFilter(candidate, fields, filter) {
     case "cpe":
       return fields.cpe ?? parseDetailNumber(fields.cpe_raw ?? candidate.cpe_raw);
     case "interaction_rate":
-      return fields.interaction_rate ?? parseDetailRatio(fields.interaction_rate_raw ?? candidate.interaction_rate);
+      return (
+        fields.interaction_rate ??
+        parseDetailRatio(fields.interaction_rate_raw ?? candidate.interaction_rate)
+      );
     case "creator_gender":
       return fields.creator_gender ?? candidate.creator_gender;
     case "creator_city":
@@ -246,22 +261,20 @@ export function evaluateCandidateDetail(candidate, detail, plan) {
               : "unknown",
         expected: `${filter.min ?? ""}–${filter.max ?? ""}`,
         actual: priceCheck.observed_yuan,
-        source_type: nonEmpty(observed.raw) && observed.raw !== candidate.price_raw ? "详情页" : "导出列表",
+        source_type:
+          nonEmpty(observed.raw) && observed.raw !== candidate.price_raw ? "详情页" : "导出列表",
         reason: priceCheck.reason,
       });
       continue;
     }
     const actual = valueForFilter(candidate, fields, filter);
     const verdict =
-      filter.mode === "range"
-        ? rangeVerdict(actual, filter)
-        : optionVerdict(actual, filter.values);
+      filter.mode === "range" ? rangeVerdict(actual, filter) : optionVerdict(actual, filter.values);
     checks.push({
       fact_id: filter.fact_id ?? null,
       control: filter.control,
       verdict,
-      expected:
-        filter.mode === "range" ? `${filter.min ?? ""}–${filter.max ?? ""}` : filter.values,
+      expected: filter.mode === "range" ? `${filter.min ?? ""}–${filter.max ?? ""}` : filter.values,
       actual,
       source_type: nonEmpty(valueForFilter({}, fields, filter)) ? "详情页" : "导出列表",
       reason: verdict === "unknown" ? "required_value_missing" : null,
@@ -273,6 +286,31 @@ export function evaluateCandidateDetail(candidate, detail, plan) {
       ? "unknown"
       : "pass";
   return { status, checks, fields };
+}
+
+const LIST_EVALUABLE_CONTROLS = new Set([
+  "creator_price",
+  "follower_count",
+  "cpm",
+  "cpe",
+  "interaction_rate",
+  "creator_gender",
+  "creator_city",
+  "creator_type",
+  "creator_persona",
+  "creator_category",
+]);
+
+export function evaluateCandidateList(candidate, plan) {
+  return evaluateCandidateDetail(
+    candidate,
+    { fields: {} },
+    {
+      ...plan,
+      filters: (plan.filters ?? []).filter((filter) => LIST_EVALUABLE_CONTROLS.has(filter.control)),
+      detail_filters: [],
+    },
+  );
 }
 
 export function mergeDetailRecords(records) {
@@ -291,6 +329,30 @@ export function mergeReviewRecords(records) {
   return [...byReference.values()];
 }
 
+export function reviewEvidenceGaps(detail, requirements = []) {
+  const fields = detail?.fields ?? {};
+  const gaps = new Set();
+  for (const requirement of requirements) {
+    const text = `${requirement.fact_kind ?? ""} ${requirement.quote ?? ""} ${requirement.expected ?? ""}`;
+    if (/城市|一二线|1、2线|地域|audience_city/iu.test(text)) {
+      if (!(fields.audience_city_distribution?.length || fields.audience_cities?.length)) {
+        gaps.add("audience_city_distribution");
+      }
+      continue;
+    }
+    if (/都市蓝领|都市银发|人群画像|粉丝画像|persona|crowd/iu.test(text)) {
+      if (!fields.audience_persona_distribution?.length) {
+        gaps.add("audience_persona_distribution");
+      }
+      continue;
+    }
+    if (/内容|主题|方向|低沉|办公|职场|相关|content/iu.test(text)) {
+      if (!fields.recent_content?.length) gaps.add("recent_content");
+    }
+  }
+  return [...gaps];
+}
+
 export function reviewBatch(candidates, details, reviews, options = {}) {
   const limit = typeof options === "number" ? options : (options.limit ?? DETAIL_REVIEW_BATCH_SIZE);
   const requirements = typeof options === "number" ? [] : (options.requirements ?? []);
@@ -300,7 +362,9 @@ export function reviewBatch(candidates, details, reviews, options = {}) {
   for (const candidate of candidates) {
     const candidateRef = candidateReference(candidate);
     const detail = detailMap.get(candidateRef);
-    if (!detail || detail.hard_evaluation?.status !== "pass" || reviewed.has(candidateRef)) continue;
+    if (!detail || detail.hard_evaluation?.status !== "pass" || reviewed.has(candidateRef))
+      continue;
+    const evidenceGaps = reviewEvidenceGaps(detail, requirements);
     tasks.push({
       candidate_ref: candidateRef,
       nickname: candidate.nickname,
@@ -309,6 +373,7 @@ export function reviewBatch(candidates, details, reviews, options = {}) {
       recent_content: detail.fields?.recent_content ?? [],
       hard_checks: detail.hard_evaluation.checks,
       review_requirements: requirements,
+      evidence_gaps: evidenceGaps,
     });
   }
   return { tasks: tasks.slice(0, limit), remaining: tasks.length };
