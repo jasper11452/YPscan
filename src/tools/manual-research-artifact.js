@@ -127,6 +127,9 @@ function replayCheckpointEvents(events, fingerprint = null) {
     page_count: 0,
     source_url: null,
     interruption: null,
+    browser_states: [],
+    browser_actions: [],
+    phase_transitions: [],
   };
   const branchMap = new Map();
   for (const event of events) {
@@ -147,6 +150,11 @@ function replayCheckpointEvents(events, fingerprint = null) {
     }
     if (event.type === "interruption" && event.interruption) {
       state.interruption = event.interruption;
+    }
+    if (event.type === "browser_state" && event.state) state.browser_states.push(event.state);
+    if (event.type === "browser_action" && event.action) state.browser_actions.push(event.action);
+    if (event.type === "phase_transition" && event.transition) {
+      state.phase_transitions.push(event.transition);
     }
   }
   state.branches = [...branchMap.values()];
@@ -823,12 +831,18 @@ function disabledStore() {
       reviews: [],
       event_count: 0,
       page_count: 0,
+      browser_states: [],
+      browser_actions: [],
+      phase_transitions: [],
     },
     async savePage() {},
     async saveBranch() {},
     async saveDetail() {},
     async saveInterruption() {},
     async saveSelection() {},
+    async saveBrowserState() {},
+    async saveBrowserAction() {},
+    async savePhaseTransition() {},
     async snapshot() {
       return { status: "unavailable", reason: "workspace_dir_unavailable" };
     },
@@ -1021,6 +1035,15 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
     async saveInterruption(interruption) {
       await append({ type: "interruption", interruption });
     },
+    async saveBrowserState(state) {
+      await append({ type: "browser_state", state });
+    },
+    async saveBrowserAction(action) {
+      await append({ type: "browser_action", action });
+    },
+    async savePhaseTransition(transition) {
+      await append({ type: "phase_transition", transition });
+    },
     async finalize(state) {
       return materialize({ ...state, appendFinal: true });
     },
@@ -1082,6 +1105,9 @@ export async function loadManualResearchRun({ workspaceDir, runId, requirementId
     details: restored.details,
     reviews: restored.reviews,
     selections: restored.selections,
+    browser_states: restored.browser_states,
+    browser_actions: restored.browser_actions,
+    phase_transitions: restored.phase_transitions,
   };
 }
 

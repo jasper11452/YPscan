@@ -56,7 +56,7 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
     selection_id: {
       type: "string",
       minLength: 1,
-      description: "collect 必传；使用 ypscan_manual_select_filters 返回的选择凭证。",
+      description: "首次 collect 必传；后续增量 collect 可从 run 的最新已验证分支恢复。",
     },
     reviews: {
       type: "array",
@@ -84,6 +84,11 @@ export const MANUAL_FILTER_SELECTION_PARAMETERS = Object.freeze({
   additionalProperties: false,
   required: ["requirement_id", "platform"],
   properties: {
+    operation: {
+      type: "string",
+      enum: ["plan", "commit"],
+      description: "默认 plan；plan 只创建动作计划，commit 只读复核并签发 selection_id。",
+    },
     requirement_id: MANUAL_RESEARCH_PARAMETERS.properties.requirement_id,
     platform: MANUAL_RESEARCH_PARAMETERS.properties.platform,
     facts: {
@@ -212,7 +217,7 @@ export function validateManualResearchParams(params = {}) {
       reviews,
     };
   }
-  if (!params.run_id || !params.selection_id) {
+  if (!params.run_id) {
     const selectorArgs = {
       requirement_id: requirementId,
       platform,
@@ -232,7 +237,7 @@ export function validateManualResearchParams(params = {}) {
     requirement_id: requirementId,
     platform,
     run_id: requiredString(params.run_id, "run_id"),
-    selection_id: requiredString(params.selection_id, "selection_id"),
+    selection_id: params.selection_id ? requiredString(params.selection_id, "selection_id") : null,
   };
 }
 
@@ -240,7 +245,14 @@ export function validateManualResearchParams(params = {}) {
 export function validateManualFilterSelectionParams(params = {}) {
   const platform = normalizePlatform(params.platform);
   const requirementId = requiredString(params.requirement_id, "requirement_id");
+  const operation = params.operation ?? "plan";
+  if (!["plan", "commit"].includes(operation)) {
+    throw argumentError("operation 必须是 plan 或 commit");
+  }
   const hasRun = params.run_id !== undefined;
+  if (operation === "commit" && !hasRun) {
+    throw argumentError("commit 必须携带 run_id 和 branch_index");
+  }
   if (hasRun) {
     if (
       params.facts !== undefined ||
@@ -253,6 +265,7 @@ export function validateManualFilterSelectionParams(params = {}) {
       throw argumentError("携带 run_id 时 branch_index 必须是大于等于 0 的整数");
     }
     return {
+      operation,
       requirement_id: requirementId,
       platform,
       run_id: requiredString(params.run_id, "run_id"),
@@ -276,6 +289,7 @@ export function validateManualFilterSelectionParams(params = {}) {
     throw argumentError("fresh_run 必须是布尔值");
   }
   return {
+    operation,
     requirement_id: requirementId,
     platform,
     facts,

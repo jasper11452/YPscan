@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 
 import { createStagedManualResearch as createManualResearch } from "./helpers/manual-staged-runner.mjs";
-import { createManualResearch as createCollector } from "../src/tools/manual-research.js";
-import { createManualFilterSelection } from "../src/tools/manual-filter-selection.js";
 import {
   compileManualResearchPlan,
   mergeManualCandidates,
@@ -697,35 +692,6 @@ test("records without stable IDs or detail URLs remain separate", () => {
     { platform: "pgy", nickname: "同名", source_branches: ["b"] },
   ]);
   assert.equal(merged.length, 2);
-});
-
-test("the collector returns the explicit next branch for the next selection stage", async () => {
-  const actions = [];
-  const browser = fakeBrowser("https://www.xingtu.cn/ad/creator/market");
-  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-next-selection-"));
-  const adapter = successfulAdapter(actions);
-  const select = createManualFilterSelection({
-    workspaceDir,
-    connectOverCDP: async () => browser,
-    createAdapter: () => adapter,
-  });
-  const collector = createCollector({
-    workspaceDir,
-    connectOverCDP: async () => browser,
-    createAdapter: () => adapter,
-  });
-  const selection = payload(await select(baseParams()));
-  const data = payload(await collector(selection.collection_args));
-  assert.equal(data.status, "awaiting_filter_selection");
-  assert.equal(data.next_selection_args.branch_index, 1);
-  assert.deepEqual(
-    data.branches.map((branch) => branch.keyword),
-    ["咖啡"],
-  );
-  assert.deepEqual(
-    actions.filter((item) => item[0] === "search").map((item) => item[1]),
-    ["咖啡"],
-  );
 });
 
 test("PGY-style 18-page result sets retain row association and deduplicate every page", async () => {

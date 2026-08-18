@@ -278,7 +278,6 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
     },
     async verifySelection(selection) {
       await assertUsablePage(page, "pgy");
-      await dismissOrdinaryPopups(page, "pgy");
       const keywordInput = page.getByPlaceholder(/按笔记关键词找博主|笔记关键词/u).first();
       const keywordValue = cleanText(await keywordInput.inputValue().catch(() => ""));
       const requestedKeyword = cleanText(selection?.branch?.keyword);

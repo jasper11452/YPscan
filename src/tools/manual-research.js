@@ -1,4 +1,5 @@
 import { chromium } from "playwright-core";
+import { inspectManualBrowser } from "./manual-browser-state.js";
 import {
   applyManualResearchReviews,
   createManualResearchStore,
@@ -26,6 +27,10 @@ import {
   mergeReviewRecords,
   reviewBatch,
 } from "./manual-research-detail.js";
+import {
+  detailGroupHasEvidence,
+  readCreatorDetailSnapshot,
+} from "./manual-research/detail-page.js";
 
 export { MANUAL_RESEARCH_PARAMETERS, MANUAL_RESEARCH_PLATFORMS };
 
@@ -602,6 +607,568 @@ function outputPayload({
   };
 }
 
+function browserActionCall(params, state, action, extra = {}) {
+  return {
+    tool: "ypscan_manual_browser_action",
+    args: {
+      requirement_id: params.requirement_id,
+      platform: params.platform,
+      run_id: params.run_id,
+      action,
+      expected_state_id: state.state_id,
+      ...extra,
+    },
+    reason: {
+      dismiss_modal: "关闭 Observer 已确认可安全关闭的普通弹窗",
+      next_results_page: "进入下一页结果并验证页码或首行变化",
+      open_creator_detail: "打开一个已持久化候选的详情页",
+      activate_detail_section: "激活缺少证据的详情区块",
+      return_to_market: "详情证据已保存，返回原达人广场",
+      ensure_market_ready: "恢复到固定达人广场后重新筛选",
+    }[action],
+  };
+}
+
+function incrementalPayload({
+  params,
+  plan,
+  branches,
+  candidates,
+  details,
+  reviews,
+  status,
+  nextCall,
+  artifact = null,
+}) {
+  return {
+    ...outputPayload({
+      params,
+      plan,
+      branches,
+      candidates,
+      details,
+      reviews,
+      status: artifact ? status : "partial",
+      artifact,
+    }),
+    success: true,
+    status,
+    operation: "collect",
+    protocol_version: 2,
+    run_id: params.run_id,
+    next_call: nextCall ?? null,
+  };
+}
+
+function mergeIncrementalFields(target, source) {
+  for (const [key, value] of Object.entries(source ?? {})) {
+    if (Array.isArray(value)) {
+      target[key] = [
+        ...new Map(
+          [...(target[key] ?? []), ...value].map((item) => [JSON.stringify(item), item]),
+        ).values(),
+      ];
+    } else if (value && typeof value === "object") {
+      target[key] = { ...(target[key] ?? {}), ...value };
+    } else if (target[key] === null || target[key] === undefined || target[key] === "") {
+      target[key] = value;
+    }
+  }
+  return target;
+}
+
+export function latestOpenCandidate(actions) {
+  let candidateRef = null;
+  for (const action of actions ?? []) {
+    const reachedBlockedDetail =
+      !action.ok &&
+      Boolean(action.after_state_id) &&
+      ["LOGIN_REQUIRED", "CAPTCHA_BLOCKED", "MODAL_BLOCKED"].includes(action.error?.code);
+    if (
+      action.action === "open_creator_detail" &&
+      action.candidate_ref &&
+      (action.ok || reachedBlockedDetail)
+    ) {
+      candidateRef = action.candidate_ref;
+    }
+    if (action.ok && action.action === "return_to_market") candidateRef = null;
+  }
+  return candidateRef;
+}
+
+function branchPages(events, branchId) {
+  return (events ?? [])
+    .filter((event) => event.type === "page" && event.branch?.branch_id === branchId)
+    .map((event) => event.page);
+}
+
+function browserBlockedResult(params, plan, loaded, state) {
+  const human = ["LOGIN_REQUIRED", "CAPTCHA_BLOCKED"].includes(state.page_state);
+  const nextCall = human
+    ? {
+        tool: "ypscan_manual_browser_inspect",
+        args: {
+          requirement_id: params.requirement_id,
+          platform: params.platform,
+          run_id: params.run_id,
+        },
+        reason: "用户处理登录或安全验证后重新观察同一页面",
+      }
+    : state.page_state === "MODAL_BLOCKED" && state.modal.dismissible
+      ? browserActionCall(params, state, "dismiss_modal", { modal_id: state.modal.modal_id })
+      : null;
+  const payload = {
+    ...incrementalPayload({
+      params,
+      plan,
+      branches: loaded.branches,
+      candidates: loaded.candidates,
+      details: loaded.details,
+      reviews: loaded.reviews,
+      status: human ? "needs_user_action" : "blocked",
+      nextCall,
+    }),
+    success: false,
+    user_action_required: human,
+    error: {
+      code: state.page_state,
+      message: `当前 Browser 状态为 ${state.page_state}`,
+      details: { state },
+    },
+  };
+  return hostToolResult(payload, { details: payload, isError: true });
+}
+
+async function collectIncrementalV2({
+  params,
+  plan,
+  loaded,
+  selection,
+  browser,
+  artifactStore,
+  createAdapter,
+  workspaceDir,
+  now,
+  inspectBrowser,
+}) {
+  const observed = await inspectBrowser(browser, params.platform);
+  const { page, state } = observed;
+  params.page_url = state.url;
+  if (!page) return browserBlockedResult(params, plan, loaded, state);
+  if (["LOGIN_REQUIRED", "CAPTCHA_BLOCKED", "MODAL_BLOCKED"].includes(state.page_state)) {
+    return browserBlockedResult(params, plan, loaded, state);
+  }
+  if (["WRONG_PAGE", "ERROR_PAGE", "UNKNOWN", "MARKET_LOADING"].includes(state.page_state)) {
+    const payload = {
+      ...incrementalPayload({
+        params,
+        plan,
+        branches: loaded.branches,
+        candidates: loaded.candidates,
+        details: loaded.details,
+        reviews: loaded.reviews,
+        status: "failed",
+        nextCall:
+          state.page_state === "MARKET_LOADING"
+            ? browserActionCall(params, state, "wait_for_ready", {
+                target_states: ["MARKET_READY", "RESULTS_READY"],
+              })
+            : null,
+      }),
+      success: false,
+      error: {
+        code: state.page_state,
+        message: "当前页面无法继续当前已验证分支；不得由抓取工具自动导航或重置",
+        details: { state },
+      },
+    };
+    return hostToolResult(payload, { details: payload, isError: true });
+  }
+
+  const candidates = [...loaded.candidates];
+  const branches = [...loaded.branches];
+  const details = [...loaded.details];
+  const reviews = [...loaded.reviews];
+  const completedBranchIds = new Set(branches.map((branch) => branch.branch_id));
+  const branch = selection.branch;
+  const resultContext =
+    ["MARKET_READY", "RESULTS_READY"].includes(state.page_state) &&
+    clean(state.market?.keyword) === clean(branch.keyword);
+
+  if (!completedBranchIds.has(branch.branch_id)) {
+    if (!resultContext) {
+      const payload = {
+        ...incrementalPayload({
+          params,
+          plan,
+          branches,
+          candidates,
+          details,
+          reviews,
+          status: "failed",
+          nextCall: null,
+        }),
+        success: false,
+        error: {
+          code: "YPSCAN_MANUAL_SELECTION_STALE",
+          message: "当前结果页关键词与 selection_id 不一致",
+          details: { requested: branch.keyword, current: state.market?.keyword ?? null },
+        },
+      };
+      return hostToolResult(payload, { details: payload, isError: true });
+    }
+    const pageNumber = state.market?.page_number ?? 1;
+    let pages = branchPages(loaded.events, branch.branch_id);
+    const alreadyCaptured = pages.some((item) => item.page_number === pageNumber);
+    if (!alreadyCaptured) {
+      const adapter = createAdapter(params.platform, page, { workspaceDir, now });
+      const pageData = await adapter.readPage(
+        pageNumber,
+        pageNumber === 1 ? (selection.list_snapshot ?? null) : null,
+      );
+      await adapter.dispose?.().catch(() => {});
+      const pageRecord = {
+        page_number: pageNumber,
+        row_count: pageData.rows.length,
+        first_candidate:
+          pageData.rows[0]?.platform_id ??
+          pageData.rows[0]?.detail_url ??
+          pageData.rows[0]?.nickname ??
+          null,
+        signature: pageSignature(pageData),
+        source_url: pageData.source_url,
+        price_tier: pageData.price_tier,
+        collection_source: pageData.collection_source ?? "dom",
+        response_endpoint: pageData.response_endpoint ?? null,
+        response_path: pageData.response_path ?? null,
+      };
+      const pageCandidates = pageData.rows.map((row) =>
+        candidateFromRow(row, {
+          platform: params.platform,
+          branchId: branch.branch_id,
+          pageNumber,
+          priceTier: pageData.price_tier,
+          sourceUrl: pageData.source_url,
+        }),
+      );
+      await artifactStore.savePage({ branch, page: pageRecord, candidates: pageCandidates });
+      candidates.push(...pageCandidates);
+      pages = [...pages, pageRecord];
+      await artifactStore.savePhaseTransition({
+        phase: "RESULTS",
+        branch_index: branch.branch_index,
+        page_number: pageNumber,
+      });
+    }
+    const merged = mergeManualCandidates(candidates);
+    const branchCandidates = merged.filter((candidate) =>
+      candidate.source_branches?.includes(branch.branch_id),
+    );
+    const viable = partitionCandidatesByListHard(branchCandidates, plan).viable.length;
+    const shouldAdvance =
+      state.market?.can_next_page === true &&
+      pageNumber < MAX_PAGES_PER_BRANCH &&
+      viable < plan.per_branch_target;
+    if (shouldAdvance) {
+      const payload = incrementalPayload({
+        params,
+        plan,
+        branches,
+        candidates: merged,
+        details,
+        reviews,
+        status: "awaiting_browser_action",
+        nextCall: browserActionCall(params, state, "next_results_page", {
+          branch_index: branch.branch_index,
+        }),
+      });
+      return hostToolResult(payload, { details: payload });
+    }
+    const branchRecord = {
+      ...branch,
+      actual_filters: selection.verification?.actual_filters ?? [],
+      unexpressed_filters: selection.verification?.unexpressed_filters ?? [],
+      price_view: selection.verification?.price_view ?? null,
+      result_count: selection.verification?.keyword?.result_count ?? null,
+      page_count: pages.length,
+      pages,
+      collection: {
+        status:
+          pages.some((item) => item.row_count > 0) || state.market?.result_row_count === 0
+            ? "complete"
+            : "incomplete",
+        stop_reason:
+          viable >= plan.per_branch_target
+            ? "candidate_target_reached"
+            : pageNumber >= MAX_PAGES_PER_BRANCH
+              ? "page_limit_reached"
+              : "end_of_results",
+        candidate_count: branchCandidates.length,
+        page_limit: MAX_PAGES_PER_BRANCH,
+      },
+      export: { status: "skipped", reason: "browser_list_primary_path", quota_consumed: false },
+    };
+    await artifactStore.saveBranch(branchRecord);
+    await artifactStore.savePhaseTransition({
+      phase: "LIST_COMPLETE",
+      branch_index: branch.branch_index,
+    });
+    branches.push(branchRecord);
+    const completed = new Set(branches.map((item) => item.branch_id));
+    const mergedAll = mergeManualCandidates(candidates);
+    const nextBranch = plan.branches.find((item) => !completed.has(item.branch_id));
+    if (
+      nextBranch &&
+      partitionCandidatesByListHard(mergedAll, plan).viable.length < plan.collection_target
+    ) {
+      const payload = incrementalPayload({
+        params,
+        plan,
+        branches,
+        candidates: mergedAll,
+        details,
+        reviews,
+        status: "awaiting_filter_selection",
+        nextCall: {
+          tool: "ypscan_manual_select_filters",
+          args: {
+            operation: "plan",
+            requirement_id: params.requirement_id,
+            platform: params.platform,
+            run_id: params.run_id,
+            branch_index: nextBranch.branch_index,
+          },
+          reason: "为下一个关键词分支生成 Browser 动作计划",
+        },
+      });
+      return hostToolResult(payload, { details: payload });
+    }
+  }
+
+  const mergedCandidates = mergeManualCandidates(candidates).map((candidate) => ({
+    ...candidate,
+    price_check: checkCandidatePrice(candidate, plan),
+    list_hard_evaluation: evaluateCandidateList(candidate, plan),
+  }));
+  const existingDetailRefs = new Set(details.map((detail) => detail.candidate_ref));
+  const detailQueue = mergedCandidates
+    .filter(
+      (candidate) =>
+        candidate.list_hard_evaluation.status !== "fail" &&
+        (candidate.platform_id || candidate.detail_url),
+    )
+    .slice(0, detailQueueLimit(plan));
+  const activeCandidateRef = latestOpenCandidate(loaded.browser_actions);
+
+  if (state.page_state === "CREATOR_DETAIL_READY") {
+    if (!activeCandidateRef) {
+      const payload = {
+        ...incrementalPayload({
+          params,
+          plan,
+          branches,
+          candidates: mergedCandidates,
+          details,
+          reviews,
+          status: "failed",
+          nextCall: null,
+        }),
+        success: false,
+        error: {
+          code: "YPSCAN_MANUAL_DETAIL_CONTEXT_UNKNOWN",
+          message: "当前详情页没有对应的已验证 open_creator_detail 动作",
+        },
+      };
+      return hostToolResult(payload, { details: payload, isError: true });
+    }
+    const candidate = mergedCandidates.find(
+      (item) => candidateReference(item) === activeCandidateRef,
+    );
+    if (!candidate) {
+      throw manualBrowserError("YPSCAN_MANUAL_DETAIL_CONTEXT_UNKNOWN", "找不到当前详情候选");
+    }
+    if (existingDetailRefs.has(activeCandidateRef)) {
+      const payload = incrementalPayload({
+        params,
+        plan,
+        branches,
+        candidates: mergedCandidates,
+        details,
+        reviews,
+        status: "awaiting_browser_action",
+        nextCall: browserActionCall(params, state, "return_to_market", {
+          candidate_ref: activeCandidateRef,
+        }),
+      });
+      return hostToolResult(payload, { details: payload });
+    }
+    const snapshot = await readCreatorDetailSnapshot(page, params.platform, candidate);
+    const fields = {};
+    const candidateActions = (loaded.browser_actions ?? []).filter(
+      (action) => action.ok && action.candidate_ref === activeCandidateRef,
+    );
+    for (const action of candidateActions) {
+      mergeIncrementalFields(fields, action.receipt?.capture?.fields);
+      mergeIncrementalFields(fields, action.receipt?.fields);
+    }
+    mergeIncrementalFields(fields, snapshot.fields);
+    const groups = detailGroupsForPlan(plan);
+    const attempted = new Set(
+      candidateActions
+        .filter((action) => action.action === "activate_detail_section")
+        .map((action) => action.detail_group),
+    );
+    const nextGroup = groups.find(
+      (group) =>
+        group !== "summary" && !detailGroupHasEvidence(group, fields) && !attempted.has(group),
+    );
+    if (nextGroup && snapshot.status !== "blocked") {
+      const payload = incrementalPayload({
+        params,
+        plan,
+        branches,
+        candidates: mergedCandidates,
+        details,
+        reviews,
+        status: "awaiting_browser_action",
+        nextCall: browserActionCall(params, state, "activate_detail_section", {
+          candidate_ref: activeCandidateRef,
+          detail_group: nextGroup,
+        }),
+      });
+      return hostToolResult(payload, { details: payload });
+    }
+    const missingGroups = groups.filter((group) =>
+      group === "summary"
+        ? Object.keys(fields).length === 0
+        : !detailGroupHasEvidence(group, fields),
+    );
+    const collected = {
+      candidate_ref: activeCandidateRef,
+      platform_id: snapshot.platform_id ?? candidate.platform_id ?? null,
+      nickname: candidate.nickname ?? null,
+      detail_url: snapshot.detail_url ?? candidate.detail_url ?? null,
+      status:
+        snapshot.status === "blocked"
+          ? "blocked"
+          : Object.keys(fields).length && missingGroups.length === 0
+            ? "complete"
+            : "partial",
+      reason:
+        snapshot.status === "blocked"
+          ? snapshot.reason
+          : missingGroups.length
+            ? "detail_groups_missing"
+            : null,
+      fields,
+      completed_groups: groups.filter((group) => !missingGroups.includes(group)),
+      missing_groups: missingGroups,
+      source_type: "browser_action+dom",
+      captured_at: new Date(now()).toISOString(),
+    };
+    const evaluation = evaluateCandidateDetail(candidate, collected, plan);
+    const detail = {
+      ...collected,
+      fields: evaluation.fields,
+      hard_evaluation:
+        collected.status === "blocked" ? { ...evaluation, status: "unknown" } : evaluation,
+    };
+    details.push(detail);
+    await artifactStore.saveDetail({
+      detail,
+      branches,
+      candidates: mergedCandidates,
+      details: mergeDetailRecords(details),
+      reviews,
+      status: "collecting_details",
+      detailPlannedCount: detailQueue.length,
+    });
+    await artifactStore.savePhaseTransition({
+      phase: "DETAIL_CAPTURED",
+      candidate_ref: activeCandidateRef,
+    });
+    const payload = incrementalPayload({
+      params,
+      plan,
+      branches,
+      candidates: mergedCandidates,
+      details,
+      reviews,
+      status: "awaiting_browser_action",
+      nextCall: browserActionCall(params, state, "return_to_market", {
+        candidate_ref: activeCandidateRef,
+      }),
+    });
+    return hostToolResult(payload, { details: payload });
+  }
+
+  if (!["MARKET_READY", "RESULTS_READY"].includes(state.page_state)) {
+    return browserBlockedResult(params, plan, loaded, state);
+  }
+  const nextCandidate = detailQueue.find(
+    (candidate) => !existingDetailRefs.has(candidateReference(candidate)),
+  );
+  if (nextCandidate) {
+    await artifactStore.savePhaseTransition({
+      phase: "DETAIL_PENDING",
+      candidate_ref: candidateReference(nextCandidate),
+    });
+    const payload = incrementalPayload({
+      params,
+      plan,
+      branches,
+      candidates: mergedCandidates,
+      details,
+      reviews,
+      status: "awaiting_browser_action",
+      nextCall: browserActionCall(params, state, "open_creator_detail", {
+        candidate_ref: candidateReference(nextCandidate),
+      }),
+    });
+    return hostToolResult(payload, { details: payload });
+  }
+
+  const pendingReview = reviewBatch(mergedCandidates, details, reviews, {
+    requirements: plan.review_requirements,
+  });
+  const incompleteDetails = mergeDetailRecords(details).some(
+    (detail) => detail.status !== "complete" || detail.hard_evaluation?.status === "unknown",
+  );
+  const finalStatus =
+    incompleteDetails || pendingReview.remaining > 0 || plan.unexpressed.length
+      ? "partial"
+      : "complete";
+  const artifact = await artifactStore.finalize({
+    branches,
+    candidates: mergedCandidates,
+    details: mergeDetailRecords(details),
+    reviews: mergeReviewRecords(reviews),
+    status: finalStatus,
+    exportFallback: {
+      status: "skipped",
+      reason: "agent_orchestrated_browser_collection",
+      reasons: [],
+      quota_consumed: false,
+    },
+    detailPlannedCount: detailQueue.length,
+  });
+  await artifactStore.savePhaseTransition({
+    phase: pendingReview.remaining ? "REVIEW_PENDING" : "COMPLETE",
+  });
+  const payload = incrementalPayload({
+    params,
+    plan,
+    branches,
+    candidates: mergedCandidates,
+    details,
+    reviews,
+    status: finalStatus,
+    nextCall: null,
+    artifact,
+  });
+  return hostToolResult(payload, { details: payload });
+}
+
 /**
  * Create the checkpointed two-platform research runner. It connects to the
  * host's existing Browser over CDP and deliberately never closes that Browser.
@@ -612,6 +1179,7 @@ function outputPayload({
  *   connectOverCDP?: (endpointURL: string) => Promise<import("playwright-core").Browser>,
  *   createAdapter?: (platform: string, page: import("playwright-core").Page, options: any) => any,
  *   createArtifactStore?: typeof createManualResearchStore,
+ *   inspectBrowser?: typeof inspectManualBrowser,
  *   now?: () => number,
  * }} [options]
  */
@@ -621,6 +1189,7 @@ export function createManualResearch({
   connectOverCDP = (endpointURL) => chromium.connectOverCDP(endpointURL),
   createAdapter = createManualResearchAdapter,
   createArtifactStore = createManualResearchStore,
+  inspectBrowser = inspectManualBrowser,
   now = Date.now,
 } = {}) {
   const cdpUrl = requiredString(browserCdpUrl, "browserCdpUrl").replace(/\/$/u, "");
@@ -706,10 +1275,9 @@ export function createManualResearch({
       details.push(...(artifactStore.restored?.details ?? []));
       reviews.push(...(artifactStore.restored?.reviews ?? []));
 
-      const matchingSelections = loaded.selections.filter(
-        (selection) => selection?.selection_id === params.selection_id,
-      );
-      const selection = matchingSelections.at(-1);
+      const selection = params.selection_id
+        ? loaded.selections.filter((item) => item?.selection_id === params.selection_id).at(-1)
+        : loaded.selections.filter((item) => item?.status === "ready").at(-1);
       if (!selection || selection.status !== "ready") {
         throw manualBrowserError(
           "YPSCAN_MANUAL_SELECTION_STALE",
@@ -721,6 +1289,21 @@ export function createManualResearch({
         .at(-1);
       if (latestForBranch?.selection_id !== selection.selection_id) {
         throw manualBrowserError("YPSCAN_MANUAL_SELECTION_STALE", "该关键词分支已有更新的筛选凭证");
+      }
+      if (selection.protocol_version === 2) {
+        const browser = await connectOverCDP(cdpUrl);
+        return collectIncrementalV2({
+          params,
+          plan,
+          loaded,
+          selection,
+          browser,
+          artifactStore,
+          createAdapter,
+          workspaceDir,
+          now,
+          inspectBrowser,
+        });
       }
       const completedBranchIds = new Set(
         completedBranches.map((branch) => branch.branch_id).filter(Boolean),

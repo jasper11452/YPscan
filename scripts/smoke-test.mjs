@@ -53,13 +53,15 @@ try {
 
   const toolNames = registered.tools.map((tool) => tool.name);
   assert.ok(toolNames.includes("ypscan_parse_requirement"));
+  assert.ok(toolNames.includes("ypscan_manual_browser_inspect"));
+  assert.ok(toolNames.includes("ypscan_manual_browser_action"));
   assert.ok(toolNames.includes("ypscan_manual_select_filters"));
   assert.ok(toolNames.includes("ypscan_manual_research"));
   assert.ok(toolNames.includes("ypscan_save_excel_artifact"));
   const excelSaver = registered.tools.find((tool) => tool.name === "ypscan_save_excel_artifact");
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("creator_preview"));
   assert.equal(toolNames.includes("ypscan__select_inquiry_form_fields"), false);
-  assert.equal(toolNames.length, 4);
+  assert.equal(toolNames.length, 6);
   assert.equal(toolNames.includes("ypscan_runtime_status"), false);
   assert.equal(toolNames.includes("ypscan_capture_field_selection"), false);
   assert.equal(toolNames.includes("ypscan_import_manual_source_excel"), false);
