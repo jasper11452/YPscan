@@ -200,6 +200,26 @@ test("manual plan expands the customer creator price once to 50%–120%", () => 
   });
 });
 
+test("manual plan preserves business summary fields for the Excel template", () => {
+  const plan = compileManualResearchPlan({
+    platform: "pgy",
+    facts: [
+      fact("brand", "brand_name", "千问"),
+      fact("project", "project_name", "千问8月推广"),
+      fact("deadline", "submission_deadline", "2026-08-20T10:00:00+08:00"),
+      fact("media", "responsible_media", "杨小玉"),
+      fact("count", "creator_count", 5),
+    ],
+  });
+
+  assert.deepEqual(plan.export_summary, {
+    brand_product: "千问",
+    project_name: "千问8月推广",
+    submission_deadline: "2026-08-20T10:00:00+08:00",
+    responsible_media: "杨小玉",
+  });
+});
+
 test("manual price expansion turns a 100k cap into 50k–120k and expands range edges", () => {
   const capped = compileManualResearchPlan({
     platform: "pgy",

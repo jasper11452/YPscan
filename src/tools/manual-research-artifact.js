@@ -55,6 +55,7 @@ function fingerprintFor(params, plan) {
           detail_filters: plan.detail_filters,
           review_requirements: plan.review_requirements,
           price_view: plan.price_view,
+          export_summary: plan.export_summary,
           target_count: plan.target_count,
           collection_target: plan.collection_target,
         }),
@@ -204,16 +205,28 @@ function columnName(index) {
   return name;
 }
 
+function templateCellStyle(rowIndex, columnIndex) {
+  if (rowIndex === 0) return 1;
+  if (rowIndex === 1) return columnIndex < 8 ? 2 : 3;
+  if (rowIndex === 2) return columnIndex % 2 === 0 && columnIndex < 12 ? 4 : 5;
+  if (rowIndex === 3) return 0;
+  if (rowIndex === 4) return 6;
+  const striped = rowIndex % 2 === 0 ? 7 : 8;
+  return columnIndex === 8 ? striped + 2 : striped;
+}
+
 function worksheetXml(rows, widths) {
   const rowXml = rows
     .map((row, rowIndex) => {
       const cells = row
         .map((value, columnIndex) => {
           const reference = `${columnName(columnIndex)}${rowIndex + 1}`;
-          return `<c r="${reference}" t="inlineStr" s="${rowIndex === 0 ? 1 : 2}"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;
+          return `<c r="${reference}" t="inlineStr" s="${templateCellStyle(rowIndex, columnIndex)}"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;
         })
         .join("");
-      return `<row r="${rowIndex + 1}"${rowIndex === 0 ? ' ht="32" customHeight="1"' : ""}>${cells}</row>`;
+      const heights = [34, 28, 28, 12, 36];
+      const height = heights[rowIndex] ?? 40;
+      return `<row r="${rowIndex + 1}" ht="${height}" customHeight="1">${cells}</row>`;
     })
     .join("");
   const columns = widths
@@ -227,11 +240,13 @@ function worksheetXml(rows, widths) {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
-  <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
-  <sheetFormatPr defaultRowHeight="18"/>
+  <dimension ref="A1:${lastColumn}${lastRow}"/>
+  <sheetViews><sheetView workbookViewId="0"><pane ySplit="5" topLeftCell="A6" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <sheetFormatPr defaultRowHeight="20"/>
   <cols>${columns}</cols>
   <sheetData>${rowXml}</sheetData>
-  <autoFilter ref="A1:${lastColumn}${lastRow}"/>
+  <autoFilter ref="A5:${lastColumn}${lastRow}"/>
+  <mergeCells count="3"><mergeCell ref="A1:M1"/><mergeCell ref="A2:H2"/><mergeCell ref="I2:M2"/></mergeCells>
   <pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>
   <pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/>
 </worksheet>`;
@@ -315,17 +330,6 @@ function zip(entries, timestamp) {
   return Buffer.concat([...localParts, ...centralParts, end]);
 }
 
-function missingFields(candidate) {
-  return [
-    ["platform_id", candidate.platform_id],
-    ["followers", candidate.followers_raw],
-    ["price", candidate.price_raw],
-    ["detail_url", candidate.detail_url],
-  ]
-    .filter(([, value]) => !value)
-    .map(([name]) => name);
-}
-
 function candidatesWithPriceCheck(candidates, plan) {
   return candidates.map((candidate) => ({
     ...candidate,
@@ -338,89 +342,6 @@ function eligiblePriceCheck(priceCheck) {
   return ["passed", "not_required"].includes(priceCheck?.status);
 }
 
-function priceCheckReview(priceCheck) {
-  if (priceCheck?.status === "passed") return "对应档位报价合规；待 Agent 语义复核";
-  if (priceCheck?.status === "rejected") return "报价不在要求区间，不得推荐";
-  if (priceCheck?.status === "needs_review") return "报价或档位证据不足，待确认";
-  return "未提供达人报价条件；待 Agent 语义复核";
-}
-
-function candidateRows(candidates, plan) {
-  const branchKeywords = new Map(
-    plan.branches.map((branch) => [branch.branch_id, branch.keyword || "无关键词"]),
-  );
-  const header = [
-    "序号",
-    "平台",
-    "平台ID",
-    "达人昵称",
-    "达人本人性别",
-    "城市",
-    "内容类型/标签",
-    "合作形式/报价口径",
-    "报价",
-    "价格校验状态",
-    "价格校验原因",
-    "列表硬筛状态",
-    "列表硬筛失败/待补证",
-    "标准化报价（元）",
-    "要求报价区间",
-    "要求报价档位",
-    "粉丝数",
-    "预期CPM",
-    "预期CPE",
-    "互动率",
-    "预期播放/阅读",
-    "详情链接",
-    "来源页",
-    "关键词分支",
-    "采集页码",
-    "缺失字段",
-    "复核状态",
-  ];
-  return [
-    header,
-    ...candidates.map((candidate, index) => [
-      index + 1,
-      candidate.platform,
-      candidate.platform_id,
-      candidate.nickname,
-      candidate.creator_gender,
-      candidate.city,
-      [
-        ...new Set([candidate.content_type, ...(candidate.tags ?? [])].map(clean).filter(Boolean)),
-      ].join("、"),
-      candidate.quote_tier,
-      candidate.price_raw,
-      candidate.price_check?.status,
-      candidate.price_check?.reason,
-      candidate.list_hard_evaluation?.status,
-      (candidate.list_hard_evaluation?.checks ?? [])
-        .filter((check) => check.verdict !== "pass")
-        .map((check) => `${check.control}:${check.reason ?? check.verdict}`)
-        .join("；"),
-      candidate.price_check?.observed_yuan,
-      candidate.price_check?.required_min === null
-        ? ""
-        : `${candidate.price_check.required_min}–${candidate.price_check.required_max}`,
-      candidate.price_check?.required_tier,
-      candidate.followers_raw,
-      candidate.cpm_raw,
-      candidate.cpe_raw,
-      candidate.interaction_rate,
-      candidate.expected_views,
-      candidate.detail_url,
-      candidate.source_url,
-      (candidate.source_branches ?? [])
-        .map((branchId) => branchKeywords.get(branchId) ?? branchId)
-        .join("、"),
-      (candidate.source_pages ?? []).join("、"),
-      missingFields(candidate).join("、"),
-      priceCheckReview(candidate.price_check),
-    ]),
-  ];
-}
-
 function detailMapFor(details) {
   return new Map(mergeDetailRecords(details).map((detail) => [detail.candidate_ref, detail]));
 }
@@ -429,143 +350,186 @@ function reviewMapFor(reviews) {
   return new Map(mergeReviewRecords(reviews).map((review) => [review.candidate_ref, review]));
 }
 
-function detailRows(candidates, details, reviews) {
-  const detailMap = detailMapFor(details);
-  const reviewMap = reviewMapFor(reviews);
-  const header = [
-    "序号",
-    "平台",
-    "平台ID",
-    "达人昵称",
-    "详情状态",
-    "详情原因",
-    "硬筛状态",
-    "语义复核",
-    "复核原因",
-    "粉丝数",
-    "城市",
-    "机构",
-    "账号类型",
-    "内容类型/标签",
-    "图文报价",
-    "视频报价",
-    "分档报价",
-    "CPM",
-    "CPE",
-    "互动率",
-    "预期播放/阅读",
-    "男性粉丝占比",
-    "女性粉丝占比",
-    "18-23岁占比",
-    "24-30岁占比",
-    "31-40岁占比",
-    "受众城市",
-    "受众人群画像",
-    "阅读中位数",
-    "互动中位数",
-    "近期内容（最多3条）",
-    "详情链接",
-    "响应路径",
-    "采集来源",
-    "采集时间",
-  ];
-  return [
-    header,
-    ...candidates.map((candidate, index) => {
-      const candidateRef = candidateReference(candidate);
-      const detail = detailMap.get(candidateRef);
-      const review = reviewMap.get(candidateRef);
-      const fields = detail?.fields ?? {};
-      return [
-        index + 1,
-        candidate.platform,
-        candidate.platform_id,
-        candidate.nickname,
-        detail?.status ?? "not_collected",
-        detail?.reason,
-        detail?.hard_evaluation?.status ?? "unknown",
-        review?.decision ?? "待复核",
-        (review?.reasons ?? []).join("；"),
-        fields.followers_raw ?? candidate.followers_raw,
-        fields.city ?? candidate.city,
-        fields.agency,
-        fields.account_type,
-        [
-          ...new Set(
-            [fields.content_type, ...(fields.tags ?? []), ...(candidate.tags ?? [])].filter(
-              Boolean,
-            ),
-          ),
-        ].join("、"),
-        fields.price_picture_raw,
-        fields.price_video_raw,
-        Object.entries(fields.price_by_tier ?? {})
-          .map(([tier, value]) => `${tier}:${value?.raw ?? value?.value ?? value}`)
-          .join("；"),
-        fields.cpm_raw ?? candidate.cpm_raw,
-        fields.cpe_raw ?? candidate.cpe_raw,
-        fields.interaction_rate_raw ?? fields.interaction_rate ?? candidate.interaction_rate,
-        fields.expected_views_raw ?? fields.expected_views ?? candidate.expected_views,
-        fields.audience_male_rate_raw ?? fields.audience_male_rate,
-        fields.audience_female_rate_raw ?? fields.audience_female_rate,
-        fields.audience_age_18_23_rate_raw ?? fields.audience_age_18_23_rate,
-        fields.audience_age_24_30_rate_raw ?? fields.audience_age_24_30_rate,
-        fields.audience_age_31_40_rate_raw ?? fields.audience_age_31_40_rate,
-        (fields.audience_city_distribution ?? fields.audience_cities ?? [])
-          .map((item) => (typeof item === "string" ? item : `${item.name}:${item.rate_raw ?? ""}`))
-          .join("、"),
-        (fields.audience_persona_distribution ?? [])
-          .map((item) => `${item.name}:${item.rate_raw ?? ""}`)
-          .join("、"),
-        fields.read_median_raw ?? fields.read_median,
-        fields.interaction_median_raw ?? fields.interaction_median,
-        (fields.recent_content ?? [])
-          .map((item) => [item.title, item.published_at, item.url].filter(Boolean).join(" | "))
-          .join("；"),
-        detail?.detail_url ?? candidate.detail_url,
-        (detail?.response_endpoints ?? []).join("；"),
-        detail?.source_type,
-        detail?.captured_at,
-      ];
-    }),
-  ];
+function platformDisplay(value) {
+  if (["xingtu", "douyin"].includes(value)) return "抖音";
+  if (["pgy", "xiaohongshu"].includes(value)) return "小红书";
+  return clean(value) || "未知";
 }
 
-function conditionRows(candidates, details) {
-  const candidateMap = new Map(
-    candidates.map((candidate) => [candidateReference(candidate), candidate]),
+function dateTimeDisplay(value) {
+  if (!clean(value)) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return clean(value);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
   );
-  const rows = [["达人引用", "达人昵称", "条件", "期望值", "实际值", "结果", "来源", "原因"]];
-  for (const candidate of candidates) {
-    for (const check of candidate.list_hard_evaluation?.checks ?? []) {
-      rows.push([
-        candidateReference(candidate),
-        candidate.nickname,
-        check.control,
-        Array.isArray(check.expected) ? check.expected.join("、") : check.expected,
-        Array.isArray(check.actual) ? check.actual.join("、") : check.actual,
-        check.verdict,
-        check.source_type,
-        check.reason,
-      ]);
-    }
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+function reasonDisplay(value) {
+  return (
+    {
+      price_out_of_range: "报价不在要求区间",
+      quote_tier_missing: "报价档位缺失",
+      required_value_missing: "缺少必要数据",
+    }[value] ?? value
+  );
+}
+
+function deadlineDisplay(value) {
+  const formatted = dateTimeDisplay(value);
+  return formatted || "未提供";
+}
+
+function monthDay(value) {
+  const display = dateTimeDisplay(value);
+  return display ? display.slice(5, 10).replace("-", "") : "导出";
+}
+
+function selectedPrice(fields, candidate) {
+  const tierPrices = Object.values(fields.price_by_tier ?? {});
+  const tierPrice = tierPrices.find((value) => value !== null && value !== undefined);
+  return (
+    candidate.price_raw ??
+    fields.price_picture_raw ??
+    fields.price_video_raw ??
+    tierPrice?.raw ??
+    tierPrice?.value ??
+    tierPrice ??
+    ""
+  );
+}
+
+function candidateStatus(candidate, detail, review, selectedReferences) {
+  const reference = candidateReference(candidate);
+  if (selectedReferences.has(reference)) return "已推荐";
+  if (candidate.price_check?.status === "rejected") return "报价淘汰";
+  if (candidate.list_hard_evaluation?.status === "fail") return "硬筛淘汰";
+  if (detail?.hard_evaluation?.status === "fail") return "详情淘汰";
+  if (review?.decision === "exclude") return "未入选";
+  if (
+    candidate.price_check?.status === "needs_review" ||
+    detail?.hard_evaluation?.status === "unknown" ||
+    !review
+  ) {
+    return "待复核";
   }
-  for (const detail of mergeDetailRecords(details)) {
-    const candidate = candidateMap.get(detail.candidate_ref);
-    for (const check of detail.hard_evaluation?.checks ?? []) {
-      rows.push([
-        detail.candidate_ref,
-        candidate?.nickname ?? detail.nickname,
-        check.control,
-        Array.isArray(check.expected) ? check.expected.join("、") : check.expected,
-        Array.isArray(check.actual) ? check.actual.join("、") : check.actual,
-        check.verdict,
-        check.source_type,
-        check.reason,
-      ]);
-    }
-  }
-  return rows;
+  return "候选";
+}
+
+function candidateRemarks(candidate, detail, review) {
+  return [
+    candidate.price_check?.status === "rejected" ? candidate.price_check.reason : null,
+    ...(candidate.list_hard_evaluation?.checks ?? [])
+      .filter((check) => check.verdict !== "pass")
+      .map((check) => check.reason ?? check.control),
+    ...(detail?.hard_evaluation?.checks ?? [])
+      .filter((check) => check.verdict !== "pass")
+      .map((check) => check.reason ?? check.control),
+    ...(review?.reasons ?? []),
+  ]
+    .map(reasonDisplay)
+    .map(clean)
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join("；");
+}
+
+const TALENT_HEADERS = Object.freeze([
+  "供应商名称",
+  "状态",
+  "提交时间",
+  "达人名称",
+  "平台",
+  "主页链接",
+  "粉丝数",
+  "内容形式",
+  "报价",
+  "可执行档期",
+  "返点比例",
+  "历史案例",
+  "备注",
+]);
+
+const TALENT_WIDTHS = Object.freeze([18, 12, 20, 22, 12, 36, 14, 20, 16, 22, 14, 38, 42]);
+
+function talentRows(candidates, details, reviews, selectedCandidates, generatedAt) {
+  const detailMap = detailMapFor(details);
+  const reviewMap = reviewMapFor(reviews);
+  const selectedReferences = new Set(selectedCandidates.map(candidateReference));
+  return candidates.map((candidate) => {
+    const candidateRef = candidateReference(candidate);
+    const detail = detailMap.get(candidateRef);
+    const review = reviewMap.get(candidateRef);
+    const fields = detail?.fields ?? {};
+    return [
+      fields.agency,
+      candidateStatus(candidate, detail, review, selectedReferences),
+      dateTimeDisplay(detail?.captured_at ?? generatedAt),
+      candidate.nickname ?? detail?.nickname,
+      platformDisplay(candidate.platform),
+      detail?.detail_url ?? candidate.detail_url,
+      fields.followers_raw ?? candidate.followers_raw,
+      [
+        ...new Set(
+          [fields.content_type, ...(fields.tags ?? []), ...(candidate.tags ?? [])].filter(Boolean),
+        ),
+      ].join("、"),
+      selectedPrice(fields, candidate),
+      "",
+      "",
+      (fields.recent_content ?? [])
+        .slice(0, 3)
+        .map((item) => item.title ?? item.url)
+        .filter(Boolean)
+        .join("；"),
+      candidateRemarks(candidate, detail, review),
+    ];
+  });
+}
+
+function templateRows({ plan, generatedAt, submittedCount, candidates, sheetKind }) {
+  const summary = plan.export_summary ?? {};
+  const brand = clean(summary.brand_product) || "项目";
+  const project = clean(summary.project_name) || brand;
+  const titleKind = sheetKind === "candidates" ? "候选达人" : "达人推荐List";
+  return [
+    [`【${brand}】悦普识星-${titleKind}-${monthDay(generatedAt)}`, ...Array(12).fill("")],
+    [
+      `达人提报｜${project}，确保填写信息的准确性`,
+      ...Array(7).fill(""),
+      `提报截止：${deadlineDisplay(summary.submission_deadline)}`,
+      ...Array(4).fill(""),
+    ],
+    [
+      "品牌 / 产品",
+      brand,
+      "项目名称",
+      project,
+      "投放平台",
+      platformDisplay(plan.platform),
+      "需求数量",
+      `${plan.target_count ?? "未知"}位`,
+      "提报数量",
+      `${submittedCount}位`,
+      "负责媒介",
+      clean(summary.responsible_media) || "未提供",
+      "",
+    ],
+    Array(13).fill(""),
+    [...TALENT_HEADERS],
+    ...candidates,
+  ];
 }
 
 function finalCandidates(candidates, details, reviews, targetCount) {
@@ -584,120 +548,46 @@ function finalCandidates(candidates, details, reviews, targetCount) {
 
 /** Build a dependency-free, standards-compliant XLSX workbook. */
 export function buildManualResearchWorkbook({
-  params,
   plan,
-  branches,
   candidates,
   details = [],
   reviews = [],
-  status,
   artifact,
 }) {
   const timestamp = artifact.generated_at;
   const targetCount = plan.target_count ?? candidates.length;
   const checkedCandidates = candidatesWithPriceCheck(candidates, plan);
-  const eligibleCandidates = checkedCandidates.filter((candidate) =>
-    eligiblePriceCheck(candidate.price_check),
-  );
-  const rejectedCandidates = checkedCandidates.filter(
-    (candidate) => candidate.price_check.status === "rejected",
-  );
-  const needsReviewCandidates = checkedCandidates.filter(
-    (candidate) => candidate.price_check.status === "needs_review",
-  );
   const finalRows = finalCandidates(checkedCandidates, details, reviews, targetCount);
-  const deliveryShortfall = plan.target_count
-    ? Math.max(plan.target_count - finalRows.length, 0)
-    : 0;
-  const poolWidths = [
-    6, 10, 22, 22, 12, 18, 36, 20, 14, 16, 22, 18, 20, 18, 14, 12, 12, 12, 16, 42, 42, 24, 14, 24,
-    16,
+  const selectedRows = talentRows(finalRows, details, reviews, finalRows, timestamp);
+  const candidateSheetRows = talentRows(checkedCandidates, details, reviews, finalRows, timestamp);
+  const sheets = [
+    {
+      name: "达人推荐List",
+      rows: templateRows({
+        plan,
+        generatedAt: timestamp,
+        submittedCount: finalRows.length,
+        candidates: selectedRows,
+        sheetKind: "recommended",
+      }),
+      widths: TALENT_WIDTHS,
+    },
+    ...(artifact.submission_only
+      ? []
+      : [
+          {
+            name: "候选达人",
+            rows: templateRows({
+              plan,
+              generatedAt: timestamp,
+              submittedCount: finalRows.length,
+              candidates: candidateSheetRows,
+              sheetKind: "candidates",
+            }),
+            widths: TALENT_WIDTHS,
+          },
+        ]),
   ];
-  const detailWidths = [
-    6, 10, 22, 22, 14, 22, 12, 12, 30, 14, 16, 20, 16, 36, 14, 14, 30, 12, 12, 12, 16, 14, 14, 14,
-    14, 14, 28, 14, 14, 60, 42, 42, 18, 22,
-  ];
-  const metadataRows = [
-    ["字段", "值"],
-    ["需求ID", params.requirement_id],
-    ["平台", params.platform],
-    ["运行状态", status],
-    ["运行ID", artifact.run_id ?? ""],
-    ["目标交付数", targetCount],
-    ["最终名单行数", finalRows.length],
-    ["完整候选池行数", candidates.length],
-    ["详情计划数", artifact.detail_planned_count ?? 0],
-    ["详情完成数", mergeDetailRecords(details).length],
-    ["语义复核数", mergeReviewRecords(reviews).length],
-    ["价格合格候选数", eligibleCandidates.length],
-    ["价格淘汰候选数", rejectedCandidates.length],
-    ["价格待复核候选数", needsReviewCandidates.length],
-    ["交付缺口", deliveryShortfall],
-    ["关键词", plan.keywords.join("、")],
-    ["已完成关键词分支", branches.map((branch) => branch.keyword || "无关键词").join("、")],
-    ["报价口径", plan.price_view],
-    ["手扒报价范围", "客户报价下探 50%、上探 20%（即客户值的 50%–120%）"],
-    [
-      "实际报价筛选",
-      plan.filters
-        .filter((filter) => filter.control === "creator_price")
-        .map((filter) => `${filter.min ?? ""}–${filter.max ?? ""} ${filter.unit ?? ""}`.trim())
-        .join("；") || "未提供达人报价条件",
-    ],
-    [
-      "详情硬审条件",
-      (plan.detail_filters ?? [])
-        .map((filter) =>
-          filter.mode === "range"
-            ? `${filter.control}:${filter.min ?? ""}–${filter.max ?? ""}`
-            : `${filter.control}:${(filter.values ?? []).join("、")}`,
-        )
-        .join("；") || "无",
-    ],
-    [
-      "语义复核条件",
-      (plan.review_requirements ?? [])
-        .map((item) => item.quote || `${item.fact_kind}:${item.expected ?? ""}`)
-        .join("；") || "无",
-    ],
-    ["增量Checkpoint", artifact.checkpoint_path],
-    ["生成时间", timestamp],
-    ["说明", "最终名单仅包含详情硬条件通过且 Agent 语义复核纳入的达人；空值按未知处理。"],
-  ];
-  const sheets = artifact.submission_only
-    ? [
-        { name: "提报表", rows: detailRows(finalRows, details, reviews), widths: detailWidths },
-        {
-          name: "需求信息",
-          rows: [
-            ["字段", "值"],
-            ["需求ID", params.requirement_id],
-            ["平台", params.platform],
-            ["运行ID", artifact.run_id ?? ""],
-            ["数据来源", "人工拓展最终复核名单"],
-            ["目标达人", targetCount],
-            ["实际达人", finalRows.length],
-            ["当前缺口", deliveryShortfall],
-            ["生成时间", timestamp],
-          ],
-          widths: [24, 90],
-        },
-      ]
-    : [
-        { name: "最终名单", rows: detailRows(finalRows, details, reviews), widths: detailWidths },
-        {
-          name: "详情补录",
-          rows: detailRows(checkedCandidates, details, reviews),
-          widths: detailWidths,
-        },
-        { name: "完整候选池", rows: candidateRows(checkedCandidates, plan), widths: poolWidths },
-        {
-          name: "条件判断",
-          rows: conditionRows(checkedCandidates, details),
-          widths: [28, 22, 22, 24, 24, 12, 16, 28],
-        },
-        { name: "运行信息", rows: metadataRows, widths: [24, 90] },
-      ];
   const sheetNames = sheets.map((sheet) => sheet.name);
   const sheetXml = sheets.map((sheet) => worksheetXml(sheet.rows, sheet.widths));
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -728,11 +618,11 @@ export function buildManualResearchWorkbook({
 </Relationships>`;
   const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <fonts count="2"><font><sz val="11"/><name val="Arial"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Arial"/></font></fonts>
-  <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill></fills>
-  <borders count="2"><border/><border><left style="thin"><color rgb="FFD9E1F2"/></left><right style="thin"><color rgb="FFD9E1F2"/></right><top style="thin"><color rgb="FFD9E1F2"/></top><bottom style="thin"><color rgb="FFD9E1F2"/></bottom></border></borders>
+  <fonts count="7"><font><sz val="10"/><color rgb="FF245243"/><name val="Microsoft YaHei"/></font><font><b/><sz val="18"/><color rgb="FFF7F6F1"/><name val="Microsoft YaHei"/></font><font><b/><sz val="11"/><color rgb="FF245243"/><name val="Microsoft YaHei"/></font><font><b/><sz val="11"/><color rgb="FF245243"/><name val="Microsoft YaHei"/></font><font><sz val="10"/><color rgb="FF245243"/><name val="Microsoft YaHei"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Microsoft YaHei"/></font><font><b/><sz val="10"/><color rgb="FF245243"/><name val="Microsoft YaHei"/></font></fonts>
+  <fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0F5A43"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEEF3EF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFFFF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF7FAF7"/><bgColor indexed="64"/></patternFill></fill></fills>
+  <borders count="2"><border/><border><left style="thin"><color rgb="FFD7E1DA"/></left><right style="thin"><color rgb="FFD7E1DA"/></right><top style="thin"><color rgb="FFD7E1DA"/></top><bottom style="thin"><color rgb="FFD7E1DA"/></bottom></border></borders>
   <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-  <cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs>
+  <cellXfs count="11"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="6" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf></cellXfs>
   <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
   const core = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -794,24 +684,18 @@ function createArtifactMetadata({
 }
 
 async function writeArtifactWorkbook({
-  params,
   plan,
-  branches,
   candidates,
   details,
   reviews,
-  status,
   artifact,
   failureCode = null,
 }) {
   const workbook = buildManualResearchWorkbook({
-    params,
     plan,
-    branches,
     candidates,
     details,
     reviews,
-    status,
     artifact,
   });
   try {
@@ -958,7 +842,6 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
   }
   /** @type {(state: any) => Promise<any>} */
   const materialize = async ({
-    branches,
     candidates,
     details = [],
     reviews = [],
@@ -1016,13 +899,10 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
       },
     });
     await writeArtifactWorkbook({
-      params,
       plan,
-      branches,
       candidates,
       details,
       reviews,
-      status,
       artifact,
       failureCode: "YPSCAN_MANUAL_ARTIFACT_FAILED",
     });
@@ -1168,13 +1048,10 @@ export async function createManualResearchSubmission({
   const submissionPath = join(root, `${safeRunId(runId)}-submission.xlsx`);
   const generatedAt = new Date(now()).toISOString();
   const workbook = buildManualResearchWorkbook({
-    params: loaded.params,
     plan: loaded.plan,
-    branches: loaded.branches,
     candidates: loaded.candidates,
     details: loaded.details,
     reviews: loaded.reviews,
-    status: "complete",
     artifact: {
       run_id: loaded.run_id,
       checkpoint_path: join(root, "checkpoint.jsonl"),
@@ -1321,13 +1198,10 @@ export async function applyManualResearchReviews({
     deliveryMessage: "复核结果已写回同一 Excel；请向用户展示 excel_path。",
   });
   await writeArtifactWorkbook({
-    params,
     plan,
-    branches: restored.branches,
     candidates,
     details,
     reviews: mergedReviews,
-    status,
     artifact,
   });
   await appendDurable(checkpointPath, {

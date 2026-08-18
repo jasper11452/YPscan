@@ -49,8 +49,6 @@ export const VALIDATE_REQUIREMENT_PARAMS = Object.freeze([
   "projectStartEnd",
   "submissionDeadlineAt",
   "rawMessagesJson",
-  "createdAt",
-  "updatedAt",
   "contentTag",
   "description",
   "contentFeatureLabel",
@@ -107,8 +105,6 @@ const REQUIRED_VALIDATE_PARAMS = new Set([
   "platform",
   "brandName",
   "projectName",
-  "createdAt",
-  "updatedAt",
   "quantityTotal",
   "submissionDeadlineAt",
   "rebate",
@@ -427,7 +423,7 @@ export function normalizeToolCallParams(toolName, params) {
             price: PRICE_RANGE_PARAMS.has(name),
           }));
     }
-    for (const name of ["createdAt", "updatedAt", "submissionDeadlineAt"]) {
+    for (const name of ["submissionDeadlineAt"]) {
       if (Object.hasOwn(normalized, name)) set(name, normalizedDateTime(normalized[name]));
     }
   }
