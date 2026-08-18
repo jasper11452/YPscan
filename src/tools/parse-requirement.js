@@ -626,24 +626,6 @@ function invalid(violations) {
   };
 }
 
-function localDateTime(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  const pad = (number) => String(number).padStart(2, "0");
-  return [
-    date.getFullYear(),
-    "-",
-    pad(date.getMonth() + 1),
-    "-",
-    pad(date.getDate()),
-    " ",
-    pad(date.getHours()),
-    ":",
-    pad(date.getMinutes()),
-    ":",
-    pad(date.getSeconds()),
-  ].join("");
-}
-
 function sourceSegments(sourceId, text) {
   const segments = [];
   for (const match of text.matchAll(/[^，,。；;\n【】[\]（）()]+/gu)) {
@@ -1844,10 +1826,8 @@ function providerJobProjection(input, facts, now, globalIssues, segment) {
     params[input.platform === "xiaohongshu" ? "growBloggerTypeLabel" : "growTalentTypeLabel"] =
       growthCreatorTypes;
   }
-  const timestamp = localDateTime(now);
   params.platform = input.platform;
-  params.createdAt = timestamp;
-  params.updatedAt = timestamp;
+  params.rawMessagesJson = JSON.stringify([{ role: "user", content: input.original_brief }]);
   params.description = activeFactSummary(facts);
   params.originalBrief = input.original_brief;
   const ready = issues.length === 0;

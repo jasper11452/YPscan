@@ -669,12 +669,12 @@ function flowDirective(toolName, message, params = {}) {
     ];
     if (jobs.length === 1 && isRecord(jobs[0]?.params)) {
       lines.push(
-        "VALIDATE_REQUIREMENT_ARGS 是编译后的完整落库参数。调用 validate_requirement 时必须把它整体作为顶层参数传入，不得手工重建、增删字段、重算区间或改 createdAt/updatedAt。",
+        "VALIDATE_REQUIREMENT_ARGS 是编译后的完整落库参数。调用 validate_requirement 时必须把它整体作为顶层参数传入，不得手工重建、增删字段或重算区间；createdAt/updatedAt 由 Provider 自动填写，不要补传。",
         `VALIDATE_REQUIREMENT_ARGS=${JSON.stringify(jobs[0].params)}`,
       );
     } else {
       lines.push(
-        "多个搜索分组时按顺序为每个 search_jobs[i].params 调用一次 validate_requirement；每次都必须整体透传该 job 的完整 params，包括 createdAt/updatedAt。",
+        "多个搜索分组时按顺序为每个 search_jobs[i].params 调用一次 validate_requirement；每次都必须整体透传该 job 的完整 params，createdAt/updatedAt 由 Provider 自动填写，不要补传。",
       );
     }
     return lines.join("\n");

@@ -1106,7 +1106,12 @@ test("frozen 阿里千问 brief compiles ready with L3 price, CPM and residual s
   assert.equal(provider.params.contentTag, "办公软件相关");
   assert.equal(provider.params.contentThemeLabel.join(","), "职场");
   assert.equal(provider.params.submissionDeadlineAt, "2026-08-16 14:00:00");
-  assert.equal(provider.params.createdAt, provider.params.updatedAt);
+  assert.deepEqual(JSON.parse(provider.params.rawMessagesJson), [
+    { role: "user", content: originalBrief },
+  ]);
+  assert.equal(provider.params.rawMessagesJson.includes('"facts"'), false);
+  assert.equal(Object.hasOwn(provider.params, "createdAt"), false);
+  assert.equal(Object.hasOwn(provider.params, "updatedAt"), false);
   assert.ok(
     provider.residual_conditions.some(
       (item) => item.kind === "schedule_window" && /人工核验/u.test(item.reason),
