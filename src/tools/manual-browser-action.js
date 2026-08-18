@@ -1,14 +1,23 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chromium } from "playwright-core";
 import { createManualResearchStore, loadManualResearchRun } from "./manual-research-artifact.js";
-import { browserActionsForBranch, findPlannedBrowserAction } from "./manual-browser-plan.js";
-import { inspectManualBrowser, inspectManualBrowserPage } from "./manual-browser-state.js";
+import {
+  browserActionsForBranch,
+  browserRequirementsForPlan,
+  findPlannedBrowserAction,
+} from "./manual-browser-plan.js";
+import {
+  inspectManualBrowser,
+  inspectManualBrowserPage,
+  resolveInteractiveElement,
+} from "./manual-browser-state.js";
 import { candidateReference, detailGroupsForPlan } from "./manual-research-detail.js";
 import { createManualResearchAdapter, resolveManualResearchPage } from "./manual-research.js";
 import {
   activateCreatorDetailSection,
   openCreatorDetailPage,
 } from "./manual-research/detail-page.js";
+import { captureDetailResponsesDuring } from "./manual-research/detail-response-capture.js";
 import {
   dismissOrdinaryPopups,
   manualBrowserError,
@@ -35,11 +44,53 @@ const ACTIONS = Object.freeze([
   "return_to_market",
 ]);
 const BLOCKING_STATES = new Set(["LOGIN_REQUIRED", "CAPTCHA_BLOCKED", "MODAL_BLOCKED"]);
+const V3_OPERATIONS = Object.freeze([
+  "activate_tab",
+  "navigate_market",
+  "wait",
+  "click",
+  "hover",
+  "fill",
+  "fill_submit",
+  "select",
+  "set_range",
+  "confirm",
+  "return_to_market",
+]);
+const V3_ELEMENT_OPERATIONS = new Set([
+  "click",
+  "hover",
+  "fill",
+  "fill_submit",
+  "select",
+  "confirm",
+]);
+const V3_PURPOSES = new Set([
+  "navigation",
+  "wait",
+  "reset_filters",
+  "filter_requirement",
+  "repair_filter",
+  "keyword_search",
+  "pagination",
+  "detail",
+  "modal",
+  "inspection",
+]);
+const V3_EFFECTS = new Set([
+  "page_changed",
+  "menu_opened",
+  "value_filled",
+  "value_selected",
+  "dialog_closed",
+  "navigation",
+  "results_refreshed",
+]);
 
 export const MANUAL_BROWSER_ACTION_PARAMETERS = Object.freeze({
   type: "object",
   additionalProperties: false,
-  required: ["requirement_id", "platform", "run_id", "action", "expected_state_id"],
+  required: ["requirement_id", "platform", "run_id"],
   properties: {
     requirement_id: { type: "string", minLength: 1 },
     platform: {
@@ -48,7 +99,40 @@ export const MANUAL_BROWSER_ACTION_PARAMETERS = Object.freeze({
     },
     run_id: { type: "string", minLength: 1 },
     action: { type: "string", enum: ACTIONS },
+    operation: { type: "string", enum: V3_OPERATIONS },
     expected_state_id: { type: "string", minLength: 1 },
+    observation_id: { type: "string", minLength: 1 },
+    target_tab_id: { type: "string", minLength: 1 },
+    element_id: { type: "string", minLength: 1 },
+    element_ids: {
+      type: "array",
+      minItems: 1,
+      maxItems: 3,
+      uniqueItems: true,
+      items: { type: "string", minLength: 1 },
+    },
+    confirm_element_id: { type: "string", minLength: 1 },
+    value: {
+      anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
+    },
+    values: {
+      type: "array",
+      minItems: 1,
+      maxItems: 20,
+      items: { anyOf: [{ type: "string" }, { type: "number" }] },
+    },
+    range: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        min: { anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }] },
+        max: { anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }] },
+      },
+    },
+    wait_ms: { type: "integer", minimum: 100, maximum: 10000 },
+    purpose: { type: "string", enum: [...V3_PURPOSES] },
+    expected_effect: { type: "string", enum: [...V3_EFFECTS] },
+    requirement_ref: { type: "string", minLength: 1 },
     branch_index: { type: "integer", minimum: 0 },
     plan_action_id: { type: "string", minLength: 1 },
     modal_id: { type: "string", minLength: 1 },
@@ -90,6 +174,10 @@ function actionSignature(params) {
         plan_action_id: params.plan_action_id ?? null,
         candidate_ref: params.candidate_ref ?? null,
         detail_group: params.detail_group ?? null,
+        operation: params.operation ?? null,
+        element_id: params.element_id ?? null,
+        requirement_ref: params.requirement_ref ?? null,
+        target_tab_id: params.target_tab_id ?? null,
       }),
     )
     .digest("hex")
@@ -229,6 +317,505 @@ async function returnToMarket(browser, detailPage, platform) {
   return { applied: true, page: detailPage, mode: "history_back" };
 }
 
+function latestV3Selection(loaded) {
+  return (loaded.selections ?? []).find(
+    (selection) => selection.protocol_version === 3 && selection.status === "ready",
+  );
+}
+
+function completedRequirementRefs(actions) {
+  return new Set(
+    (actions ?? [])
+      .filter(
+        (action) =>
+          action.ok &&
+          action.verified &&
+          ["filter_requirement", "repair_filter"].includes(action.purpose) &&
+          action.requirement_ref,
+      )
+      .map((action) => action.requirement_ref),
+  );
+}
+
+function cleanPublicElement(element) {
+  if (!element) return null;
+  const { _locator_index: _index, _region_kind: _region, ...publicElement } = element;
+  return publicElement;
+}
+
+function v3ActionParams(rawParams, platform) {
+  const operation = clean(rawParams.operation);
+  const purpose = clean(rawParams.purpose);
+  const expectedEffect = clean(rawParams.expected_effect);
+  if (!V3_OPERATIONS.includes(operation)) {
+    throw manualBrowserError("YPSCAN_MANUAL_ARGUMENT_INVALID", "v3 operation 不受支持");
+  }
+  if (!V3_PURPOSES.has(purpose) || !V3_EFFECTS.has(expectedEffect)) {
+    throw manualBrowserError(
+      "YPSCAN_MANUAL_ARGUMENT_INVALID",
+      "v3 动作必须提供有效 purpose 和 expected_effect",
+    );
+  }
+  const elementIds = Array.isArray(rawParams.element_ids)
+    ? rawParams.element_ids.map(clean).filter(Boolean)
+    : [];
+  const params = {
+    requirement_id: clean(rawParams.requirement_id),
+    platform,
+    run_id: clean(rawParams.run_id),
+    operation,
+    action: `element:${operation}`,
+    observation_id: clean(rawParams.observation_id),
+    target_tab_id: clean(rawParams.target_tab_id) || null,
+    element_id: clean(rawParams.element_id) || null,
+    element_ids: elementIds,
+    confirm_element_id: clean(rawParams.confirm_element_id) || null,
+    value: rawParams.value ?? null,
+    values: Array.isArray(rawParams.values) ? rawParams.values : [],
+    range: rawParams.range && typeof rawParams.range === "object" ? rawParams.range : {},
+    wait_ms: Math.min(10_000, Math.max(100, Number(rawParams.wait_ms) || 500)),
+    purpose,
+    expected_effect: expectedEffect,
+    requirement_ref: clean(rawParams.requirement_ref) || null,
+    branch_index: Number.isInteger(rawParams.branch_index) ? rawParams.branch_index : 0,
+    candidate_ref: clean(rawParams.candidate_ref) || null,
+    detail_group: clean(rawParams.detail_group) || null,
+  };
+  if (!params.observation_id) {
+    throw manualBrowserError("YPSCAN_MANUAL_ARGUMENT_INVALID", "v3 动作必须引用 observation_id");
+  }
+  if (V3_ELEMENT_OPERATIONS.has(operation) && !params.element_id) {
+    throw manualBrowserError("YPSCAN_MANUAL_ARGUMENT_INVALID", `${operation} 必须引用 element_id`);
+  }
+  if (operation === "set_range" && !params.element_ids.length) {
+    throw manualBrowserError(
+      "YPSCAN_MANUAL_ARGUMENT_INVALID",
+      "set_range 必须引用输入框 element_ids",
+    );
+  }
+  if (operation === "activate_tab" && !params.target_tab_id) {
+    throw manualBrowserError(
+      "YPSCAN_MANUAL_ARGUMENT_INVALID",
+      "activate_tab 必须引用 target_tab_id",
+    );
+  }
+  if (purpose === "detail" && !params.candidate_ref) {
+    throw manualBrowserError("YPSCAN_MANUAL_ARGUMENT_INVALID", "详情动作必须引用 candidate_ref");
+  }
+  return params;
+}
+
+function v3EffectVerified(params, beforeState, afterState, receipt) {
+  if (params.operation === "wait") return true;
+  if (params.operation === "navigate_market") {
+    return ["creator_market", "platform_other"].includes(afterState.page_kind);
+  }
+  if (params.operation === "activate_tab") return true;
+  if (params.operation === "return_to_market") return afterState.page_kind === "creator_market";
+  if (["fill", "fill_submit"].includes(params.operation)) {
+    const filled = clean(receipt.readback) === clean(params.value);
+    return params.operation === "fill_submit"
+      ? filled && clean(afterState.market?.keyword) === clean(params.value)
+      : filled;
+  }
+  if (params.operation === "set_range") return receipt.inputs_verified === true;
+  if (params.expected_effect === "dialog_closed") return !afterState.modal.present;
+  if (params.expected_effect === "navigation") {
+    return beforeState.url !== afterState.url || beforeState.page_kind !== afterState.page_kind;
+  }
+  if (params.expected_effect === "results_refreshed") {
+    return (
+      beforeState.market?.page_number !== afterState.market?.page_number ||
+      beforeState.state_id !== afterState.state_id
+    );
+  }
+  if (params.expected_effect === "value_selected") {
+    return (
+      beforeState.selected_filter_fingerprint !== afterState.selected_filter_fingerprint ||
+      receipt.target_after?.selected === true ||
+      receipt.target_after?.selected === "true" ||
+      receipt.target_after?.checked === true ||
+      receipt.target_after?.checked === "true" ||
+      receipt.target_after?.active === true
+    );
+  }
+  if (params.expected_effect === "menu_opened") {
+    return (
+      afterState.elements.length > beforeState.elements.length ||
+      receipt.target_after?.expanded === "true"
+    );
+  }
+  return beforeState.state_id !== afterState.state_id;
+}
+
+async function executeV3BrowserAction({
+  rawParams,
+  loaded,
+  workspaceDir,
+  cdpUrl,
+  connectOverCDP,
+  createArtifactStore,
+  inspectBrowser,
+  inspectPage,
+  resolveElement,
+  now,
+}) {
+  let params;
+  let store;
+  let beforeState = null;
+  let afterState = null;
+  try {
+    const platform = normalizePlatform(rawParams.platform);
+    params = v3ActionParams(rawParams, platform);
+    const observation = (loaded.browser_states ?? []).find(
+      (state) => state.observation_id === params.observation_id,
+    );
+    if (!observation) {
+      throw manualBrowserError("OBSERVATION_NOT_FOUND", "找不到指定 observation_id，请重新观察");
+    }
+    const branch = loaded.plan.branches[params.branch_index];
+    if (!branch) throw manualBrowserError("YPSCAN_MANUAL_BRANCH_INVALID", "关键词分支不存在");
+    const requirements = browserRequirementsForPlan(loaded.plan);
+    const requirementRefs = new Set(requirements.map((item) => item.requirement_ref));
+    const baseSelection = latestV3Selection(loaded);
+    if (params.requirement_ref && !requirementRefs.has(params.requirement_ref)) {
+      throw manualBrowserError(
+        "YPSCAN_MANUAL_ACTION_NOT_ALLOWED",
+        "requirement_ref 不属于当前需求",
+      );
+    }
+    if (params.purpose === "filter_requirement" && (!params.requirement_ref || baseSelection)) {
+      throw manualBrowserError(
+        "YPSCAN_MANUAL_ACTION_NOT_ALLOWED",
+        baseSelection ? "后续关键词不得重新执行全量硬筛" : "硬筛动作必须绑定 requirement_ref",
+      );
+    }
+    if (params.purpose === "repair_filter" && !baseSelection) {
+      throw manualBrowserError("YPSCAN_MANUAL_ACTION_NOT_ALLOWED", "首分支不使用 repair_filter");
+    }
+    if (
+      ["filter_requirement", "repair_filter"].includes(params.purpose) &&
+      !["value_selected", "value_filled"].includes(params.expected_effect)
+    ) {
+      throw manualBrowserError(
+        "YPSCAN_MANUAL_ACTION_NOT_ALLOWED",
+        "硬筛完成动作必须声明可回读的 value_selected 或 value_filled 后置条件",
+      );
+    }
+    if (params.purpose === "reset_filters" && baseSelection) {
+      throw manualBrowserError("YPSCAN_MANUAL_ACTION_NOT_ALLOWED", "后续关键词禁止清空筛选条件");
+    }
+    if (params.purpose === "keyword_search") {
+      if (params.operation !== "fill_submit") {
+        throw manualBrowserError("YPSCAN_MANUAL_ACTION_NOT_ALLOWED", "关键词必须使用 fill_submit");
+      }
+      if (!baseSelection) {
+        const completed = completedRequirementRefs(loaded.browser_actions);
+        const missing = requirements
+          .map((item) => item.requirement_ref)
+          .filter((reference) => !completed.has(reference));
+        const baselineReady = (loaded.browser_states ?? []).some(
+          (state) =>
+            state.page_kind === "creator_market" &&
+            !clean(state.market?.keyword) &&
+            (state.selected_filters ?? []).length === 0,
+        );
+        if (!baselineReady || missing.length) {
+          throw manualBrowserError(
+            "YPSCAN_MANUAL_KEYWORD_TOO_EARLY",
+            "关键词必须在干净基线和全部页面硬筛完成后提交",
+            { baseline_ready: baselineReady, missing_requirement_refs: missing },
+          );
+        }
+      }
+    }
+    store = await createArtifactStore({
+      workspaceDir,
+      params: { ...loaded.params, run_id: params.run_id },
+      plan: loaded.plan,
+      now,
+    });
+    const signature = actionSignature(params);
+    const failedSame = (loaded.browser_actions ?? []).filter(
+      (action) => action.signature === signature && action.ok !== true,
+    ).length;
+    if (failedSame >= 2) {
+      throw manualBrowserError("NO_PROGRESS", "同一元素语义动作已失败两次");
+    }
+    const browser = await connectOverCDP(cdpUrl);
+    const observed = await inspectBrowser(browser, platform, { tabId: observation.tab_id });
+    beforeState = observed.state;
+    if (!observed.page || beforeState.page_context_id !== observation.page_context_id) {
+      throw manualBrowserError("PAGE_CHANGED", "页面整体上下文已变化，请重新观察", {
+        observation_page_context_id: observation.page_context_id,
+        current_page_context_id: beforeState.page_context_id,
+      });
+    }
+    if (["LOGIN_REQUIRED", "CAPTCHA_BLOCKED"].includes(beforeState.page_state)) {
+      throw manualBrowserError(failureFromState(beforeState), "当前页面需要用户接管");
+    }
+    if (beforeState.page_state === "MODAL_BLOCKED") {
+      if (params.purpose !== "modal") {
+        throw manualBrowserError("MODAL_BLOCKED", "当前页面存在阻塞弹窗，请先处理弹窗", {
+          state: beforeState,
+        });
+      }
+      if (!beforeState.modal.dismissible) {
+        throw manualBrowserError("MODAL_BLOCKED", "当前弹窗未被识别为可安全关闭", {
+          state: beforeState,
+        });
+      }
+    }
+    let actionPage = observed.page;
+    let target = null;
+    let targetLocator = null;
+    if (params.element_id) {
+      const descriptor = observation.elements?.find(
+        (element) => element.element_id === params.element_id,
+      );
+      const resolved = await resolveElement(actionPage, descriptor);
+      target = resolved.element;
+      targetLocator = resolved.locator;
+      if (!targetLocator || !target?.enabled) {
+        throw manualBrowserError("TARGET_NOT_FOUND", "目标元素已消失、变化或不可用", {
+          element_id: params.element_id,
+        });
+      }
+    }
+    const receipt = {
+      applied: false,
+      purpose: params.purpose,
+      expected_effect: params.expected_effect,
+      requirement_ref: params.requirement_ref,
+      target_before: cleanPublicElement(target),
+    };
+    if (params.operation === "activate_tab") {
+      const targetTab = await inspectBrowser(browser, platform, { tabId: params.target_tab_id });
+      if (!targetTab.page) {
+        throw manualBrowserError("TARGET_NOT_FOUND", "目标标签页已不存在");
+      }
+      actionPage = targetTab.page;
+      await actionPage.bringToFront?.();
+      receipt.applied = true;
+    } else if (params.operation === "navigate_market") {
+      await actionPage.goto(PLATFORM_RULES[platform].url, {
+        waitUntil: "domcontentloaded",
+        timeout: 10_000,
+      });
+      receipt.applied = true;
+    } else if (params.operation === "wait") {
+      await actionPage.waitForTimeout(params.wait_ms);
+      receipt.applied = true;
+    } else if (params.operation === "return_to_market") {
+      const returned = await returnToMarket(browser, actionPage, platform);
+      actionPage = returned.page;
+      Object.assign(receipt, returned, { page: undefined });
+    } else if (params.operation === "hover") {
+      await targetLocator.hover({ timeout: 3_000 });
+      receipt.applied = true;
+    } else if (params.operation === "fill" || params.operation === "fill_submit") {
+      await targetLocator.fill(String(params.value ?? ""), { timeout: 3_000 });
+      receipt.readback = await targetLocator.inputValue().catch(() => "");
+      if (params.operation === "fill_submit") await targetLocator.press("Enter");
+      receipt.applied = true;
+    } else if (params.operation === "select") {
+      if (target.tag === "select") {
+        await targetLocator.selectOption(params.values.map(String));
+      } else {
+        await targetLocator.click({ timeout: 3_000 });
+      }
+      receipt.applied = true;
+    } else if (["click", "confirm"].includes(params.operation)) {
+      if (params.purpose === "detail" && params.candidate_ref) {
+        const candidate = loaded.candidates.find(
+          (item) => candidateReference(item) === params.candidate_ref,
+        );
+        if (!candidate) {
+          throw manualBrowserError("TARGET_NOT_FOUND", "run 中不存在指定 candidate_ref");
+        }
+        const captured = await captureDetailResponsesDuring(actionPage, {
+          platform,
+          candidate,
+          expectedGroups: params.detail_group
+            ? [params.detail_group]
+            : detailGroupsForPlan(loaded.plan),
+          action: () => targetLocator.click({ timeout: 3_000 }),
+        });
+        receipt.capture = captured.capture;
+      } else {
+        await targetLocator.click({ timeout: 3_000 });
+      }
+      receipt.applied = true;
+    } else if (params.operation === "set_range") {
+      const descriptors = params.element_ids.map((elementId) =>
+        observation.elements?.find((element) => element.element_id === elementId),
+      );
+      const resolvedInputs = [];
+      for (const descriptor of descriptors) {
+        const resolved = await resolveElement(actionPage, descriptor);
+        if (!resolved.locator) {
+          throw manualBrowserError("TARGET_NOT_FOUND", "范围输入框已变化，请重新观察");
+        }
+        resolvedInputs.push(resolved.locator);
+      }
+      const requested = [params.range.min, params.range.max].slice(0, resolvedInputs.length);
+      for (const [index, locator] of resolvedInputs.entries()) {
+        await locator.fill(
+          requested[index] === null || requested[index] === undefined
+            ? ""
+            : String(requested[index]),
+        );
+      }
+      const readbacks = await Promise.all(
+        resolvedInputs.map((locator) => locator.inputValue().catch(() => "")),
+      );
+      receipt.inputs_verified = readbacks.every(
+        (value, index) => clean(value) === clean(requested[index]),
+      );
+      receipt.readbacks = readbacks;
+      if (params.confirm_element_id) {
+        const confirmDescriptor = observation.elements?.find(
+          (element) => element.element_id === params.confirm_element_id,
+        );
+        const confirm = await resolveElement(actionPage, confirmDescriptor);
+        if (!confirm.locator) {
+          throw manualBrowserError("TARGET_NOT_FOUND", "确认按钮已变化，请重新观察");
+        }
+        await confirm.locator.click({ timeout: 3_000 });
+      }
+      receipt.applied = receipt.inputs_verified;
+    }
+    await actionPage.waitForTimeout?.(200).catch(() => {});
+    if (params.purpose === "detail" || params.expected_effect === "navigation") {
+      const observedAfter = await inspectBrowser(browser, platform);
+      if (observedAfter.page) actionPage = observedAfter.page;
+      afterState = observedAfter.state;
+    } else {
+      afterState = await inspectPage(actionPage, platform);
+    }
+    afterState.tab_id =
+      params.operation === "activate_tab"
+        ? params.target_tab_id
+        : (afterState.tab_id ?? observation.tab_id);
+    const resolvedAfter = params.element_id
+      ? await resolveElement(actionPage, { element_id: params.element_id })
+      : null;
+    receipt.target_after = cleanPublicElement(resolvedAfter?.element);
+    receipt.after_selected_filter_fingerprint = afterState.selected_filter_fingerprint;
+    receipt.after_selected_filters = afterState.selected_filters;
+    if (["LOGIN_REQUIRED", "CAPTCHA_BLOCKED"].includes(afterState.page_state)) {
+      throw manualBrowserError(failureFromState(afterState), "动作后页面需要用户接管", {
+        after_state: afterState,
+      });
+    }
+    if (params.purpose === "detail" && params.candidate_ref && afterState.detail?.candidate_id) {
+      const candidate = loaded.candidates.find(
+        (item) => candidateReference(item) === params.candidate_ref,
+      );
+      if (
+        candidate?.platform_id &&
+        clean(candidate.platform_id) !== clean(afterState.detail.candidate_id)
+      ) {
+        throw manualBrowserError("IDENTITY_MISMATCH", "打开的详情页与候选身份不一致", {
+          requested: candidate.platform_id,
+          actual: afterState.detail.candidate_id,
+        });
+      }
+    }
+    const verified = receipt.applied && v3EffectVerified(params, beforeState, afterState, receipt);
+    if (!verified) {
+      throw manualBrowserError("POSTCONDITION_FAILED", "元素动作未满足局部后置条件", {
+        receipt,
+        after_state: afterState,
+      });
+    }
+    const actionId = randomUUID();
+    const actionRecord = {
+      action_id: actionId,
+      signature,
+      protocol_version: 3,
+      action: params.action,
+      operation: params.operation,
+      purpose: params.purpose,
+      expected_effect: params.expected_effect,
+      observation_id: params.observation_id,
+      element_id: params.element_id,
+      element_ids: params.element_ids,
+      requirement_ref: params.requirement_ref,
+      branch_index: params.branch_index,
+      candidate_ref: params.candidate_ref,
+      detail_group: params.detail_group,
+      ok: true,
+      changed: beforeState.state_id !== afterState.state_id,
+      verified: true,
+      before_state_id: beforeState.state_id,
+      after_state_id: afterState.state_id,
+      receipt,
+    };
+    await store.saveBrowserState({ source: "before_action", action_id: actionId, ...beforeState });
+    await store.saveBrowserAction(actionRecord);
+    await store.saveBrowserState({ source: "after_action", action_id: actionId, ...afterState });
+    const payload = {
+      success: true,
+      status: "completed",
+      operation: "browser_action",
+      protocol_version: 3,
+      ok: true,
+      action: params.operation,
+      action_id: actionId,
+      changed: actionRecord.changed,
+      verified: true,
+      retryable: false,
+      receipt,
+      next_call: inspectCall(params),
+    };
+    return hostToolResult(payload, { details: payload });
+  } catch (error) {
+    const code = safeErrorCode(error);
+    if (store && params) {
+      await store
+        .saveBrowserAction({
+          action_id: randomUUID(),
+          signature: actionSignature(params),
+          protocol_version: 3,
+          action: params.action,
+          operation: params.operation,
+          purpose: params.purpose,
+          observation_id: params.observation_id,
+          element_id: params.element_id,
+          requirement_ref: params.requirement_ref,
+          branch_index: params.branch_index,
+          candidate_ref: params.candidate_ref,
+          detail_group: params.detail_group,
+          ok: false,
+          changed: Boolean(
+            beforeState && afterState && beforeState.state_id !== afterState.state_id,
+          ),
+          verified: false,
+          before_state_id: beforeState?.state_id ?? null,
+          after_state_id: afterState?.state_id ?? error?.details?.after_state?.state_id ?? null,
+          error: { code, message: error?.message ?? String(error) },
+        })
+        .catch(() => {});
+    }
+    const humanBlocked = ["LOGIN_REQUIRED", "CAPTCHA_BLOCKED"].includes(code);
+    const payload = {
+      success: false,
+      status: humanBlocked ? "needs_user_action" : "failed",
+      operation: "browser_action",
+      protocol_version: 3,
+      ok: false,
+      action: params?.operation ?? clean(rawParams.operation) ?? null,
+      changed: Boolean(beforeState && afterState && beforeState.state_id !== afterState.state_id),
+      verified: false,
+      retryable: !humanBlocked && !["NO_PROGRESS", "PAGE_CHANGED"].includes(code),
+      next_call: params ? inspectCall(params) : null,
+      error: { code, message: error?.message ?? String(error), evidence: error?.details ?? {} },
+    };
+    return hostToolResult(payload, { details: payload, isError: true });
+  }
+}
+
 /**
  * @param {{
  *   browserCdpUrl?: string,
@@ -239,6 +826,7 @@ async function returnToMarket(browser, detailPage, platform) {
  *   createArtifactStore?: typeof createManualResearchStore,
  *   inspectBrowser?: typeof inspectManualBrowser,
  *   inspectPage?: typeof inspectManualBrowserPage,
+ *   resolveElement?: typeof resolveInteractiveElement,
  *   resolvePage?: typeof resolveManualResearchPage,
  *   now?: () => number,
  * }} [options]
@@ -252,11 +840,61 @@ export function createManualBrowserAction({
   createArtifactStore = createManualResearchStore,
   inspectBrowser = inspectManualBrowser,
   inspectPage = inspectManualBrowserPage,
+  resolveElement = resolveInteractiveElement,
   resolvePage = resolveManualResearchPage,
   now = Date.now,
 } = {}) {
   const cdpUrl = clean(browserCdpUrl).replace(/\/$/u, "");
   return async function manualBrowserAction(rawParams = {}) {
+    if (rawParams.operation) {
+      try {
+        const requirementId = clean(rawParams.requirement_id);
+        const platform = normalizePlatform(rawParams.platform);
+        const runId = clean(rawParams.run_id);
+        if (!requirementId || !runId) {
+          throw manualBrowserError(
+            "YPSCAN_MANUAL_ARGUMENT_INVALID",
+            "requirement_id 和 run_id 不能为空",
+          );
+        }
+        const loaded = await loadRun({
+          workspaceDir,
+          runId,
+          requirementId,
+          platform,
+        });
+        if (loaded.plan.protocol_version !== 3) {
+          throw manualBrowserError(
+            "YPSCAN_MANUAL_PROTOCOL_MISMATCH",
+            "element-ID operation 只适用于 v3 运行",
+          );
+        }
+        return executeV3BrowserAction({
+          rawParams,
+          loaded,
+          workspaceDir,
+          cdpUrl,
+          connectOverCDP,
+          createArtifactStore,
+          inspectBrowser,
+          inspectPage,
+          resolveElement,
+          now,
+        });
+      } catch (error) {
+        const payload = {
+          success: false,
+          status: "failed",
+          operation: "browser_action",
+          protocol_version: 3,
+          error: {
+            code: safeErrorCode(error),
+            message: error?.message ?? String(error),
+          },
+        };
+        return hostToolResult(payload, { details: payload, isError: true });
+      }
+    }
     let params;
     let store;
     let beforeState = null;

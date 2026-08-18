@@ -104,7 +104,7 @@ function rankMcnsDirective(message) {
     "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出，再原样展示此前 ypscan_save_excel_artifact 返回的 CREATOR_PREVIEW_LOCAL_PATH，最后调用 AskUserQuestion。不要输出达人预览表下载链接；表格禁止改成项目符号或编号列表。",
     "表格固定列：机构名、返点、综合分、本机构预估覆盖达人数；每行覆盖人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 search_creators 确实未返回 creators_export_path 或精确保存参数，必须如实说明无法保存，禁止编造或复用历史链接。",
-    "人工拓展并提报 = 先调用 ypscan_manual_select_filters(operation=plan)，再原样执行 inspect/action next_call；commit 生成 selection_id 后才进入增量 ypscan_manual_research。Browser 动作前后都必须使用结构化状态和 post-condition，任何前缀的 manual_source_creators 都不得调用。",
+    "人工拓展并提报 = 先调用 ypscan_manual_select_filters(operation=plan)，再 inspect 全页元素、由 Agent 选择 element_id 调用 Action 并检查局部 post-condition；commit 生成 selection_id 后才进入增量 ypscan_manual_research。首关键词先完成全部硬筛且关键词最后提交，后续关键词保留筛选集只换关键词。任何前缀的 manual_source_creators 都不得调用。",
     MCN_MARKDOWN_TABLE_HEADER,
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
@@ -202,7 +202,7 @@ function manualFilterSelectionSuccessDirective(message) {
     return [
       "YPSCAN_FLOW_DIRECTIVE=筛选计划已创建，尚未操作 Browser，也没有 selection_id。",
       `YPSCAN_NEXT_CALL=${JSON.stringify(result.next_call)}`,
-      "下一步必须原样调用 next_call；之后只使用 Observer/Action 返回的下一步，不得退回一体化筛选调用。",
+      "下一步先原样调用 inspect；Observer 只返回页面与元素，不替 Agent 决策。Agent 必须根据 interaction_plan 选择 element_id 调用 Action，不得退回一体化筛选调用。",
     ].join("\n");
   }
   if (result?.ready_for_collection !== true || !isRecord(result?.collection_args)) {
@@ -249,11 +249,22 @@ function manualBrowserDirective(message) {
       )}`,
     ].join("\n");
   }
+  if (
+    result?.success === true &&
+    result?.protocol_version === 3 &&
+    result?.operation === "inspect"
+  ) {
+    return [
+      `YPSCAN_FLOW_DIRECTIVE=Observer 已完成一次全页快照，observation_id=${state?.observation_id ?? "未知"}。`,
+      "Observer 不决定下一步。必须结合当前 interaction_plan 或 research next_call.intent，检查 URL/重定向/登录/弹窗及全部 elements，由 Agent 选择 element_id、purpose 和 expected_effect 调用 ypscan_manual_browser_action。",
+      "任何 Action 后必须重新 inspect；不得使用 selector、坐标或未出现在本 observation 的元素。首分支关键词必须最后提交；后续分支禁止 reset，只换关键词，漂移时仅修复差异项。",
+    ].join("\n");
+  }
   if (isRecord(result?.next_call)) {
     return [
       `YPSCAN_FLOW_DIRECTIVE=Browser 状态/动作已返回（${pageState ?? code}）。`,
       `YPSCAN_NEXT_CALL=${JSON.stringify(result.next_call)}`,
-      "下一步必须原样调用 next_call；不得自行拼 selector、坐标点击或重复上一动作。",
+      "下一步必须原样调用 next_call；v3 inspect 后由 Agent 根据全页元素决定动作，不得自行拼 selector、坐标点击或重复上一动作。",
     ].join("\n");
   }
   return [
@@ -693,9 +704,9 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now, skillP
         prependContext: [
           "[YPscan startup instruction]",
           `Before the first YPscan or media-assistant action in this run, read the complete Skill exactly once with the host Read tool: ${skillPath}`,
-          "固定业务顺序：需求解析阶段内部固定调用 ypscan_parse_requirement → validate_requirement；完整固定链路：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns。search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实本地 file_path，最后调用 AskUserQuestion。表格和本地路径不得放进弹窗 question，也不得在 AskUserQuestion 返回后补发；表格禁止改成项目符号或编号列表。人工拓展先调用 ypscan_manual_select_filters(operation=plan)，再严格原样执行工具返回的 inspect/action next_call；只有 commit 返回 ready_for_collection=true 后才进入 ypscan_manual_research。多关键词逐分支 plan → inspect/action → commit → 增量 collect；任何前缀的 manual_source_creators 都不得调用。",
+          "固定业务顺序：需求解析阶段内部固定调用 ypscan_parse_requirement → validate_requirement；完整固定链路：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns。search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实本地 file_path，最后调用 AskUserQuestion。表格和本地路径不得放进弹窗 question，也不得在 AskUserQuestion 返回后补发；表格禁止改成项目符号或编号列表。人工拓展先调用 ypscan_manual_select_filters(operation=plan)，再执行 inspect → Agent 选择 element_id → Action → inspect；只有 commit 返回 ready_for_collection=true 后才进入 ypscan_manual_research。首关键词先建立硬筛且关键词最后提交，后续关键词继承筛选集只换关键词；任何前缀的 manual_source_creators 都不得调用。",
           "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion；普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
-          "用户选择人工拓展后，首次 ypscan_manual_select_filters 必须保留完整硬条件 facts。Browser 的错页、登录、弹窗、加载、结果页和详情页一律先由 ypscan_manual_browser_inspect 识别；只有 ypscan_manual_browser_action 可以执行语义动作，并且必须传上一状态的 expected_state_id。任何动作后必须使用 verified/after_state/next_call，不得自行拼 selector 或坐标点击；只有登录失效或真实 CAPTCHA 才请求用户接管。",
+          "用户选择人工拓展后，首次 ypscan_manual_select_filters 必须保留完整硬条件 facts。Browser 的错页、重定向、登录、弹窗、结果页和详情页一律先由 ypscan_manual_browser_inspect 做一次性全页观测；Observer 不等待具体元素也不决定动作。Agent 从 elements 选择目标，ypscan_manual_browser_action 必须传 observation_id、element_id、purpose 和 expected_effect。任何动作后重新 inspect，不得自行拼 selector 或坐标点击；只有登录失效或真实 CAPTCHA 才请求用户接管。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           "手扒达人价格必须从当前 ypscan_parse_requirement.data.facts 复制客户原始 operator 和原始数值；禁止把 Provider 区间或手工计算后的 50%–120% 区间再次传入。除本轮唯一 creator_count 外，不重算价格事实。",
         ].join("\n"),
