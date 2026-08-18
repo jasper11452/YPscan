@@ -44,7 +44,7 @@ export default {
         return {
           name: "ypscan_manual_browser_inspect",
           description:
-            "只读识别人工拓展 Browser 当前状态：错页、登录、加载、普通/受保护弹窗、验证码、达人广场、结果页或达人详情。任何 Browser 动作前先调用；不导航、不点击、不关闭弹窗、不返回原始 DOM。",
+            "一次性只读观测人工拓展 Browser 的整体状态和当前标签页全部可见可交互元素。返回 observation_id、稳定页面上下文、重定向/登录/弹窗/验证码信号、区域与 element_id；不等待具体元素、不决定下一步、不返回原始 DOM。",
           parameters: MANUAL_BROWSER_INSPECT_PARAMETERS,
           async execute(_id, params) {
             return inspectBrowser(params);
@@ -63,7 +63,7 @@ export default {
         return {
           name: "ypscan_manual_browser_action",
           description:
-            "执行一个有后置验证的人工拓展语义动作。必须携带 inspect/上一动作返回的 expected_state_id；筛选动作必须引用 plan_action_id。登录、验证码和受保护弹窗作为状态立即暂停，绝不内部盲重试。",
+            "执行一个带局部后置验证的人工拓展元素语义动作。v3 必须引用 Observer 的 observation_id/element_id，并声明 purpose/expected_effect；页面其他元素变化不阻止动作，目标变化则要求重新观测。禁止 selector 和坐标。",
           parameters: MANUAL_BROWSER_ACTION_PARAMETERS,
           async execute(_id, params) {
             return browserAction(params);
@@ -82,7 +82,7 @@ export default {
         return {
           name: "ypscan_manual_select_filters",
           description:
-            "人工拓展筛选凭证工具：operation=plan 只生成当前关键词分支的语义动作计划，不操作 Browser；Agent 用 inspect/action 逐步执行后，operation=commit 只读复核全部页面条件并签发 selection_id。",
+            "人工拓展筛选凭证工具：v3 plan 只返回硬筛需求和关键词顺序，不指定页面控件；Agent 观测全页元素后逐项操作。首关键词硬筛完成后最后提交关键词，后续关键词继承筛选集只换关键词；commit 复核后签发 selection_id。",
           parameters: MANUAL_FILTER_SELECTION_PARAMETERS,
           async execute(_id, params) {
             return selectFilters(params);

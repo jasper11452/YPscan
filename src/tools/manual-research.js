@@ -608,6 +608,18 @@ function outputPayload({
 }
 
 function browserActionCall(params, state, action, extra = {}) {
+  if (params.protocol_version === 3) {
+    return {
+      tool: "ypscan_manual_browser_inspect",
+      args: {
+        requirement_id: params.requirement_id,
+        platform: params.platform,
+        run_id: params.run_id,
+      },
+      intent: { action, ...extra },
+      reason: "先观察当前页全部可交互元素，再由 Agent 选择 element_id 执行目标动作",
+    };
+  }
   return {
     tool: "ypscan_manual_browser_action",
     args: {
@@ -654,7 +666,7 @@ function incrementalPayload({
     success: true,
     status,
     operation: "collect",
-    protocol_version: 2,
+    protocol_version: plan.protocol_version ?? 2,
     run_id: params.run_id,
     next_call: nextCall ?? null,
   };
@@ -685,13 +697,19 @@ export function latestOpenCandidate(actions) {
       Boolean(action.after_state_id) &&
       ["LOGIN_REQUIRED", "CAPTCHA_BLOCKED", "MODAL_BLOCKED"].includes(action.error?.code);
     if (
-      action.action === "open_creator_detail" &&
+      (action.action === "open_creator_detail" ||
+        (action.protocol_version === 3 && action.purpose === "detail" && action.candidate_ref)) &&
       action.candidate_ref &&
       (action.ok || reachedBlockedDetail)
     ) {
       candidateRef = action.candidate_ref;
     }
-    if (action.ok && action.action === "return_to_market") candidateRef = null;
+    if (
+      action.ok &&
+      (action.action === "return_to_market" || action.operation === "return_to_market")
+    ) {
+      candidateRef = null;
+    }
   }
   return candidateRef;
 }
@@ -773,7 +791,9 @@ async function collectIncrementalV2({
             ? browserActionCall(params, state, "wait_for_ready", {
                 target_states: ["MARKET_READY", "RESULTS_READY"],
               })
-            : null,
+            : params.protocol_version === 3
+              ? browserActionCall(params, state, "ensure_market_ready")
+              : null,
       }),
       success: false,
       error: {
@@ -1015,7 +1035,11 @@ async function collectIncrementalV2({
     const groups = detailGroupsForPlan(plan);
     const attempted = new Set(
       candidateActions
-        .filter((action) => action.action === "activate_detail_section")
+        .filter(
+          (action) =>
+            action.action === "activate_detail_section" ||
+            (action.protocol_version === 3 && action.purpose === "detail" && action.detail_group),
+        )
         .map((action) => action.detail_group),
     );
     const nextGroup = groups.find(
@@ -1284,13 +1308,14 @@ export function createManualResearch({
           "selection_id 不存在、未就绪或已经失效",
         );
       }
+      params.protocol_version = selection.protocol_version ?? 1;
       const latestForBranch = loaded.selections
         .filter((item) => item?.branch?.branch_id === selection.branch?.branch_id)
         .at(-1);
       if (latestForBranch?.selection_id !== selection.selection_id) {
         throw manualBrowserError("YPSCAN_MANUAL_SELECTION_STALE", "该关键词分支已有更新的筛选凭证");
       }
-      if (selection.protocol_version === 2) {
+      if ([2, 3].includes(selection.protocol_version)) {
         const browser = await connectOverCDP(cdpUrl);
         return collectIncrementalV2({
           params,

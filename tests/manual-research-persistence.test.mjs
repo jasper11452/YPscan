@@ -277,7 +277,7 @@ test("the target sheet excludes candidates below the manual price floor", async 
   assert.match(poolSheet, /报价不在要求区间，不得推荐/u);
 });
 
-test("a restarted v2 run restores the same plan and advances to the requested branch", async (t) => {
+test("a restarted v3 run restores the same requirements and advances keyword-only planning", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-manual-resume-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   let browserConnections = 0;
@@ -314,7 +314,9 @@ test("a restarted v2 run restores the same plan and advances to the requested br
   assert.equal(resumed.run_id, first.run_id);
   assert.equal(resumed.branch.branch_index, 1);
   assert.equal(resumed.branch.keyword, "办公软件");
-  assert.equal(resumed.planned_actions.at(-1).keyword, "办公软件");
+  assert.equal(resumed.protocol_version, 3);
+  assert.equal(resumed.interaction_plan.branch.keyword, "办公软件");
+  assert.equal(resumed.interaction_plan.keyword_must_be_last, true);
   assert.equal(browserConnections, 0, "planning and restart recovery must remain Browser-free");
 });
 

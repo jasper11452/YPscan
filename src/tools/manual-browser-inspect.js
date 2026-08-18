@@ -1,7 +1,7 @@
 import { chromium } from "playwright-core";
 import { browserActionsForBranch } from "./manual-browser-plan.js";
 import { inspectManualBrowser, MANUAL_BROWSER_PAGE_STATES } from "./manual-browser-state.js";
-import { loadManualResearchRun } from "./manual-research-artifact.js";
+import { createManualResearchStore, loadManualResearchRun } from "./manual-research-artifact.js";
 import { hostToolResult } from "./tool-result.js";
 
 const DEFAULT_CDP_URL = "http://127.0.0.1:18800";
@@ -39,6 +39,8 @@ function platformName(value) {
  *   workspaceDir?: string,
  *   connectOverCDP?: (endpointURL: string) => Promise<import("playwright-core").Browser>,
  *   loadRun?: typeof loadManualResearchRun,
+ *   createArtifactStore?: typeof createManualResearchStore,
+ *   inspectBrowser?: typeof inspectManualBrowser,
  * }} [options]
  */
 export function createManualBrowserInspector({
@@ -46,6 +48,8 @@ export function createManualBrowserInspector({
   workspaceDir,
   connectOverCDP = (endpointURL) => chromium.connectOverCDP(endpointURL),
   loadRun = loadManualResearchRun,
+  createArtifactStore = createManualResearchStore,
+  inspectBrowser = inspectManualBrowser,
 } = {}) {
   const cdpUrl = String(browserCdpUrl ?? "")
     .trim()
@@ -54,7 +58,7 @@ export function createManualBrowserInspector({
     try {
       const platform = platformName(rawParams.platform);
       const browser = await connectOverCDP(cdpUrl);
-      const { state } = await inspectManualBrowser(browser, platform, {
+      const { state } = await inspectBrowser(browser, platform, {
         expectedStateId:
           typeof rawParams.expected_state_id === "string"
             ? rawParams.expected_state_id.trim()
@@ -71,6 +75,27 @@ export function createManualBrowserInspector({
           requirementId,
           platform,
         });
+        const store = await createArtifactStore({
+          workspaceDir,
+          params: { ...loaded.params, run_id: runId },
+          plan: loaded.plan,
+        });
+        await store.saveBrowserState({ source: "observer", ...state });
+        if (loaded.plan.protocol_version === 3) {
+          const payload = {
+            success: true,
+            status: "observed",
+            operation: "inspect",
+            protocol_version: 3,
+            platform,
+            requirement_id: requirementId,
+            run_id: runId,
+            state,
+            known_page_states: MANUAL_BROWSER_PAGE_STATES,
+            next_call: null,
+          };
+          return hostToolResult(payload, { details: payload });
+        }
         const latestTransition = loaded.phase_transitions?.at(-1) ?? null;
         const branchIndex = Number.isInteger(latestTransition?.branch_index)
           ? latestTransition.branch_index

@@ -141,7 +141,8 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
   assert.match(directiveText(rank), /ypscan_manual_select_filters\(operation=plan\)/u);
-  assert.match(directiveText(rank), /inspect\/action next_call/u);
+  assert.match(directiveText(rank), /inspect 全页元素/u);
+  assert.match(directiveText(rank), /element_id/u);
   assert.match(directiveText(rank), /post-condition/u);
   const question = argsFromDirective(directiveText(rank));
   assert.deepEqual(
@@ -334,7 +335,8 @@ test("startup instruction fixes the chain and delays Browser until the manual br
   assert.match(first.prependContext, /ypscan_manual_select_filters\(operation=plan\)/u);
   assert.match(first.prependContext, /ypscan_manual_browser_inspect/u);
   assert.match(first.prependContext, /ypscan_manual_browser_action/u);
-  assert.match(first.prependContext, /expected_state_id/u);
+  assert.match(first.prependContext, /observation_id/u);
+  assert.match(first.prependContext, /element_id/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /普通 UI\/参数问题的一次有界自动重试不调用/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
@@ -446,5 +448,5 @@ test("rank and startup directives ban any manual_source_creators call", () => {
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /manual_source_creators 都不得调用/u);
   assert.match(startup.prependContext, /ypscan_manual_select_filters\(operation=plan\)/u);
-  assert.match(startup.prependContext, /inspect\/action/u);
+  assert.match(startup.prependContext, /inspect → Agent 选择 element_id → Action/u);
 });

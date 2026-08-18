@@ -318,6 +318,7 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
       input_anchor: filter.input_anchor,
     }));
   return {
+    protocol_version: 3,
     platform,
     keywords: keywordsToRun,
     filters,

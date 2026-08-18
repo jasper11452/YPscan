@@ -87,7 +87,8 @@ export const MANUAL_FILTER_SELECTION_PARAMETERS = Object.freeze({
     operation: {
       type: "string",
       enum: ["plan", "commit"],
-      description: "默认 plan；plan 只创建动作计划，commit 只读复核并签发 selection_id。",
+      description:
+        "默认 plan；v3 plan 只创建硬筛需求和关键词顺序，不决定元素动作，commit 只读复核并签发 selection_id。",
     },
     requirement_id: MANUAL_RESEARCH_PARAMETERS.properties.requirement_id,
     platform: MANUAL_RESEARCH_PARAMETERS.properties.platform,

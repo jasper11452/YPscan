@@ -6,6 +6,12 @@ import test from "node:test";
 
 import { createManualBrowserAction } from "../src/tools/manual-browser-action.js";
 import { createManualFilterSelection } from "../src/tools/manual-filter-selection.js";
+import { browserActionsForBranch } from "../src/tools/manual-browser-plan.js";
+import {
+  createManualResearchStore,
+  loadManualResearchRun,
+} from "../src/tools/manual-research-artifact.js";
+import { compileManualResearchPlan } from "../src/tools/manual-research-plan.js";
 
 function payload(result) {
   return JSON.parse(result.content[0].text);
@@ -45,8 +51,16 @@ function pageState(pageState, id) {
 }
 
 async function plannedRun(workspaceDir) {
-  const select = createManualFilterSelection({ workspaceDir });
-  return payload(await select(selectionParams()));
+  const input = selectionParams();
+  const plan = { ...compileManualResearchPlan(input), protocol_version: 2 };
+  const store = await createManualResearchStore({ workspaceDir, params: input, plan });
+  const branch = plan.branches[0];
+  return {
+    ...input,
+    run_id: store.run_id,
+    branch,
+    planned_actions: browserActionsForBranch(plan, branch),
+  };
 }
 
 test("semantic action rejects stale expected_state_id without touching the page", async (t) => {
@@ -196,4 +210,248 @@ test("the action ledger stops an unchanged action after two failed attempts", as
   assert.equal(stopped.error.code, "NO_PROGRESS");
   assert.equal(stopped.retryable, false);
   assert.equal(attempts, 2);
+});
+
+test("v3 resolves an observed element even when unrelated page elements changed", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-browser-v3-element-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const planned = payload(await createManualFilterSelection({ workspaceDir })(selectionParams()));
+  const loaded = await loadManualResearchRun({
+    workspaceDir,
+    runId: planned.run_id,
+    requirementId: planned.requirement_id,
+    platform: planned.platform,
+  });
+  const store = await createManualResearchStore({
+    workspaceDir,
+    params: { ...loaded.params, run_id: planned.run_id },
+    plan: loaded.plan,
+  });
+  const target = {
+    element_id: "el-filter-menu",
+    region_id: "filters",
+    role: "button",
+    tag: "button",
+    name: "任意新版筛选菜单",
+    enabled: true,
+    actions: ["click", "hover"],
+  };
+  const observation = {
+    source: "observer",
+    observation_id: "observation-v3",
+    tab_id: "tab:0:0",
+    page_context_id: "market-context",
+    state_id: "observed-state",
+    page_state: "MARKET_READY",
+    page_kind: "creator_market",
+    url: "https://www.xingtu.cn/ad/creator/market",
+    market: { keyword: "" },
+    modal: { present: false },
+    challenge: { present: false },
+    elements: [target],
+    selected_filters: [],
+    selected_filter_fingerprint: "filters-empty",
+  };
+  await store.saveBrowserState(observation);
+  const page = { waitForTimeout: async () => {} };
+  const before = {
+    ...observation,
+    observation_id: "current-observation",
+    state_id: "current-with-unrelated-elements",
+    elements: [target, { element_id: "unrelated" }],
+  };
+  const after = {
+    ...before,
+    state_id: "menu-open",
+    elements: [target, { element_id: "menu-option" }, { element_id: "unrelated" }],
+  };
+  let clicks = 0;
+  const act = createManualBrowserAction({
+    workspaceDir,
+    connectOverCDP: async () => ({ contexts: () => [] }),
+    inspectBrowser: async () => ({ page, state: before }),
+    inspectPage: async () => after,
+    resolveElement: async (_page, descriptor) => ({
+      element: descriptor ? { ...target, expanded: clicks ? "true" : null } : null,
+      locator: descriptor
+        ? {
+            click: async () => {
+              clicks += 1;
+            },
+          }
+        : null,
+      snapshot: { elements: [target] },
+    }),
+  });
+  const result = payload(
+    await act({
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
+      branch_index: 0,
+      operation: "click",
+      observation_id: observation.observation_id,
+      element_id: target.element_id,
+      purpose: "inspection",
+      expected_effect: "menu_opened",
+    }),
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.protocol_version, 3);
+  assert.equal(clicks, 1);
+  assert.equal(result.next_call.tool, "ypscan_manual_browser_inspect");
+});
+
+test("v3 enforces keyword-last and forbids reset after a filter set exists", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-browser-v3-order-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const planned = payload(await createManualFilterSelection({ workspaceDir })(selectionParams()));
+  const loaded = await loadManualResearchRun({
+    workspaceDir,
+    runId: planned.run_id,
+    requirementId: planned.requirement_id,
+    platform: planned.platform,
+  });
+  const store = await createManualResearchStore({
+    workspaceDir,
+    params: { ...loaded.params, run_id: planned.run_id },
+    plan: loaded.plan,
+  });
+  const search = { element_id: "el-search", tag: "input", enabled: true };
+  await store.saveBrowserState({
+    source: "observer",
+    observation_id: "order-observation",
+    tab_id: "tab:0:0",
+    page_context_id: "market-context",
+    page_kind: "creator_market",
+    market: { keyword: "" },
+    selected_filters: [],
+    elements: [search],
+  });
+  let connections = 0;
+  const act = createManualBrowserAction({
+    workspaceDir,
+    connectOverCDP: async () => {
+      connections += 1;
+      return { contexts: () => [] };
+    },
+  });
+  const early = payload(
+    await act({
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
+      branch_index: 0,
+      operation: "fill_submit",
+      observation_id: "order-observation",
+      element_id: search.element_id,
+      value: "办公软件",
+      purpose: "keyword_search",
+      expected_effect: "results_refreshed",
+    }),
+  );
+  assert.equal(early.error.code, "YPSCAN_MANUAL_KEYWORD_TOO_EARLY");
+  assert.equal(connections, 0);
+
+  await store.saveSelection({
+    protocol_version: 3,
+    selection_id: "base-selection",
+    status: "ready",
+    branch: loaded.plan.branches[0],
+    filter_set_id: "filter-set",
+    filter_fingerprint: "filters-a",
+  });
+  const reset = payload(
+    await act({
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
+      branch_index: 0,
+      operation: "click",
+      observation_id: "order-observation",
+      element_id: search.element_id,
+      purpose: "reset_filters",
+      expected_effect: "page_changed",
+    }),
+  );
+  assert.equal(reset.error.code, "YPSCAN_MANUAL_ACTION_NOT_ALLOWED");
+  assert.equal(connections, 0);
+});
+
+test("v3 fills an Agent-chosen arbitrary range and verifies each input before confirming", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-browser-v3-range-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const planned = payload(await createManualFilterSelection({ workspaceDir })(selectionParams()));
+  const loaded = await loadManualResearchRun({
+    workspaceDir,
+    runId: planned.run_id,
+    requirementId: planned.requirement_id,
+    platform: planned.platform,
+  });
+  const store = await createManualResearchStore({
+    workspaceDir,
+    params: { ...loaded.params, run_id: planned.run_id },
+    plan: loaded.plan,
+  });
+  const elements = [
+    { element_id: "el-min", tag: "input", enabled: true },
+    { element_id: "el-max", tag: "input", enabled: true },
+    { element_id: "el-confirm", tag: "button", enabled: true },
+  ];
+  const observation = {
+    source: "observer",
+    observation_id: "range-observation",
+    tab_id: "tab:0:0",
+    page_context_id: "market-context",
+    state_id: "range-before",
+    page_state: "MARKET_READY",
+    page_kind: "creator_market",
+    url: "https://www.xingtu.cn/ad/creator/market",
+    market: { keyword: "" },
+    modal: { present: false },
+    challenge: { present: false },
+    elements,
+    selected_filters: [],
+  };
+  await store.saveBrowserState(observation);
+  const values = new Map();
+  let confirmed = 0;
+  const page = { waitForTimeout: async () => {} };
+  const resolveElement = async (_page, descriptor) => ({
+    element: descriptor ?? null,
+    locator: descriptor
+      ? {
+          fill: async (value) => values.set(descriptor.element_id, value),
+          inputValue: async () => values.get(descriptor.element_id) ?? "",
+          click: async () => {
+            confirmed += 1;
+          },
+        }
+      : null,
+  });
+  const act = createManualBrowserAction({
+    workspaceDir,
+    connectOverCDP: async () => ({ contexts: () => [] }),
+    inspectBrowser: async () => ({ page, state: observation }),
+    inspectPage: async () => ({ ...observation, state_id: "range-after" }),
+    resolveElement,
+  });
+  const result = payload(
+    await act({
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
+      branch_index: 0,
+      operation: "set_range",
+      observation_id: observation.observation_id,
+      element_ids: ["el-min", "el-max"],
+      confirm_element_id: "el-confirm",
+      range: { min: 10000, max: 24000 },
+      purpose: "inspection",
+      expected_effect: "value_filled",
+    }),
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.receipt.readbacks, ["10000", "24000"]);
+  assert.equal(confirmed, 1);
 });

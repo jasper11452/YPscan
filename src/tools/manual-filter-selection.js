@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chromium } from "playwright-core";
-import { browserActionsForBranch } from "./manual-browser-plan.js";
+import {
+  branchInteractionPlan,
+  browserActionsForBranch,
+  browserRequirementsForPlan,
+} from "./manual-browser-plan.js";
 import { inspectManualBrowser } from "./manual-browser-state.js";
 import { createManualResearchStore, loadManualResearchRun } from "./manual-research-artifact.js";
 import { compileManualResearchPlan } from "./manual-research-plan.js";
@@ -77,6 +81,218 @@ function verificationFromActions(plannedActions, completed) {
   };
 }
 
+function latestRequirementActions(actions) {
+  const latest = new Map();
+  for (const action of actions ?? []) {
+    if (action.protocol_version === 3 && action.ok && action.verified && action.requirement_ref) {
+      latest.set(action.requirement_ref, action);
+    }
+  }
+  return latest;
+}
+
+async function commitV3Selection({
+  params,
+  plan,
+  branch,
+  loaded,
+  store,
+  connectOverCDP,
+  cdpUrl,
+  inspectBrowser,
+  now,
+}) {
+  const requirements = browserRequirementsForPlan(plan);
+  const requirementActions = latestRequirementActions(loaded.browser_actions);
+  const baseSelection = (loaded.selections ?? []).find(
+    (selection) => selection.protocol_version === 3 && selection.status === "ready",
+  );
+  const missingRequirements = baseSelection
+    ? []
+    : requirements
+        .map((requirement) => requirement.requirement_ref)
+        .filter((reference) => !requirementActions.has(reference));
+  const baselineReady = baseSelection
+    ? true
+    : (loaded.browser_states ?? []).some(
+        (state) =>
+          state.page_kind === "creator_market" &&
+          !clean(state.market?.keyword) &&
+          (state.selected_filters ?? []).length === 0,
+      );
+  const actions = loaded.browser_actions ?? [];
+  const keywordIndex = actions.findLastIndex(
+    (action) =>
+      action.protocol_version === 3 &&
+      action.ok &&
+      action.verified &&
+      action.branch_index === branch.branch_index &&
+      action.purpose === "keyword_search",
+  );
+  const lastFilterMutation = actions.findLastIndex(
+    (action) =>
+      action.protocol_version === 3 &&
+      action.ok &&
+      action.verified &&
+      ["reset_filters", "filter_requirement", "repair_filter"].includes(action.purpose),
+  );
+  if (
+    !baselineReady ||
+    missingRequirements.length ||
+    keywordIndex < 0 ||
+    keywordIndex < lastFilterMutation
+  ) {
+    throw selectionError(
+      "YPSCAN_MANUAL_ACTIONS_INCOMPLETE",
+      "页面硬筛、干净基线或最后关键词动作尚未完成",
+      {
+        baseline_ready: baselineReady,
+        missing_requirement_refs: missingRequirements,
+        keyword_submitted: keywordIndex >= 0,
+        keyword_is_last: keywordIndex >= lastFilterMutation,
+        next_call: {
+          tool: "ypscan_manual_browser_inspect",
+          args: {
+            requirement_id: params.requirement_id,
+            platform: params.platform,
+            run_id: store.run_id,
+          },
+          reason: "重新观察完整页面，由 Agent 决定下一条元素动作",
+        },
+      },
+    );
+  }
+  const browser = await connectOverCDP(cdpUrl);
+  const observed = await inspectBrowser(browser, params.platform);
+  if (!observed.page) {
+    throw selectionError("YPSCAN_MANUAL_PAGE_STATE_UNKNOWN", "无法确定当前 Browser 页面");
+  }
+  if (["LOGIN_REQUIRED", "CAPTCHA_BLOCKED"].includes(observed.state.page_state)) {
+    throw selectionError(observed.state.page_state, "当前 Browser 需要用户处理", {
+      state: observed.state,
+    });
+  }
+  if (observed.state.page_kind !== "creator_market") {
+    throw selectionError("YPSCAN_MANUAL_SELECTION_READBACK_MISMATCH", "当前页面不是达人广场", {
+      state: observed.state,
+    });
+  }
+  const keywordAction = actions[keywordIndex];
+  if (clean(observed.state.market?.keyword) !== clean(branch.keyword)) {
+    throw selectionError("YPSCAN_MANUAL_SELECTION_READBACK_MISMATCH", "当前关键词与分支不一致", {
+      requested: branch.keyword,
+      actual: observed.state.market?.keyword ?? null,
+    });
+  }
+  const currentFilterFingerprint = observed.state.selected_filter_fingerprint;
+  if (baseSelection && currentFilterFingerprint !== baseSelection.filter_fingerprint) {
+    throw selectionError("YPSCAN_MANUAL_FILTER_SET_DRIFT", "后续关键词的硬筛条件发生漂移", {
+      expected_filter_fingerprint: baseSelection.filter_fingerprint,
+      actual_filter_fingerprint: currentFilterFingerprint,
+      selected_filters: observed.state.selected_filters,
+      next_call: {
+        tool: "ypscan_manual_browser_inspect",
+        args: {
+          requirement_id: params.requirement_id,
+          platform: params.platform,
+          run_id: store.run_id,
+        },
+        reason: "仅修复发生漂移的筛选项，禁止清空全部条件",
+      },
+    });
+  }
+  const verification = {
+    keyword: {
+      requested: branch.keyword,
+      readback: observed.state.market?.keyword ?? "",
+      applied: true,
+      result_count: observed.state.market?.result_row_count ?? null,
+      action_id: keywordAction.action_id,
+    },
+    requirements: requirements.map((requirement) => ({
+      ...requirement,
+      inherited: Boolean(baseSelection),
+      action_id:
+        requirementActions.get(requirement.requirement_ref)?.action_id ??
+        baseSelection?.verification?.requirements?.find(
+          (item) => item.requirement_ref === requirement.requirement_ref,
+        )?.action_id ??
+        null,
+    })),
+    actual_filters: requirements.map((requirement) => ({
+      control: requirement.kind,
+      requirement_ref: requirement.requirement_ref,
+      readback:
+        requirementActions.get(requirement.requirement_ref)?.receipt?.after_selected_filters ??
+        observed.state.selected_filters,
+    })),
+    price_view: {
+      requested: plan.price_view ?? null,
+      applied: !plan.price_view || requirements.some((item) => item.kind === "price_view"),
+      readback: plan.price_view ?? null,
+    },
+    unexpressed_filters: plan.unexpressed ?? [],
+    selected_filters: observed.state.selected_filters,
+    filter_fingerprint: currentFilterFingerprint,
+    final_state: {
+      valid: true,
+      page_context_id: observed.state.page_context_id,
+      observation_id: observed.state.observation_id,
+    },
+  };
+  const filterSetId =
+    baseSelection?.filter_set_id ??
+    stateHash({
+      platform: params.platform,
+      filter_fingerprint: currentFilterFingerprint,
+      requirement_refs: requirements.map((item) => item.requirement_ref),
+    });
+  const selectionId = randomUUID();
+  const selection = {
+    protocol_version: 3,
+    selection_id: selectionId,
+    status: "ready",
+    requirement_id: params.requirement_id,
+    platform: params.platform,
+    branch,
+    page_url: observed.state.url,
+    filter_set_id: filterSetId,
+    filter_fingerprint: currentFilterFingerprint,
+    verification,
+    selected_at: new Date(now()).toISOString(),
+  };
+  await store.saveBrowserState({ source: "selection_commit", ...observed.state });
+  await store.saveSelection(selection);
+  await store.savePhaseTransition({
+    phase: "FILTERS_VERIFIED",
+    branch_index: branch.branch_index,
+    selection_id: selectionId,
+    filter_set_id: filterSetId,
+  });
+  const payload = {
+    success: true,
+    status: "ready",
+    operation: "commit",
+    protocol_version: 3,
+    requirement_id: params.requirement_id,
+    platform: params.platform,
+    run_id: store.run_id,
+    selection_id: selectionId,
+    filter_set_id: filterSetId,
+    branch,
+    ready_for_collection: true,
+    verification,
+    collection_args: {
+      operation: "collect",
+      requirement_id: params.requirement_id,
+      platform: params.platform,
+      run_id: store.run_id,
+      selection_id: selectionId,
+    },
+  };
+  return hostToolResult(payload, { details: payload });
+}
+
 /**
  * Create the plan/commit selection boundary. Planning never touches Browser;
  * committing never repairs or reapplies a failed interaction.
@@ -107,6 +323,7 @@ export function createManualFilterSelection({
     let params;
     let store;
     let branch = null;
+    let protocolVersion = 3;
     try {
       params = validateManualFilterSelectionParams(rawParams);
       let plan;
@@ -122,6 +339,7 @@ export function createManualFilterSelection({
         });
         plan = loaded.plan;
       }
+      protocolVersion = plan.protocol_version ?? 2;
       branch = plan.branches[params.branch_index ?? 0];
       if (!branch) {
         throw selectionError("YPSCAN_MANUAL_BRANCH_INVALID", "branch_index 已超过当前关键词分支数");
@@ -154,13 +372,15 @@ export function createManualFilterSelection({
           success: true,
           status: "awaiting_browser_actions",
           operation: "plan",
-          protocol_version: 2,
+          protocol_version: plan.protocol_version ?? 2,
           requirement_id: params.requirement_id,
           platform: params.platform,
           run_id: store.run_id,
           branch,
           ready_for_collection: false,
-          planned_actions: plannedActions,
+          ...(plan.protocol_version === 3
+            ? { interaction_plan: branchInteractionPlan(plan, branch, loaded?.selections ?? []) }
+            : { planned_actions: plannedActions }),
           next_call: nextCall,
         };
         return hostToolResult(payload, { details: payload });
@@ -172,6 +392,19 @@ export function createManualFilterSelection({
         requirementId: params.requirement_id,
         platform: params.platform,
       });
+      if (plan.protocol_version === 3) {
+        return await commitV3Selection({
+          params,
+          plan,
+          branch,
+          loaded,
+          store,
+          connectOverCDP,
+          cdpUrl,
+          inspectBrowser,
+          now,
+        });
+      }
       const completed = latestActionsByPlanId(loaded.browser_actions, branch.branch_index);
       const incomplete = plannedActions.filter((action) => {
         const receipt = completed.get(action.plan_action_id);
@@ -237,7 +470,7 @@ export function createManualFilterSelection({
         : null;
       const selectionId = randomUUID();
       const selection = {
-        protocol_version: 2,
+        protocol_version: protocolVersion,
         selection_id: selectionId,
         status: "ready",
         requirement_id: params.requirement_id,
@@ -258,7 +491,7 @@ export function createManualFilterSelection({
         success: true,
         status: "ready",
         operation: "commit",
-        protocol_version: 2,
+        protocol_version: protocolVersion,
         requirement_id: params.requirement_id,
         platform: params.platform,
         run_id: store.run_id,
@@ -281,7 +514,7 @@ export function createManualFilterSelection({
         success: false,
         status,
         operation: params?.operation ?? rawParams.operation ?? "plan",
-        protocol_version: 2,
+        protocol_version: protocolVersion,
         ready_for_collection: false,
         requirement_id: params?.requirement_id ?? (clean(rawParams.requirement_id) || null),
         platform: params?.platform ?? (clean(rawParams.platform) || null),

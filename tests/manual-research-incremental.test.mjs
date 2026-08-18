@@ -30,8 +30,11 @@ function params() {
 
 function resultState() {
   return {
+    observation_id: "results-observation",
+    page_context_id: "results-context",
     state_id: "results-state",
     page_state: "RESULTS_READY",
+    page_kind: "creator_market",
     url: "https://www.xingtu.cn/ad/creator/market",
     modal: { present: false },
     challenge: { present: false },
@@ -43,6 +46,10 @@ function resultState() {
       can_next_page: false,
     },
     detail: null,
+    elements: [],
+    regions: [],
+    selected_filters: [{ label: "硬筛", value: "已选择" }],
+    selected_filter_fingerprint: "filters-a",
     tabs: [],
   };
 }
@@ -72,28 +79,41 @@ async function committedRun(workspaceDir, page) {
     params: { ...loaded.params, run_id: planned.run_id },
     plan: loaded.plan,
   });
-  for (const action of planned.planned_actions) {
+  await store.saveBrowserState({
+    source: "observer",
+    observation_id: "clean-baseline",
+    page_kind: "creator_market",
+    market: { keyword: "" },
+    selected_filters: [],
+  });
+  for (const requirement of planned.interaction_plan.hard_requirements) {
     await store.saveBrowserAction({
-      action_id: action.plan_action_id,
-      action: action.action,
-      plan_action_id: action.plan_action_id,
+      action_id: requirement.requirement_ref,
+      protocol_version: 3,
+      action: "element:select",
+      operation: "select",
+      purpose: "filter_requirement",
+      requirement_ref: requirement.requirement_ref,
       branch_index: 0,
       candidate_ref: null,
       ok: true,
       verified: true,
       changed: true,
-      receipt:
-        action.action === "search_keyword"
-          ? { applied: true, result_count: 1 }
-          : action.action === "reset_filters"
-            ? { applied: true, valid: true }
-            : action.action === "set_price_view"
-              ? { applied: true, readback: action.price_view }
-              : action.action === "apply_filter"
-                ? { applied: true, readback: action.filter.control }
-                : { applied: true },
+      receipt: { applied: true, after_selected_filters: [{ label: requirement.kind }] },
     });
   }
+  await store.saveBrowserAction({
+    action_id: "keyword-action",
+    protocol_version: 3,
+    action: "element:fill_submit",
+    operation: "fill_submit",
+    purpose: "keyword_search",
+    branch_index: 0,
+    ok: true,
+    verified: true,
+    changed: true,
+    receipt: { applied: true, readback: planned.branch.keyword },
+  });
   return payload(
     await select({
       operation: "commit",
@@ -105,7 +125,7 @@ async function committedRun(workspaceDir, page) {
   );
 }
 
-test("v2 collect captures one current page and returns an exact open-detail action", async (t) => {
+test("v3 collect captures one current page and asks Agent to inspect before opening detail", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-incremental-list-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   const page = { url: () => "https://www.xingtu.cn/ad/creator/market" };
@@ -144,10 +164,9 @@ test("v2 collect captures one current page and returns an exact open-detail acti
   const result = payload(await collect(committed.collection_args));
   assert.equal(result.status, "awaiting_browser_action");
   assert.equal(result.candidate_count, 1);
-  assert.equal(result.next_call.tool, "ypscan_manual_browser_action");
-  assert.equal(result.next_call.args.action, "open_creator_detail");
-  assert.equal(result.next_call.args.candidate_ref, "creator-1");
-  assert.equal(result.next_call.args.expected_state_id, "results-state");
+  assert.equal(result.next_call.tool, "ypscan_manual_browser_inspect");
+  assert.equal(result.next_call.intent.action, "open_creator_detail");
+  assert.equal(result.next_call.intent.candidate_ref, "creator-1");
   assert.equal(reads, 1);
   assert.equal(nextCalls, 0, "read-only collect must never advance pagination itself");
   const checkpoint = await readFile(

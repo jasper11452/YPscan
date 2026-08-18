@@ -4,9 +4,17 @@ import test from "node:test";
 import {
   inspectManualBrowser,
   inspectManualBrowserPage,
+  resolveInteractiveElement,
 } from "../src/tools/manual-browser-state.js";
 
-function locator({ visible = false, count = 0, text = "", value = "", disabled = false } = {}) {
+function locator({
+  visible = false,
+  count = 0,
+  text = "",
+  value = "",
+  disabled = false,
+  items = [],
+} = {}) {
   return {
     first() {
       return this;
@@ -23,7 +31,7 @@ function locator({ visible = false, count = 0, text = "", value = "", disabled =
     innerText: async () => text,
     inputValue: async () => value,
     count: async () => count,
-    evaluateAll: async () => [],
+    evaluateAll: async () => items,
     getByRole() {
       return locator();
     },
@@ -44,6 +52,7 @@ function pageHarness({
   challenge = false,
   modal = null,
   loading = false,
+  interactiveElements = [],
 } = {}) {
   const page = {
     url: () => url,
@@ -68,6 +77,9 @@ function pageHarness({
       }
       if (selector.includes("loading") || selector.includes("aria-busy")) {
         return locator({ visible: loading });
+      }
+      if (selector.startsWith("button,input,select")) {
+        return locator({ items: interactiveElements });
       }
       return locator();
     },
@@ -102,6 +114,107 @@ test("observer distinguishes wrong page, logged-out page and ready results", asy
   assert.equal(results.market.keyword, "办公软件");
   assert.equal(results.market.result_row_count, 12);
   assert.ok(results.state_id);
+});
+
+test("observer reports a pending redirect as page-level navigation state without waiting", async () => {
+  const redirected = await inspectManualBrowserPage(
+    pageHarness({
+      url: "https://www.xingtu.cn/?redirect_uri=%2Fad%2Fcreator%2Fmarket",
+      body: "星图首页",
+      loading: true,
+    }),
+    "xingtu",
+  );
+  assert.equal(redirected.page_state, "WRONG_PAGE");
+  assert.equal(redirected.page_kind, "platform_other");
+  assert.equal(redirected.navigation.redirect_detected, true);
+  assert.equal(redirected.navigation.status, "redirect_target_pending");
+});
+
+test("observer returns every visible interactive element without coupling page context to DOM churn", async () => {
+  const items = Array.from({ length: 35 }, (_, index) => ({
+    locator_index: index,
+    region: { kind: "filters", label: "筛选区" },
+    role: "button",
+    tag: "button",
+    name: `动态筛选 ${index + 1}`,
+    text: `动态筛选 ${index + 1}`,
+    value: "",
+    input_type: null,
+    href: null,
+    enabled: true,
+    checked: false,
+    selected: false,
+    expanded: null,
+    pressed: null,
+    active: false,
+    occurrence: 0,
+  }));
+  const first = await inspectManualBrowserPage(
+    pageHarness({
+      url: "https://www.xingtu.cn/ad/creator/market",
+      body: "达人广场",
+      interactiveElements: items,
+    }),
+    "xingtu",
+  );
+  const second = await inspectManualBrowserPage(
+    pageHarness({
+      url: "https://www.xingtu.cn/ad/creator/market",
+      body: "达人广场",
+      interactiveElements: [...items, { ...items[0], locator_index: 35, name: "新出现的菜单" }],
+    }),
+    "xingtu",
+  );
+  assert.equal(first.elements.length, 35);
+  assert.equal(second.elements.length, 36);
+  assert.equal(first.page_context_id, second.page_context_id);
+  assert.notEqual(first.observation_id, second.observation_id);
+  assert.notEqual(first.state_id, second.state_id);
+});
+
+test("element resolution preserves the original DOM locator index when hidden nodes were skipped", async () => {
+  const item = {
+    locator_index: 7,
+    region: { kind: "filters", label: "筛选区" },
+    role: "button",
+    tag: "button",
+    name: "城市",
+    text: "城市",
+    value: "",
+    input_type: null,
+    href: null,
+    enabled: true,
+    checked: false,
+    selected: false,
+    expanded: null,
+    pressed: null,
+    active: false,
+    occurrence: 0,
+  };
+  let resolvedIndex = null;
+  const resolvedLocator = { marker: "resolved" };
+  const page = {
+    locator() {
+      return {
+        evaluateAll: async () => [item],
+        nth(index) {
+          resolvedIndex = index;
+          return resolvedLocator;
+        },
+      };
+    },
+  };
+  const snapshot = await inspectManualBrowserPage(
+    pageHarness({
+      url: "https://www.xingtu.cn/ad/creator/market",
+      interactiveElements: [item],
+    }),
+    "xingtu",
+  );
+  const resolved = await resolveInteractiveElement(page, snapshot.elements[0]);
+  assert.equal(resolved.locator, resolvedLocator);
+  assert.equal(resolvedIndex, 7);
 });
 
 test("observer exposes safe modals and treats detail CAPTCHA as the highest-priority state", async () => {
