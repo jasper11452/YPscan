@@ -75,10 +75,15 @@ function requirementInputRepairDirective(message) {
 }
 
 const MCN_MARKDOWN_TABLE_HEADER = [
-  "| 机构名 | 返点 | 综合分 | 本机构预估覆盖达人数 |",
+  "| 机构名 | 返点 | 综合分 | 达人数 |",
   "| --- | --- | --- | --- |",
 ].join("\n");
 const MCN_MARKDOWN_EMPTY_ROW = "| 暂无匹配机构 | — | — | — |";
+
+const MANUAL_BROWSER_ENTRY_POLICY =
+  "Browser 入口：① snapshot 观察整页及当前 URL；② 页面正在跳转、刷新或加载时先等待稳定再重新 snapshot，不在变化中的页面操作；③ snapshot 中若有带明确关闭按钮的阻塞弹窗（包括 review-wrapper 普通公告/提示），优先直接 click 关闭按钮，不必先读取完整弹窗内容或先 goto，关闭后立即重新 snapshot；④ 确认当前 URL、页面内容和筛选区属于目标达人广场；⑤ 仅当关闭弹窗并重新 snapshot 后仍明确不在目标达人广场时，才用 goto 固定达人广场并重新 snapshot；⑥ 再次确认无阻塞弹窗且筛选区可用，才开始任何筛选。弹窗若出现登录、全局验证码或安全验证信号，必须请求用户处理，绝不能关闭。";
+const MANUAL_BROWSER_ACTION_POLICY =
+  "常规交互优先使用 snapshot/click/hover/fill；goto 只用于首次打开 session，或关闭阻塞弹窗并重新 snapshot 后仍明确不在目标页面的恢复场景。只有级联或 teleported 浮层无法表达时才使用限定目标容器且带提交回读的 run-code。";
 
 const FIELD_SELECTION_AUTO_OPEN_FAILED = "浏览器打开请求未成功";
 
@@ -119,9 +124,12 @@ function rankMcnsDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。本 tool result 里的表头只是格式提示，不是用户可见表格。",
     "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出，再原样展示此前 ypscan_save_excel_artifact 返回的 CREATOR_PREVIEW_LOCAL_PATH，最后调用 AskUserQuestion。不要输出达人预览表下载链接；表格禁止改成项目符号或编号列表。",
-    "用户可见机构结果只显示这一张四列表格，固定列且不得增减：机构名、返点、综合分、本机构预估覆盖达人数。禁止在表格内外另行展示排名、supplier_id、候选数、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。每行覆盖人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
+    "用户可见机构结果只显示这一张四列表格，固定列且不得增减：机构名、返点、综合分、达人数。禁止在表格内外另行展示排名、supplier_id、候选数、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。每行达人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 search_creators 确实未返回 creators_export_path 或精确保存参数，必须如实说明无法保存，禁止编造或复用历史链接。",
-    "人工拓展并提报 = 先调用 ypscan_manual_research(operation=start) 创建本地运行，再读取并使用 YP Action 自带 playwright 技能，通过 Bash 调用 playwright_cli.sh，固定短 session=ypscan，首次 open 使用 --headed --persistent；禁止调用宿主原生 Browser。进入页面后严格按“整页 snapshot → 等待重定向稳定并确认当前 URL/页面确为目标达人广场 → 重新 snapshot → 关闭可安全关闭的普通弹窗 → 再次 snapshot 并确认筛选区可用 → 开始筛选”执行；未确认达人广场就不得关闭未知弹窗或操作筛选。登录页、全局验证码和安全验证不是普通弹窗，不得关闭。稳定列表页和详情页用 run-code 读取结构化数据，再分别作为 list_snapshot/detail_snapshot 传给 capture_list/capture_detail。插件不调用 shell，也不会自行读取 Playwright session。首关键词先完成全部硬筛且关键词最后提交，后续关键词保留筛选集只换关键词。普通页面问题自主恢复，任何前缀的 manual_source_creators 都不得调用。",
+    "人工拓展并提报 = 先调用 ypscan_manual_research(operation=start) 创建本地运行，再读取并使用 YP Action 自带 playwright 技能，通过 Bash 调用 playwright_cli.sh，固定短 session=ypscan，首次 open 使用 --headed --persistent；禁止调用宿主原生 Browser。",
+    MANUAL_BROWSER_ENTRY_POLICY,
+    MANUAL_BROWSER_ACTION_POLICY,
+    "稳定列表页和详情页用 run-code 读取结构化数据，再分别作为 list_snapshot/detail_snapshot 传给 capture_list/capture_detail。插件不调用 shell，也不会自行读取 Playwright session。首关键词先完成全部硬筛且关键词最后提交，后续关键词保留筛选集只换关键词。普通页面问题自主恢复，任何前缀的 manual_source_creators 都不得调用。",
     MCN_MARKDOWN_TABLE_HEADER,
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
@@ -469,7 +477,7 @@ function manualResearchSuccessDirective(message) {
       "YPSCAN_FLOW_DIRECTIVE=Playwright CLI 自助手扒运行已创建。读取并使用 YP Action 自带 playwright 技能，固定使用返回的 playwright_session；插件不会代为执行 shell。手扒期间禁止调用宿主原生 Browser。",
       `MANUAL_RESEARCH_RUN_ID=${result?.run_id ?? "未知"}`,
       "先使用 YP Action 自带 playwright 技能和 playwright_cli.sh，固定短 session=ypscan；若 session 未打开，用 --headed --persistent 打开目标达人广场。禁止调用宿主原生 Browser。",
-      "开始筛选前必须完成入口检查：① snapshot 观察整页及当前 URL；② 页面正在跳转、刷新或加载时先等待稳定再重新 snapshot，不在变化中的页面操作；③ URL 或页面内容不是目标达人广场时 goto 固定达人广场并重新 snapshot，直到同时确认正确页面和筛选区；④ 只在正确达人广场内识别并关闭可安全关闭的普通公告/资质弹窗，关闭后重新 snapshot；⑤ 再次确认仍在达人广场、无阻塞弹窗且筛选区可用，才开始任何筛选。登录页、全局验证码或安全验证必须请求用户处理，绝不能当普通弹窗关闭。",
+      MANUAL_BROWSER_ENTRY_POLICY,
       "根据 hard_requirements 与当前可见筛选项做语义匹配。打开菜单、输入、确认、关闭弹窗、导航或页面刷新后必须重新 snapshot，绝不复用旧 ref；动态范围与级联优先用 Playwright hover/fill/click，显式命令不足时才用限定作用域的 run-code，并回读已选条件。所有硬筛完成后最后输入首个关键词；后续只换关键词。",
       "每个稳定结果页先用 Playwright run-code 读取 source_url/page_number/price_tier/rows，再作为 list_snapshot 调用 ypscan_manual_research(operation=capture_list, run_id, keyword, keyword_complete=false, list_snapshot)；翻页由 Playwright CLI 完成。关键词采集完成后再以 keyword_complete=true 记录筛选证据。详情页用 run-code 读取 url/fields/challenge/login，并作为 detail_snapshot 调用 capture_detail；单个详情不可访问就跳过继续。完成后调用 finalize。",
     ].join("\n");
@@ -1007,10 +1015,14 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
           "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → create_with_distributions 的消息确认和机构确认 → 发送后询问是否继续人工拓展。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
           "search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
-          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展完成后必须询问“继续询价”或“直接生成提报表”；后者调用 ypscan_manual_research(operation=create_submission)。人工拓展先调用 ypscan_manual_research(operation=start)，随后读取并使用 YP Action 自带 playwright 技能，通过 Bash 调用 playwright_cli.sh，固定短 session=ypscan，首次 open 使用 --headed --persistent；手扒期间禁止调用宿主原生 Browser，不使用 selection_id、observation_id、element_id。入口固定先 snapshot 整页并等待重定向稳定，确认 URL 和页面内容都是目标达人广场后，再关闭普通弹窗并重新 snapshot；再次确认筛选区可用后才筛选。登录、全局验证码和安全验证不得当普通弹窗关闭。页面变化后重新 snapshot；稳定列表/详情用 run-code 读取结构化快照，分别作为 list_snapshot/detail_snapshot 传给 capture_list/capture_detail 落盘，插件自身不执行 shell。首关键词先建立硬筛且关键词最后提交，后续关键词继承筛选集只换关键词；任何前缀的 manual_source_creators 都不得调用。",
+          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展完成后必须询问“继续询价”或“直接生成提报表”；后者调用 ypscan_manual_research(operation=create_submission)。人工拓展先调用 ypscan_manual_research(operation=start)，随后读取并使用 YP Action 自带 playwright 技能，通过 Bash 调用 playwright_cli.sh，固定短 session=ypscan，首次 open 使用 --headed --persistent；手扒期间禁止调用宿主原生 Browser，不使用 selection_id、observation_id、element_id。",
+          MANUAL_BROWSER_ENTRY_POLICY,
+          "页面变化后重新 snapshot；稳定列表/详情用 run-code 读取结构化快照，分别作为 list_snapshot/detail_snapshot 传给 capture_list/capture_detail 落盘，插件自身不执行 shell。首关键词先建立硬筛且关键词最后提交，后续关键词继承筛选集只换关键词；任何前缀的 manual_source_creators 都不得调用。",
           "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion；需求解析按最新 violations 持续修正并重试，不限制调用次数；其他普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
           "需求解析性能约束：普通 fact 只传 kind/quote/value；抖音 60s+ 必须表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；参考达人统一使用 reference_creator，昵称和 http/https 链接可作为两条 fact 或同一 value 数组传入，最终分别透传为 refNickname/refUrl；女粉偏多、城市集中等无精确数值或主体不明的条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌、数量、截止时间等必填业务信息缺失时才向用户澄清。YPSCAN_REQUIREMENT_INVALID 是 Agent 参数构造错误，必须按最新 violations 一次性修正并继续调用需求解析工具，不限制调用次数。",
-          "用户选择人工拓展后，start 必须保留完整硬条件 facts。Agent 使用 YP Action Playwright CLI 的同一 ypscan session 完成观察和交互，禁止调用宿主原生 Browser。每次 navigation、菜单开关、输入提交、分页或详情切换后重新 snapshot；refs 只属于最新 snapshot。优先使用显式 goto/snapshot/click/hover/fill，只有级联或 teleported 浮层无法表达时才使用限定目标容器且带提交回读的 run-code。普通失败先重新 snapshot 并更换定位方式，最多两次；登录失效或全局 CAPTCHA 才请求用户接管。",
+          "用户选择人工拓展后，start 必须保留完整硬条件 facts。Agent 使用 YP Action Playwright CLI 的同一 ypscan session 完成观察和交互，禁止调用宿主原生 Browser。每次 navigation、菜单开关、输入提交、分页或详情切换后重新 snapshot；refs 只属于最新 snapshot。",
+          MANUAL_BROWSER_ACTION_POLICY,
+          "普通失败先重新 snapshot 并更换定位方式，最多两次；登录失效或全局 CAPTCHA 才请求用户接管。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           "手扒达人价格必须从当前 ypscan_parse_requirement.data.facts 复制客户原始 operator 和原始数值；禁止把 Provider 区间或手工计算后的 50%–120% 区间再次传入。除本轮唯一 creator_count 外，不重算价格事实。",
         );

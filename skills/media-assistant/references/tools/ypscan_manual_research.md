@@ -17,7 +17,8 @@
 
 - 使用返回的固定短 session。未打开时以 `--headed --persistent` 打开目标达人广场；禁止调用宿主原生 Browser。
 - 页面发生导航、菜单开关、输入提交、分页或详情切换后必须重新 snapshot；ref 只属于最新 snapshot。
-- 优先使用显式 goto/snapshot/click/hover/fill。只有动态级联或 teleported 浮层无法表达时才使用限定目标容器的 run-code，并回读提交结果。
+- snapshot 中出现带明确关闭按钮的阻塞弹窗时，优先直接 click 关闭并重新 snapshot；`review-wrapper` 等普通公告/提示不必先读取完整内容或先 goto。若出现登录、验证码或安全验证信号则不得关闭。
+- 常规交互优先使用 snapshot/click/hover/fill。goto 仅用于首次打开 session，或关闭弹窗并重新 snapshot 后仍明确不在目标达人广场的恢复场景。只有动态级联或 teleported 浮层无法表达时才使用限定目标容器的 run-code，并回读提交结果。
 - `capture_list` / `capture_detail` 只接受当前页面真实可见或页面自身加载得到的结构化证据。不得读取 Cookie/Token，不主动重放私有 API，不保存原始响应或敏感头。
 - 登录、全局 CAPTCHA 或安全验证返回 `needs_user_action`，必须用 `AskUserQuestion`。普通重定向、弹窗、旧 ref 和定位失败由 Agent 在同一 session 内重新 snapshot 并换策略恢复。
 

@@ -123,9 +123,9 @@ test("fixed result directives enforce parse → validate → search → save →
   });
   assert.match(directiveText(rank), /完整 MCN Markdown 表格/u);
   assert.match(directiveText(rank), /用户可见正文文本块/u);
-  assert.match(directiveText(rank), /\| 机构名 \| 返点 \| 综合分 \| 本机构预估覆盖达人数 \|/u);
+  assert.match(directiveText(rank), /\| 机构名 \| 返点 \| 综合分 \| 达人数 \|/u);
   assert.match(directiveText(rank), /禁止改成项目符号或编号列表/u);
-  assert.match(directiveText(rank), /机构名、返点、综合分、本机构预估覆盖达人数/u);
+  assert.match(directiveText(rank), /机构名、返点、综合分、达人数/u);
   assert.match(directiveText(rank), /只显示这一张四列表格/u);
   assert.match(directiveText(rank), /固定列且不得增减/u);
   assert.match(directiveText(rank), /禁止在表格内外另行展示排名、supplier_id/u);
@@ -330,10 +330,11 @@ test("manual research observes redirects and dismisses safe modals before filter
 
   assert.match(directive, /snapshot 观察整页及当前 URL/u);
   assert.match(directive, /等待稳定再重新 snapshot/u);
-  assert.match(directive, /同时确认正确页面和筛选区/u);
-  assert.match(directive, /关闭可安全关闭的普通公告\/资质弹窗/u);
-  assert.match(directive, /再次确认仍在达人广场.*才开始任何筛选/u);
-  assert.match(directive, /登录页、全局验证码或安全验证.*绝不能当普通弹窗关闭/u);
+  assert.match(directive, /确认当前 URL、页面内容和筛选区属于目标达人广场/u);
+  assert.match(directive, /review-wrapper 普通公告\/提示.*优先直接 click 关闭按钮/u);
+  assert.match(directive, /不必先读取完整弹窗内容或先 goto/u);
+  assert.match(directive, /仅当关闭弹窗并重新 snapshot 后仍明确不在目标达人广场时.*goto/u);
+  assert.match(directive, /弹窗若出现登录、全局验证码或安全验证信号.*绝不能关闭/u);
 });
 
 test("completed manual research asks for inquiry or a local submission workbook", () => {
@@ -412,7 +413,7 @@ test("empty rank result still outputs the Markdown table and offers manual expan
   const text = directiveText(result);
   assert.match(text, /完整 MCN Markdown 表格/u);
   assert.match(text, /用户可见正文文本块/u);
-  assert.match(text, /\| 机构名 \| 返点 \| 综合分 \| 本机构预估覆盖达人数 \|/u);
+  assert.match(text, /\| 机构名 \| 返点 \| 综合分 \| 达人数 \|/u);
   assert.match(text, /\| 暂无匹配机构 \| — \| — \| — \|/u);
   const question = argsFromDirective(text).questions[0];
   assert.deepEqual(
@@ -506,6 +507,10 @@ test("startup instruction fixes the chain and reserves Playwright for the manual
   assert.match(first.prependContext, /capture_list\/capture_detail/u);
   assert.match(first.prependContext, /playwright_cli\.sh/u);
   assert.match(first.prependContext, /页面变化后重新 snapshot/u);
+  assert.match(first.prependContext, /review-wrapper 普通公告\/提示.*优先直接 click 关闭/u);
+  assert.match(first.prependContext, /仅当关闭弹窗.*仍明确不在目标达人广场时.*goto/u);
+  assert.match(first.prependContext, /常规交互优先使用 snapshot\/click\/hover\/fill/u);
+  assert.match(first.prependContext, /goto 只用于首次打开 session/u);
   assert.match(first.prependContext, /不使用 selection_id、observation_id、element_id/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /需求解析按最新 violations 持续修正并重试/u);

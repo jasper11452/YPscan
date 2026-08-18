@@ -6,7 +6,7 @@
 
 1. 调用 `ypscan_manual_research(operation=start, requirement_id, platform=xingtu, facts, keywords)`。读取返回的 `run_id`、`hard_requirements` 和固定 `playwright_session=ypscan`。
 2. 读取并使用 YP Action 自带 playwright 技能，通过 `playwright_cli.sh` 操作该 session。未打开时以 `--headed --persistent` 打开 `https://www.xingtu.cn/ad/creator/market`；禁止调用宿主原生 Browser。
-3. 先 snapshot 整页并等待重定向稳定。必须同时确认 URL、页面内容和筛选区都属于星图达人广场，才关闭可安全关闭的普通弹窗并开始筛选；登录、全局验证码和安全验证不得关闭或绕过。
+3. 先 snapshot 整页并等待重定向稳定。若有带明确关闭按钮的阻塞弹窗（包括 `review-wrapper` 普通公告/提示），优先直接 click 关闭并重新 snapshot，不必先读取完整内容或先 goto；出现登录、全局验证码或安全验证信号时不得关闭或绕过。随后确认 URL、页面内容和筛选区都属于星图达人广场；仅当关闭弹窗后仍明确不在目标页面时才 goto 固定地址。
 4. 首关键词先完成全部页面可表达硬筛，关键词最后提交；后续关键词保留筛选集、只换关键词。菜单开关、输入提交、导航、分页或详情切换后都重新 snapshot，旧 ref 不得复用。无法稳定表达的条件记录为未验证并转入详情硬复核。
 5. 报价必须切换并回读正确时长档。需求是 60s+ 时应确认“60s以上视频”和列表表头；1–20 秒、21–60 秒、60 秒以上不得跨档借价。以客户原始值为锚点按 50%–120% 验收，不使用 Provider 的 70%–120% 搜索区间。
 6. 每个稳定结果页用限定作用域的 run-code 读取 `source_url`、`page_number`、`price_tier` 和同一行关联的 `rows`，传给 `capture_list`。翻页继续由 Playwright CLI 完成；关键词结束时用 `keyword_complete=true` 记录最终筛选证据。

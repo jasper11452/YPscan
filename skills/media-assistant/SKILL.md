@@ -23,7 +23,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 “先输出”只指已经发出的用户可见 assistant 文本块；工具结果里的表头、directive、思考过程都不算，AskUserQuestion 返回后补写的表格或本地路径也不满足。AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block。
 
-MCN 结果必须使用 Markdown 表格，禁止改成项目符号或编号列表。表格固定包含：机构名、返点、综合分、本机构预估覆盖达人数。每行覆盖人数只取该机构对象自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，严禁用作本机构人数，严禁与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。其他值同样只取当前 `rank_mcns` 响应；缺失值写“未知”，不使用历史结果补齐。
+MCN 结果必须使用 Markdown 表格，禁止改成项目符号或编号列表。表格固定包含：机构名、返点、综合分、达人数。每行达人数只取该机构对象自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，严禁用作本机构人数，严禁与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。其他值同样只取当前 `rank_mcns` 响应；缺失值写“未知”，不使用历史结果补齐。
 
 ## AskUserQuestion 规则
 
@@ -40,6 +40,8 @@ rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必�
 固定顺序为“`ypscan_manual_research(operation=start)` → YP Action Playwright CLI 固定 `ypscan` session → `capture_list` / `capture_detail` → `finalize` → 必要时分批 `apply_reviews` → `create_submission`”。`start` 使用当前 requirement ID（优先 `data.requirement_id`，缺失时兼容 `data.id`，绝不是 `data.demand_id`）、平台、完整 facts 和 1–4 个关键词；价格 fact 必须复制客户原始 operator 与数值，禁止复用 Provider 的 70%–120% 区间。
 
 Agent 读取并使用 YP Action 自带 playwright 技能，通过 `playwright_cli.sh` 操作独立持久 session；首次 `open` 使用 `--headed --persistent`，禁止调用宿主原生 Browser。插件只校验和持久化 Agent 回传的结构化快照，不执行 shell、不读取 Playwright session、不读取 Cookie/Token、不主动重放私有 API。平台筛选必须真实回读；价格按客户原始达人单价独立扩展为 50%–120%，并绑定正确图文/视频或星图时长档。候选必须经过详情证据和分批语义复核，持续 `apply_reviews` 到 `review_remaining=0`；价格失败者不得补数，人数不足如实报告缺口。完整结果按达人推荐 List 模板交付 Excel，仅含“达人推荐List”和“候选达人”两个 Sheet。只有登录失效、真实 CAPTCHA 或全局安全验证才请求用户接管；任何前缀的 `manual_source_creators` 都不得调用。
+
+Browser 入口先 snapshot；遇到带明确关闭按钮的 `review-wrapper` 等普通阻塞弹窗，优先直接 click 关闭并重新 snapshot，不必先读取完整内容或先 goto。只有弹窗出现登录、验证码或安全验证信号时不得关闭。goto 仅用于首次打开 session，或关闭弹窗后仍明确不在目标达人广场的恢复场景，不作为普通弹窗或点击失败的首选动作。
 
 ## Provider 后续
 

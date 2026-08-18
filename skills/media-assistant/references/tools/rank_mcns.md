@@ -10,7 +10,7 @@ Provider risk labels, supply multipliers, institution count, and `recommended_ac
 
 After every successful response, before any other text or user interaction, use every candidate supplier from that same real response, in response order. Show one compact Markdown table; never replace it with bullets or a numbered list:
 
-| 机构名 | 返点 | 综合分 | 本机构预估覆盖达人数 |
+| 机构名 | 返点 | 综合分 | 达人数 |
 | ------ | ---- | ------ | -------------------- |
 
 This four-column table is the entire user-visible institution result. Do not add columns or show ranking, `supplier_id`, candidate totals, supply multipliers, recommended MCN count, manual-research count, MCN-to-manual ratio, recommendation reasons, risk labels, `recommended_action`, or any other `rank_mcns` fields or summaries inside or outside the table.
@@ -20,7 +20,7 @@ Each row's values must come from that supplier's own object. For the coverage co
 When no suppliers are returned, keep the same header and add exactly one empty-state row:
 
 ```markdown
-| 机构名       | 返点 | 综合分 | 本机构预估覆盖达人数 |
+| 机构名       | 返点 | 综合分 | 达人数 |
 | ------------ | ---- | ------ | -------------------- |
 | 暂无匹配机构 | —    | —      | —                    |
 ```
