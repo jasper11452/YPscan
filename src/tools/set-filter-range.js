@@ -180,7 +180,7 @@ export function createFilterRangeSetter({
         { min: params.min, max: params.max, unit: params.unit },
         { requireConfirm: true },
       );
-      await page.waitForTimeout?.(250).catch(() => {});
+      await page.waitForTimeout?.(1_000).catch(() => {});
       const after = await readFilterEvidence(page, opened.row);
       const menuClosed = !(await opened.menu?.isVisible?.().catch(() => false));
       const changed = after.row !== before.row || after.selected_filters !== before.selected_filters;

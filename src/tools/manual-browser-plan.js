@@ -12,6 +12,17 @@ function requirementRef(prefix, value) {
   return `${prefix}:${fingerprint(value)}`;
 }
 
+function orderedFilters(filters = []) {
+  return filters
+    .map((filter, index) => ({ filter, index }))
+    .sort((left, right) => {
+      const modeOrder =
+        Number(left.filter.mode === "range") - Number(right.filter.mode === "range");
+      return modeOrder || left.index - right.index;
+    })
+    .map(({ filter }) => filter);
+}
+
 export function browserRequirementsForPlan(plan) {
   const requirements = [];
   if (plan.price_view) {
@@ -25,7 +36,7 @@ export function browserRequirementsForPlan(plan) {
       mode: "option",
     });
   }
-  for (const filter of plan.filters ?? []) {
+  for (const filter of orderedFilters(plan.filters)) {
     requirements.push({
       requirement_ref: requirementRef("filter", filter),
       kind: filter.fact_kind ?? filter.control,
@@ -50,6 +61,9 @@ export function branchInteractionPlan(plan, branch, selections = []) {
     mode: baseSelection ? "keyword_only" : "establish_filter_set",
     keyword_must_be_last: true,
     preserve_filters: Boolean(baseSelection),
+    filter_order: baseSelection
+      ? ["keyword"]
+      : ["price_view", "options", "ranges", "keyword"],
     filter_set_id: baseSelection?.filter_set_id ?? null,
     hard_requirements: browserRequirementsForPlan(plan),
     detail_requirements: plan.detail_filters ?? [],
@@ -76,7 +90,7 @@ export function browserActionsForBranch(plan, branch) {
       price_view: plan.price_view,
     });
   }
-  for (const [index, filter] of plan.filters.entries()) {
+  for (const [index, filter] of orderedFilters(plan.filters).entries()) {
     actions.push({
       plan_action_id: actionId(
         branch,

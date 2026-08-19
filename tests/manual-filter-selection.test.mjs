@@ -157,6 +157,16 @@ test("v3 plan returns requirements without deciding page elements", async (t) =>
   assert.equal(planned.planned_actions, undefined);
   assert.equal(planned.interaction_plan.mode, "establish_filter_set");
   assert.equal(planned.interaction_plan.keyword_must_be_last, true);
+  assert.deepEqual(planned.interaction_plan.filter_order, [
+    "price_view",
+    "options",
+    "ranges",
+    "keyword",
+  ]);
+  assert.deepEqual(
+    planned.interaction_plan.hard_requirements.map((requirement) => requirement.kind),
+    ["price_view", "creator_gender", "creator_price"],
+  );
   assert.equal(planned.interaction_plan.hard_requirements.length, 3);
   assert.equal(planned.next_call.tool, "ypscan_manual_browser_inspect");
   assert.equal(connections, 0);
@@ -241,6 +251,7 @@ test("commit signs a credential only after action receipts and final readback ag
   );
   assert.equal(nextBranch.interaction_plan.mode, "keyword_only");
   assert.equal(nextBranch.interaction_plan.preserve_filters, true);
+  assert.deepEqual(nextBranch.interaction_plan.filter_order, ["keyword"]);
   assert.equal(nextBranch.interaction_plan.filter_set_id, committed.filter_set_id);
   assert.equal(nextBranch.planned_actions, undefined);
 });

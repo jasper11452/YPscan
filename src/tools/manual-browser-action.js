@@ -27,6 +27,8 @@ import {
 import { hostToolResult } from "./tool-result.js";
 
 const DEFAULT_CDP_URL = "http://127.0.0.1:18800";
+const DEFAULT_ACTION_SETTLE_MS = 200;
+const FILTER_INTERACTION_SETTLE_MS = 1_000;
 const PLAN_ACTIONS = new Set([
   "ensure_market_ready",
   "reset_filters",
@@ -110,6 +112,7 @@ export const MANUAL_BROWSER_ACTION_PARAMETERS = Object.freeze({
       maxItems: 3,
       uniqueItems: true,
       items: { type: "string", minLength: 1 },
+      description: "set_range 输入框，双输入时必须按页面的下限、上限顺序传入。",
     },
     confirm_element_id: { type: "string", minLength: 1 },
     value: {
@@ -155,6 +158,10 @@ function clean(value) {
   return String(value ?? "")
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+async function settleInteraction(page, delayMs = FILTER_INTERACTION_SETTLE_MS) {
+  await page?.waitForTimeout?.(delayMs).catch(() => {});
 }
 
 function normalizePlatform(value) {
@@ -435,8 +442,7 @@ function v3EffectVerified(params, beforeState, afterState, receipt) {
       receipt.target_after?.selected === true ||
       receipt.target_after?.selected === "true" ||
       receipt.target_after?.checked === true ||
-      receipt.target_after?.checked === "true" ||
-      receipt.target_after?.active === true
+      receipt.target_after?.checked === "true"
     );
   }
   if (params.expected_effect === "menu_opened") {
@@ -489,6 +495,19 @@ async function executeV3BrowserAction({
         "YPSCAN_MANUAL_ACTION_NOT_ALLOWED",
         baseSelection ? "后续关键词不得重新执行全量硬筛" : "硬筛动作必须绑定 requirement_ref",
       );
+    }
+    if (params.purpose === "filter_requirement") {
+      const completed = completedRequirementRefs(loaded.browser_actions);
+      const nextRequirement = requirements.find(
+        (requirement) => !completed.has(requirement.requirement_ref),
+      );
+      if (nextRequirement && params.requirement_ref !== nextRequirement.requirement_ref) {
+        throw manualBrowserError(
+          "YPSCAN_MANUAL_ACTION_NOT_ALLOWED",
+          "页面硬筛必须按报价视图、选项级联、范围输入的顺序完成",
+          { next_requirement_ref: nextRequirement.requirement_ref },
+        );
+      }
     }
     if (params.purpose === "repair_filter" && !baseSelection) {
       throw manualBrowserError("YPSCAN_MANUAL_ACTION_NOT_ALLOWED", "首分支不使用 repair_filter");
@@ -615,6 +634,7 @@ async function executeV3BrowserAction({
       receipt.applied = true;
     } else if (params.operation === "fill" || params.operation === "fill_submit") {
       await targetLocator.fill(String(params.value ?? ""), { timeout: 3_000 });
+      await settleInteraction(actionPage);
       receipt.readback = await targetLocator.inputValue().catch(() => "");
       if (params.operation === "fill_submit") await targetLocator.press("Enter");
       receipt.applied = true;
@@ -650,25 +670,32 @@ async function executeV3BrowserAction({
       const descriptors = params.element_ids.map((elementId) =>
         observation.elements?.find((element) => element.element_id === elementId),
       );
-      const resolvedInputs = [];
+      const requested =
+        descriptors.length === 1
+          ? [params.range.max ?? params.range.min]
+          : [params.range.min, params.range.max].slice(0, descriptors.length);
+      const inputOrder = descriptors.map((_, index) => index).reverse();
+      for (const index of inputOrder) {
+        const descriptor = descriptors[index];
+        const resolved = await resolveElement(actionPage, descriptor);
+        if (!resolved.locator) {
+          throw manualBrowserError("TARGET_NOT_FOUND", "范围输入框已变化，请重新观察");
+        }
+        await resolved.locator.fill(
+          requested[index] === null || requested[index] === undefined
+            ? ""
+            : String(requested[index]),
+        );
+        await settleInteraction(actionPage);
+      }
+      const readbacks = [];
       for (const descriptor of descriptors) {
         const resolved = await resolveElement(actionPage, descriptor);
         if (!resolved.locator) {
           throw manualBrowserError("TARGET_NOT_FOUND", "范围输入框已变化，请重新观察");
         }
-        resolvedInputs.push(resolved.locator);
+        readbacks.push(await resolved.locator.inputValue().catch(() => ""));
       }
-      const requested = [params.range.min, params.range.max].slice(0, resolvedInputs.length);
-      for (const [index, locator] of resolvedInputs.entries()) {
-        await locator.fill(
-          requested[index] === null || requested[index] === undefined
-            ? ""
-            : String(requested[index]),
-        );
-      }
-      const readbacks = await Promise.all(
-        resolvedInputs.map((locator) => locator.inputValue().catch(() => "")),
-      );
       receipt.inputs_verified = readbacks.every(
         (value, index) => clean(value) === clean(requested[index]),
       );
@@ -681,11 +708,17 @@ async function executeV3BrowserAction({
         if (!confirm.locator) {
           throw manualBrowserError("TARGET_NOT_FOUND", "确认按钮已变化，请重新观察");
         }
+        await settleInteraction(actionPage);
         await confirm.locator.click({ timeout: 3_000 });
       }
       receipt.applied = receipt.inputs_verified;
     }
-    await actionPage.waitForTimeout?.(200).catch(() => {});
+    const finalSettleMs = ["filter_requirement", "repair_filter", "inspection"].includes(
+      params.purpose,
+    )
+      ? FILTER_INTERACTION_SETTLE_MS
+      : DEFAULT_ACTION_SETTLE_MS;
+    await settleInteraction(actionPage, finalSettleMs);
     if (params.purpose === "detail" || params.expected_effect === "navigation") {
       const observedAfter = await inspectBrowser(browser, platform);
       if (observedAfter.page) actionPage = observedAfter.page;

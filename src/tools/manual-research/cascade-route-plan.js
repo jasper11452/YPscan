@@ -105,9 +105,9 @@ export function resolveCascadeRoute(platform, control, value) {
 
 const RUN_CODE_TEMPLATE = String.raw`await (async () => {
   const batch = __YPSCAN_CASCADE_BATCH__;
-  const parentHoverSettleMs = 700;
-  const leafHoverSettleMs = 500;
-  const selectionSettleMs = 500;
+  const parentHoverSettleMs = 1000;
+  const leafHoverSettleMs = 1000;
+  const selectionSettleMs = 1000;
   const pollMs = 75;
   const norm = value => String(value ?? "").normalize("NFKC").replace(/\s+/gu, " ").trim();
   const hasReadback = (text, value) => {
@@ -213,13 +213,12 @@ const RUN_CODE_TEMPLATE = String.raw`await (async () => {
     return null;
   }
 
-  async function selectionState(option, allowActive = false) {
-    return option.evaluate((node, activeAllowed) => {
+  async function selectionState(option) {
+    return option.evaluate(node => {
       let current = node;
       for (let depth = 0; current && depth < 5; depth += 1, current = current.parentElement) {
         if (current.getAttribute("aria-selected") === "true" || current.getAttribute("aria-checked") === "true") return true;
         if (/(?:^|\s)(?:is-checked|is-selected|checked|selected)(?:\s|$)/u.test(current.getAttribute("class") ?? "")) return true;
-        if (activeAllowed && /(?:^|\s)--active(?:\s|$)/u.test(current.getAttribute("class") ?? "")) return true;
         const input = current.matches("input[type=checkbox],input[type=radio]") ? current : current.querySelector("input[type=checkbox],input[type=radio]");
         if (input?.matches(":checked")) return true;
       }
@@ -240,9 +239,20 @@ const RUN_CODE_TEMPLATE = String.raw`await (async () => {
     let stableKey = null;
     let stablePolls = 0;
     for (let attempt = 0; attempt < 30; attempt += 1) {
+      let controlledFound = false;
       for (const id of controlledIds) {
         const controlled = page.locator("[id=" + JSON.stringify(id) + "]").first();
-        if ((await controlled.isVisible().catch(() => false)) && await exactOption(controlled, value)) return controlled;
+        if (!(await controlled.isVisible().catch(() => false)) || !(await exactOption(controlled, value))) continue;
+        const key = "controlled:" + id + ":" + norm(await controlled.innerText().catch(() => ""));
+        if (key === stableKey) stablePolls += 1;
+        else { stableKey = key; stablePolls = 1; }
+        if (stablePolls >= 3) return controlled;
+        controlledFound = true;
+        break;
+      }
+      if (controlledFound) {
+        await page.waitForTimeout(pollMs);
+        continue;
       }
       const candidates = [];
       for (const candidate of await columns()) {

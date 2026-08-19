@@ -320,7 +320,7 @@ export function installDialogAutoDismiss(page) {
 /** @param {import("playwright-core").Page} page */
 export async function settleAfterAction(page) {
   await page.waitForLoadState("domcontentloaded", { timeout: 3_000 }).catch(() => {});
-  await page.waitForTimeout(350);
+  await page.waitForTimeout(1_000);
 }
 
 /** @param {import("playwright-core").Page} page */
@@ -650,10 +650,10 @@ export async function openFilterMenu(page, rowLabels, options = {}) {
   return null;
 }
 
-const CASCADE_HOVER_SETTLE_MS = 700;
+const CASCADE_HOVER_SETTLE_MS = 1_000;
 const CASCADE_STABLE_POLLS = 3;
-const LEAF_HOVER_SETTLE_MS = 500;
-const CASCADE_SELECTION_SETTLE_MS = 500;
+const LEAF_HOVER_SETTLE_MS = 1_000;
+const CASCADE_SELECTION_SETTLE_MS = 1_000;
 const OPTION_COMMIT_POLL_MS = 75;
 const OPTION_COMMIT_ATTEMPTS = 30;
 const CASCADE_COLUMN_SELECTOR =
@@ -1088,6 +1088,7 @@ export async function fillMenuRange(page, opened, filter, options = {}) {
     });
     const normalizedValue = value ?? "";
     await input.fill(normalizedValue);
+    await page.waitForTimeout(CASCADE_SELECTION_SETTLE_MS);
     expected.set(index, normalizedValue);
   }
   for (const [index, value] of expected) {

@@ -500,7 +500,7 @@ test("cascading selection waits for hover settlement and a committed leaf", asyn
     locator: () => overlay,
     waitForTimeout: async (milliseconds) => {
       waits.push(milliseconds);
-      if (milliseconds === 700) childReady = true;
+      if (milliseconds === 1_000) childReady = true;
     },
   };
 
@@ -508,7 +508,7 @@ test("cascading selection waits for hover settlement and a committed leaf", asyn
     await selectMenuValues(page, { menu: root }, ["一级 > 二级"], { close: false }),
     ["一级 > 二级"],
   );
-  assert.deepEqual(waits, [700, 75, 75, 500, 500]);
+  assert.deepEqual(waits, [1_000, 75, 75, 1_000, 1_000]);
   assert.deepEqual(events, [
     ["scroll", "一级"],
     ["hover", "一级"],
@@ -1140,7 +1140,7 @@ test("a late first commit during retry dwell is not toggled off", async () => {
   const menu = { getByText: () => option };
   const page = {
     waitForTimeout: async (milliseconds) => {
-      if (milliseconds === 500) selected = true;
+      if (milliseconds === 1_000) selected = true;
     },
   };
 
@@ -1173,8 +1173,8 @@ test("an uncommitted menu click is retried once and never reported as selected",
 
   assert.deepEqual(await selectMenuValues(page, { menu }, ["二级"], { close: false }), []);
   assert.equal(clicks, 2);
-  assert.equal(waits[0], 500);
-  assert.equal(waits.includes(700), true);
+  assert.equal(waits[0], 1_000);
+  assert.equal(waits.includes(1_000), true);
 });
 
 test("floating menus are closed with a complete mouse sequence", async () => {

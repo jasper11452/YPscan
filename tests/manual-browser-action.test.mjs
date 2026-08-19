@@ -302,6 +302,81 @@ test("v3 resolves an observed element even when unrelated page elements changed"
   assert.equal(result.next_call.tool, "ypscan_manual_browser_inspect");
 });
 
+test("v3 does not treat hover-only active styling as a committed selection", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-browser-v3-active-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const planned = payload(await createManualFilterSelection({ workspaceDir })(selectionParams()));
+  const loaded = await loadManualResearchRun({
+    workspaceDir,
+    runId: planned.run_id,
+    requirementId: planned.requirement_id,
+    platform: planned.platform,
+  });
+  const store = await createManualResearchStore({
+    workspaceDir,
+    params: { ...loaded.params, run_id: planned.run_id },
+    plan: loaded.plan,
+  });
+  const target = {
+    element_id: "el-hover-active",
+    tag: "button",
+    enabled: true,
+    active: false,
+    selected: false,
+    checked: false,
+  };
+  const observation = {
+    source: "observer",
+    observation_id: "active-observation",
+    tab_id: "tab:0:0",
+    page_context_id: "market-context",
+    state_id: "active-before",
+    page_state: "MARKET_READY",
+    page_kind: "creator_market",
+    url: "https://www.xingtu.cn/ad/creator/market",
+    market: { keyword: "" },
+    modal: { present: false },
+    challenge: { present: false },
+    elements: [target],
+    selected_filters: [],
+    selected_filter_fingerprint: "filters-empty",
+  };
+  await store.saveBrowserState(observation);
+  let clicked = false;
+  const page = { waitForTimeout: async () => {} };
+  const act = createManualBrowserAction({
+    workspaceDir,
+    connectOverCDP: async () => ({ contexts: () => [] }),
+    inspectBrowser: async () => ({ page, state: observation }),
+    inspectPage: async () => ({ ...observation, state_id: "active-after" }),
+    resolveElement: async (_page, descriptor) => ({
+      element: descriptor ? { ...target, active: clicked } : null,
+      locator: descriptor
+        ? {
+            click: async () => {
+              clicked = true;
+            },
+          }
+        : null,
+    }),
+  });
+  const result = payload(
+    await act({
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
+      branch_index: 0,
+      operation: "click",
+      observation_id: observation.observation_id,
+      element_id: target.element_id,
+      purpose: "inspection",
+      expected_effect: "value_selected",
+    }),
+  );
+  assert.equal(clicked, true);
+  assert.equal(result.error.code, "POSTCONDITION_FAILED");
+});
+
 test("v3 enforces keyword-last and forbids reset after a filter set exists", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-browser-v3-order-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
@@ -351,6 +426,27 @@ test("v3 enforces keyword-last and forbids reset after a filter set exists", asy
     }),
   );
   assert.equal(early.error.code, "YPSCAN_MANUAL_KEYWORD_TOO_EARLY");
+  assert.equal(connections, 0);
+
+  const outOfOrder = payload(
+    await act({
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
+      branch_index: 0,
+      operation: "click",
+      observation_id: "order-observation",
+      element_id: search.element_id,
+      purpose: "filter_requirement",
+      expected_effect: "value_selected",
+      requirement_ref: planned.interaction_plan.hard_requirements[1].requirement_ref,
+    }),
+  );
+  assert.equal(outOfOrder.error.code, "YPSCAN_MANUAL_ACTION_NOT_ALLOWED");
+  assert.equal(
+    outOfOrder.error.evidence.next_requirement_ref,
+    planned.interaction_plan.hard_requirements[0].requirement_ref,
+  );
   assert.equal(connections, 0);
 
   await store.saveSelection({
@@ -415,13 +511,18 @@ test("v3 fills an Agent-chosen arbitrary range and verifies each input before co
   };
   await store.saveBrowserState(observation);
   const values = new Map();
+  const fills = [];
+  const waits = [];
   let confirmed = 0;
-  const page = { waitForTimeout: async () => {} };
+  const page = { waitForTimeout: async (milliseconds) => waits.push(milliseconds) };
   const resolveElement = async (_page, descriptor) => ({
     element: descriptor ?? null,
     locator: descriptor
       ? {
-          fill: async (value) => values.set(descriptor.element_id, value),
+          fill: async (value) => {
+            fills.push([descriptor.element_id, value]);
+            values.set(descriptor.element_id, value);
+          },
           inputValue: async () => values.get(descriptor.element_id) ?? "",
           click: async () => {
             confirmed += 1;
@@ -453,5 +554,33 @@ test("v3 fills an Agent-chosen arbitrary range and verifies each input before co
   );
   assert.equal(result.ok, true);
   assert.deepEqual(result.receipt.readbacks, ["10000", "24000"]);
+  assert.deepEqual(fills, [
+    ["el-max", "24000"],
+    ["el-min", "10000"],
+  ]);
+  assert.deepEqual(waits, [1_000, 1_000, 1_000, 1_000]);
   assert.equal(confirmed, 1);
+
+  fills.length = 0;
+  waits.length = 0;
+  const upperBound = payload(
+    await act({
+      requirement_id: planned.requirement_id,
+      platform: planned.platform,
+      run_id: planned.run_id,
+      branch_index: 0,
+      operation: "set_range",
+      observation_id: observation.observation_id,
+      element_ids: ["el-max"],
+      confirm_element_id: "el-confirm",
+      range: { min: null, max: 30_000 },
+      purpose: "inspection",
+      expected_effect: "value_filled",
+    }),
+  );
+  assert.equal(upperBound.ok, true);
+  assert.deepEqual(upperBound.receipt.readbacks, ["30000"]);
+  assert.deepEqual(fills, [["el-max", "30000"]]);
+  assert.deepEqual(waits, [1_000, 1_000, 1_000]);
+  assert.equal(confirmed, 2);
 });
