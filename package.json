@@ -1,7 +1,7 @@
 {
   "name": "ypscan",
-  "version": "0.1.24-beta58",
-  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由 Agent 使用 YP Action Playwright 自主完成。",
+  "version": "0.1.24-beta59",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由插件内持久 Chrome Runner 完成。",
   "type": "module",
   "private": true,
   "files": [

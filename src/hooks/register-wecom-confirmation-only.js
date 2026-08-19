@@ -79,11 +79,6 @@ const MCN_MARKDOWN_TABLE_HEADER = [
 ].join("\n");
 const MCN_MARKDOWN_EMPTY_ROW = "| 暂无匹配机构 | — | — | — |";
 
-const MANUAL_BROWSER_ENTRY_POLICY =
-  "Browser 入口：只使用 ypscan_manual_research(operation=start) 返回的 target_url，禁止自行搜索、猜测域名、改用平台官网首页或其他入口；① snapshot 观察整页及当前 URL；② 页面正在跳转、刷新或加载时先等待稳定再重新 snapshot，不在变化中的页面操作；③ snapshot 中若有带明确关闭按钮的阻塞弹窗（包括 review-wrapper 普通公告/提示），优先直接 click 关闭按钮，不必先读取完整弹窗内容或先 goto，关闭后立即重新 snapshot；④ 确认当前 URL、页面内容和筛选区属于目标达人广场；⑤ 仅当关闭弹窗并重新 snapshot 后仍明确不在目标达人广场时，才用 goto 原样导航到返回的 target_url 并重新 snapshot；⑥ 再次确认无阻塞弹窗且筛选区可用，才开始任何筛选。星图固定地址只能是 https://www.xingtu.cn/ad/creator/market，禁止使用 star.jinritemai.com、buyin.jinritemai.com 或 https://www.xingtu.cn/ 首页。弹窗若出现登录、全局验证码或安全验证信号，必须请求用户处理，绝不能关闭。";
-const MANUAL_BROWSER_ACTION_POLICY =
-  "常规交互优先使用 snapshot/click/hover/fill；goto 只用于首次打开 session，或关闭阻塞弹窗并重新 snapshot 后仍明确不在目标页面的恢复场景。只有级联或 teleported 浮层无法表达时才使用限定目标容器且带提交回读的 run-code。";
-
 const FIELD_SELECTION_AUTO_OPEN_FAILED = "浏览器打开请求未成功";
 
 function fieldSelectionDirective(message) {
@@ -113,22 +108,20 @@ function rankMcnsDirective(message) {
     : mcns.length;
   const options = empty
     ? [
-        { label: "人工拓展并提报", description: "使用 Playwright 继续筛选达人" },
+        { label: "人工拓展并提报", description: "由插件内 Runner 继续筛选并生成 Excel" },
         { label: "结束本次", description: "保留机构表格的空结果并结束本次流程" },
       ]
     : [
         { label: "询价机构", description: "从当前真实 MCN 表格选择机构并继续询价" },
-        { label: "人工拓展并提报", description: "使用 Playwright 继续筛选达人" },
+        { label: "人工拓展并提报", description: "由插件内 Runner 继续筛选并生成 Excel" },
       ];
   return [
     "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。本 tool result 里的表头只是格式提示，不是用户可见表格。",
     "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出，再原样展示此前 ypscan_save_excel_artifact 返回的 CREATOR_PREVIEW_LOCAL_PATH，最后调用 AskUserQuestion。不要输出达人预览表下载链接；表格禁止改成项目符号或编号列表。",
     "用户可见机构结果只显示这一张四列表格，固定列且不得增减：机构名、返点、综合分、达人数。禁止在表格内外另行展示排名、supplier_id、候选数、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。每行达人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 search_creators 确实未返回 creators_export_path 或精确保存参数，必须如实说明无法保存，禁止编造或复用历史链接。",
-    "人工拓展并提报 = 先调用 ypscan_manual_research(operation=start) 创建本地运行，再读取并使用 YP Action 自带 playwright 技能，通过 Bash 调用 playwright_cli.sh，固定短 session=ypscan，首次 open 使用 --headed --persistent；禁止调用宿主原生 Browser。",
-    MANUAL_BROWSER_ENTRY_POLICY,
-    MANUAL_BROWSER_ACTION_POLICY,
-    "稳定列表页和详情页用 run-code 读取结构化数据，再分别作为 list_snapshot/detail_snapshot 传给 capture_list/capture_detail。插件不调用 shell，也不会自行读取 Playwright session。首关键词先完成全部硬筛且关键词最后提交，后续关键词保留筛选集只换关键词。普通页面问题自主恢复，任何前缀的 manual_source_creators 都不得调用。",
+    "人工拓展并提报 = 直接调用 ypscan_manual_research(operation=start)，传当前 requirement_id、platform、完整 facts 和 1–4 个关键词。插件内专用持久 Chrome 会自行筛选、降级、分页并生成 Excel；不得调用 Browser、Bash、Playwright CLI 或旧 capture/selection 工具，任何前缀的 manual_source_creators 都不得调用。",
+    "start 返回 complete/partial/empty/failed_with_artifact 时立即展示真实 Excel 路径和候选/缺口；needs_user_action 时先展示当前 Excel，再用返回的 resume_args 在用户处理登录或验证码后继续。",
     MCN_MARKDOWN_TABLE_HEADER,
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
@@ -469,8 +462,8 @@ function manualResearchDirective(message) {
   }
   if (!loginOrCaptcha) {
     return [
-      `YPSCAN_FLOW_DIRECTIVE=ypscan_manual_research 未完成（${code}）。这是 Agent 可处理的页面/参数问题，不得要求用户关闭普通弹窗、复位筛选或刷新页面，也不得调用 AskUserQuestion。`,
-      "根据工具 next_call 或 Playwright CLI 同一 session 的最新 snapshot 恢复；没有 next_call 时如实交付 partial/failed 证据，不盲目重复同一调用。",
+      `YPSCAN_FLOW_DIRECTIVE=ypscan_manual_research 硬失败（${code}）。不得调用 Browser、Bash、Playwright CLI 或旧 capture 操作。`,
+      "仅当 artifact.excel_path 存在时展示当前诊断 Excel；否则如实说明初始产物创建失败，并根据错误修正参数或工作区后重新 start。",
     ].join("\n");
   }
   const options = [
@@ -500,45 +493,36 @@ function manualResearchDirective(message) {
 
 function manualResearchSuccessDirective(message) {
   const result = parsedToolResult(message);
-  if (result?.status === "ready_for_playwright") {
-    return [
-      "YPSCAN_FLOW_DIRECTIVE=Playwright CLI 自助手扒运行已创建。读取并使用 YP Action 自带 playwright 技能，固定使用返回的 playwright_session；插件不会代为执行 shell。手扒期间禁止调用宿主原生 Browser。",
-      `MANUAL_RESEARCH_RUN_ID=${result?.run_id ?? "未知"}`,
-      `MANUAL_RESEARCH_TARGET_URL=${result?.target_url ?? "缺失"}`,
-      "先使用 YP Action 自带 playwright 技能和 playwright_cli.sh，固定短 session=ypscan；若 session 未打开，用 --headed --persistent 原样打开 MANUAL_RESEARCH_TARGET_URL。若 target_url 缺失则重新调用 start，禁止猜测入口。禁止调用宿主原生 Browser。",
-      MANUAL_BROWSER_ENTRY_POLICY,
-      "先处理 selection_plan：每个 batch 都在最新 snapshot 后原样执行其 playwright_run_code，同一菜单入口只打开和确认一次；执行后重新 snapshot，并按返回的 selected_paths/unresolved_paths 和筛选区、结果变化回读。只重试 unresolved_paths 一次，fallbacks、动态项或仍失败路径再用当前页面逐层观察；硬条件没有精确可见选项时不得用近义项替代，记录未表达并转详情硬复核。其余 hard_requirements 继续按当前可见筛选项做精确匹配。数值范围按 range_execution_plan 执行稳定预设档分轮召回，每轮把实际档位放入 filter_evidence；不要把自定义输入作为必经路径。打开菜单、输入、确认、关闭弹窗、导航或页面刷新后必须重新 snapshot，绝不复用旧 ref。所有硬筛完成后最后输入首个关键词；后续只换关键词。",
-      "星图达人报价是两级独立控件：先把报价类型切换并回读为 plan.price_view（60s+ 必须是“60s以上视频”，绝不能保留默认“21-60s视频”），再按 range_execution_plan 选择报价区间预设档。工具会按精确 min/max 做行级二次硬筛，因此不要求操作自定义输入。",
-      "每个稳定结果页先用 Playwright run-code 读取 source_url/page_number/price_tier/rows，再作为 list_snapshot 调用 ypscan_manual_research(operation=capture_list, run_id, keyword, keyword_complete=false, list_snapshot)；工具会拒绝错误报价档，并在落盘候选前剔除报价、粉丝量等已可见的硬筛失败行。翻页由 Playwright CLI 完成。最后一页可直接以 keyword_complete=true 提交；若该页此前已提交，可用 rows=[] 只标记完成，工具不会追加空页或覆盖已有候选。详情页用 run-code 读取 url/fields/challenge/login，并作为 detail_snapshot 调用 capture_detail；单个详情不可访问就跳过继续。完成后调用 finalize。",
-    ].join("\n");
-  }
-  if (result?.status === "recoverable") {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=手扒当前步骤可恢复（${result?.page_state ?? result?.error?.code ?? "页面状态变化"}）。不得停下或询问用户。`,
-      result?.recovery_hint ??
-        "重新 snapshot 整个页面，使用 Playwright CLI 同一 session 关闭普通弹窗、处理重定向、返回达人广场或重新打开目标详情，然后重试当前只读采集。",
-      "不要重复同一种无效操作；可换用文字点击、悬停后点击、键盘或重新导航。只有全局登录或全局验证码才请求用户处理。",
-    ].join("\n");
-  }
-  if (result?.status === "list_captured") {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=当前结果页已保存：关键词=${result?.keyword ?? "未知"}，页码=${result?.page_number ?? "未知"}，本页=${result?.page_candidate_count ?? 0}，累计去重=${result?.candidate_count ?? 0}。`,
-      ...(Array.isArray(result?.remaining_preset_rounds) && result.remaining_preset_rounds.length
-        ? [
-            `RANGE_PRESET_ROUNDS_REMAINING=${JSON.stringify(result.remaining_preset_rounds)}`,
-            "关键词尚未完成；按上面的剩余预设档逐轮筛选、采集并在 filter_evidence 记录实际档位，全部覆盖后再提交 keyword_complete=true。",
-          ]
-        : []),
-      result?.keyword_complete
-        ? "当前关键词已完成。若目标人数不足，使用 Playwright CLI 只替换下一个关键词并继续；否则自主进入详情复核。"
-        : "继续由 Playwright CLI 翻页或判断当前关键词是否完成；不要等待固定 next_call。",
-    ].join("\n");
-  }
-  if (["detail_captured", "detail_skipped"].includes(result?.status)) {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=当前达人详情已${result.status === "detail_skipped" ? "记录为不可访问" : "保存"}。`,
-      "关闭或返回当前详情，继续用 Playwright CLI 同一 session 处理下一位达人；单个详情失败、字段缺失或局部验证码不得终止整批任务。全局验证码阻止所有详情时才请求用户。",
-    ].join("\n");
+  const status = result?.status;
+  const operation = result?.operation;
+  const runnerExcelPath = firstString(result?.artifact?.excel_path);
+  if (["start", "resume"].includes(operation)) {
+    if (["needs_user_action", "busy"].includes(status)) {
+      const resumeArgs = isRecord(result?.resume_args) ? result.resume_args : null;
+      return [
+        `YPSCAN_FLOW_DIRECTIVE=插件内手扒 Runner 当前状态=${status}。浏览器动作由插件负责，禁止调用 Browser、Bash 或 Playwright CLI。`,
+        ...(runnerExcelPath
+          ? [`MANUAL_RESEARCH_EXCEL_PATH=${runnerExcelPath}`, "先向用户展示当前状态 Excel 的真实绝对路径。"]
+          : []),
+        ...(resumeArgs ? [`MANUAL_RESEARCH_RESUME_ARGS=${JSON.stringify(resumeArgs)}`] : []),
+        `ASK_USER_QUESTION_ARGS=${JSON.stringify(
+          askQuestion("手扒恢复", status === "busy" ? "专用浏览器正被另一运行占用。" : "请在手扒专用浏览器完成登录或安全验证。", [
+            { label: "已处理，继续", description: "使用当前 run 继续插件内手扒" },
+            { label: "结束本次", description: "保留当前状态 Excel 并结束" },
+          ]),
+        )}`,
+      ].join("\n");
+    }
+    if (["complete", "partial", "empty", "failed_with_artifact"].includes(status)) {
+      return [
+        `YPSCAN_FLOW_DIRECTIVE=插件内手扒 Runner 已终止：状态=${status}，质量=${result?.quality_level ?? "未知"}。不得调用 Browser、Bash、Playwright CLI、capture_list、capture_detail 或 finalize。`,
+        `候选池=${result?.candidate_count ?? 0}，缺口=${result?.delivery_shortfall ?? "未知"}。未复核候选只属于“候选达人”，不得表述为最终推荐。`,
+        ...(runnerExcelPath
+          ? [`MANUAL_RESEARCH_EXCEL_PATH=${runnerExcelPath}`, "必须向用户原样展示上面的 Excel 绝对路径；该候选产物已满足本次产物优先任务。"]
+          : ["没有真实 artifact.excel_path，必须如实说明产物写入失败。"]),
+        "详情语义复核、直接生成提报表和继续询价都是可选后续，不得为了完成手扒而强制继续。",
+      ].join("\n");
+    }
   }
   if (result?.operation === "create_submission") {
     const submissionPath = firstString(result?.submission_path, result?.artifact?.submission_path);
@@ -549,14 +533,6 @@ function manualResearchSuccessDirective(message) {
       "必须把上面的真实绝对路径和最终行数原样展示给用户，然后结束；不得调用 rank_creators、create_submission_batch 或上传合并。",
     ].join("\n");
   }
-  if (isRecord(result?.next_call)) {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=ypscan_manual_research 当前增量阶段=${result?.status ?? "未知"}。`,
-      `YPSCAN_NEXT_CALL=${JSON.stringify(result.next_call)}`,
-      "当前工具只完成了一次只读采集；下一步必须原样调用 next_call，不得提前交付或让抓取工具自行导航。",
-    ].join("\n");
-  }
-  const operation = result?.operation ?? "unknown";
   const reviewRemaining = Number.isFinite(result?.review_remaining)
     ? result.review_remaining
     : null;
@@ -567,52 +543,10 @@ function manualResearchSuccessDirective(message) {
   const targetRowCount = Number.isFinite(result?.artifact?.target_row_count)
     ? result.artifact.target_row_count
     : null;
-  const targetCount = Number.isFinite(result?.plan?.target_count) ? result.plan.target_count : null;
-  const eligibleCount = Number.isFinite(result?.eligible_candidate_count)
-    ? result.eligible_candidate_count
-    : null;
-  const rejectedCount = Number.isFinite(result?.rejected_candidate_count)
-    ? result.rejected_candidate_count
-    : null;
-  const needsReviewCount = Number.isFinite(result?.needs_review_candidate_count)
-    ? result.needs_review_candidate_count
-    : null;
-  const listHardPassCount = Number.isFinite(result?.list_hard_pass_candidate_count)
-    ? result.list_hard_pass_candidate_count
-    : null;
-  const listHardRejectedCount = Number.isFinite(result?.list_hard_rejected_candidate_count)
-    ? result.list_hard_rejected_candidate_count
-    : null;
-  const listHardPendingCount = Number.isFinite(result?.list_hard_pending_candidate_count)
-    ? result.list_hard_pending_candidate_count
-    : null;
-  const deliveryShortfall = Number.isFinite(result?.delivery_shortfall)
-    ? result.delivery_shortfall
-    : null;
-  const priceRanges = Array.isArray(result?.plan?.planned_filters)
-    ? result.plan.planned_filters
-        .filter((filter) => filter?.control === "creator_price")
-        .map((filter) => `${filter.min}–${filter.max} ${filter.unit ?? ""}`.trim())
-    : [];
   const lines = [
-    "YPSCAN_FLOW_DIRECTIVE=ypscan_manual_research 已返回真实 Browser 结果。不得在成功后重复调用平台原生导出。",
-    ...(reviewRemaining > 0
-      ? [
-          `当前仍有 ${reviewRemaining} 条详情语义复核待处理。必须结合客户原始需求、review_batch 的详情字段与近期内容生成 include/exclude、reasons、evidence，并立即用 operation=apply_reviews、当前 artifact.run_id 调回同一工具；每批最多 20 条，直到 review_remaining=0，期间不得把空的最终名单当成交付结果。`,
-        ]
-      : [
-          "最终回复必须先说明候选池数量、最终名单行数、未表达条件和缺口；不得把平台硬筛结果表述为已经完成语义复核，只有写入 include 的达人属于最终名单。",
-        ]),
-    `筛选统计：目标 ${targetCount ?? "未知"}，报价区间初筛通过 ${eligibleCount ?? "未知"}，报价淘汰 ${rejectedCount ?? "未知"}，报价待补证 ${needsReviewCount ?? "未知"}；列表硬条件通过 ${listHardPassCount ?? "未知"}，列表硬条件淘汰 ${listHardRejectedCount ?? "未知"}，列表待补证 ${listHardPendingCount ?? "未知"}；最终缺口 ${deliveryShortfall ?? "未知"}。`,
-    ...(priceRanges.length ? [`本轮实际手扒报价区间：${priceRanges.join("；")}。`] : []),
-    "最终推荐只能来自本工具返回的 candidates/detail_tasks；昵称或平台 ID 搜索只允许定位已有详情任务，不得重新建立绕过价格筛选的候选池。",
-    "price_check.status=rejected 的达人不得推荐或包装为备选；needs_review 只能标为待确认，不能计入已通过人数。",
+    `YPSCAN_FLOW_DIRECTIVE=手扒复核已写回；剩余=${reviewRemaining ?? "未知"}。不得调用 Browser、Bash、Playwright CLI 或旧 capture 操作。`,
+    "复核是候选产物交付后的可选步骤；未复核或未纳入的候选不得表述为最终推荐。",
   ];
-  if ((reviewRemaining ?? 0) === 0 && (deliveryShortfall ?? 0) > 0) {
-    lines.push(
-      `当前价格合格人数不足目标，缺口为 ${deliveryShortfall}；不得声称已凑满，仍不足时必须如实交付当前合格数和缺口。`,
-    );
-  }
   if (excelPath) {
     lines.push(
       `MANUAL_RESEARCH_EXCEL_PATH=${excelPath}`,
@@ -621,56 +555,10 @@ function manualResearchSuccessDirective(message) {
   } else {
     lines.push("本次没有可交付的 artifact.excel_path，必须如实说明文件未生成，禁止编造路径。");
   }
-  if (operation === "apply_reviews" && reviewRemaining > 0) {
-    lines.push(
-      "apply_reviews 已返回下一批 review_batch；不得停下或重新采集列表，继续写回当前 run_id。",
-    );
-  }
   if ((candidateCount ?? targetRowCount ?? 0) > 20) {
     lines.push(
       "候选超过 20 人：禁止在对话粘贴完整名单，只给筛选摘要、待确认项和最多 10 条预览；完整记录以 Excel 为准。",
     );
-  }
-  if ((reviewRemaining ?? 0) === 0 && excelPath) {
-    const providerPlatform =
-      result?.platform === "xingtu"
-        ? "douyin"
-        : result?.platform === "pgy"
-          ? "xiaohongshu"
-          : result?.platform;
-    const requirementId = firstString(result?.requirement_id);
-    const runId = firstString(result?.artifact?.run_id, result?.run_id);
-    if (requirementId && providerPlatform && runId) {
-      lines.push(
-        "手扒 Excel 展示后必须立即逐字调用下面的 AskUserQuestion，不得直接停止。",
-        `FIELD_SELECTION_ARGS=${JSON.stringify({
-          requirement_id: requirementId,
-          platform: providerPlatform,
-        })}`,
-        `MANUAL_SUBMISSION_ARGS=${JSON.stringify({
-          operation: "create_submission",
-          requirement_id: requirementId,
-          platform: result.platform,
-          run_id: runId,
-        })}`,
-        `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-          askQuestion(
-            "手扒后续",
-            [
-              "人工拓展已完成。",
-              `目标达人：${targetCount ?? "未知"} 人`,
-              `最终名单：${targetRowCount ?? "未知"} 人`,
-              `当前缺口：${deliveryShortfall ?? "未知"} 人`,
-              "请选择继续询价或直接生成本地提报表。",
-            ].join("\n"),
-            [
-              { label: "继续询价", description: "先选择询价字段，再确认消息和机构列表" },
-              { label: "直接生成提报表", description: "使用本轮最终名单生成独立本地提报表" },
-            ],
-          ),
-        )}`,
-      );
-    }
   }
   return lines.join("\n");
 }
@@ -1013,14 +901,11 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
           "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → create_with_distributions 在同一次弹窗确认机构列表和完整消息 → 发送后询问是否继续人工拓展。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
           "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
-          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展完成后必须询问“继续询价”或“直接生成提报表”；后者调用 ypscan_manual_research(operation=create_submission)。人工拓展先调用 ypscan_manual_research(operation=start)，随后读取并使用 YP Action 自带 playwright 技能，通过 Bash 调用 playwright_cli.sh，固定短 session=ypscan，首次 open 使用 --headed --persistent；手扒期间禁止调用宿主原生 Browser，不使用 selection_id、observation_id、element_id。",
-          MANUAL_BROWSER_ENTRY_POLICY,
-          "页面变化后重新 snapshot；稳定列表/详情用 run-code 读取结构化快照，分别作为 list_snapshot/detail_snapshot 传给 capture_list/capture_detail 落盘，插件自身不执行 shell。首关键词先建立硬筛且关键词最后提交，后续关键词继承筛选集只换关键词；任何前缀的 manual_source_creators 都不得调用。",
+          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展直接调用 ypscan_manual_research(operation=start)，由插件内专用持久 Chrome 完成筛选、降级、分页、详情和 Excel；禁止调用宿主 Browser、Bash、Playwright CLI、selection_id、observation_id、element_id 或旧 capture 操作，任何前缀的 manual_source_creators 都不得调用。",
+          "手扒 start/resume 的任何可控终态都先展示真实 artifact.excel_path；needs_user_action 时用户处理专用浏览器后原样调用 resume_args。候选产物交付后，详情复核、直接生成提报表和继续询价均为可选后续。",
           "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion；需求解析按最新 violations 持续修正并重试，不限制调用次数；其他普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
           "需求解析性能约束：普通 fact 只传 kind/quote/value；抖音 60s+ 必须表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；参考达人统一使用 reference_creator，昵称和 http/https 链接可作为两条 fact 或同一 value 数组传入，最终分别透传为 refNickname/refUrl；女粉偏多、城市集中等无精确数值或主体不明的条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌、数量、截止时间等必填业务信息缺失时才向用户澄清。YPSCAN_REQUIREMENT_INVALID 是 Agent 参数构造错误，必须按最新 violations 一次性修正并继续调用需求解析工具，不限制调用次数。",
-          "用户选择人工拓展后，start 必须保留完整硬条件 facts。Agent 使用 YP Action Playwright CLI 的同一 ypscan session 完成观察和交互，禁止调用宿主原生 Browser。每次 navigation、菜单开关、输入提交、分页或详情切换后重新 snapshot；refs 只属于最新 snapshot。",
-          MANUAL_BROWSER_ACTION_POLICY,
-          "普通失败先重新 snapshot 并更换定位方式，最多两次；登录失效或全局 CAPTCHA 才请求用户接管。",
+          "用户选择人工拓展后，start 必须保留完整硬条件 facts 和 1–4 个关键词；页面操作、有限重试与逐级降级全部由插件 Runner 执行，Agent不得自行接管普通页面故障。登录失效或全局 CAPTCHA 才请求用户处理，处理后使用同一 run_id 调用 resume。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           "手扒达人价格必须从当前 ypscan_parse_requirement.data.facts 复制客户原始 operator 和原始数值；禁止把 Provider 区间或手工计算后的 50%–120% 区间再次传入。除本轮唯一 creator_count 外，不重算价格事实。",
         );

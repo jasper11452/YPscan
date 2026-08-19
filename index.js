@@ -5,7 +5,11 @@ import {
   PARSE_REQUIREMENT_PARAMETERS,
 } from "./src/tools/parse-requirement.js";
 import { createExcelArtifactSaver } from "./src/tools/save-excel-artifact.js";
-import { createManualResearch, MANUAL_RESEARCH_PARAMETERS } from "./src/tools/manual-research.js";
+import {
+  createManualResearchRunner,
+  MANUAL_RESEARCH_RUNNER_PARAMETERS,
+} from "./src/tools/manual-research-runner.js";
+import { createManualBrowserRuntime } from "./src/tools/manual-research/browser-runtime.js";
 import { resolveTestAdapterBaseUrl } from "./src/tools/test-adapter.js";
 
 /** Entry point for the YPscan client integration layer. */
@@ -15,18 +19,21 @@ export default {
     const testAdapterBaseUrl = resolveTestAdapterBaseUrl(api.pluginConfig ?? {});
     const parseRequirement = createRequirementParser();
     const hookRuntime = registerWecomConfirmationOnlyHooks(api);
+    const manualBrowserRuntime = createManualBrowserRuntime({
+      profileDir: api.pluginConfig?.manualBrowserProfileDir,
+    });
 
     api.registerTool(
       (context) => {
-        const manualResearch = createManualResearch({
-          allowLegacyProtocol: false,
+        const manualResearch = createManualResearchRunner({
           workspaceDir: context?.workspaceDir,
+          browserRuntime: manualBrowserRuntime,
         });
         return {
           name: "ypscan_manual_research",
           description:
-            "Playwright 自助手扒的数据工具：start 创建运行并返回固定 CLI session；Agent 使用 YP Action playwright 技能操作该 session，capture_list/capture_detail 从同一 session 只读并持久化，finalize 生成 Excel；不调用宿主 Browser，也不需要 selection_id。",
-          parameters: MANUAL_RESEARCH_PARAMETERS,
+            "产物优先的双平台手扒 Runner：start/resume 由插件直接控制专用持久 Chrome，筛选失败逐级降级并始终优先生成本地 Excel；apply_reviews/create_submission 为可选后续。",
+          parameters: MANUAL_RESEARCH_RUNNER_PARAMETERS,
           async execute(_id, params) {
             return manualResearch(params);
           },
@@ -96,6 +103,7 @@ export default {
     });
     api.on("gateway_stop", async () => {
       hookRuntime.resetTransientState();
+      await manualBrowserRuntime.close();
     });
   },
 };

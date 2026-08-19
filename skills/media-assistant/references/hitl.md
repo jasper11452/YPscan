@@ -4,7 +4,7 @@
 
 达人筛选固定先完成 `ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns`，再展示完整 MCN Markdown 表格和真实本地路径，最后用 `AskUserQuestion` 选择“询价机构”或“人工拓展并提报”。`creators_export_path` 只作为保存工具参数，不向用户输出下载链接。这条顺序是静态行为指令，不是额外状态机或权限门禁。
 
-选择人工拓展后，Agent 使用 YP Action Playwright CLI 的固定 `ypscan` session 操作星图或蒲公英，禁止调用宿主原生 Browser。平台登录、全局验证码、暂停或结束只通过 `AskUserQuestion` 等待用户；普通页面错误由 Agent 自主恢复，成功交付时不弹完成确认。
+选择人工拓展后，插件内 Runner 使用独立持久 Chrome Profile 操作星图或蒲公英，Agent 禁止调用 Browser、Bash 或 Playwright CLI。平台登录、全局验证码、浏览器占用、暂停或结束只通过 `AskUserQuestion` 等待用户；普通页面错误由 Runner 有界恢复和降级，成功交付时不弹完成确认。
 
 ## 一次最终确认
 

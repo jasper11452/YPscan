@@ -131,6 +131,7 @@ function replayCheckpointEvents(events, fingerprint = null) {
     browser_states: [],
     browser_actions: [],
     phase_transitions: [],
+    runner_states: [],
   };
   const branchMap = new Map();
   for (const event of events) {
@@ -157,6 +158,7 @@ function replayCheckpointEvents(events, fingerprint = null) {
     if (event.type === "phase_transition" && event.transition) {
       state.phase_transitions.push(event.transition);
     }
+    if (event.type === "runner_state" && event.state) state.runner_states.push(event.state);
   }
   state.branches = [...branchMap.values()];
   state.details = mergeDetailRecords(state.details);
@@ -412,19 +414,24 @@ function selectedPrice(fields, candidate) {
 
 function candidateStatus(candidate, detail, review, selectedReferences) {
   const reference = candidateReference(candidate);
-  if (selectedReferences.has(reference)) return "已推荐";
-  if (candidate.price_check?.status === "rejected") return "报价淘汰";
-  if (candidate.list_hard_evaluation?.status === "fail") return "硬筛淘汰";
-  if (detail?.hard_evaluation?.status === "fail") return "详情淘汰";
-  if (review?.decision === "exclude") return "未入选";
+  if (selectedReferences.has(reference)) return "已复核纳入";
+  if (review?.decision === "exclude") return "已复核淘汰";
+  if (
+    candidate.price_check?.status === "rejected" ||
+    candidate.list_hard_evaluation?.status === "fail" ||
+    detail?.hard_evaluation?.status === "fail"
+  ) {
+    return "硬条件失败";
+  }
+  if (candidate.collection_mode && candidate.collection_mode !== "filtered") return "降级召回";
   if (
     candidate.price_check?.status === "needs_review" ||
     detail?.hard_evaluation?.status === "unknown" ||
     !review
   ) {
-    return "待复核";
+    return "待核验";
   }
-  return "候选";
+  return "待核验";
 }
 
 function candidateRemarks(candidate, detail, review) {
@@ -437,6 +444,9 @@ function candidateRemarks(candidate, detail, review) {
       .filter((check) => check.verdict !== "pass")
       .map((check) => check.reason ?? check.control),
     ...(review?.reasons ?? []),
+    candidate.collection_mode && candidate.collection_mode !== "filtered"
+      ? `召回方式：${candidate.collection_mode}`
+      : null,
   ]
     .map(reasonDisplay)
     .map(clean)
@@ -539,11 +549,50 @@ function finalCandidates(candidates, details, reviews, targetCount) {
     .filter((candidate) => {
       const candidateRef = candidateReference(candidate);
       return (
+        candidate.collection_mode !== "generic_dom" &&
         detailMap.get(candidateRef)?.hard_evaluation?.status === "pass" &&
         reviewMap.get(candidateRef)?.decision === "include"
       );
     })
     .slice(0, targetCount ?? candidates.length);
+}
+
+const RUN_INFO_WIDTHS = Object.freeze([18, 28, 18, 70, ...Array(9).fill(2)]);
+
+function runInfoRows(artifact) {
+  const info = artifact.run_info ?? {};
+  const rows = [
+    ["悦普识星手扒运行说明", ...Array(12).fill("")],
+    ["本表记录执行状态、降级和缺口；候选不等于最终推荐。", ...Array(12).fill("")],
+    [
+      "运行 ID",
+      artifact.run_id,
+      "执行状态",
+      artifact.status,
+      ...Array(9).fill(""),
+    ],
+    Array(13).fill(""),
+    ["类别", "项目", "状态", "说明", ...Array(9).fill("")],
+  ];
+  const add = (category, item, status, description) => {
+    rows.push([category, item, status, description, ...Array(9).fill("")]);
+  };
+  add("标识", "需求 ID", "", info.requirement_id ?? "未知");
+  add("标识", "平台", "", info.platform ?? "未知");
+  add("执行", "阶段", info.phase ?? "未知", info.quality_level ?? "unverified");
+  add("执行", "更新时间", "", info.updated_at ?? artifact.generated_at);
+  add("数量", "目标 / 候选 / 推荐", "", `${info.target_count ?? "未知"} / ${info.candidate_count ?? artifact.candidate_row_count} / ${artifact.target_row_count}`);
+  add("数量", "候选缺口", "", info.candidate_shortfall ?? "未知");
+  add("数量", "推荐缺口", "", artifact.delivery_shortfall);
+  add("搜索", "已完成关键词", "", (info.completed_keywords ?? []).join("、") || "无");
+  add("搜索", "已完成页数", "", info.completed_pages ?? 0);
+  add("搜索", "降级方式", "", (info.fallback_modes_used ?? []).join("、") || "无");
+  add("筛选", "已应用", "", (info.applied_filters ?? []).join("；") || "无");
+  add("筛选", "未应用", "", (info.unapplied_filters ?? []).join("；") || "无");
+  add("详情", "完成进度", "", `${info.detail_completed ?? 0} / ${info.detail_attempted ?? 0}`);
+  add("错误", info.error_code ?? "无", info.error_code ? "存在" : "无", info.error_message ?? "");
+  add("恢复", "是否可恢复", info.resume_available ? "是" : "否", info.resume_instruction ?? "");
+  return rows;
 }
 
 /** Build a dependency-free, standards-compliant XLSX workbook. */
@@ -585,6 +634,11 @@ export function buildManualResearchWorkbook({
               sheetKind: "candidates",
             }),
             widths: TALENT_WIDTHS,
+          },
+          {
+            name: "运行说明",
+            rows: runInfoRows(artifact),
+            widths: RUN_INFO_WIDTHS,
           },
         ]),
   ];
@@ -659,9 +713,11 @@ function createArtifactMetadata({
   exportFallback = null,
   deliveryMessage,
   extra = {},
+  executionStatus = "complete",
+  runInfo = null,
 }) {
   return {
-    status: "complete",
+    status: executionStatus,
     run_id: runId,
     checkpoint_path: checkpointPath,
     excel_path: excelPath,
@@ -674,6 +730,7 @@ function createArtifactMetadata({
     delivery_shortfall: deliveryShortfall,
     checkpoint_event_count: checkpointEventCount,
     generated_at: generatedAt,
+    run_info: runInfo,
     native_export_quota_consumed: Boolean(exportFallback?.quota_consumed),
     delivery: {
       display_required: true,
@@ -746,6 +803,7 @@ function disabledStore() {
     async saveBrowserState() {},
     async saveBrowserAction() {},
     async savePhaseTransition() {},
+    async saveRunnerState() {},
     async snapshot() {
       return { status: "unavailable", reason: "workspace_dir_unavailable" };
     },
@@ -849,6 +907,7 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
     exportFallback = null,
     detailPlannedCount = 0,
     appendFinal = false,
+    runInfo = null,
   }) => {
     const generatedAt = new Date(now()).toISOString();
     const checkedCandidates = candidatesWithPriceCheck(candidates, plan);
@@ -897,6 +956,8 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
         list_hard_pending_candidate_count: listHardPendingCandidateCount,
         restored_candidate_count: restored.candidates.length,
       },
+      executionStatus: status,
+      runInfo,
     });
     await writeArtifactWorkbook({
       plan,
@@ -948,6 +1009,9 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
     },
     async savePhaseTransition(transition) {
       await append({ type: "phase_transition", transition });
+    },
+    async saveRunnerState(state) {
+      await append({ type: "runner_state", state });
     },
     async finalize(state) {
       return materialize({ ...state, appendFinal: true });
@@ -1013,6 +1077,9 @@ export async function loadManualResearchRun({ workspaceDir, runId, requirementId
     browser_states: restored.browser_states,
     browser_actions: restored.browser_actions,
     phase_transitions: restored.phase_transitions,
+    runner_states: restored.runner_states,
+    event_count: restored.event_count,
+    page_count: restored.page_count,
   };
 }
 

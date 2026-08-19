@@ -113,7 +113,7 @@ function storedZipEntry(buffer, expectedName) {
   return null;
 }
 
-test("50-person runs checkpoint every page and return a compact review batch plus a two-sheet XLSX", async (t) => {
+test("50-person runs checkpoint every page and return a compact review batch plus a three-sheet XLSX", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-manual-50-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   const actions = [];
@@ -162,12 +162,13 @@ test("50-person runs checkpoint every page and return a compact review batch plu
   const candidateSheet = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
   assert.match(workbookXml, /sheet name="达人推荐List"/u);
   assert.match(workbookXml, /sheet name="候选达人"/u);
-  assert.equal((workbookXml.match(/<sheet /gu) ?? []).length, 2);
+  assert.match(workbookXml, /sheet name="运行说明"/u);
+  assert.equal((workbookXml.match(/<sheet /gu) ?? []).length, 3);
   assert.equal((recommendedSheet.match(/<row /gu) ?? []).length, 5);
   assert.equal((candidateSheet.match(/<row /gu) ?? []).length, 125);
   assert.match(candidateSheet, /供应商名称/u);
   assert.match(candidateSheet, /达人名称/u);
-  assert.match(candidateSheet, /待复核/u);
+  assert.match(candidateSheet, /待核验/u);
   assert.match(candidateSheet, /mergeCell ref="A1:M1"/u);
   assert.match(candidateSheet, /pane ySplit="5"/u);
 });

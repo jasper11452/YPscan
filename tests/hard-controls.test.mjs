@@ -140,9 +140,9 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
   assert.match(directiveText(rank), /ypscan_manual_research\(operation=start\)/u);
-  assert.match(directiveText(rank), /Playwright/u);
-  assert.match(directiveText(rank), /禁止调用宿主原生 Browser/u);
-  assert.match(directiveText(rank), /capture_list\/capture_detail/u);
+  assert.match(directiveText(rank), /插件内专用持久 Chrome/u);
+  assert.match(directiveText(rank), /不得调用 Browser、Bash、Playwright CLI/u);
+  assert.match(directiveText(rank), /旧 capture\/selection 工具/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
   const question = argsFromDirective(directiveText(rank));
   assert.deepEqual(
@@ -343,7 +343,10 @@ test("manual research success directive makes the local Excel the primary large-
     message: toolMessage({
       success: true,
       status: "complete",
+      operation: "start",
+      quality_level: "degraded",
       candidate_count: 120,
+      delivery_shortfall: 0,
       artifact: {
         target_row_count: 50,
         excel_path: "/workspace/ypscan-manual-research/result.xlsx",
@@ -355,44 +358,44 @@ test("manual research success directive makes the local Excel the primary large-
     directive,
     /MANUAL_RESEARCH_EXCEL_PATH=\/workspace\/ypscan-manual-research\/result\.xlsx/u,
   );
-  assert.match(directive, /必须把上面的 Excel 绝对路径原样作为主要交付展示/u);
-  assert.match(directive, /不消耗平台导出额度/u);
-  assert.match(directive, /禁止在对话粘贴完整名单/u);
-  assert.match(directive, /最多 10 条预览/u);
-  assert.match(directive, /不得把平台硬筛结果表述为已经完成语义复核/u);
+  assert.match(directive, /必须向用户原样展示上面的 Excel 绝对路径/u);
+  assert.match(directive, /候选池=120/u);
+  assert.match(directive, /未复核候选只属于“候选达人”/u);
+  assert.match(directive, /详情语义复核.*都是可选后续/u);
 });
 
-test("manual research observes redirects and dismisses safe modals before filtering", () => {
+test("manual research pause displays the diagnostic Excel and exact resume args", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_manual_research",
     message: toolMessage({
       success: true,
-      status: "ready_for_playwright",
+      status: "needs_user_action",
+      operation: "start",
       run_id: "run-entry-guard",
-      playwright_session: "ypscan",
-      target_url: "https://www.xingtu.cn/ad/creator/market",
+      artifact: { excel_path: "/workspace/manual-login.xlsx" },
+      resume_args: {
+        operation: "resume",
+        requirement_id: "req-manual",
+        platform: "xingtu",
+        run_id: "run-entry-guard",
+      },
     }),
   });
   const directive = directiveText(result);
 
-  assert.match(
-    directive,
-    /MANUAL_RESEARCH_TARGET_URL=https:\/\/www\.xingtu\.cn\/ad\/creator\/market/u,
-  );
-  assert.match(directive, /--headed --persistent 原样打开 MANUAL_RESEARCH_TARGET_URL/u);
-  assert.match(directive, /禁止自行搜索、猜测域名、改用平台官网首页/u);
-  assert.match(directive, /禁止使用 star\.jinritemai\.com/u);
-  assert.match(directive, /snapshot 观察整页及当前 URL/u);
-  assert.match(directive, /等待稳定再重新 snapshot/u);
-  assert.match(directive, /确认当前 URL、页面内容和筛选区属于目标达人广场/u);
-  assert.match(directive, /review-wrapper 普通公告\/提示.*优先直接 click 关闭按钮/u);
-  assert.match(directive, /不必先读取完整弹窗内容或先 goto/u);
-  assert.match(directive, /仅当关闭弹窗并重新 snapshot 后仍明确不在目标达人广场时.*goto/u);
-  assert.match(directive, /弹窗若出现登录、全局验证码或安全验证信号.*绝不能关闭/u);
+  assert.match(directive, /MANUAL_RESEARCH_EXCEL_PATH=\/workspace\/manual-login\.xlsx/u);
+  assert.deepEqual(namedArgsFromDirective(directive, "MANUAL_RESEARCH_RESUME_ARGS"), {
+    operation: "resume",
+    requirement_id: "req-manual",
+    platform: "xingtu",
+    run_id: "run-entry-guard",
+  });
+  assert.match(directive, /禁止调用 Browser、Bash 或 Playwright CLI/u);
+  assert.match(directive, /ASK_USER_QUESTION_ARGS=/u);
 });
 
-test("completed manual research asks for inquiry or a local submission workbook", () => {
+test("completed review remains optional and does not force a follow-up dialog", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_manual_research",
@@ -413,25 +416,21 @@ test("completed manual research asks for inquiry or a local submission workbook"
     }),
   });
   const text = directiveText(result);
-  assert.deepEqual(
-    argsFromDirective(text).questions[0].options.map((option) => option.label),
-    ["继续询价", "直接生成提报表"],
-  );
-  assert.deepEqual(namedArgsFromDirective(text, "MANUAL_SUBMISSION_ARGS"), {
-    operation: "create_submission",
-    requirement_id: "req-manual",
-    platform: "xingtu",
-    run_id: "run-manual",
-  });
+  assert.match(text, /手扒复核已写回；剩余=0/u);
+  assert.match(text, /复核是候选产物交付后的可选步骤/u);
+  assert.match(text, /MANUAL_RESEARCH_EXCEL_PATH=\/workspace\/manual\.xlsx/u);
+  assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
-test("manual research shortfall directive forbids padding rejected price candidates", () => {
+test("manual research terminal directive reports candidate shortfall without padding", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_manual_research",
     message: toolMessage({
       success: true,
       status: "partial",
+      operation: "start",
+      quality_level: "degraded",
       candidate_count: 5,
       eligible_candidate_count: 3,
       rejected_candidate_count: 2,
@@ -449,12 +448,9 @@ test("manual research shortfall directive forbids padding rejected price candida
     }),
   });
   const directive = directiveText(result);
-  assert.match(directive, /目标 5，报价区间初筛通过 3，报价淘汰 2，报价待补证 0/u);
-  assert.match(directive, /缺口为 2/u);
-  assert.match(directive, /不得声称已凑满/u);
-  assert.match(directive, /price_check\.status=rejected 的达人不得推荐或包装为备选/u);
-  assert.match(directive, /昵称或平台 ID 搜索只允许定位已有详情任务/u);
-  assert.match(directive, /10000–24000 yuan/u);
+  assert.match(directive, /候选池=5，缺口=2/u);
+  assert.match(directive, /未复核候选只属于“候选达人”/u);
+  assert.match(directive, /不得表述为最终推荐/u);
   assert.match(directive, /MANUAL_RESEARCH_EXCEL_PATH=.*shortfall\.xlsx/u);
 });
 
@@ -536,7 +532,7 @@ test("invalid parse arguments allow unlimited Agent repairs instead of asking th
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
-test("startup instruction fixes the chain and reserves Playwright for the manual branch", () => {
+test("startup instruction fixes the chain and reserves the internal Runner for the manual branch", () => {
   const skillPath = "/plugin/skills/media-assistant/SKILL.md";
   const hooks = registeredHooks({ skillPath });
   const context = { runId: "startup-run" };
@@ -557,16 +553,11 @@ test("startup instruction fixes the chain and reserves Playwright for the manual
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
-  assert.match(first.prependContext, /Playwright CLI/u);
-  assert.match(first.prependContext, /禁止调用宿主原生 Browser/u);
-  assert.match(first.prependContext, /capture_list\/capture_detail/u);
-  assert.match(first.prependContext, /playwright_cli\.sh/u);
-  assert.match(first.prependContext, /页面变化后重新 snapshot/u);
-  assert.match(first.prependContext, /review-wrapper 普通公告\/提示.*优先直接 click 关闭/u);
-  assert.match(first.prependContext, /仅当关闭弹窗.*仍明确不在目标达人广场时.*goto/u);
-  assert.match(first.prependContext, /常规交互优先使用 snapshot\/click\/hover\/fill/u);
-  assert.match(first.prependContext, /goto 只用于首次打开 session/u);
-  assert.match(first.prependContext, /不使用 selection_id、observation_id、element_id/u);
+  assert.match(first.prependContext, /插件内专用持久 Chrome/u);
+  assert.match(first.prependContext, /禁止调用宿主 Browser、Bash、Playwright CLI/u);
+  assert.match(first.prependContext, /旧 capture 操作/u);
+  assert.match(first.prependContext, /有限重试与逐级降级全部由插件 Runner 执行/u);
+  assert.match(first.prependContext, /同一 run_id 调用 resume/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /需求解析按最新 violations 持续修正并重试/u);
   assert.match(first.prependContext, /不限制调用次数/u);
@@ -627,9 +618,9 @@ test("manual research asks only for login/CAPTCHA and keeps ordinary UI recovery
   });
   const filterText = directiveText(filter);
   assert.doesNotMatch(filterText, /ASK_USER_QUESTION_ARGS=/u);
-  assert.match(filterText, /不得要求用户关闭普通弹窗/u);
-  assert.match(filterText, /Playwright CLI 同一 session 的最新 snapshot/u);
-  assert.match(filterText, /不盲目重复/u);
+  assert.match(filterText, /硬失败/u);
+  assert.match(filterText, /不得调用 Browser、Bash、Playwright CLI/u);
+  assert.match(filterText, /初始产物创建失败/u);
   assert.doesNotMatch(filterText, /ypscan_manual_select_filters|MANUAL_FILTER_SELECTION_ARGS/u);
 
   const legacy = persist({
@@ -718,7 +709,7 @@ test("rank and startup directives ban any manual_source_creators call", () => {
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /manual_source_creators 都不得调用/u);
   assert.match(startup.prependContext, /ypscan_manual_research\(operation=start\)/u);
-  assert.match(startup.prependContext, /Playwright CLI/u);
-  assert.match(startup.prependContext, /禁止调用宿主原生 Browser/u);
-  assert.match(startup.prependContext, /capture_list\/capture_detail/u);
+  assert.match(startup.prependContext, /插件内专用持久 Chrome/u);
+  assert.match(startup.prependContext, /禁止调用宿主 Browser、Bash、Playwright CLI/u);
+  assert.match(startup.prependContext, /旧 capture 操作/u);
 });

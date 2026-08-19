@@ -1,8 +1,8 @@
 {
   "id": "ypscan",
   "name": "悦普识星",
-  "version": "0.1.24-beta58",
-  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由 Agent 使用 YP Action Playwright 自主完成。",
+  "version": "0.1.24-beta59",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由插件内持久 Browser Runner 产物优先执行。",
   "author": {
     "name": "Jasper"
   },
@@ -51,7 +51,11 @@
       },
       "browserCdpUrl": {
         "type": "string",
-        "description": "已弃用并忽略，仅保留旧配置兼容；人工拓展固定使用 YP Action Playwright CLI session。"
+        "description": "已弃用并忽略，仅保留一个版本的旧配置兼容。"
+      },
+      "manualBrowserProfileDir": {
+        "type": "string",
+        "description": "可选的手扒专用 Chrome Profile 绝对路径；不得位于项目工作区。"
       }
     }
   },
