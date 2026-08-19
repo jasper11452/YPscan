@@ -187,6 +187,10 @@ test("run-code payload JSON-escapes untrusted visible labels", () => {
 
   assert.equal(code.includes("\\" + '"; globalThis.__injected = true; //'), true);
   assert.doesNotMatch(code, /path:\s*\["美妆", "";/u);
+  assert.match(code, /const parentHoverSettleMs = 700;/u);
+  assert.match(code, /const leafHoverSettleMs = 500;/u);
+  assert.match(code, /const selectionSettleMs = 500;/u);
+  assert.doesNotMatch(code, /selectionState\(option, true\)/u);
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   assert.doesNotThrow(() => new AsyncFunction("page", code));
 });

@@ -105,6 +105,10 @@ export function resolveCascadeRoute(platform, control, value) {
 
 const RUN_CODE_TEMPLATE = String.raw`await (async () => {
   const batch = __YPSCAN_CASCADE_BATCH__;
+  const parentHoverSettleMs = 700;
+  const leafHoverSettleMs = 500;
+  const selectionSettleMs = 500;
+  const pollMs = 75;
   const norm = value => String(value ?? "").normalize("NFKC").replace(/\s+/gu, " ").trim();
   const hasReadback = (text, value) => {
     const escaped = norm(value).replace(/[.*+?^$(){}|[\]\\]/gu, "\\$&");
@@ -177,7 +181,7 @@ const RUN_CODE_TEMPLATE = String.raw`await (async () => {
       for (let attempt = 0; attempt < 30; attempt += 1) {
         const menu = controlled ? page.locator("[id=" + JSON.stringify(controlled) + "]").first() : page.locator(overlaySelector).last();
         if (await menu.isVisible().catch(() => false)) return { row: trigger, trigger, menu };
-        await page.waitForTimeout(75);
+        await page.waitForTimeout(pollMs);
       }
     }
     const rows = page.locator(".market-filter-wrapper--line,[class*=filter-row],.common-filter-item");
@@ -202,7 +206,7 @@ const RUN_CODE_TEMPLATE = String.raw`await (async () => {
         for (let attempt = 0; attempt < 30; attempt += 1) {
           const menu = controlled ? page.locator("[id=" + JSON.stringify(controlled) + "]").first() : page.locator(overlaySelector).last();
           if (await menu.isVisible().catch(() => false)) return { row, trigger, menu };
-          await page.waitForTimeout(75);
+          await page.waitForTimeout(pollMs);
         }
       }
     }
@@ -256,7 +260,7 @@ const RUN_CODE_TEMPLATE = String.raw`await (async () => {
         stableKey = null;
         stablePolls = 0;
       }
-      await page.waitForTimeout(75);
+      await page.waitForTimeout(pollMs);
     }
     return null;
   }
@@ -286,7 +290,7 @@ const RUN_CODE_TEMPLATE = String.raw`await (async () => {
       if (depth < actionPath.length - 1) {
         const before = new Set((await columns()).map(column => column.key));
         await option.hover();
-        await page.waitForTimeout(300);
+        await page.waitForTimeout(parentHoverSettleMs);
         let child = await nextColumn(actionPath[depth + 1], option, before);
         if (!child) {
           const suffix = option.locator(".xt-cascader-option__suffix,[class*=suffix],[class*=arrow]").first();
@@ -299,21 +303,23 @@ const RUN_CODE_TEMPLATE = String.raw`await (async () => {
         if (!child) { failedAt = actionPath[depth + 1]; break; }
         root = child;
       } else {
-        if (await selectionState(option, true)) committed = true;
+        if (await selectionState(option)) committed = true;
         else {
           await option.hover();
-          await page.waitForTimeout(180);
+          await page.waitForTimeout(leafHoverSettleMs);
           await option.click();
+          await page.waitForTimeout(selectionSettleMs);
           committed = await selectionState(option);
         }
       }
     }
     attempts.push({ item, committed, failed_at: failedAt });
   }
+  await page.waitForTimeout(selectionSettleMs);
   const confirm = opened.menu.getByRole("button", { name: /^(?:确定|确认)$/u }).last();
   if (await confirm.isVisible().catch(() => false)) await confirm.click();
   else await page.keyboard.press("Escape").catch(() => {});
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(selectionSettleMs);
   const afterReadback = norm(await opened.row.innerText().catch(() => ""));
   const selected = attempts.filter(attempt => attempt.committed || (
     afterReadback !== beforeReadback &&

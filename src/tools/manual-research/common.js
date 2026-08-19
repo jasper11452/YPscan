@@ -650,9 +650,10 @@ export async function openFilterMenu(page, rowLabels, options = {}) {
   return null;
 }
 
-const CASCADE_HOVER_SETTLE_MS = 300;
+const CASCADE_HOVER_SETTLE_MS = 700;
 const CASCADE_STABLE_POLLS = 3;
-const LEAF_HOVER_SETTLE_MS = 180;
+const LEAF_HOVER_SETTLE_MS = 500;
+const CASCADE_SELECTION_SETTLE_MS = 500;
 const OPTION_COMMIT_POLL_MS = 75;
 const OPTION_COMMIT_ATTEMPTS = 30;
 const CASCADE_COLUMN_SELECTOR =
@@ -1034,7 +1035,10 @@ export async function selectMenuValues(page, opened, values, options = {}) {
         root = nextRoot;
       }
     }
-    if (applied) selected.push(value);
+    if (applied) {
+      selected.push(value);
+      await page.waitForTimeout(CASCADE_SELECTION_SETTLE_MS);
+    }
   }
   if (selected.length !== values.length) {
     if (options.close !== false) await closeFloatingLayer(page);
