@@ -39,7 +39,7 @@ rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必�
 
 固定入口为 `ypscan_manual_research(operation=start)`：使用当前 requirement ID（优先 `data.requirement_id`，缺失时兼容 `data.id`，绝不是 `data.demand_id`）、平台、完整 facts 和 1–4 个关键词。价格 fact 必须复制客户原始 operator 与数值，禁止复用 Provider 的 70%–120% 区间。
 
-浏览器筛选、有限重试、逐级降级、分页、有限详情和 Excel 刷新全部由插件内专用持久 Chrome Runner 完成。Agent 禁止调用宿主 Browser、Bash、Playwright CLI、`capture_list`、`capture_detail`、`finalize`、`selection_id`、`observation_id` 或 `element_id`。插件不读取 Cookie/Token、不主动重放私有 API；价格仍按客户原始达人单价扩展为 50%–120%，并绑定正确图文/视频或星图时长档。
+浏览器筛选、有限重试、逐级降级、分页、有限详情和 Excel 刷新全部由插件内专用持久 Chrome Runner 完成。Agent 禁止调用宿主 Browser、Bash、Playwright CLI、`capture_list`、`capture_detail`、`finalize`、`selection_id`、`observation_id` 或 `element_id`。插件不读取 Cookie/Token、不主动重放私有 API；价格仍按客户原始达人单价扩展为 50%–120%。蒲公英报价类型为图文或视频笔记，且与“笔记类型”内容筛选相互独立；星图本期只支持植入视频或定制视频。原需求同时包含多个报价类型时，必须先调用 AskUserQuestion 让用户选择单次运行类型；不得用“全部报价/起”代替目标类型精确报价。
 
 `complete`、`partial`、`empty`、`failed_with_artifact` 都必须原样展示真实 `artifact.excel_path`、候选数量、质量等级和缺口；候选表交付即满足产物优先任务。`needs_user_action` 或 `busy` 时先展示当前 Excel，再调用返回的 AskUserQuestion；用户选择继续后原样使用 `resume_args`。Excel 固定含“达人推荐List”“候选达人”“运行说明”三个 Sheet；未验证或降级候选只进入“候选达人”。详情语义复核、`apply_reviews`、`create_submission` 和继续询价都是可选后续，不得阻断候选产物交付。任何前缀的 `manual_source_creators` 都不得调用。
 

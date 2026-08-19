@@ -179,7 +179,14 @@ export function normalizeListResponseRow(source, platform) {
     "notePrice",
     "note_price",
   ]);
-  const videoPrice = pick(bag, ["videoPrice", "video_price", "taskPrice", "task_price", "price"]);
+  const videoPrice = pick(bag, ["videoPrice", "video_price", "taskPrice", "task_price"]);
+  const xingtuSelectedPrice = videoPrice ?? pick(bag, ["price"]);
+  const priceByTier = Object.fromEntries(
+    [
+      ["图文", clean(picturePrice)],
+      ["视频", clean(videoPrice)],
+    ].filter(([, value]) => value),
+  );
   return {
     ordinal: pick(bag, ["ordinal", "rank", "rankIndex", "rank_index", "index"]),
     platform_id: platformId,
@@ -205,9 +212,8 @@ export function normalizeListResponseRow(source, platform) {
           "fans_count",
         ]),
       ) || null,
-    price_raw:
-      clean(platform === "pgy" ? (picturePrice ?? videoPrice) : (videoPrice ?? picturePrice)) ||
-      null,
+    price_raw: platform === "xingtu" ? clean(xingtuSelectedPrice ?? picturePrice) || null : null,
+    price_by_tier: platform === "pgy" ? priceByTier : {},
     cpm_raw:
       clean(
         pick(bag, ["expectedCpm", "expected_cpm", "estimateAllCpm", "estimate_all_cpm", "cpm"]),
@@ -492,6 +498,10 @@ export function mergeCapturedAndDomRows(capturedRows, domRows) {
       quote_fields: {
         ...(networkRow.quote_fields ?? {}),
         ...(domRow?.quote_fields ?? {}),
+      },
+      price_by_tier: {
+        ...(networkRow.price_by_tier ?? {}),
+        ...(domRow?.price_by_tier ?? {}),
       },
       tags: [...new Set([...(networkRow.tags ?? []), ...(domRow?.tags ?? [])])],
     };

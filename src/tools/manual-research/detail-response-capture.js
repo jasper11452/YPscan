@@ -189,9 +189,8 @@ function priceByTier(bag) {
   for (const [key, value] of bag.entries()) {
     if (!/(?:price|quote|quotation|报价)/iu.test(key) || !clean(value)) continue;
     let tier = null;
-    if (/60.*(?:above|plus|up|以上)|durationl3/iu.test(key)) tier = "60s以上视频";
-    else if (/21.*60|durationl2/iu.test(key)) tier = "21-60s视频";
-    else if (/1.*20|durationl1/iu.test(key)) tier = "1-20s视频";
+    if (/placement|implant|植入/iu.test(key)) tier = "植入视频";
+    else if (/custom|定制/iu.test(key)) tier = "定制视频";
     else if (/picture|pic|image|图文/iu.test(key)) tier = "图文";
     else if (/video|视频/iu.test(key)) tier = "视频";
     if (tier && result[tier] === undefined) result[tier] = value;

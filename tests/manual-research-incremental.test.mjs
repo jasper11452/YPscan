@@ -71,7 +71,7 @@ test("Playwright CLI run starts and captures the current list without a selectio
   const started = payload(await research({ operation: "start", ...params() }));
   assert.equal(started.status, "ready_for_playwright");
   assert.equal(started.target_url, "https://www.xingtu.cn/ad/creator/market");
-  assert.equal(started.price_view, "60s以上视频");
+  assert.equal(started.price_view, "植入视频");
   assert.equal(started.browser_policy.playwright_session, "ypscan");
   assert.equal(started.browser_policy.target_url, started.target_url);
   assert.equal(started.browser_policy.selection_id_required, false);
@@ -105,7 +105,7 @@ test("Playwright CLI run starts and captures the current list without a selectio
       list_snapshot: {
         source_url: "https://www.xingtu.cn/ad/creator/market",
         page_number: 1,
-        price_tier: "60s以上视频",
+        price_tier: "植入视频",
         rows: [
           {
             platform_id: "native-creator-1",
@@ -117,11 +117,11 @@ test("Playwright CLI run starts and captures the current list without a selectio
       },
       filter_evidence: [
         {
-          fact: "60s以上视频报价 2 万以内",
+          fact: "植入视频报价 2 万以内",
           page_control: "达人报价",
-          selected_path: ["60s以上视频"],
+          selected_path: ["植入视频"],
           verified: true,
-          evidence: "筛选栏显示 60s以上视频",
+          evidence: "筛选栏显示植入视频",
         },
         {
           control: "creator_price",
@@ -225,19 +225,19 @@ test("capture_list blocks a wrong quote tier, rejects visible hard failures, and
   const wrongTier = payload(
     await capture({
       source_url: "https://www.xingtu.cn/ad/creator/market",
-      price_tier: "21-60s视频",
+      price_tier: "定制视频",
       rows: [{ platform_id: "wrong-tier", price_raw: "18000", followers_raw: "20万" }],
     }),
   );
   assert.equal(wrongTier.status, "recoverable");
   assert.equal(wrongTier.page_state, "QUOTE_TIER_MISMATCH");
-  assert.equal(wrongTier.required_price_tier, "60s以上视频");
+  assert.equal(wrongTier.required_price_tier, "植入视频");
 
   const captured = payload(
     await capture(
       {
         source_url: "https://www.xingtu.cn/ad/creator/market",
-        price_tier: "60s以上视频",
+        price_tier: "植入视频",
         rows: [
           { platform_id: "eligible", price_raw: "18000", followers_raw: "20万" },
           { platform_id: "over-price", price_raw: "45000", followers_raw: "20万" },
@@ -277,7 +277,7 @@ test("capture_list blocks a wrong quote tier, rejects visible hard failures, and
         {
           source_url: "https://www.xingtu.cn/ad/creator/market",
           page_number: 1,
-          price_tier: "60s以上视频",
+          price_tier: "植入视频",
           rows: [],
         },
         false,
@@ -403,11 +403,11 @@ test("v3 collect captures one current page and asks Agent to inspect before open
               nickname: "效率达人",
               detail_url: "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/creator-1",
               price_raw: "18000",
-              format: "60s以上视频",
+              format: "植入视频",
             },
           ],
           source_url: page.url(),
-          price_tier: "60s以上视频",
+          price_tier: "植入视频",
           collection_source: "browser_response+dom",
         };
       },

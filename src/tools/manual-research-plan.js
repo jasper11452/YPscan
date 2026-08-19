@@ -1,4 +1,5 @@
 import { compileCascadeSelectionPlan } from "./manual-research/cascade-route-plan.js";
+import { resolveManualQuoteType } from "./manual-research-quote-type.js";
 
 const KEYWORD_FACT_KINDS = Object.freeze([
   "product_name",
@@ -22,6 +23,7 @@ const FILTER_FACTS = Object.freeze({
     platforms: ["xingtu", "pgy"],
   },
   content_feature: { control: "content_feature", mode: "options", platforms: ["pgy"] },
+  content_format: { control: "content_format", mode: "options", platforms: ["pgy"] },
   creator_gender: { control: "creator_gender", mode: "options" },
   creator_city: { control: "creator_city", mode: "options" },
   follower_count: { control: "follower_count", mode: "range", unit: "count" },
@@ -57,6 +59,12 @@ const XINGTU_DETAIL_ONLY_CONTROLS = new Set([
 ]);
 const MANUAL_CREATOR_PRICE_MIN_FACTOR = 0.5;
 const MANUAL_CREATOR_PRICE_MAX_FACTOR = 1.2;
+const PRICE_EVIDENCE_RANK = Object.freeze({
+  detail: 3,
+  structured_list: 2,
+  selected_list_response: 2,
+  visible_selected_column: 1,
+});
 
 const XINGTU_PRESET_RANGES = Object.freeze({
   creator_price: [
@@ -111,6 +119,10 @@ function factValues(fact) {
 
 function visibleOptionValue(control, value) {
   const normalized = clean(value).toLowerCase();
+  if (control === "content_format") {
+    if (/图文|图片|picture|image/iu.test(normalized)) return "图文笔记为主";
+    if (/视频|video/iu.test(normalized)) return "视频笔记为主";
+  }
   if (["creator_gender", "audience_gender"].includes(control)) {
     if (["female", "woman", "women", "女"].includes(normalized)) return "女";
     if (["male", "man", "men", "男"].includes(normalized)) return "男";
@@ -208,56 +220,6 @@ function requestedCreatorCount(facts) {
   return values.length ? Math.max(...values) : null;
 }
 
-function priceView(platform, facts) {
-  const format = facts.find((fact) => activeFact(fact) && fact.kind === "content_format");
-  const duration = facts.find((fact) => activeFact(fact) && fact.kind === "video_duration");
-  const commercial = facts.find(
-    (fact) =>
-      activeFact(fact) &&
-      ["creator_price", "cpm_max", "cpe_max"].includes(fact.kind) &&
-      !["", "generic"].includes(clean(fact.qualifier).toLowerCase()),
-  );
-  const formatText = factValues(format ?? {}).join(" ");
-  const durationText = factValues(duration ?? {}).join(" ");
-  const qualifier = clean(commercial?.qualifier).toLowerCase();
-  const range = factRange(duration ?? {});
-  if (platform === "pgy") {
-    if (/图文|图片|笔记|picture|image/iu.test(formatText)) return "图文";
-    if (/视频|video/iu.test(formatText) || duration) return "视频";
-    if (["picture", "image"].includes(qualifier)) return "图文";
-    if (qualifier === "video") return "视频";
-    return null;
-  }
-  if (/duration_l3|60s?\+|60秒以上/u.test(durationText)) return "60s以上视频";
-  if (/duration_l1|1\s*[-–]\s*20s/u.test(durationText)) return "1-20s视频";
-  if (/duration_l2|21\s*[-–]\s*60s/u.test(durationText)) return "21-60s视频";
-  if (range.min !== null && range.min >= 60) return "60s以上视频";
-  if (range.max !== null && range.max <= 20) return "1-20s视频";
-  if (qualifier === "duration_l3") return "60s以上视频";
-  if (qualifier === "duration_l1") return "1-20s视频";
-  if (qualifier === "duration_l2") return "21-60s视频";
-  if (!duration && !/视频|video/iu.test(formatText)) return null;
-  return "21-60s视频";
-}
-
-function relevantCommercialFact(fact, platform, selectedPriceView) {
-  if (!["creator_price", "cpm_max", "cpe_max"].includes(fact.kind)) return true;
-  const qualifier = clean(fact.qualifier || "generic").toLowerCase();
-  if (["", "generic"].includes(qualifier)) return true;
-  if (platform === "pgy") {
-    return selectedPriceView === "视频"
-      ? qualifier === "video"
-      : ["picture", "image"].includes(qualifier);
-  }
-  if (qualifier === "video") return true;
-  const expected = {
-    "1-20s视频": "duration_l1",
-    "21-60s视频": "duration_l2",
-    "60s以上视频": "duration_l3",
-  }[selectedPriceView];
-  return qualifier === expected;
-}
-
 function overlapsRange(preset, filter) {
   const presetMax = preset.max ?? Number.POSITIVE_INFINITY;
   const filterMax = filter.max ?? Number.POSITIVE_INFINITY;
@@ -318,11 +280,12 @@ function rangeExecutionPlan(platform, filters) {
  * price uses the original customer fact as its anchor and expands it once to
  * 50%–120%; other numeric filters retain their original operators/ranges.
  *
- * @param {{platform: "xingtu"|"pgy", facts: any[], keywords?: string[]}} input
+ * @param {{platform: "xingtu"|"pgy", facts: any[], keywords?: string[], quote_type?: string}} input
  */
-export function compileManualResearchPlan({ platform, facts, keywords }) {
+export function compileManualResearchPlan({ platform, facts, keywords, quote_type: quoteType }) {
   const activeFacts = facts.filter(activeFact);
-  const selectedPriceView = priceView(platform, activeFacts);
+  const quoteSelection = resolveManualQuoteType({ platform, facts: activeFacts, quoteType });
+  const selectedPriceView = quoteSelection.price_view;
   const targetCount = requestedCreatorCount(activeFacts);
   const branchKeywords = [
     ...new Set((keywords ?? keywordValues(activeFacts)).map(clean).filter(Boolean)),
@@ -334,15 +297,6 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
   for (const fact of activeFacts.filter(hardFact)) {
     const mapping = FILTER_FACTS[fact.kind];
     if (mapping && (!mapping.platforms || mapping.platforms.includes(platform))) {
-      if (!relevantCommercialFact(fact, platform, selectedPriceView)) {
-        unexpressed.push({
-          fact_id: fact.id ?? null,
-          fact_kind: fact.kind,
-          source: fact.source ?? null,
-          reason: "cooperation_tier_not_selected",
-        });
-        continue;
-      }
       const filter = {
         fact_id: fact.id ?? null,
         fact_kind: fact.kind,
@@ -416,6 +370,7 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
   const selectionPlan = compileCascadeSelectionPlan({ platform, filters });
   return {
     protocol_version: 3,
+    price_semantics_version: 2,
     platform,
     keywords: keywordsToRun,
     filters,
@@ -424,6 +379,7 @@ export function compileManualResearchPlan({ platform, facts, keywords }) {
     detail_filters: detailFilters,
     review_requirements: reviewRequirements,
     price_view: selectedPriceView,
+    price_view_source: quoteSelection.source,
     price_policy: {
       creator_price: "customer_value_50_to_120_percent",
       minimum_factor: MANUAL_CREATOR_PRICE_MIN_FACTOR,
@@ -487,6 +443,21 @@ export function mergeManualCandidates(candidates) {
       ...new Set([...existing.source_pages, ...(candidate.source_pages ?? [])]),
     ];
     existing.evidence.push(...(candidate.evidence ?? []));
+    existing.price_by_tier = {
+      ...(existing.price_by_tier ?? {}),
+      ...(candidate.price_by_tier ?? {}),
+    };
+    if (
+      candidate.price_evidence?.exact === true &&
+      candidate.price_raw &&
+      candidate.quote_tier &&
+      (PRICE_EVIDENCE_RANK[candidate.price_evidence.source] ?? 0) >=
+        (PRICE_EVIDENCE_RANK[existing.price_evidence?.source] ?? 0)
+    ) {
+      existing.price_raw = candidate.price_raw;
+      existing.quote_tier = candidate.quote_tier;
+      existing.price_evidence = candidate.price_evidence;
+    }
     for (const [key, value] of Object.entries(candidate)) {
       if (
         (existing[key] === null || existing[key] === undefined || existing[key] === "") &&

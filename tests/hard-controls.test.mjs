@@ -553,6 +553,8 @@ test("startup instruction fixes the chain and reserves the internal Runner for t
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
+  assert.match(first.prependContext, /星图报价只支持植入视频\/定制视频/u);
+  assert.match(first.prependContext, /蒲公英图文\/视频报价与笔记类型独立/u);
   assert.match(first.prependContext, /插件内专用持久 Chrome/u);
   assert.match(first.prependContext, /禁止调用宿主 Browser、Bash、Playwright CLI/u);
   assert.match(first.prependContext, /旧 capture 操作/u);

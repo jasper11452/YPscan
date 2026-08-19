@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { createStagedManualResearch as createManualResearch } from "./helpers/manual-staged-runner.mjs";
 import { createManualFilterSelection } from "../src/tools/manual-filter-selection.js";
+import { loadManualResearchRun } from "../src/tools/manual-research-artifact.js";
 
 function payload(result) {
   return JSON.parse(result.content[0].text);
@@ -29,6 +30,50 @@ function params() {
     keywords: ["AI工具", "办公软件", "效率办公", "职场"],
   };
 }
+
+test("only legacy checkpoints with price semantics are rejected", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-price-semantics-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const root = join(workspaceDir, "ypscan-manual-research");
+  const writeRun = async (runId, plan) => {
+    const runDir = join(root, runId);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "checkpoint.jsonl"),
+      `${JSON.stringify({
+        version: 2,
+        fingerprint: runId,
+        type: "run",
+        requirement_id: "legacy-requirement",
+        platform: "xingtu",
+        params: { requirement_id: "legacy-requirement", platform: "xingtu" },
+        plan,
+      })}\n`,
+    );
+  };
+  await writeRun("legacy-priced", {
+    price_view: "60s以上视频",
+    filters: [{ control: "creator_price" }],
+  });
+  await writeRun("legacy-unpriced", { price_view: null, filters: [] });
+
+  await assert.rejects(
+    loadManualResearchRun({
+      workspaceDir,
+      runId: "legacy-priced",
+      requirementId: "legacy-requirement",
+      platform: "xingtu",
+    }),
+    { code: "YPSCAN_MANUAL_PRICE_SEMANTICS_UNSUPPORTED" },
+  );
+  const unpriced = await loadManualResearchRun({
+    workspaceDir,
+    runId: "legacy-unpriced",
+    requirementId: "legacy-requirement",
+    platform: "xingtu",
+  });
+  assert.equal(unpriced.run_id, "legacy-unpriced");
+});
 
 function pagedAdapter(actionLog, { captchaKeyword = null } = {}) {
   let keyword = "";
@@ -56,7 +101,7 @@ function pagedAdapter(actionLog, { captchaKeyword = null } = {}) {
     async readPage(pageNumber) {
       actionLog.push(["read", keyword, pageNumber]);
       return {
-        price_tier: "60s以上视频",
+        price_tier: "植入视频",
         source_url: `https://www.xingtu.cn/ad/creator/market?keyword=${keyword}&page=${pageNumber}`,
         collection_source: "browser_response+dom",
         rows: Array.from({ length: 20 }, (_, index) => ({
@@ -86,7 +131,7 @@ function pagedAdapter(actionLog, { captchaKeyword = null } = {}) {
         captured_at: "2026-08-17T02:00:00.000Z",
         fields: {
           followers_raw: candidate.followers_raw,
-          price_by_tier: { "60s以上视频": candidate.price_raw },
+          price_by_tier: { 植入视频: candidate.price_raw },
           recent_content: [{ title: `${candidate.nickname}近期内容` }],
         },
       };
@@ -169,7 +214,8 @@ test("50-person runs checkpoint every page and return a compact review batch plu
   assert.match(candidateSheet, /供应商名称/u);
   assert.match(candidateSheet, /达人名称/u);
   assert.match(candidateSheet, /待核验/u);
-  assert.match(candidateSheet, /mergeCell ref="A1:M1"/u);
+  assert.match(candidateSheet, /mergeCell ref="A1:N1"/u);
+  assert.match(candidateSheet, /报价类型/u);
   assert.match(candidateSheet, /pane ySplit="5"/u);
 });
 
@@ -201,7 +247,7 @@ test("the target sheet excludes candidates below the manual price floor", async 
       },
       async readPage() {
         return {
-          price_tier: "60s以上",
+          price_tier: "植入视频",
           source_url: browser.contexts()[0].pages()[0].url(),
           rows,
         };
@@ -220,7 +266,7 @@ test("the target sheet excludes candidates below the manual price floor", async 
           captured_at: "2026-08-17T02:00:00.000Z",
           fields: {
             followers_raw: candidate.followers_raw,
-            price_by_tier: { "60s以上视频": candidate.price_raw },
+            price_by_tier: { 植入视频: candidate.price_raw },
             recent_content: [{ title: `${candidate.nickname}近期内容` }],
           },
         };

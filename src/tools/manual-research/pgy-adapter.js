@@ -24,6 +24,7 @@ const FILTER_ROWS = Object.freeze({
   creator_category: ["博主类目", "内容分类", "博主分类"],
   creator_type: ["博主类型", "博主类目"],
   creator_persona: ["博主人设", "人设"],
+  content_format: ["笔记类型"],
   creator_gender: ["博主性别", "性别"],
   creator_city: ["博主地域", "常驻地", "地域"],
   follower_count: ["粉丝量", "粉丝数"],
@@ -170,6 +171,21 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
       if (await input.isVisible().catch(() => false)) await input.fill("");
       await settleAfterAction(page);
     },
+    async verifyBaseline() {
+      const keyword = cleanText(
+        await page
+          .getByPlaceholder(/按笔记关键词找博主|笔记关键词/u)
+          .first()
+          .inputValue()
+          .catch(() => ""),
+      );
+      const quoteSummary = cleanText((await appliedFilterSummary(page, "合作报价")) ?? "");
+      return {
+        valid: !keyword && !/图文笔记\s*：|视频笔记\s*：/u.test(quoteSummary),
+        keyword,
+        quote_summary: quoteSummary,
+      };
+    },
     async recover() {
       await assertUsablePage(page, "pgy");
       const dismissed = await dismissOrdinaryPopups(page, "pgy");
@@ -219,13 +235,18 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
           await waitForPgyTableReady(page);
           return applied;
         });
-        const applied = observed.action_result;
+        const summary = cleanText((await appliedFilterSummary(page, "合作报价")) ?? "");
+        const opposite = selectedPriceView === "图文" ? "视频" : "图文";
+        const applied =
+          observed.action_result &&
+          summary.includes(`${selectedPriceView}笔记`) &&
+          !summary.includes(`${opposite}笔记`);
         capturedPage = observed.capture ?? null;
         return {
           applied,
-          reason: applied ? null : "price_range_menu_not_found",
+          reason: applied ? null : "price_range_readback_mismatch",
           menu_id: opened.menu_id,
-          readback: (await appliedFilterSummary(page, "合作报价")) ?? null,
+          readback: summary || null,
         };
       }
       const observed = await captureListResponseDuring(page, "pgy", async () => {
@@ -249,31 +270,14 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
     async setPriceView(priceView) {
       await assertUsablePage(page, "pgy");
       if (!priceView) return { applied: true, readback: null };
-      const opened = await openFilterMenu(page, ["笔记类型", "合作类型", "报价类型"]);
-      if (!opened) return { applied: false, reason: "price_view_trigger_not_found" };
-      const visibleValue = priceView === "图文" ? "图文笔记为主" : "视频笔记为主";
-      const observed = await captureListResponseDuring(page, "pgy", async () => {
-        const selected = await selectMenuValues(
-          page,
-          {
-            ...opened,
-            readback: () => appliedFilterSummary(page, "笔记类型"),
-          },
-          [visibleValue],
-        );
-        await settleAfterAction(page);
-        await waitForPgyTableReady(page);
-        return selected;
-      });
-      const selected = observed.action_result;
-      capturedPage = observed.capture ?? null;
-      if (selected.length > 0) selectedPriceView = priceView;
+      if (!["图文", "视频"].includes(priceView)) {
+        return { applied: false, reason: "price_view_option_not_supported" };
+      }
+      selectedPriceView = priceView;
       return {
-        applied: selected.length > 0,
-        readback:
-          selected.length > 0
-            ? ((await appliedFilterSummary(page, "笔记类型")) ?? `${priceView}（${selected[0]}）`)
-            : null,
+        applied: true,
+        readback: priceView,
+        source: "internal_target",
       };
     },
     async verifySelection(selection) {
@@ -288,24 +292,18 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
           .catch(() => ""),
       );
       const requestedPrice = cleanText(selection?.verification?.price_view?.requested);
-      const expectedPriceReadback =
-        requestedPrice === "图文"
-          ? "图文笔记为主"
-          : requestedPrice === "视频"
-            ? "视频笔记为主"
-            : "";
       const filters = (selection?.verification?.actual_filters ?? []).map((filter) => ({
         control: filter.control,
         valid: Boolean(cleanText(filter.readback)) && body.includes(cleanText(filter.readback)),
       }));
       const keywordValid = keywordValue === requestedKeyword;
-      const priceViewValid = !expectedPriceReadback || body.includes(expectedPriceReadback);
+      const priceViewValid = !requestedPrice || selectedPriceView === requestedPrice;
       return {
         valid: keywordValid && priceViewValid && filters.every((filter) => filter.valid),
         keyword: { requested: requestedKeyword, readback: keywordValue, valid: keywordValid },
         price_view: {
           requested: requestedPrice,
-          readback: expectedPriceReadback,
+          readback: selectedPriceView,
           valid: priceViewValid,
         },
         filters,

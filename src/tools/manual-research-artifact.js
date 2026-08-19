@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, realpath, rename, stat, unlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { checkCandidatePrice } from "./manual-research-price-check.js";
+import { checkCandidatePrice, parseManualPrice } from "./manual-research-price-check.js";
+import { mergeManualCandidates } from "./manual-research-plan.js";
 import {
   candidateReference,
   detailQueueLimit,
@@ -55,6 +56,8 @@ function fingerprintFor(params, plan) {
           detail_filters: plan.detail_filters,
           review_requirements: plan.review_requirements,
           price_view: plan.price_view,
+          price_view_source: plan.price_view_source,
+          price_semantics_version: plan.price_semantics_version,
           export_summary: plan.export_summary,
           target_count: plan.target_count,
           collection_target: plan.collection_target,
@@ -207,14 +210,14 @@ function columnName(index) {
   return name;
 }
 
-function templateCellStyle(rowIndex, columnIndex) {
+function templateCellStyle(rowIndex, columnIndex, columnCount) {
   if (rowIndex === 0) return 1;
-  if (rowIndex === 1) return columnIndex < 8 ? 2 : 3;
+  if (rowIndex === 1) return columnIndex < (columnCount === 14 ? 9 : 8) ? 2 : 3;
   if (rowIndex === 2) return columnIndex % 2 === 0 && columnIndex < 12 ? 4 : 5;
   if (rowIndex === 3) return 0;
   if (rowIndex === 4) return 6;
   const striped = rowIndex % 2 === 0 ? 7 : 8;
-  return columnIndex === 8 ? striped + 2 : striped;
+  return columnIndex === (columnCount === 14 ? 9 : 8) ? striped + 2 : striped;
 }
 
 function worksheetXml(rows, widths) {
@@ -223,7 +226,7 @@ function worksheetXml(rows, widths) {
       const cells = row
         .map((value, columnIndex) => {
           const reference = `${columnName(columnIndex)}${rowIndex + 1}`;
-          return `<c r="${reference}" t="inlineStr" s="${templateCellStyle(rowIndex, columnIndex)}"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;
+          return `<c r="${reference}" t="inlineStr" s="${templateCellStyle(rowIndex, columnIndex, widths.length)}"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;
         })
         .join("");
       const heights = [34, 28, 28, 12, 36];
@@ -239,6 +242,10 @@ function worksheetXml(rows, widths) {
     .join("");
   const lastColumn = columnName(Math.max(0, widths.length - 1));
   const lastRow = Math.max(1, rows.length);
+  const mergedHeaders =
+    widths.length === 14
+      ? '<mergeCell ref="A1:N1"/><mergeCell ref="A2:I2"/><mergeCell ref="J2:N2"/>'
+      : '<mergeCell ref="A1:M1"/><mergeCell ref="A2:H2"/><mergeCell ref="I2:M2"/>';
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
@@ -248,7 +255,7 @@ function worksheetXml(rows, widths) {
   <cols>${columns}</cols>
   <sheetData>${rowXml}</sheetData>
   <autoFilter ref="A5:${lastColumn}${lastRow}"/>
-  <mergeCells count="3"><mergeCell ref="A1:M1"/><mergeCell ref="A2:H2"/><mergeCell ref="I2:M2"/></mergeCells>
+  <mergeCells count="3">${mergedHeaders}</mergeCells>
   <pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>
   <pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/>
 </worksheet>`;
@@ -398,18 +405,32 @@ function monthDay(value) {
   return display ? display.slice(5, 10).replace("-", "") : "导出";
 }
 
-function selectedPrice(fields, candidate) {
-  const tierPrices = Object.values(fields.price_by_tier ?? {});
-  const tierPrice = tierPrices.find((value) => value !== null && value !== undefined);
-  return (
-    candidate.price_raw ??
-    fields.price_picture_raw ??
-    fields.price_video_raw ??
-    tierPrice?.raw ??
-    tierPrice?.value ??
-    tierPrice ??
-    ""
-  );
+function rawTierPrice(value) {
+  return value?.raw ?? value?.value ?? value ?? "";
+}
+
+function quoteTypeDisplay(platform, value) {
+  if (platform !== "pgy") return value;
+  if (value === "图文") return "图文笔记";
+  if (value === "视频") return "视频笔记";
+  return value;
+}
+
+function selectedQuote(plan, fields, candidate) {
+  const detailPrice = plan.price_view ? fields.price_by_tier?.[plan.price_view] : null;
+  if (rawTierPrice(detailPrice)) {
+    return { type: quoteTypeDisplay(plan.platform, plan.price_view), price: rawTierPrice(detailPrice) };
+  }
+  if (candidate.price_raw && candidate.quote_tier && candidate.price_evidence?.exact !== false) {
+    return {
+      type: quoteTypeDisplay(plan.platform, candidate.quote_tier),
+      price: candidate.price_raw,
+    };
+  }
+  if (candidate.minimum_price_raw) {
+    return { type: "全部报价（起）", price: candidate.minimum_price_raw };
+  }
+  return { type: "", price: "" };
 }
 
 function candidateStatus(candidate, detail, review, selectedReferences) {
@@ -434,8 +455,20 @@ function candidateStatus(candidate, detail, review, selectedReferences) {
   return "待核验";
 }
 
-function candidateRemarks(candidate, detail, review) {
+function candidateRemarks(candidate, detail, review, plan) {
+  const detailPrice = rawTierPrice(detail?.fields?.price_by_tier?.[plan.price_view]);
+  const listPrice =
+    candidate.quote_tier === plan.price_view && candidate.price_evidence?.exact !== false
+      ? candidate.price_raw
+      : null;
+  const conflictingPrice =
+    detailPrice &&
+    listPrice &&
+    parseManualPrice(detailPrice) !== parseManualPrice(listPrice)
+      ? `报价冲突：列表${listPrice}，详情${detailPrice}（采用详情）`
+      : null;
   return [
+    conflictingPrice,
     candidate.price_check?.status === "rejected" ? candidate.price_check.reason : null,
     ...(candidate.list_hard_evaluation?.checks ?? [])
       .filter((check) => check.verdict !== "pass")
@@ -464,6 +497,7 @@ const TALENT_HEADERS = Object.freeze([
   "主页链接",
   "粉丝数",
   "内容形式",
+  "报价类型",
   "报价",
   "可执行档期",
   "返点比例",
@@ -471,9 +505,9 @@ const TALENT_HEADERS = Object.freeze([
   "备注",
 ]);
 
-const TALENT_WIDTHS = Object.freeze([18, 12, 20, 22, 12, 36, 14, 20, 16, 22, 14, 38, 42]);
+const TALENT_WIDTHS = Object.freeze([18, 12, 20, 22, 12, 36, 14, 20, 18, 16, 22, 14, 38, 42]);
 
-function talentRows(candidates, details, reviews, selectedCandidates, generatedAt) {
+function talentRows(plan, candidates, details, reviews, selectedCandidates, generatedAt) {
   const detailMap = detailMapFor(details);
   const reviewMap = reviewMapFor(reviews);
   const selectedReferences = new Set(selectedCandidates.map(candidateReference));
@@ -482,6 +516,7 @@ function talentRows(candidates, details, reviews, selectedCandidates, generatedA
     const detail = detailMap.get(candidateRef);
     const review = reviewMap.get(candidateRef);
     const fields = detail?.fields ?? {};
+    const quote = selectedQuote(plan, fields, candidate);
     return [
       fields.agency,
       candidateStatus(candidate, detail, review, selectedReferences),
@@ -495,7 +530,8 @@ function talentRows(candidates, details, reviews, selectedCandidates, generatedA
           [fields.content_type, ...(fields.tags ?? []), ...(candidate.tags ?? [])].filter(Boolean),
         ),
       ].join("、"),
-      selectedPrice(fields, candidate),
+      quote.type,
+      quote.price,
       "",
       "",
       (fields.recent_content ?? [])
@@ -503,7 +539,7 @@ function talentRows(candidates, details, reviews, selectedCandidates, generatedA
         .map((item) => item.title ?? item.url)
         .filter(Boolean)
         .join("；"),
-      candidateRemarks(candidate, detail, review),
+      candidateRemarks(candidate, detail, review, plan),
     ];
   });
 }
@@ -514,10 +550,10 @@ function templateRows({ plan, generatedAt, submittedCount, candidates, sheetKind
   const project = clean(summary.project_name) || brand;
   const titleKind = sheetKind === "candidates" ? "候选达人" : "达人推荐List";
   return [
-    [`【${brand}】悦普识星-${titleKind}-${monthDay(generatedAt)}`, ...Array(12).fill("")],
+    [`【${brand}】悦普识星-${titleKind}-${monthDay(generatedAt)}`, ...Array(13).fill("")],
     [
       `达人提报｜${project}，确保填写信息的准确性`,
-      ...Array(7).fill(""),
+      ...Array(8).fill(""),
       `提报截止：${deadlineDisplay(summary.submission_deadline)}`,
       ...Array(4).fill(""),
     ],
@@ -535,8 +571,9 @@ function templateRows({ plan, generatedAt, submittedCount, candidates, sheetKind
       "负责媒介",
       clean(summary.responsible_media) || "未提供",
       "",
+      "",
     ],
-    Array(13).fill(""),
+    Array(14).fill(""),
     [...TALENT_HEADERS],
     ...candidates,
   ];
@@ -579,6 +616,12 @@ function runInfoRows(artifact) {
   };
   add("标识", "需求 ID", "", info.requirement_id ?? "未知");
   add("标识", "平台", "", info.platform ?? "未知");
+  add(
+    "报价",
+    "报价类型 / 来源",
+    info.price_view ?? "未指定",
+    `${info.price_view_source ?? "none"} / semantics-v${info.price_semantics_version ?? "unknown"}`,
+  );
   add("执行", "阶段", info.phase ?? "未知", info.quality_level ?? "unverified");
   add("执行", "更新时间", "", info.updated_at ?? artifact.generated_at);
   add("数量", "目标 / 候选 / 推荐", "", `${info.target_count ?? "未知"} / ${info.candidate_count ?? artifact.candidate_row_count} / ${artifact.target_row_count}`);
@@ -607,8 +650,15 @@ export function buildManualResearchWorkbook({
   const targetCount = plan.target_count ?? candidates.length;
   const checkedCandidates = candidatesWithPriceCheck(candidates, plan);
   const finalRows = finalCandidates(checkedCandidates, details, reviews, targetCount);
-  const selectedRows = talentRows(finalRows, details, reviews, finalRows, timestamp);
-  const candidateSheetRows = talentRows(checkedCandidates, details, reviews, finalRows, timestamp);
+  const selectedRows = talentRows(plan, finalRows, details, reviews, finalRows, timestamp);
+  const candidateSheetRows = talentRows(
+    plan,
+    checkedCandidates,
+    details,
+    reviews,
+    finalRows,
+    timestamp,
+  );
   const sheets = [
     {
       name: "达人推荐List",
@@ -894,7 +944,11 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
       type: "run",
       requirement_id: params.requirement_id,
       platform: params.platform,
-      params: { requirement_id: params.requirement_id, platform: params.platform },
+      params: {
+        requirement_id: params.requirement_id,
+        platform: params.platform,
+        quote_type: params.quote_type ?? null,
+      },
       plan,
     });
   }
@@ -1062,6 +1116,14 @@ export async function loadManualResearchRun({ workspaceDir, runId, requirementId
       code: "YPSCAN_MANUAL_RUN_MISMATCH",
     });
   }
+  const hasPriceSemantics =
+    Boolean(runEvent.plan.price_view) ||
+    runEvent.plan.filters?.some((filter) => filter.control === "creator_price");
+  if (hasPriceSemantics && runEvent.plan.price_semantics_version !== 2) {
+    throw Object.assign(new Error("旧运行使用已失效的报价体系，请使用 start 新建手扒运行"), {
+      code: "YPSCAN_MANUAL_PRICE_SEMANTICS_UNSUPPORTED",
+    });
+  }
   const restored = replayCheckpointEvents(events);
   return {
     run_id: safeId,
@@ -1147,33 +1209,7 @@ export async function createManualResearchSubmission({
 }
 
 function mergeStoredCandidates(candidates) {
-  const result = [];
-  const byReference = new Map();
-  for (const candidate of candidates) {
-    const reference = candidateReference(candidate);
-    const existing = byReference.get(reference);
-    if (!existing) {
-      const value = { ...candidate };
-      result.push(value);
-      byReference.set(reference, value);
-      continue;
-    }
-    existing.source_branches = [
-      ...new Set([...(existing.source_branches ?? []), ...(candidate.source_branches ?? [])]),
-    ];
-    existing.source_pages = [
-      ...new Set([...(existing.source_pages ?? []), ...(candidate.source_pages ?? [])]),
-    ];
-    for (const [key, value] of Object.entries(candidate)) {
-      if (
-        (existing[key] === null || existing[key] === undefined || existing[key] === "") &&
-        value
-      ) {
-        existing[key] = value;
-      }
-    }
-  }
-  return result;
+  return mergeManualCandidates(candidates);
 }
 
 /** Apply one Agent review batch to an existing checkpointed run. */

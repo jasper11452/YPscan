@@ -8,7 +8,7 @@ const fixturePath = fileURLToPath(
 );
 const frozen = JSON.parse(readFileSync(fixturePath, "utf8"));
 
-test("frozen 8/14 sample locks the 21-60s vs 60s+ price split", () => {
+test("frozen legacy sample records the obsolete duration-price split", () => {
   assert.equal(frozen.tier_rule.list_default_price, 6200);
   assert.equal(frozen.tier_rule.export_60s_plus_price, 8000);
   assert.notEqual(frozen.tier_rule.list_default_price, frozen.tier_rule.export_60s_plus_price);

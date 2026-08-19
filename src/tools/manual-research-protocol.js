@@ -123,6 +123,11 @@ export const MANUAL_RESEARCH_PARAMETERS = Object.freeze({
       description: "start 必传的完整硬条件 facts；后续操作不得重传。",
       items: { type: "object" },
     },
+    quote_type: {
+      type: "string",
+      enum: ["植入视频", "定制视频", "图文", "图文笔记", "视频", "视频笔记"],
+      description: "start 可选；单次运行只允许一个平台报价类型。",
+    },
     keywords: {
       type: "array",
       minItems: 1,
@@ -268,6 +273,7 @@ export function validateManualResearchParams(params = {}, { allowLegacyProtocol 
       requirement_id: requirementId,
       platform,
       facts,
+      quote_type: params.quote_type ? requiredString(params.quote_type, "quote_type") : null,
       keywords: params.keywords.map((value, index) => requiredString(value, `keywords[${index}]`)),
       fresh_run: params.fresh_run === true,
     };

@@ -3,6 +3,7 @@ import { normalizeToolCallParams, stripHostPrefix } from "../contract/registry.j
 
 const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
 const GRANT_TTL_MS = 10 * 60_000;
+const RANKED_SUPPLIER_TTL_MS = 24 * 60 * 60_000;
 const SEND_CONFIRM_LABEL = "确认发送";
 const CANCEL_LABEL = "取消";
 const CHALLENGE_PATTERN = /\[悦普识星 询价确认 (wc_[0-9a-f-]+)\]/iu;
@@ -120,7 +121,7 @@ function rankMcnsDirective(message) {
     "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出，再原样展示此前 ypscan_save_excel_artifact 返回的 CREATOR_PREVIEW_LOCAL_PATH，最后调用 AskUserQuestion。不要输出达人预览表下载链接；表格禁止改成项目符号或编号列表。",
     "用户可见机构结果只显示这一张四列表格，固定列且不得增减：机构名、返点、综合分、达人数。禁止在表格内外另行展示排名、supplier_id、候选数、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。每行达人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 search_creators 确实未返回 creators_export_path 或精确保存参数，必须如实说明无法保存，禁止编造或复用历史链接。",
-    "人工拓展并提报 = 直接调用 ypscan_manual_research(operation=start)，传当前 requirement_id、platform、完整 facts 和 1–4 个关键词。插件内专用持久 Chrome 会自行筛选、降级、分页并生成 Excel；不得调用 Browser、Bash、Playwright CLI 或旧 capture/selection 工具，任何前缀的 manual_source_creators 都不得调用。",
+    "人工拓展并提报 = 直接调用 ypscan_manual_research(operation=start)，传当前 requirement_id、platform、完整 facts、1–4 个关键词和必要的 quote_type。星图报价只支持植入视频/定制视频，蒲公英报价为图文/视频且与笔记类型独立；原需求同时包含多个报价类型时先让用户选择单次运行类型。插件内专用持久 Chrome 会自行筛选、降级、分页并生成 Excel；不得调用 Browser、Bash、Playwright CLI 或旧 capture/selection 工具，任何前缀的 manual_source_creators 都不得调用。",
     "start 返回 complete/partial/empty/failed_with_artifact 时立即展示真实 Excel 路径和候选/缺口；needs_user_action 时先展示当前 Excel，再用返回的 resume_args 在用户处理登录或验证码后继续。",
     MCN_MARKDOWN_TABLE_HEADER,
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
@@ -502,14 +503,23 @@ function manualResearchSuccessDirective(message) {
       return [
         `YPSCAN_FLOW_DIRECTIVE=插件内手扒 Runner 当前状态=${status}。浏览器动作由插件负责，禁止调用 Browser、Bash 或 Playwright CLI。`,
         ...(runnerExcelPath
-          ? [`MANUAL_RESEARCH_EXCEL_PATH=${runnerExcelPath}`, "先向用户展示当前状态 Excel 的真实绝对路径。"]
+          ? [
+              `MANUAL_RESEARCH_EXCEL_PATH=${runnerExcelPath}`,
+              "先向用户展示当前状态 Excel 的真实绝对路径。",
+            ]
           : []),
         ...(resumeArgs ? [`MANUAL_RESEARCH_RESUME_ARGS=${JSON.stringify(resumeArgs)}`] : []),
         `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-          askQuestion("手扒恢复", status === "busy" ? "专用浏览器正被另一运行占用。" : "请在手扒专用浏览器完成登录或安全验证。", [
-            { label: "已处理，继续", description: "使用当前 run 继续插件内手扒" },
-            { label: "结束本次", description: "保留当前状态 Excel 并结束" },
-          ]),
+          askQuestion(
+            "手扒恢复",
+            status === "busy"
+              ? "专用浏览器正被另一运行占用。"
+              : "请在手扒专用浏览器完成登录或安全验证。",
+            [
+              { label: "已处理，继续", description: "使用当前 run 继续插件内手扒" },
+              { label: "结束本次", description: "保留当前状态 Excel 并结束" },
+            ],
+          ),
         )}`,
       ].join("\n");
     }
@@ -518,7 +528,10 @@ function manualResearchSuccessDirective(message) {
         `YPSCAN_FLOW_DIRECTIVE=插件内手扒 Runner 已终止：状态=${status}，质量=${result?.quality_level ?? "未知"}。不得调用 Browser、Bash、Playwright CLI、capture_list、capture_detail 或 finalize。`,
         `候选池=${result?.candidate_count ?? 0}，缺口=${result?.delivery_shortfall ?? "未知"}。未复核候选只属于“候选达人”，不得表述为最终推荐。`,
         ...(runnerExcelPath
-          ? [`MANUAL_RESEARCH_EXCEL_PATH=${runnerExcelPath}`, "必须向用户原样展示上面的 Excel 绝对路径；该候选产物已满足本次产物优先任务。"]
+          ? [
+              `MANUAL_RESEARCH_EXCEL_PATH=${runnerExcelPath}`,
+              "必须向用户原样展示上面的 Excel 绝对路径；该候选产物已满足本次产物优先任务。",
+            ]
           : ["没有真实 artifact.excel_path，必须如实说明产物写入失败。"]),
         "详情语义复核、直接生成提报表和继续询价都是可选后续，不得为了完成手扒而强制继续。",
       ].join("\n");
@@ -675,6 +688,33 @@ function inquiryFingerprint(params) {
   return fingerprint(JSON.stringify(params ?? {}));
 }
 
+function rankedSupplierKey(scope, requirementId) {
+  return JSON.stringify([scope, requirementId]);
+}
+
+function recipientNameMissingBlock(missingSupplierIds) {
+  const recoveryDirective = {
+    schema_version: 1,
+    code: "INQUIRY_RECIPIENT_NAME_MISSING",
+    category: "control",
+    action: "stop",
+    retry_original: false,
+    params_valid: true,
+    modify_params: false,
+    missing_supplier_ids: missingSupplierIds,
+  };
+  return {
+    block: true,
+    blockReason: [
+      "INQUIRY_RECIPIENT_NAME_MISSING: 【企微状态：本次未发送｜机构名称无法确认】",
+      `YPSCAN_BLOCK_DIRECTIVE=${JSON.stringify(recoveryDirective)}`,
+      `MISSING_SUPPLIER_IDS=${JSON.stringify(missingSupplierIds)}`,
+      "当前会话没有以上机构 ID 的可靠名称映射。不得显示“名称未知”、不得请求发送确认、不得调用 Provider。请停止本次发送并让用户重新选择当前可验证名称与 ID 的机构；若 Gateway 已重启，需重新开始当前需求的机构选择流程。",
+    ].join("\n"),
+    recoveryDirective,
+  };
+}
+
 function answerTexts(result) {
   if (typeof result === "string") return [result];
   if (!isRecord(result)) return [];
@@ -730,7 +770,7 @@ function sendConfirmationQuestion(challenge, supplierNames = new Map()) {
     ? challenge.params.supplierIds
     : [];
   const recipients = supplierIds.map((supplierId, index) => {
-    const name = supplierNames.get(supplierId) ?? "名称未知";
+    const name = supplierNames.get(supplierId);
     return `${index + 1}. ${name}（${supplierId}）`;
   });
   const requirement = nonemptyString(challenge?.params?.requirement_id)
@@ -796,15 +836,17 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
         challenges.delete(challengeId);
       }
     }
-    for (const [requirementId, ranked] of rankedSuppliers) {
-      if (callNow - ranked.createdAt > GRANT_TTL_MS) rankedSuppliers.delete(requirementId);
+    for (const [key, ranked] of rankedSuppliers) {
+      if (callNow - ranked.createdAt > RANKED_SUPPLIER_TTL_MS) rankedSuppliers.delete(key);
     }
   };
 
   const supplierNamesFor = (params, scope) => {
     const requirementId = firstString(params?.requirement_id, params?.id);
-    const ranked = requirementId ? rankedSuppliers.get(requirementId) : null;
-    return ranked?.scope === scope ? ranked.names : new Map();
+    const ranked = requirementId
+      ? rankedSuppliers.get(rankedSupplierKey(scope, requirementId))
+      : null;
+    return ranked?.names ?? new Map();
   };
 
   const pendingForScope = (scope) =>
@@ -837,17 +879,29 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
           challenge.consumed = true;
           return undefined;
         }
-        const active = challenge ?? {
-          id: newId("wc"),
-          fingerprint: key,
-          createdAt: callNow,
-          consumed: false,
-          scope,
-          stage: "pending",
-          params,
-        };
-        challenges.set(active.id, active);
-        const askUserQuestion = sendConfirmationQuestion(active, supplierNamesFor(params, scope));
+        let active = challenge;
+        if (!active) {
+          const supplierNames = supplierNamesFor(params, scope);
+          const supplierIds = Array.isArray(params?.supplierIds) ? params.supplierIds : [];
+          const missingSupplierIds = supplierIds.filter(
+            (supplierId) => !nonemptyString(supplierNames.get(supplierId)),
+          );
+          if (missingSupplierIds.length > 0) {
+            return recipientNameMissingBlock(missingSupplierIds);
+          }
+          active = {
+            id: newId("wc"),
+            fingerprint: key,
+            createdAt: callNow,
+            consumed: false,
+            scope,
+            stage: "pending",
+            params,
+            supplierNames,
+          };
+          challenges.set(active.id, active);
+        }
+        const askUserQuestion = sendConfirmationQuestion(active, active.supplierNames);
         const recoveryDirective = {
           schema_version: 1,
           code: "HITL_REQUIRED",
@@ -901,7 +955,7 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
           "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → create_with_distributions 在同一次弹窗确认机构列表和完整消息 → 发送后询问是否继续人工拓展。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
           "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
-          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展直接调用 ypscan_manual_research(operation=start)，由插件内专用持久 Chrome 完成筛选、降级、分页、详情和 Excel；禁止调用宿主 Browser、Bash、Playwright CLI、selection_id、observation_id、element_id 或旧 capture 操作，任何前缀的 manual_source_creators 都不得调用。",
+          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展直接调用 ypscan_manual_research(operation=start)：星图报价只支持植入视频/定制视频，蒲公英图文/视频报价与笔记类型独立，多报价类型先让用户选择单次运行类型。由插件内专用持久 Chrome 完成筛选、降级、分页、详情和 Excel；禁止调用宿主 Browser、Bash、Playwright CLI、selection_id、observation_id、element_id 或旧 capture 操作，任何前缀的 manual_source_creators 都不得调用。",
           "手扒 start/resume 的任何可控终态都先展示真实 artifact.excel_path；needs_user_action 时用户处理专用浏览器后原样调用 resume_args。候选产物交付后，详情复核、直接生成提报表和继续询价均为可选后续。",
           "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion；需求解析按最新 violations 持续修正并重试，不限制调用次数；其他普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
           "需求解析性能约束：普通 fact 只传 kind/quote/value；抖音 60s+ 必须表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；参考达人统一使用 reference_creator，昵称和 http/https 链接可作为两条 fact 或同一 value 数组传入，最终分别透传为 refNickname/refUrl；女粉偏多、城市集中等无精确数值或主体不明的条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌、数量、截止时间等必填业务信息缺失时才向用户澄清。YPSCAN_REQUIREMENT_INVALID 是 Agent 参数构造错误，必须按最新 violations 一次性修正并继续调用需求解析工具，不限制调用次数。",
@@ -929,13 +983,15 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
           mcns[0]?.requirement_id,
         );
         if (requirementId) {
-          rankedSuppliers.set(requirementId, {
+          const scope = scopeKey(event, context);
+          rankedSuppliers.set(rankedSupplierKey(scope, requirementId), {
             createdAt: now(),
-            scope: scopeKey(event, context),
             names: new Map(
               mcns
-                .filter((mcn) => nonemptyString(mcn?.supplier_id))
-                .map((mcn) => [mcn.supplier_id, firstString(mcn?.agency_name) ?? "名称未知"]),
+                .filter(
+                  (mcn) => nonemptyString(mcn?.supplier_id) && nonemptyString(mcn?.agency_name),
+                )
+                .map((mcn) => [mcn.supplier_id, mcn.agency_name.trim()]),
             ),
           });
         }

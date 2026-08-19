@@ -215,7 +215,7 @@ test("Xingtu price view uses the labeled type trigger and verifies the table hea
   };
   let menuId = "price-type-menu-before-open";
   const priceTypeTrigger = {
-    innerText: async () => (selected ? "60s以上视频" : "全部"),
+    innerText: async () => (selected ? "植入视频" : "全部"),
     isVisible: async () => true,
     getAttribute: async (name) => {
       if (name === "aria-controls") return menuId;
@@ -246,12 +246,12 @@ test("Xingtu price view uses the labeled type trigger and verifies the table hea
   };
   const priceTypeMenu = {
     isVisible: async () => true,
-    innerText: async () => "全部 1-20s视频 21-60s视频 60s以上视频",
+    innerText: async () => "全部 植入视频 定制视频 短直种草",
     first() {
       return this;
     },
     getByText(pattern) {
-      assert.equal(pattern.test("60s以上视频"), true);
+      assert.equal(pattern.test("植入视频"), true);
       return option;
     },
   };
@@ -297,7 +297,7 @@ test("Xingtu price view uses the labeled type trigger and verifies the table hea
       return hidden;
     },
   };
-  let headerText = "达人信息 60s以上报价 预期CPM";
+  let headerText = "达人信息 植入视频报价 预期CPM";
   const header = { innerText: async () => headerText };
   const page = basePage((selector) => {
     if (selector === ".custom-selector__button:visible") return hidden;
@@ -308,12 +308,12 @@ test("Xingtu price view uses the labeled type trigger and verifies the table hea
     throw new Error(`unexpected locator: ${selector}`);
   });
 
-  const receipt = await createXingtuAdapter(page).setPriceView("60s以上视频");
+  const receipt = await createXingtuAdapter(page).setPriceView("植入视频");
 
   assert.deepEqual(receipt, {
     applied: true,
     reason: null,
-    readback: "达人信息 60s以上报价 预期CPM",
+    readback: "达人信息 植入视频报价 预期CPM",
   });
   assert.equal(events.includes("wrong-click"), false);
   assert.deepEqual(events, [
@@ -328,8 +328,8 @@ test("Xingtu price view uses the labeled type trigger and verifies the table hea
     "confirm",
   ]);
 
-  headerText = "达人信息 21-60s报价 预期CPM";
-  assert.deepEqual(await createXingtuAdapter(page).setPriceView("60s以上视频"), {
+  headerText = "达人信息 定制视频报价 预期CPM";
+  assert.deepEqual(await createXingtuAdapter(page).setPriceView("植入视频"), {
     applied: false,
     reason: "price_view_readback_mismatch",
     readback: headerText,
@@ -339,7 +339,7 @@ test("Xingtu price view uses the labeled type trigger and verifies the table hea
 test("Xingtu price view accepts the quote label and delayed confirmation", async () => {
   const events = [];
   let pending = false;
-  let headerText = "达人信息 21-60s报价 预期CPM";
+  let headerText = "达人信息 定制视频报价 预期CPM";
   let menuId = "price-type-menu-before-open";
   const priceTypeTrigger = {
     innerText: async () => "全部",
@@ -372,19 +372,19 @@ test("Xingtu price view accepts the quote label and delayed confirmation", async
   };
   const priceTypeMenu = {
     isVisible: async () => true,
-    innerText: async () => "全部 1-20s报价 21-60s报价 60s以上报价",
+    innerText: async () => "全部 植入视频 定制视频 短直种草",
     first() {
       return this;
     },
     getByText(pattern) {
-      return pattern.test("60s以上报价") ? option : hidden;
+      return pattern.test("植入视频") ? option : hidden;
     },
   };
   const confirm = {
     isVisible: async () => true,
     click: async () => {
       events.push("confirm");
-      if (pending) headerText = "达人信息 60s以上报价 预期CPM";
+      if (pending) headerText = "达人信息 植入视频报价 预期CPM";
     },
     last() {
       return this;
@@ -433,10 +433,10 @@ test("Xingtu price view accepts the quote label and delayed confirmation", async
     throw new Error(`unexpected locator: ${selector}`);
   });
 
-  assert.deepEqual(await createXingtuAdapter(page).setPriceView("60s以上视频"), {
+  assert.deepEqual(await createXingtuAdapter(page).setPriceView("植入视频"), {
     applied: true,
     reason: null,
-    readback: "达人信息 60s以上报价 预期CPM",
+    readback: "达人信息 植入视频报价 预期CPM",
   });
   assert.deepEqual(events, ["option-click", "confirm"]);
 });
@@ -464,7 +464,7 @@ test("Xingtu quote range identifies the custom interval control instead of using
   };
   const typeMenu = {
     isVisible: async () => true,
-    innerText: async () => "全部 1-20s视频 21-60s视频 60s以上视频",
+    innerText: async () => "全部 植入视频 定制视频 短直种草",
     locator: () => collection([]),
     first() {
       return this;
@@ -614,7 +614,7 @@ test("Xingtu quote range identifies the custom interval control instead of using
 test("Xingtu selection verification survives later filters changing the same row", async () => {
   const finalBody =
     "达人广场 已选条件 达人报价·2 预期播放量 自定义 预期CPE 互动率 完播率 爆文率 进行中的任务数";
-  const header = { innerText: async () => "达人信息 60s以上报价 预期CPM" };
+  const header = { innerText: async () => "达人信息 植入视频报价 预期CPM" };
   const keyword = {
     inputValue: async () => "办公软件",
     first() {
@@ -634,7 +634,7 @@ test("Xingtu selection verification survives later filters changing the same row
   const verification = await createXingtuAdapter(page).verifySelection({
     branch: { keyword: "办公软件" },
     verification: {
-      price_view: { requested: "60s以上视频" },
+      price_view: { requested: "植入视频" },
       actual_filters: [
         {
           control: "creator_price",
@@ -660,7 +660,7 @@ test("Xingtu selection verification survives later filters changing the same row
   const missingReadback = await createXingtuAdapter(page).verifySelection({
     branch: { keyword: "办公软件" },
     verification: {
-      price_view: { requested: "60s以上视频" },
+      price_view: { requested: "植入视频" },
       actual_filters: [{ control: "cpm", readback: "", verification_readback: "" }],
     },
   });

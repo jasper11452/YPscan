@@ -71,7 +71,7 @@ test("readResultsPage keeps Xingtu column values associated by row", async () =>
   }));
   const sticky = {
     classList: { contains: (name) => name === "sticky-header" },
-    innerText: "达人信息 粉丝数 21-60s报价 预期CPM",
+    innerText: "达人信息 粉丝数 植入视频报价 预期CPM",
   };
   const body = {
     classList: { contains: () => false },
@@ -90,7 +90,7 @@ test("readResultsPage keeps Xingtu column values associated by row", async () =>
     () => readResultsPage({ platform: "xingtu" }),
   );
 
-  assert.equal(result.price_tier, "21-60s");
+  assert.equal(result.price_tier, "植入视频");
   assert.equal(
     result.rows[0].detail_url,
     "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/123456789",
@@ -133,8 +133,8 @@ test("Xingtu mismatched header and body columns are not cross-paired", async () 
   );
   const sticky = {
     classList: { contains: (name) => name === "sticky-header" },
-    innerText: "达人信息 21-60s报价 预期CPM",
-    querySelectorAll: () => ["达人信息", "21-60s报价", "预期CPM"].map(resultCell),
+    innerText: "达人信息 定制视频报价 预期CPM",
+    querySelectorAll: () => ["达人信息", "定制视频报价", "预期CPM"].map(resultCell),
   };
   const body = {
     classList: { contains: () => false },
@@ -266,7 +266,7 @@ test("readResultsPage keeps PGY table fields inside their original row", async (
     result.rows.map((row) => ({
       nickname: row.nickname,
       followers: row.followers_raw,
-      price: row.price_raw,
+      price: row.minimum_price_raw,
       read_median: row.read_median,
       interaction_median: row.interaction_median,
     })),

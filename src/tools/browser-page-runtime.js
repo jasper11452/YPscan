@@ -17,7 +17,7 @@ export async function readResultsPage(input) {
   const pick = (node, selector) => text(node.querySelector(selector));
   const unique = (items) => [...new Set(items.map(clean).filter(Boolean))];
   const HEADER_TOKENS =
-    /达人信息|代表视频|搜索词相关视频|达人类型|内容主题|连接用户数|粉丝数|预期CPM|预期CPE|预期播放量|互动率|完播率|爆文率|\d+\s*[-–]\s*\d+s\s*报价|60s以上报价|1-20s报价|操作/gu;
+    /达人信息|代表视频|搜索词相关视频|达人类型|内容主题|连接用户数|粉丝数|预期CPM|预期CPE|预期播放量|互动率|完播率|爆文率|植入视频报价|定制视频报价|操作/gu;
   const headerColumns = (wrapper) => {
     const columns = wrapper
       ? [...(wrapper.querySelectorAll?.(":scope > .content-section > .content-column") ?? [])]
@@ -35,9 +35,7 @@ export async function readResultsPage(input) {
     bodyWrapper = wrappers.find((node) => !node.classList.contains("sticky-header")) ?? null;
     header = headerColumns(sticky);
     const priceHeader = header.find((value) => /报价/u.test(value)) ?? "";
-    priceTier =
-      firstMatch(priceHeader, /(\d+\s*[-–]\s*\d+s|60s以上|1-20s)\s*报价/u) ??
-      firstMatch(priceHeader, /(\d+\s*[-–]\s*\d+s|60s以上|1-20s)/u);
+    priceTier = firstMatch(priceHeader, /(植入视频|定制视频)(?:报价)?/u);
   } else {
     header = [...document.querySelectorAll("thead th,[role=columnheader]")]
       .filter(visible)
@@ -117,7 +115,7 @@ export async function readResultsPage(input) {
         .find(Boolean) ??
       firstMatch(
         raw,
-        /(?:60s以上|60s\+|21[-–]60s|报价|一口价|视频|图文)?[^\d¥￥]{0,12}[¥￥]\s*([\d.,]+\s*(?:万|w|W|k|K)?)/iu,
+        /(?:植入视频|定制视频|报价|一口价|视频|图文)?[^\d¥￥]{0,12}[¥￥]\s*([\d.,]+\s*(?:万|w|W|k|K)?)/iu,
       ) ??
       firstMatch(raw, /(?:报价|一口价|视频|图文)[^\d]{0,12}([\d.,]+\s*(?:万|w|W|k|K)?)/iu);
     const tags = unique(
@@ -139,8 +137,15 @@ export async function readResultsPage(input) {
       followers_raw: followers,
       content_type: tags[0] ?? null,
       related_posts: firstMatch(raw, /(?:相关|匹配)[^\d]{0,8}(\d+)/u),
-      format: priceTier || firstMatch(raw, /(60s以上|60s\+|21[-–]60s|图文|视频)/iu),
-      price_raw: price,
+      format:
+        priceTier ||
+        (platform === "xingtu" ? firstMatch(raw, /(植入视频|定制视频)/u) : null),
+      minimum_price_raw: platform === "pgy" ? price : null,
+      price_evidence:
+        platform === "xingtu" && priceTier && price
+          ? { source: "visible_selected_column", exact: true }
+          : null,
+      price_raw: platform === "xingtu" ? price : null,
       cpm_raw: cpm,
       cpe_raw: cpe,
       expected_views: expectedViews,

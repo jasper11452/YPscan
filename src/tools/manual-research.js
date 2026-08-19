@@ -187,6 +187,8 @@ function remainingPresetRounds(rangePlan, pageRecords, currentEvidence) {
  * @param {{platform: string, branchId: string, pageNumber: number, priceTier: string|null, sourceUrl: string}} source
  */
 function candidateFromRow(row, source) {
+  const tierPrice = source.priceTier ? row.price_by_tier?.[source.priceTier] : null;
+  const exactPrice = tierPrice ?? row.price_raw ?? null;
   const listFields = Object.fromEntries(
     ["ordinal", "related_posts", "read_median", "interaction_median", "quote_fields"]
       .map((key) => [key, row[key]])
@@ -200,8 +202,17 @@ function candidateFromRow(row, source) {
     source_url: row.source_url ?? source.sourceUrl,
     source_branches: [source.branchId],
     source_pages: [source.pageNumber],
-    quote_tier: row.format ?? source.priceTier,
-    price_raw: row.price_raw ?? null,
+    quote_tier: exactPrice ? row.format ?? source.priceTier : null,
+    price_raw: exactPrice,
+    minimum_price_raw: row.minimum_price_raw ?? null,
+    price_by_tier: row.price_by_tier ?? {},
+    price_evidence:
+      row.price_evidence ??
+      (tierPrice
+        ? { source: "structured_list", exact: true }
+        : exactPrice && source.priceTier
+          ? { source: "selected_list_response", exact: true }
+          : null),
     followers_raw: row.followers_raw ?? null,
     cpm_raw: row.cpm_raw ?? null,
     cpe_raw: row.cpe_raw ?? null,

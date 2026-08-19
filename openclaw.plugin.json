@@ -1,7 +1,7 @@
 {
   "id": "ypscan",
   "name": "悦普识星",
-  "version": "0.1.24-beta60",
+  "version": "0.1.24-beta61",
   "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由插件内持久 Browser Runner 产物优先执行。",
   "author": {
     "name": "Jasper"

@@ -245,6 +245,104 @@ test("runner rejects the removed capture protocol", async () => {
   assert.match(data.error.message, /旧操作 capture_list 已停用/u);
 });
 
+test("detail budget prioritizes candidates missing the selected exact quote", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-price-detail-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const collected = [];
+  const fakeAdapter = adapter(12);
+  fakeAdapter.readPage = async () => ({
+    price_tier: "植入视频",
+    source_url: "https://www.xingtu.cn/ad/creator/market",
+    rows: Array.from({ length: 12 }, (_, index) => ({
+      platform_id: `creator-${index + 1}`,
+      nickname: `达人 ${index + 1}`,
+      detail_url: `https://www.xingtu.cn/creator/${index + 1}`,
+      ...(index < 2 ? { price_raw: "1800" } : {}),
+    })),
+  });
+  fakeAdapter.collectDetail = async (candidate) => {
+    collected.push(candidate.platform_id);
+    return {
+      status: "complete",
+      platform_id: candidate.platform_id,
+      fields: { price_by_tier: { 植入视频: "1800" } },
+    };
+  };
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => fakeAdapter,
+  });
+
+  await run(
+    params({
+      facts: [
+        fact("product", "product_name", "办公软件"),
+        fact("price", "creator_price", 2_000, { operator: "lte" }),
+      ],
+    }),
+  );
+
+  assert.deepEqual(
+    collected,
+    Array.from({ length: 10 }, (_, index) => `creator-${index + 3}`),
+  );
+});
+
+test("PGY starting price is labeled as all-price evidence, never as a typed quote", () => {
+  const plan = compileManualResearchPlan({
+    platform: "pgy",
+    facts: [],
+    keywords: ["咖啡"],
+  });
+  const workbook = buildManualResearchWorkbook({
+    plan,
+    candidates: [
+      {
+        platform: "pgy",
+        platform_id: "pgy-1",
+        nickname: "博主一",
+        collection_mode: "filtered",
+        minimum_price_raw: "¥20,000起",
+      },
+    ],
+    artifact: { generated_at: "2026-08-19T00:00:00.000Z" },
+  });
+  const candidateSheet = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
+  assert.match(candidateSheet, /全部报价（起）/u);
+  assert.match(candidateSheet, /¥20,000起/u);
+  assert.doesNotMatch(candidateSheet, /图文笔记|视频笔记/u);
+});
+
+test("PGY exact quote uses its independent typed label in Excel", () => {
+  const plan = compileManualResearchPlan({
+    platform: "pgy",
+    quote_type: "视频",
+    facts: [],
+    keywords: ["咖啡"],
+  });
+  const workbook = buildManualResearchWorkbook({
+    plan,
+    candidates: [
+      {
+        platform: "pgy",
+        platform_id: "pgy-video-1",
+        nickname: "视频博主",
+        collection_mode: "filtered",
+        price_raw: "¥29,000",
+        quote_tier: "视频",
+        price_evidence: { source: "structured_list", exact: true },
+        minimum_price_raw: "¥20,000起",
+      },
+    ],
+    artifact: { generated_at: "2026-08-19T00:00:00.000Z" },
+  });
+  const candidateSheet = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
+  assert.match(candidateSheet, /视频笔记/u);
+  assert.match(candidateSheet, /¥29,000/u);
+  assert.doesNotMatch(candidateSheet, /全部报价（起）/u);
+});
+
 test("generic DOM candidates remain outside the recommendation sheet after review", () => {
   const plan = compileManualResearchPlan(params());
   const candidate = {

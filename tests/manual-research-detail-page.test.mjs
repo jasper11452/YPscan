@@ -118,7 +118,7 @@ function adaptiveDetailHarness() {
 
 test("detail collection falls back to visible DOM when no structured response is captured", async () => {
   const harness = detailHarness(
-    "粉丝数：12.5万 所在地：上海 预期CPM：36 互动率：8.5% 60s以上视频报价：18,000",
+    "粉丝数：12.5万 所在地：上海 预期CPM：36 互动率：8.5% 植入视频报价：18,000",
   );
   const detail = await collectCreatorDetail(
     harness.listPage,
@@ -137,14 +137,14 @@ test("detail collection falls back to visible DOM when no structured response is
   assert.equal(detail.fields.city, "上海");
   assert.equal(detail.fields.cpm_raw, "36");
   assert.equal(detail.fields.interaction_rate_raw, "8.5%");
-  assert.equal(detail.fields.price_by_tier["60s以上视频"], "18,000");
+  assert.equal(detail.fields.price_by_tier.植入视频, "18,000");
   assert.equal(harness.wasClosed(), true, "the temporary detail tab must be closed");
 });
 
 test("Xingtu detail URLs backfill and verify the stable creator ID", async () => {
   const detailUrl =
     "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/7324533389695025215";
-  const harness = detailHarness("粉丝数：261.7万 60s以上视频报价：14,300", detailUrl);
+  const harness = detailHarness("粉丝数：261.7万 植入视频报价：14,300", detailUrl);
   const detail = await collectCreatorDetail(
     harness.listPage,
     "xingtu",

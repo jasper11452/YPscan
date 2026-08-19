@@ -27,11 +27,11 @@ test("detail values normalize Chinese units and inclusive range boundaries", () 
     platform_id: "creator-1",
     nickname: "达人一",
     price_raw: "¥20,000",
-    quote_tier: "60s以上视频",
+    quote_tier: "植入视频",
   };
   const plan = {
     platform: "xingtu",
-    price_view: "60s以上视频",
+    price_view: "植入视频",
     filters: [
       range("creator_price", 10_000, 20_000),
       range("follower_count", 100_000, 200_000),
@@ -44,7 +44,7 @@ test("detail values normalize Chinese units and inclusive range boundaries", () 
       fields: {
         followers_raw: "10万",
         interaction_rate_raw: "10%",
-        price_by_tier: { "60s以上视频": "¥20,000" },
+        price_by_tier: { 植入视频: "¥20,000" },
       },
     },
     plan,

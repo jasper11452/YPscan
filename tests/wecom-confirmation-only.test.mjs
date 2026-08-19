@@ -3,17 +3,21 @@ import test from "node:test";
 
 import { registerWecomConfirmationOnlyHooks } from "../src/hooks/register-wecom-confirmation-only.js";
 
-function registeredHooks(now = () => 1, skillPath = null) {
+function registeredPlugin(now = () => 1) {
   const hooks = new Map();
-  registerWecomConfirmationOnlyHooks(
+  const transientState = registerWecomConfirmationOnlyHooks(
     {
       on(name, handler) {
         hooks.set(name, handler);
       },
     },
-    { now, skillPath },
+    { now },
   );
-  return hooks;
+  return { hooks, transientState };
+}
+
+function registeredHooks(now = () => 1) {
+  return registeredPlugin(now).hooks;
 }
 
 const inquiryParams = {
@@ -22,6 +26,27 @@ const inquiryParams = {
   description: "新品询价",
   wechat_notification_message: "您好，请协助反馈本次项目报价。",
 };
+
+async function persistRankedSuppliers(hooks, context, mcns = null) {
+  await hooks.get("tool_result_persist")(
+    {
+      toolName: "test__rank_mcns",
+      params: { id: inquiryParams.requirement_id },
+      message: {
+        content: JSON.stringify({
+          success: true,
+          data: {
+            mcns: mcns ?? [
+              { supplier_id: "supplier-a", agency_name: "机构甲" },
+              { supplier_id: "supplier-b", agency_name: "机构乙" },
+            ],
+          },
+        }),
+      },
+    },
+    context,
+  );
+}
 
 test("Provider calls remain unrestricted and their params are not rewritten", async () => {
   const hooks = registeredHooks();
@@ -67,6 +92,7 @@ test("Provider calls remain unrestricted and their params are not rewritten", as
 test("WeCom send requires one combined confirmation before one exact send", async () => {
   const hooks = registeredHooks();
   const context = { runId: "run-wecom" };
+  await persistRankedSuppliers(hooks, context);
   const blocked = await hooks.get("before_tool_call")(
     {
       toolName: "ypmcn__create_with_distributions",
@@ -122,6 +148,7 @@ test("WeCom send requires one combined confirmation before one exact send", asyn
 test("confirmation rejects changed params and stays scoped to one session", async () => {
   const hooks = registeredHooks();
   const session = { sessionKey: "session-a", runId: "run-a" };
+  await persistRankedSuppliers(hooks, session);
   const blocked = await hooks.get("before_tool_call")(
     { toolName: "create_with_distributions", params: inquiryParams },
     session,
@@ -145,9 +172,11 @@ test("confirmation rejects changed params and stays scoped to one session", asyn
   );
   assert.equal(changed.block, true);
 
+  const otherContext = { sessionKey: "session-b", runId: "run-b" };
+  await persistRankedSuppliers(hooks, otherContext);
   const otherSession = await hooks.get("before_tool_call")(
     { toolName: "create_with_distributions", params: inquiryParams },
-    { sessionKey: "session-b", runId: "run-b" },
+    otherContext,
   );
   assert.equal(otherSession.block, true);
   assert.equal(otherSession.askUserQuestion.questions[0].header, "确认企微发送");
@@ -156,6 +185,7 @@ test("confirmation rejects changed params and stays scoped to one session", asyn
 test("confirmation binds exact params through the single stage", async () => {
   const hooks = registeredHooks();
   const context = { runId: "run-rewritten-question" };
+  await persistRankedSuppliers(hooks, context);
   const blocked = await hooks.get("before_tool_call")(
     { toolName: "create_with_distributions", params: inquiryParams },
     context,
@@ -197,9 +227,11 @@ test("confirmation binds exact params through the single stage", async () => {
 
 test("test MCP prefixes cannot bypass the WeCom gate", async () => {
   const hooks = registeredHooks();
+  const context = { sessionKey: "test-prefix-session" };
+  await persistRankedSuppliers(hooks, context);
   const blocked = await hooks.get("before_tool_call")(
     { toolName: "test__create_with_distributions", params: inquiryParams },
-    { sessionKey: "test-prefix-session" },
+    context,
   );
   assert.equal(blocked.block, true);
   assert.equal(blocked.askUserQuestion.questions[0].header, "确认企微发送");
@@ -208,6 +240,7 @@ test("test MCP prefixes cannot bypass the WeCom gate", async () => {
 test("fixed manual confirmation phrase authorizes the current send", async () => {
   const hooks = registeredHooks();
   const context = { sessionKey: "manual-confirm-session" };
+  await persistRankedSuppliers(hooks, context);
   await hooks.get("before_tool_call")(
     { toolName: "test__create_with_distributions", params: inquiryParams },
     context,
@@ -229,24 +262,7 @@ test("fixed manual confirmation phrase authorizes the current send", async () =>
 test("combined confirmation displays ranked institution names", async () => {
   const hooks = registeredHooks();
   const context = { sessionKey: "ranked-name-session" };
-  await hooks.get("tool_result_persist")(
-    {
-      toolName: "test__rank_mcns",
-      params: { id: inquiryParams.requirement_id },
-      message: {
-        content: JSON.stringify({
-          success: true,
-          data: {
-            mcns: [
-              { supplier_id: "supplier-a", agency_name: "机构甲" },
-              { supplier_id: "supplier-b", agency_name: "机构乙" },
-            ],
-          },
-        }),
-      },
-    },
-    context,
-  );
+  await persistRankedSuppliers(hooks, context);
 
   const blocked = await hooks.get("before_tool_call")(
     { toolName: "create_with_distributions", params: inquiryParams },
@@ -254,6 +270,109 @@ test("combined confirmation displays ranked institution names", async () => {
   );
   assert.match(blocked.askUserQuestion.questions[0].question, /机构甲（supplier-a）/u);
   assert.match(blocked.askUserQuestion.questions[0].question, /机构乙（supplier-b）/u);
+});
+
+test("ranked institution names outlive the ten-minute send grant", async () => {
+  let clock = 1;
+  const hooks = registeredHooks(() => clock);
+  const context = { sessionKey: "ranked-name-ttl-session" };
+  await persistRankedSuppliers(hooks, context);
+
+  clock += 11 * 60_000;
+  const blocked = await hooks.get("before_tool_call")(
+    { toolName: "create_with_distributions", params: inquiryParams },
+    context,
+  );
+
+  assert.match(blocked.blockReason, /^HITL_REQUIRED:/u);
+  assert.match(blocked.askUserQuestion.questions[0].question, /机构甲（supplier-a）/u);
+  assert.doesNotMatch(blocked.askUserQuestion.questions[0].question, /名称未知/u);
+});
+
+test("send authorization still expires after ten minutes", async () => {
+  let clock = 1;
+  const hooks = registeredHooks(() => clock);
+  const context = { sessionKey: "send-grant-ttl-session" };
+  await persistRankedSuppliers(hooks, context);
+  const blocked = await hooks.get("before_tool_call")(
+    { toolName: "create_with_distributions", params: inquiryParams },
+    context,
+  );
+  await hooks.get("after_tool_call")(
+    {
+      toolName: "AskUserQuestion",
+      params: blocked.askUserQuestion,
+      result: { answer: "确认发送" },
+    },
+    context,
+  );
+
+  clock += 10 * 60_000 + 1;
+  const expired = await hooks.get("before_tool_call")(
+    { toolName: "create_with_distributions", params: inquiryParams },
+    context,
+  );
+
+  assert.match(expired.blockReason, /^HITL_REQUIRED:/u);
+  assert.equal(expired.askUserQuestion.questions[0].header, "确认企微发送");
+});
+
+test("ranked institution names are isolated by session scope", async () => {
+  const hooks = registeredHooks();
+  const contextA = { sessionKey: "ranked-scope-a" };
+  const contextB = { sessionKey: "ranked-scope-b" };
+  await persistRankedSuppliers(hooks, contextA);
+  await persistRankedSuppliers(hooks, contextB, [
+    { supplier_id: "supplier-a", agency_name: "机构丙" },
+    { supplier_id: "supplier-b", agency_name: "机构丁" },
+  ]);
+
+  const blockedA = await hooks.get("before_tool_call")(
+    { toolName: "create_with_distributions", params: inquiryParams },
+    contextA,
+  );
+  const blockedB = await hooks.get("before_tool_call")(
+    { toolName: "create_with_distributions", params: inquiryParams },
+    contextB,
+  );
+
+  assert.match(blockedA.askUserQuestion.questions[0].question, /机构甲（supplier-a）/u);
+  assert.match(blockedB.askUserQuestion.questions[0].question, /机构丙（supplier-a）/u);
+});
+
+test("WeCom send is blocked when any recipient name cannot be verified", async () => {
+  const hooks = registeredHooks();
+  const context = { sessionKey: "missing-ranked-name-session" };
+  await persistRankedSuppliers(hooks, context, [
+    { supplier_id: "supplier-a", agency_name: "机构甲" },
+    { supplier_id: "supplier-b", agency_name: "" },
+  ]);
+
+  const blocked = await hooks.get("before_tool_call")(
+    { toolName: "create_with_distributions", params: inquiryParams },
+    context,
+  );
+
+  assert.equal(blocked.block, true);
+  assert.match(blocked.blockReason, /^INQUIRY_RECIPIENT_NAME_MISSING:/u);
+  assert.match(blocked.blockReason, /supplier-b/u);
+  assert.equal(blocked.askUserQuestion, undefined);
+  assert.equal(blocked.recoveryDirective.action, "stop");
+});
+
+test("WeCom send is blocked after transient name state is lost", async () => {
+  const { hooks, transientState } = registeredPlugin();
+  const context = { sessionKey: "reset-ranked-name-session" };
+  await persistRankedSuppliers(hooks, context);
+  transientState.resetTransientState();
+
+  const blocked = await hooks.get("before_tool_call")(
+    { toolName: "create_with_distributions", params: inquiryParams },
+    context,
+  );
+
+  assert.match(blocked.blockReason, /^INQUIRY_RECIPIENT_NAME_MISSING:/u);
+  assert.equal(blocked.askUserQuestion, undefined);
 });
 
 test("startup injects the fixed chain once without requiring a Skill read", () => {

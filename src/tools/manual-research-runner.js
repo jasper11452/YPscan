@@ -15,6 +15,7 @@ import {
 } from "./manual-research-detail.js";
 import { compileManualResearchPlan, mergeManualCandidates } from "./manual-research-plan.js";
 import { validateCreatorPriceFact } from "./manual-research-protocol.js";
+import { checkCandidatePrice } from "./manual-research-price-check.js";
 import { createPgyAdapter } from "./manual-research/pgy-adapter.js";
 import { createXingtuAdapter } from "./manual-research/xingtu-adapter.js";
 import { cleanText, manualBrowserError } from "./manual-research/common.js";
@@ -40,6 +41,10 @@ export const MANUAL_RESEARCH_RUNNER_PARAMETERS = Object.freeze({
     platform: { type: "string", enum: [...PLATFORMS] },
     run_id: { type: "string", minLength: 1 },
     facts: { type: "array", items: { type: "object" } },
+    quote_type: {
+      type: "string",
+      enum: ["植入视频", "定制视频", "图文", "图文笔记", "视频", "视频笔记"],
+    },
     keywords: {
       type: "array",
       minItems: 1,
@@ -103,7 +108,12 @@ function validateParams(input = {}) {
     for (const fact of input.facts) validateCreatorPriceFact(fact);
     const keywords = [...new Set((input.keywords ?? []).map(cleanText).filter(Boolean))].slice(0, 4);
     if (!keywords.length) throw argumentError("start 必须提供 1–4 个关键词");
-    Object.assign(params, { facts: input.facts, keywords, fresh_run: input.fresh_run === true });
+    Object.assign(params, {
+      facts: input.facts,
+      keywords,
+      quote_type: cleanText(input.quote_type) || null,
+      fresh_run: input.fresh_run === true,
+    });
   } else {
     params.run_id = required(input.run_id, "run_id");
   }
@@ -117,6 +127,9 @@ function validateParams(input = {}) {
 }
 
 function candidateFromRow(row, source) {
+  const tierPrice = source.price_tier ? row.price_by_tier?.[source.price_tier] : null;
+  const exactPrice = tierPrice ?? row.price_raw ?? null;
+  const quoteTier = exactPrice ? row.format ?? source.price_tier ?? null : null;
   return {
     platform: source.platform,
     platform_id: row.platform_id ?? null,
@@ -125,8 +138,17 @@ function candidateFromRow(row, source) {
     source_url: row.source_url ?? source.source_url,
     source_branches: [source.branch_id],
     source_pages: [source.page_number],
-    quote_tier: row.format ?? source.price_tier ?? null,
-    price_raw: row.price_raw ?? null,
+    quote_tier: quoteTier,
+    price_raw: exactPrice,
+    minimum_price_raw: row.minimum_price_raw ?? null,
+    price_by_tier: row.price_by_tier ?? {},
+    price_evidence:
+      row.price_evidence ??
+      (tierPrice
+        ? { source: "structured_list", exact: true }
+        : exactPrice && source.price_tier
+          ? { source: "selected_list_response", exact: true }
+          : null),
     followers_raw: row.followers_raw ?? null,
     cpm_raw: row.cpm_raw ?? null,
     cpe_raw: row.cpe_raw ?? null,
@@ -207,6 +229,10 @@ function persistenceFailure(error) {
   return ["YPSCAN_MANUAL_CHECKPOINT_FAILED", "YPSCAN_MANUAL_ARTIFACT_FAILED"].includes(error?.code);
 }
 
+function needsExactPrice(candidate, plan) {
+  return checkCandidatePrice(candidate, plan).status === "needs_review";
+}
+
 const QUALITY_RANK = Object.freeze({ exact: 0, degraded: 1, unverified: 2 });
 
 function lowerQuality(state, quality) {
@@ -223,6 +249,9 @@ function createRunInfo(params, plan, state, now, candidateCount = 0) {
     quality_level: state.quality_level,
     updated_at: new Date(now()).toISOString(),
     target_count: plan.target_count ?? null,
+    price_view: plan.price_view ?? null,
+    price_view_source: plan.price_view_source ?? "none",
+    price_semantics_version: plan.price_semantics_version ?? null,
     candidate_count: candidateCount,
     candidate_shortfall: plan.target_count ? Math.max(plan.target_count - candidateCount, 0) : 0,
     completed_keywords: [...state.completed_keywords],
@@ -623,7 +652,7 @@ export function createManualResearchRunner({
                 platform: params.platform,
                 branch_id: `${branch.branch_id}:${pageCollectionMode}`,
                 page_number: pageNumber,
-                price_tier: pageData.price_tier,
+                price_tier: pageData.price_tier ?? plan.price_view,
                 source_url: pageData.source_url ?? page.url(),
                 collection_mode: pageCollectionMode,
               }),
@@ -698,6 +727,7 @@ export function createManualResearchRunner({
         const existingDetails = new Set(details.map((item) => item.candidate_ref));
         const detailCandidates = candidates
           .filter((candidate) => !existingDetails.has(candidateReference(candidate)))
+          .sort((left, right) => Number(needsExactPrice(right, plan)) - Number(needsExactPrice(left, plan)))
           .slice(0, Math.max(MAX_DETAILS - state.detail_attempted, 0));
         for (const candidate of detailCandidates) {
           if (now() >= deadline) {

@@ -82,7 +82,7 @@ function successfulAdapter(
       const suffix = keyword === "咖啡" ? "coffee" : "camping";
       return {
         page_number: pageNumber,
-        price_tier: "60s以上",
+        price_tier: "植入视频",
         source_url: `https://www.xingtu.cn/ad/creator/market?page=${pageNumber}`,
         rows: [
           {
@@ -119,7 +119,7 @@ function successfulAdapter(
         response_endpoints: ["/gw/api/detail"],
         fields: {
           followers_raw: candidate.followers_raw,
-          price_by_tier: { "60s以上视频": candidate.price_raw },
+          price_by_tier: { 植入视频: candidate.price_raw },
           recent_content: [{ title: `${candidate.nickname}近期内容` }],
         },
       };
@@ -155,7 +155,9 @@ test("manual plan expands the customer creator price once to 50%–120%", () => 
   });
 
   assert.deepEqual(plan.keywords, ["咖啡", "露营"]);
-  assert.equal(plan.price_view, "60s以上视频");
+  assert.equal(plan.price_view, "植入视频");
+  assert.equal(plan.price_view_source, "platform_default");
+  assert.equal(plan.price_semantics_version, 2);
   assert.deepEqual(
     plan.filters.find((item) => item.fact_kind === "creator_price"),
     {
@@ -181,7 +183,7 @@ test("manual plan expands the customer creator price once to 50%–120%", () => 
     creator_price: "customer_value_50_to_120_percent",
     minimum_factor: 0.5,
     maximum_factor: 1.2,
-    quote_tier: "60s以上视频",
+    quote_tier: "植入视频",
     other_metrics_expanded: false,
     applied_ranges: [
       {
@@ -294,30 +296,25 @@ test("manual price expansion turns a 100k cap into 50k–120k and expands range 
   );
 });
 
-test("normalized duration tiers, gender labels and cooperation qualifiers map to visible controls", () => {
+test("Xingtu quote type is independent from duration and maps gender to visible controls", () => {
   const xingtu = compileManualResearchPlan({
     platform: "xingtu",
     facts: [
       fact("duration", "video_duration", "duration_l3"),
       fact("gender", "creator_gender", "female"),
-      fact("long-price", "creator_price", 2_000, {
+      fact("price", "creator_price", 2_000, {
         operator: "exact",
-        qualifier: "duration_l3",
         maximum: 2_000,
-      }),
-      fact("short-price", "creator_price", 1_000, {
-        operator: "exact",
-        qualifier: "duration_l1",
-        maximum: 1_000,
+        quote: "定制视频报价 2000",
       }),
     ],
     keywords: ["办公软件"],
   });
-  assert.equal(xingtu.price_view, "60s以上视频");
+  assert.equal(xingtu.price_view, "定制视频");
   assert.deepEqual(xingtu.filters.find((item) => item.control === "creator_gender").values, ["女"]);
   assert.deepEqual(
     xingtu.filters.filter((item) => item.control === "creator_price").map((item) => item.fact_id),
-    ["long-price"],
+    ["price"],
   );
   assert.deepEqual(
     xingtu.filters
@@ -325,38 +322,19 @@ test("normalized duration tiers, gender labels and cooperation qualifiers map to
       .map((item) => [item.min, item.max, item.range_policy]),
     [[1_000, 2_400, "customer_value_50_to_120_percent"]],
   );
-  assert.deepEqual(
-    xingtu.unexpressed.map((item) => [item.fact_id, item.reason]),
-    [["short-price", "cooperation_tier_not_selected"]],
-  );
+  assert.deepEqual(xingtu.unexpressed, []);
 
-  const pgy = compileManualResearchPlan({
-    platform: "pgy",
-    facts: [
-      fact("format", "content_format", "picture"),
-      fact("picture-price", "creator_price", 800, {
-        operator: "exact",
-        qualifier: "picture",
-        maximum: 800,
+  assert.throws(
+    () =>
+      compileManualResearchPlan({
+        platform: "pgy",
+        facts: [
+          fact("picture-price", "creator_price", 800, { qualifier: "picture" }),
+          fact("video-price", "creator_price", 1_500, { qualifier: "video" }),
+        ],
+        keywords: ["咖啡"],
       }),
-      fact("video-price", "creator_price", 1_500, {
-        operator: "exact",
-        qualifier: "video",
-        maximum: 1_500,
-      }),
-    ],
-    keywords: ["咖啡"],
-  });
-  assert.equal(pgy.price_view, "图文");
-  assert.deepEqual(
-    pgy.filters.filter((item) => item.control === "creator_price").map((item) => item.fact_id),
-    ["picture-price"],
-  );
-  assert.deepEqual(
-    pgy.filters
-      .filter((item) => item.control === "creator_price")
-      .map((item) => [item.min, item.max]),
-    [[400, 960]],
+    { code: "YPSCAN_MANUAL_QUOTE_TYPE_CONFLICT" },
   );
 });
 
@@ -586,7 +564,7 @@ test("the current delivery count bounds the global pool and skips remaining keyw
   const adapter = successfulAdapter(actions, { pageTotal: 1 });
   adapter.readPage = async (pageNumber) => ({
     page_number: pageNumber,
-    price_tier: "60s以上",
+    price_tier: "植入视频",
     source_url: browser.page.url(),
     rows: Array.from({ length: 20 }, (_, index) => ({
       platform_id: `creator-${index + 1}`,
@@ -660,7 +638,7 @@ test("price-rejected rows do not stop later pages or keyword branches", async ()
         currentPage = pageNumber;
         actions.push(["read", keyword, pageNumber]);
         return {
-          price_tier: "60s以上",
+          price_tier: "植入视频",
           source_url: browser.page.url(),
           rows: Array.from({ length: 20 }, (_, index) => ({
             platform_id: `${keyword}-${pageNumber}-${index}`,
@@ -824,7 +802,7 @@ test("an explicit zero-result search does not waste an export quota", async () =
         return { applied: true, result_count: 0 };
       },
       async readPage() {
-        return { rows: [], source_url: browser.page.url(), price_tier: "60s以上" };
+        return { rows: [], source_url: browser.page.url(), price_tier: "植入视频" };
       },
       async nextPage() {
         return false;
@@ -876,7 +854,7 @@ test("a failed price-tier readback stops before search after one bounded retry",
     return {
       applied: false,
       reason: "price_view_readback_mismatch",
-      readback: "达人信息 21-60s报价",
+      readback: "达人信息 定制视频报价",
     };
   };
   const run = createManualResearch({
@@ -888,14 +866,14 @@ test("a failed price-tier readback stops before search after one bounded retry",
   assert.equal(data.status, "failed");
   assert.equal(data.ready_for_collection, false);
   assert.equal(data.error.code, "YPSCAN_MANUAL_PRICE_VIEW_NOT_APPLIED");
-  assert.equal(data.verification.price_view.readback, "达人信息 21-60s报价");
+  assert.equal(data.verification.price_view.readback, "达人信息 定制视频报价");
   assert.deepEqual(
     actions.filter(([action]) =>
       ["price_view", "search", "read", "filter", "export"].includes(action),
     ),
     [
-      ["price_view", "60s以上视频"],
-      ["price_view", "60s以上视频"],
+      ["price_view", "植入视频"],
+      ["price_view", "植入视频"],
     ],
   );
 });
@@ -913,7 +891,7 @@ test("a preserved-filter mismatch falls back safely and a price-tier failure can
       : {
           applied: false,
           reason: "price_view_readback_mismatch",
-          readback: "达人信息 21-60s报价",
+          readback: "达人信息 定制视频报价",
         };
   };
   adapter.verifySelection = async ({ branch }) => ({ valid: branch.keyword !== "露营" });
@@ -984,7 +962,7 @@ test("detail collection is serial, bounded to twice the target and retries an or
       },
       async readPage() {
         return {
-          price_tier: "60s以上视频",
+          price_tier: "植入视频",
           source_url: browser.page.url(),
           rows: Array.from({ length: 3 }, (_, index) => ({
             platform_id: `serial-${index + 1}`,
@@ -1012,7 +990,7 @@ test("detail collection is serial, bounded to twice the target and retries an or
           candidate_ref: candidate.platform_id,
           status: "complete",
           fields: {
-            price_by_tier: { "60s以上视频": candidate.price_raw },
+            price_by_tier: { 植入视频: candidate.price_raw },
             recent_content: [{ title: "办公效率内容" }],
           },
         };
@@ -1071,7 +1049,7 @@ test("detail risk signals stop the batch immediately and are never retried", asy
       },
       async readPage() {
         return {
-          price_tier: "60s以上视频",
+          price_tier: "植入视频",
           source_url: browser.page.url(),
           rows: [{ platform_id: "risk-1", nickname: "风险达人", price_raw: "1800" }],
         };
@@ -1135,7 +1113,7 @@ test("a list CPM violation is rejected before any detail navigation", async () =
       },
       async readPage() {
         return {
-          price_tier: "60s以上视频",
+          price_tier: "植入视频",
           source_url: browser.page.url(),
           rows: [
             {

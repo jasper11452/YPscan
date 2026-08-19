@@ -57,6 +57,8 @@ test("extracts the signed-in PGY filtered list without retaining raw response da
       id: result.rows[0].platform_id,
       nickname: result.rows[0].nickname,
       followers: result.rows[0].followers_raw,
+      picture_price: result.rows[0].price_by_tier.图文,
+      video_price: result.rows[0].price_by_tier.视频,
       price: result.rows[0].price_raw,
       cpm: result.rows[0].cpm_raw,
       city: result.rows[0].city,
@@ -65,7 +67,9 @@ test("extracts the signed-in PGY filtered list without retaining raw response da
       id: "pgy-user-1",
       nickname: "咖啡研究所",
       followers: "128000",
-      price: "2600",
+      picture_price: "2600",
+      video_price: "4800",
+      price: null,
       cpm: "52.3",
       city: "上海",
     },
@@ -189,7 +193,7 @@ test("DOM display values enrich network identities instead of replacing them", (
         nickname: "同一达人",
         followers_raw: "23.5万",
         price_raw: "¥18,000",
-        quote_fields: { "60s以上报价": "¥18,000" },
+        quote_fields: { 植入视频报价: "¥18,000" },
         tags: ["科技"],
       },
     ],
@@ -230,6 +234,26 @@ test("clean network nickname wins over a DOM row polluted by adjacent PGY fields
 
   assert.equal(rows[0].nickname, "张张不脏脏");
   assert.equal(rows[0].followers_raw, "1.8w");
+});
+
+test("PGY network quote tiers survive a merge with an empty DOM quote map", () => {
+  const rows = mergeCapturedAndDomRows(
+    [
+      normalizeListResponseRow(
+        {
+          userId: "kol-1",
+          nickName: "张张不脏脏",
+          picturePrice: 2600,
+          videoPrice: 4800,
+        },
+        "pgy",
+      ),
+    ],
+    [{ nickname: "张张不脏脏", price_by_tier: {}, minimum_price_raw: "¥2,600起" }],
+  );
+
+  assert.deepEqual(rows[0].price_by_tier, { 图文: "2600", 视频: "4800" });
+  assert.equal(rows[0].minimum_price_raw, "¥2,600起");
 });
 
 test("observes one browser-signed list response and removes the temporary listener", async () => {

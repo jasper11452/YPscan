@@ -1,3 +1,5 @@
+import { normalizeManualQuoteType } from "./manual-research-quote-type.js";
+
 function clean(value) {
   return String(value ?? "")
     .replace(/\s+/gu, "")
@@ -17,17 +19,10 @@ export function parseManualPrice(raw) {
 }
 
 export function normalizeManualQuoteTier(platform, raw) {
-  const value = clean(raw).replace(/[–—]/gu, "-");
-  if (!value) return null;
-  if (platform === "pgy") {
-    if (/图文/u.test(value)) return "picture";
-    if (/视频/u.test(value)) return "video";
-    return null;
-  }
-  if (/60s?(?:以上|\+)/iu.test(value)) return "duration_l3";
-  if (/21-60s?/iu.test(value)) return "duration_l2";
-  if (/1-20s?/iu.test(value)) return "duration_l1";
-  return null;
+  const normalized = normalizeManualQuoteType(platform, raw);
+  if (platform === "pgy")
+    return normalized === "图文" ? "picture" : normalized === "视频" ? "video" : null;
+  return normalized === "植入视频" ? "placement" : normalized === "定制视频" ? "custom" : null;
 }
 
 export function checkCandidatePrice(candidate, plan) {

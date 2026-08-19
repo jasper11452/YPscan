@@ -24,6 +24,32 @@ function locator({ visible = true, onClick = () => {}, evaluateAll = null, text 
   };
 }
 
+test("PGY quote selection does not click the note-type content filter", async () => {
+  let interactiveCalls = 0;
+  const page = {
+    url: () => "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol",
+    locator(selector) {
+      if (selector === "body") return locator({ text: "博主广场" });
+      return locator({ visible: false });
+    },
+    getByText() {
+      interactiveCalls += 1;
+      return locator();
+    },
+    getByRole() {
+      interactiveCalls += 1;
+      return locator();
+    },
+  };
+  const result = await createPgyAdapter(page, {
+    workspaceDir: "/tmp",
+    now: () => 123,
+  }).setPriceView("图文");
+
+  assert.deepEqual(result, { applied: true, readback: "图文", source: "internal_target" });
+  assert.equal(interactiveCalls, 0);
+});
+
 test("Xingtu export returns only a newly observed Feishu link", async () => {
   const oldLink = "https://example.feishu.cn/sheets/old";
   const newLink = "https://example.feishu.cn/sheets/new";

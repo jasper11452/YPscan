@@ -22,15 +22,15 @@ import { captureListResponseDuring, mergeCapturedAndDomRows } from "./list-respo
 import { collectCreatorDetail } from "./detail-page.js";
 
 const PRICE_TYPE_TRIGGER_LABEL = "选择报价类型";
-const PRICE_VIEW_LABEL_PATTERN = /^(?:1-20s|21-60s|60s以上)(?:视频|报价)?$/u;
+const PRICE_VIEW_LABEL_PATTERN = /^(?:植入视频|定制视频)(?:报价)?$/u;
 
 function normalizePriceView(value) {
-  return cleanText(value).replace(/(?:视频|报价)$/u, "");
+  return cleanText(value).replace(/报价$/u, "");
 }
 
 function priceViewAliases(value) {
   const normalized = normalizePriceView(value);
-  return [...new Set([cleanText(value), `${normalized}报价`, normalized].filter(Boolean))];
+  return [...new Set([normalized, `${normalized}报价`].filter(Boolean))];
 }
 
 async function readPriceViewHeader(page) {
@@ -163,7 +163,7 @@ async function findPriceTypeMenu(page, menu) {
     const resolved = await waitForControlledMenu(page, control);
     if (!resolved) continue;
     const options = cleanText(await resolved.menu.innerText().catch(() => ""));
-    if (/1-20s/u.test(options) && /21-60s/u.test(options) && /60s以上/u.test(options)) {
+    if (/植入视频/u.test(options) && /定制视频/u.test(options)) {
       return { trigger: control, menu: resolved.menu, menu_id: resolved.menu_id };
     }
     await page.keyboard.press("Escape").catch(() => {});
@@ -174,7 +174,7 @@ async function findPriceTypeMenu(page, menu) {
 /**
  * Identify the quote interval control by the controlled menu's capabilities,
  * never by DOM position. The interval menu must expose either a custom-range
- * entry or editable numeric inputs and must not be the duration-type menu.
+ * entry or editable numeric inputs and must not be the quote-type menu.
  */
 async function findPriceRangeMenu(page, menu) {
   const controls = menu.locator("[aria-controls]");
@@ -198,7 +198,7 @@ async function findPriceRangeMenu(page, menu) {
     const resolved = await waitForControlledMenu(page, control);
     if (!resolved) continue;
     const text = cleanText(await resolved.menu.innerText().catch(() => ""));
-    const isPriceType = /1-20s/u.test(text) && /21-60s/u.test(text) && /60s以上/u.test(text);
+    const isPriceType = /植入视频/u.test(text) && /定制视频/u.test(text);
     const inputs = resolved.menu.locator("input:visible:not([readonly]):not([disabled])");
     const inputCount = typeof inputs.count === "function" ? await inputs.count().catch(() => 0) : 0;
     const hasCustomRange = /自定义(?:区间)?/u.test(text);

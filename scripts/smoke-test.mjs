@@ -95,6 +95,7 @@ try {
     "tool_result_persist",
   ]);
   const beforeHook = registered.hooks.find((hook) => hook.name === "before_tool_call").handler;
+  const persistHook = registered.hooks.find((hook) => hook.name === "tool_result_persist").handler;
   assert.equal(
     await beforeHook(
       {
@@ -112,12 +113,28 @@ try {
     description: "smoke",
     wechat_notification_message: "smoke WeCom body",
   };
+  const sendContext = { runId: "smoke-run" };
+  await persistHook(
+    {
+      toolName: "ypmcn__rank_mcns",
+      params: { id: sendParams.requirement_id },
+      message: {
+        content: JSON.stringify({
+          success: true,
+          data: {
+            mcns: [{ supplier_id: "smoke-supplier", agency_name: "Smoke 机构" }],
+          },
+        }),
+      },
+    },
+    sendContext,
+  );
   const blocked = await beforeHook(
     {
       toolName: "ypmcn__create_with_distributions",
       params: sendParams,
     },
-    { runId: "smoke-run" },
+    sendContext,
   );
   assert.match(blocked.blockReason, /^HITL_REQUIRED:/u);
 
