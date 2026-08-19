@@ -24,6 +24,7 @@ import { hostToolResult } from "./tool-result.js";
 const RUN_BUDGET_MS = 180_000;
 const PERSIST_RESERVE_MS = 15_000;
 const ACTION_TIMEOUT_MS = 6_000;
+const DETAIL_TIMEOUT_MS = 20_000;
 const MAX_PAGES_PER_BRANCH = 5;
 const MAX_PAGES_TOTAL = 12;
 const MAX_DETAILS = 10;
@@ -106,7 +107,10 @@ function validateParams(input = {}) {
   if (operation === "start") {
     if (!Array.isArray(input.facts)) throw argumentError("start 必须提供完整 facts");
     for (const fact of input.facts) validateCreatorPriceFact(fact);
-    const keywords = [...new Set((input.keywords ?? []).map(cleanText).filter(Boolean))].slice(0, 4);
+    const keywords = [...new Set((input.keywords ?? []).map(cleanText).filter(Boolean))].slice(
+      0,
+      4,
+    );
     if (!keywords.length) throw argumentError("start 必须提供 1–4 个关键词");
     Object.assign(params, {
       facts: input.facts,
@@ -129,7 +133,7 @@ function validateParams(input = {}) {
 function candidateFromRow(row, source) {
   const tierPrice = source.price_tier ? row.price_by_tier?.[source.price_tier] : null;
   const exactPrice = tierPrice ?? row.price_raw ?? null;
-  const quoteTier = exactPrice ? row.format ?? source.price_tier ?? null : null;
+  const quoteTier = exactPrice ? (row.format ?? source.price_tier ?? null) : null;
   return {
     platform: source.platform,
     platform_id: row.platform_id ?? null,
@@ -165,9 +169,13 @@ function candidateFromRow(row, source) {
 
 async function genericVisibleRows(page) {
   return page.evaluate(() => {
-    const clean = (value) => String(value ?? "").replace(/\s+/gu, " ").trim();
+    const clean = (value) =>
+      String(value ?? "")
+        .replace(/\s+/gu, " ")
+        .trim();
     const visible = (node) => Boolean(node?.getClientRects?.().length);
-    const selectors = "tbody tr,[role=row],[class*=creator-card],[class*=kol-card],[class*=author-card]";
+    const selectors =
+      "tbody tr,[role=row],[class*=creator-card],[class*=kol-card],[class*=author-card]";
     return [...globalThis.document.querySelectorAll(selectors)]
       .filter(visible)
       .filter((node) => !node.closest("thead"))
@@ -216,7 +224,11 @@ async function retryBrowserAction(label, action, adapter, timeoutMs = ACTION_TIM
     return await bounded(label, Promise.resolve().then(action), timeoutMs);
   } catch (firstError) {
     if (needsUser(firstError) || typeof adapter?.recover !== "function") throw firstError;
-    await bounded(`${label}恢复页面`, Promise.resolve().then(() => adapter.recover()), timeoutMs);
+    await bounded(
+      `${label}恢复页面`,
+      Promise.resolve().then(() => adapter.recover()),
+      timeoutMs,
+    );
     return bounded(`${label}重试`, Promise.resolve().then(action), timeoutMs);
   }
 }
@@ -241,6 +253,19 @@ function lowerQuality(state, quality) {
   }
 }
 
+function cleanDiagnosticMessage(error) {
+  return String(error?.message ?? error ?? "详情采集失败")
+    .replaceAll(String.fromCharCode(27), "")
+    .replace(/\[[0-9;]*m/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+function detailTarget(plan) {
+  return Math.min(MAX_DETAILS, plan.target_count ?? MAX_DETAILS);
+}
+
 function createRunInfo(params, plan, state, now, candidateCount = 0) {
   return {
     requirement_id: params.requirement_id,
@@ -261,6 +286,8 @@ function createRunInfo(params, plan, state, now, candidateCount = 0) {
     unapplied_filters: [...state.unapplied_filters],
     detail_attempted: state.detail_attempted,
     detail_completed: state.detail_completed,
+    detail_target: detailTarget(plan),
+    detail_shortfall: Math.max(detailTarget(plan) - state.detail_completed, 0),
     error_code: state.error_code,
     error_message: state.error_message,
     resume_available: state.resume_available,
@@ -316,10 +343,23 @@ function createState(restored = {}) {
   };
 }
 
-function publicPayload({ params, plan, store, state, candidates, details, reviews, status, artifact }) {
+function publicPayload({
+  params,
+  plan,
+  store,
+  state,
+  candidates,
+  details,
+  reviews,
+  status,
+  artifact,
+}) {
   const pending = reviewBatch(candidates, details, reviews, {
     requirements: plan.review_requirements,
   });
+  const target = detailTarget(plan);
+  const partialCount = details.filter((item) => item.status === "partial").length;
+  const failedDetails = details.filter((item) => item.status === "failed");
   return {
     success: status !== "failed",
     status,
@@ -333,6 +373,22 @@ function publicPayload({ params, plan, store, state, candidates, details, review
     review_batch: pending.tasks,
     review_remaining: pending.remaining,
     delivery_shortfall: plan.target_count ? Math.max(plan.target_count - candidates.length, 0) : 0,
+    detail_progress: {
+      target,
+      attempted: state.detail_attempted,
+      completed: state.detail_completed,
+      partial: partialCount,
+      failed: failedDetails.length,
+      shortfall: Math.max(target - state.detail_completed, 0),
+    },
+    detail_failures: failedDetails.slice(-MAX_DETAILS).map((item) => ({
+      candidate_ref: item.candidate_ref,
+      nickname: item.nickname ?? null,
+      stage: item.failure?.stage ?? "collect_detail",
+      code: item.failure?.code ?? "YPSCAN_MANUAL_DETAIL_FAILED",
+      message: item.failure?.message ?? "详情采集失败",
+      duration_ms: item.failure?.duration_ms ?? null,
+    })),
     artifact,
     ...(state.resume_available
       ? {
@@ -351,7 +407,9 @@ function publicPayload({ params, plan, store, state, candidates, details, review
 }
 
 function defaultAdapter(platform, page, options) {
-  return platform === "xingtu" ? createXingtuAdapter(page, options) : createPgyAdapter(page, options);
+  return platform === "xingtu"
+    ? createXingtuAdapter(page, options)
+    : createPgyAdapter(page, options);
 }
 
 /**
@@ -437,7 +495,8 @@ export function createManualResearchRunner({
         plan,
         now,
       });
-      if (!store.enabled || !store.run_id) throw argumentError("当前项目目录不可用，无法生成手扒产物");
+      if (!store.enabled || !store.run_id)
+        throw argumentError("当前项目目录不可用，无法生成手扒产物");
       const saved = restored ?? store.restored;
       let candidates = mergeManualCandidates(saved.candidates ?? []);
       let details = mergeDetailRecords(saved.details ?? []);
@@ -455,7 +514,7 @@ export function createManualResearchRunner({
           details,
           reviews,
           status,
-          detailPlannedCount: Math.min(MAX_DETAILS, candidates.length),
+          detailPlannedCount: detailTarget(plan),
           runInfo,
         });
         await store.saveRunnerState(runnerState(params, state, status, now));
@@ -466,9 +525,24 @@ export function createManualResearchRunner({
       if (latestRunnerState?.phase === "terminal" && params.fresh_run !== true) {
         state.phase = "terminal";
         const terminalStatus = latestRunnerState.execution_status ?? "complete";
-        const artifact = await materialize(terminalStatus);
-        return hostToolResult(
-          publicPayload({
+        const diagnosticRunnerState = [...(saved.runner_states ?? [])]
+          .reverse()
+          .find(
+            (item) =>
+              item.phase === "terminal" &&
+              item.execution_status === terminalStatus &&
+              (item.error_code || item.error_message),
+          );
+        state.error_code =
+          latestRunnerState.error_code ?? diagnosticRunnerState?.error_code ?? null;
+        state.error_message =
+          latestRunnerState.error_message ?? diagnosticRunnerState?.error_message ?? null;
+        const artifact = await store.replayArtifact({
+          status: terminalStatus,
+          runInfo: createRunInfo(params, plan, state, now, candidates.length),
+        });
+        return hostToolResult({
+          ...publicPayload({
             params,
             plan,
             store,
@@ -479,14 +553,16 @@ export function createManualResearchRunner({
             status: terminalStatus,
             artifact,
           }),
-        );
+          terminal_replay: true,
+        });
       }
 
       let artifact = await materialize("created");
       let lock;
       try {
         lock = browserRuntime?.acquire?.(store.run_id);
-        if (!lock) throw manualBrowserError("YPSCAN_MANUAL_BROWSER_UNAVAILABLE", "浏览器 Runner 未初始化");
+        if (!lock)
+          throw manualBrowserError("YPSCAN_MANUAL_BROWSER_UNAVAILABLE", "浏览器 Runner 未初始化");
       } catch (error) {
         state.phase = "terminal";
         state.error_code = error?.code ?? "YPSCAN_MANUAL_BROWSER_UNAVAILABLE";
@@ -516,7 +592,17 @@ export function createManualResearchRunner({
         state.resume_instruction = "前一运行结束后原样调用 resume";
         artifact = await materialize("busy", true);
         return hostToolResult(
-          publicPayload({ params, plan, store, state, candidates, details, reviews, status: "busy", artifact }),
+          publicPayload({
+            params,
+            plan,
+            store,
+            state,
+            candidates,
+            details,
+            reviews,
+            status: "busy",
+            artifact,
+          }),
         );
       }
 
@@ -537,7 +623,12 @@ export function createManualResearchRunner({
         }
 
         const collect = async (branch, mode, applyFilters) => {
-          if (now() >= deadline || candidates.length >= poolTarget || state.completed_pages >= MAX_PAGES_TOTAL) return;
+          if (
+            now() >= deadline ||
+            candidates.length >= poolTarget ||
+            state.completed_pages >= MAX_PAGES_TOTAL
+          )
+            return;
           state.phase = "filtering";
           state.branch_index = branch.branch_index;
           state.keyword = branch.keyword;
@@ -595,7 +686,8 @@ export function createManualResearchRunner({
               }
             }
           }
-          const effectiveMode = applyFilters && allApplied ? "filtered" : mode === "filtered" ? "keyword_only" : mode;
+          const effectiveMode =
+            applyFilters && allApplied ? "filtered" : mode === "filtered" ? "keyword_only" : mode;
           if (effectiveMode !== "filtered") {
             lowerQuality(state, "degraded");
             state.fallback_modes.add(effectiveMode);
@@ -616,7 +708,11 @@ export function createManualResearchRunner({
           }
           state.phase = "collecting_list";
           for (let pageNumber = 1; pageNumber <= MAX_PAGES_PER_BRANCH; pageNumber += 1) {
-            if (now() >= deadline || candidates.length >= poolTarget || state.completed_pages >= MAX_PAGES_TOTAL) {
+            if (
+              now() >= deadline ||
+              candidates.length >= poolTarget ||
+              state.completed_pages >= MAX_PAGES_TOTAL
+            ) {
               timedOut ||= now() >= deadline;
               break;
             }
@@ -676,11 +772,7 @@ export function createManualResearchRunner({
             /** @type {any} */
             let next = false;
             try {
-              next = await retryBrowserAction(
-                "进入下一页",
-                () => adapter.nextPage(),
-                adapter,
-              );
+              next = await retryBrowserAction("进入下一页", () => adapter.nextPage(), adapter);
             } catch (error) {
               if (needsUser(error) || persistenceFailure(error)) throw error;
               state.unapplied_filters.add(`分页:${pageNumber + 1}`);
@@ -724,30 +816,40 @@ export function createManualResearchRunner({
         }
 
         state.phase = "collecting_detail";
-        const existingDetails = new Set(details.map((item) => item.candidate_ref));
+        const existingDetails = new Set(
+          details
+            .filter((item) => item.reason !== "manual_challenge")
+            .map((item) => item.candidate_ref),
+        );
         const detailCandidates = candidates
           .filter((candidate) => !existingDetails.has(candidateReference(candidate)))
-          .sort((left, right) => Number(needsExactPrice(right, plan)) - Number(needsExactPrice(left, plan)))
-          .slice(0, Math.max(MAX_DETAILS - state.detail_attempted, 0));
+          .sort(
+            (left, right) =>
+              Number(needsExactPrice(right, plan)) - Number(needsExactPrice(left, plan)),
+          );
         for (const candidate of detailCandidates) {
+          if (state.detail_completed >= detailTarget(plan)) break;
           if (now() >= deadline) {
             timedOut = true;
             break;
           }
           state.detail_attempted += 1;
+          const detailStarted = now();
           try {
-            const collected = await retryBrowserAction(
+            const collected = await bounded(
               "采集达人详情",
-              () => adapter.collectDetail(candidate, { groups: detailGroupsForPlan(plan) }),
-              adapter,
-              10_000,
+              Promise.resolve().then(() =>
+                adapter.collectDetail(candidate, { groups: detailGroupsForPlan(plan) }),
+              ),
+              DETAIL_TIMEOUT_MS,
             );
             const evaluation = evaluateCandidateDetail(candidate, collected, plan);
             const detail = {
               ...collected,
               candidate_ref: candidateReference(candidate),
               fields: evaluation.fields,
-              hard_evaluation: collected.status === "blocked" ? { ...evaluation, status: "unknown" } : evaluation,
+              hard_evaluation:
+                collected.status === "blocked" ? { ...evaluation, status: "unknown" } : evaluation,
             };
             details = mergeDetailRecords([...details, detail]);
             if (detail.status === "complete") state.detail_completed += 1;
@@ -758,34 +860,118 @@ export function createManualResearchRunner({
               details,
               reviews,
               status: "running",
-              detailPlannedCount: Math.min(MAX_DETAILS, candidates.length),
+              detailPlannedCount: detailTarget(plan),
               runInfo: createRunInfo(params, plan, state, now, candidates.length),
             });
           } catch (error) {
+            const captured = error?.details?.captured_detail;
+            if (captured) {
+              const evaluation = evaluateCandidateDetail(candidate, captured, plan);
+              const detail = {
+                ...captured,
+                candidate_ref: candidateReference(candidate),
+                fields: evaluation.fields,
+                hard_evaluation:
+                  captured.status === "complete"
+                    ? evaluation
+                    : { ...evaluation, status: "unknown" },
+              };
+              details = mergeDetailRecords([...details, detail]);
+              if (detail.status === "complete") state.detail_completed += 1;
+              artifact = await store.saveDetail({
+                detail,
+                branches,
+                candidates,
+                details,
+                reviews,
+                status: "running",
+                detailPlannedCount: detailTarget(plan),
+                runInfo: createRunInfo(params, plan, state, now, candidates.length),
+              });
+            }
             if (needsUser(error)) throw error;
-            state.unapplied_filters.add(`详情:${candidateReference(candidate)}`);
+            const failure = {
+              candidate_ref: candidateReference(candidate),
+              platform_id: candidate.platform_id ?? null,
+              nickname: candidate.nickname ?? null,
+              detail_url: candidate.detail_url ?? null,
+              captured_at: new Date(now()).toISOString(),
+              status: "failed",
+              reason: "collection_failed",
+              fields: {},
+              failure: {
+                stage: "collect_detail",
+                code: error?.code ?? "YPSCAN_MANUAL_DETAIL_FAILED",
+                message: cleanDiagnosticMessage(error),
+                duration_ms: Math.max(now() - detailStarted, 0),
+              },
+            };
+            details = mergeDetailRecords([...details, failure]);
+            artifact = await store.saveDetail({
+              detail: failure,
+              branches,
+              candidates,
+              details,
+              reviews,
+              status: "running",
+              detailPlannedCount: detailTarget(plan),
+              runInfo: createRunInfo(params, plan, state, now, candidates.length),
+            });
           }
         }
 
         timedOut ||= now() >= deadline;
         state.phase = "terminal";
+        const detailShortfall = state.detail_completed < detailTarget(plan);
         const status = candidates.length
-          ? timedOut || state.error_code ? "partial" : "complete"
+          ? timedOut || state.error_code || detailShortfall
+            ? "partial"
+            : "complete"
           : state.error_code
             ? "failed_with_artifact"
             : "empty";
         artifact = await materialize(status, true);
-        return hostToolResult(publicPayload({ params, plan, store, state, candidates, details, reviews, status, artifact }));
+        return hostToolResult(
+          publicPayload({
+            params,
+            plan,
+            store,
+            state,
+            candidates,
+            details,
+            reviews,
+            status,
+            artifact,
+          }),
+        );
       } catch (error) {
         state.error_code = error?.code ?? "YPSCAN_MANUAL_RESEARCH_FAILED";
         state.error_message = error?.message ?? String(error);
         lowerQuality(state, candidates.length ? "degraded" : "unverified");
-        const status = needsUser(error) ? "needs_user_action" : candidates.length ? "partial" : "failed_with_artifact";
+        const status = needsUser(error)
+          ? "needs_user_action"
+          : candidates.length
+            ? "partial"
+            : "failed_with_artifact";
         state.phase = needsUser(error) ? "awaiting_user" : "terminal";
         state.resume_available = needsUser(error);
-        state.resume_instruction = needsUser(error) ? "在专用浏览器完成登录或验证后原样调用 resume" : null;
+        state.resume_instruction = needsUser(error)
+          ? "在专用浏览器完成登录或验证后原样调用 resume"
+          : null;
         artifact = await materialize(status, true).catch(() => artifact);
-        return hostToolResult(publicPayload({ params, plan, store, state, candidates, details, reviews, status, artifact }));
+        return hostToolResult(
+          publicPayload({
+            params,
+            plan,
+            store,
+            state,
+            candidates,
+            details,
+            reviews,
+            status,
+            artifact,
+          }),
+        );
       } finally {
         await adapter?.dispose?.().catch(() => {});
         lock.release();
@@ -813,4 +999,5 @@ export const MANUAL_RESEARCH_RUNNER_LIMITS = Object.freeze({
   max_pages_per_branch: MAX_PAGES_PER_BRANCH,
   max_pages_total: MAX_PAGES_TOTAL,
   max_details: MAX_DETAILS,
+  detail_timeout_ms: DETAIL_TIMEOUT_MS,
 });

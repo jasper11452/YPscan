@@ -135,6 +135,7 @@ function replayCheckpointEvents(events, fingerprint = null) {
     browser_actions: [],
     phase_transitions: [],
     runner_states: [],
+    final_events: [],
   };
   const branchMap = new Map();
   for (const event of events) {
@@ -162,6 +163,7 @@ function replayCheckpointEvents(events, fingerprint = null) {
       state.phase_transitions.push(event.transition);
     }
     if (event.type === "runner_state" && event.state) state.runner_states.push(event.state);
+    if (event.type === "final") state.final_events.push(event);
   }
   state.branches = [...branchMap.values()];
   state.details = mergeDetailRecords(state.details);
@@ -419,7 +421,10 @@ function quoteTypeDisplay(platform, value) {
 function selectedQuote(plan, fields, candidate) {
   const detailPrice = plan.price_view ? fields.price_by_tier?.[plan.price_view] : null;
   if (rawTierPrice(detailPrice)) {
-    return { type: quoteTypeDisplay(plan.platform, plan.price_view), price: rawTierPrice(detailPrice) };
+    return {
+      type: quoteTypeDisplay(plan.platform, plan.price_view),
+      price: rawTierPrice(detailPrice),
+    };
   }
   if (candidate.price_raw && candidate.quote_tier && candidate.price_evidence?.exact !== false) {
     return {
@@ -462,9 +467,7 @@ function candidateRemarks(candidate, detail, review, plan) {
       ? candidate.price_raw
       : null;
   const conflictingPrice =
-    detailPrice &&
-    listPrice &&
-    parseManualPrice(detailPrice) !== parseManualPrice(listPrice)
+    detailPrice && listPrice && parseManualPrice(detailPrice) !== parseManualPrice(listPrice)
       ? `报价冲突：列表${listPrice}，详情${detailPrice}（采用详情）`
       : null;
   return [
@@ -601,13 +604,7 @@ function runInfoRows(artifact) {
   const rows = [
     ["悦普识星手扒运行说明", ...Array(12).fill("")],
     ["本表记录执行状态、降级和缺口；候选不等于最终推荐。", ...Array(12).fill("")],
-    [
-      "运行 ID",
-      artifact.run_id,
-      "执行状态",
-      artifact.status,
-      ...Array(9).fill(""),
-    ],
+    ["运行 ID", artifact.run_id, "执行状态", artifact.status, ...Array(9).fill("")],
     Array(13).fill(""),
     ["类别", "项目", "状态", "说明", ...Array(9).fill("")],
   ];
@@ -624,7 +621,12 @@ function runInfoRows(artifact) {
   );
   add("执行", "阶段", info.phase ?? "未知", info.quality_level ?? "unverified");
   add("执行", "更新时间", "", info.updated_at ?? artifact.generated_at);
-  add("数量", "目标 / 候选 / 推荐", "", `${info.target_count ?? "未知"} / ${info.candidate_count ?? artifact.candidate_row_count} / ${artifact.target_row_count}`);
+  add(
+    "数量",
+    "目标 / 候选 / 推荐",
+    "",
+    `${info.target_count ?? "未知"} / ${info.candidate_count ?? artifact.candidate_row_count} / ${artifact.target_row_count}`,
+  );
   add("数量", "候选缺口", "", info.candidate_shortfall ?? "未知");
   add("数量", "推荐缺口", "", artifact.delivery_shortfall);
   add("搜索", "已完成关键词", "", (info.completed_keywords ?? []).join("、") || "无");
@@ -774,7 +776,8 @@ function createArtifactMetadata({
     target_row_count: targetRowCount,
     candidate_row_count: candidates.length,
     detail_planned_count: detailPlannedCount,
-    detail_completed_count: mergeDetailRecords(details).length,
+    detail_completed_count: mergeDetailRecords(details).filter((item) => item.status === "complete")
+      .length,
     review_completed_count: mergeReviewRecords(reviews).length,
     ...extra,
     delivery_shortfall: deliveryShortfall,
@@ -827,6 +830,7 @@ function finalCheckpointEvent(status, candidates, artifact) {
     delivery_shortfall: artifact.delivery_shortfall,
     excel_path: artifact.excel_path,
     sha256: artifact.sha256,
+    artifact,
   };
 }
 
@@ -844,6 +848,8 @@ function disabledStore() {
       browser_states: [],
       browser_actions: [],
       phase_transitions: [],
+      runner_states: [],
+      final_events: [],
     },
     async savePage() {},
     async saveBranch() {},
@@ -855,6 +861,9 @@ function disabledStore() {
     async savePhaseTransition() {},
     async saveRunnerState() {},
     async snapshot() {
+      return { status: "unavailable", reason: "workspace_dir_unavailable" };
+    },
+    async replayArtifact() {
       return { status: "unavailable", reason: "workspace_dir_unavailable" };
     },
     async finalize() {
@@ -1027,6 +1036,58 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
     }
     return artifact;
   };
+  const replayArtifact = async ({ status, runInfo }) => {
+    const finalEvent = restored.final_events.at(-1);
+    if (!finalEvent) {
+      throw Object.assign(new Error("终态运行缺少最终产物记录"), {
+        code: "YPSCAN_MANUAL_ARTIFACT_FAILED",
+      });
+    }
+    let workbook;
+    try {
+      workbook = await readFile(excelPath);
+    } catch (error) {
+      error.code = "YPSCAN_MANUAL_ARTIFACT_FAILED";
+      throw error;
+    }
+    const sha256 = createHash("sha256").update(workbook).digest("hex");
+    if (finalEvent.sha256 && finalEvent.sha256 !== sha256) {
+      throw Object.assign(new Error("最终 Excel 与检查点记录不一致"), {
+        code: "YPSCAN_MANUAL_ARTIFACT_FAILED",
+      });
+    }
+    const recorded = finalEvent.artifact ?? {};
+    return {
+      ...recorded,
+      status: finalEvent.status ?? status,
+      run_id: runName,
+      checkpoint_path: checkpointPath,
+      excel_path: excelPath,
+      target_row_count: finalEvent.target_row_count ?? recorded.target_row_count ?? 0,
+      candidate_row_count:
+        finalEvent.candidate_count ?? recorded.candidate_row_count ?? restored.candidates.length,
+      detail_completed_count:
+        finalEvent.detail_completed_count ??
+        recorded.detail_completed_count ??
+        restored.details.filter((item) => item.status === "complete").length,
+      review_completed_count:
+        finalEvent.review_completed_count ??
+        recorded.review_completed_count ??
+        restored.reviews.length,
+      delivery_shortfall: finalEvent.delivery_shortfall ?? recorded.delivery_shortfall ?? 0,
+      checkpoint_event_count: restored.event_count,
+      generated_at: recorded.generated_at ?? finalEvent.captured_at ?? runInfo.updated_at,
+      run_info: recorded.run_info ?? runInfo,
+      native_export_quota_consumed: Boolean(recorded.native_export_quota_consumed),
+      delivery: recorded.delivery ?? {
+        display_required: true,
+        primary_file: "excel_path",
+        user_visible_message: "手扒运行已结束；请向用户展示原有 excel_path。",
+      },
+      byte_count: workbook.length,
+      sha256,
+    };
+  };
   return {
     enabled: true,
     run_id: runName,
@@ -1073,6 +1134,7 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
     async snapshot(state) {
       return materialize({ ...state, appendFinal: false });
     },
+    replayArtifact,
   };
 }
 
@@ -1140,6 +1202,7 @@ export async function loadManualResearchRun({ workspaceDir, runId, requirementId
     browser_actions: restored.browser_actions,
     phase_transitions: restored.phase_transitions,
     runner_states: restored.runner_states,
+    final_events: restored.final_events,
     event_count: restored.event_count,
     page_count: restored.page_count,
   };

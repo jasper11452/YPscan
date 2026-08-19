@@ -33,7 +33,7 @@ export function pageMatches(platform, value) {
   }
 }
 
-function isXingtuLoginRedirect(value) {
+export function isXingtuLoginRedirect(value) {
   try {
     const url = new URL(value);
     return (
@@ -56,12 +56,20 @@ export async function assertNoManualChallenge(page) {
   );
   const challengeSelector =
     "#captcha_container:visible,iframe[src*=verifycenter]:visible,iframe[src*=captcha]:visible,[class*=captcha]:visible,[class*=slide-verify]:visible";
-  const challengeVisible = await page
+  let challengeVisible = await page
     .locator(challengeSelector)
     .first()
     .isVisible()
     .catch(() => false);
   const pageUrl = page.url?.() ?? "";
+  if (challengeVisible) {
+    await page.waitForTimeout(3_000);
+    challengeVisible = await page
+      .locator(challengeSelector)
+      .first()
+      .isVisible()
+      .catch(() => false);
+  }
   if (challengeVisible || /verifycenter|captcha|challenge/iu.test(pageUrl)) {
     throw manualBrowserError("YPSCAN_MANUAL_CAPTCHA_REQUIRED", "平台要求用户完成安全验证", {
       signal: challengeVisible ? "visible_challenge_component" : "challenge_url",
@@ -103,6 +111,21 @@ export async function assertNoManualChallenge(page) {
 /** @param {import("playwright-core").Page} page */
 export async function assertUsablePage(page, platform) {
   if (platform === "xingtu" && isXingtuLoginRedirect(page.url())) {
+    const authenticated =
+      typeof page.locator === "function"
+        ? await page
+            .locator(".user-info:visible")
+            .filter({ hasText: /ID\s*[:：]\s*\d+/u })
+            .first()
+            .isVisible()
+            .catch(() => false)
+        : false;
+    if (authenticated) {
+      throw manualBrowserError("YPSCAN_MANUAL_WRONG_PAGE", "星图登录态有效，但当前仍停留在首页", {
+        actual_url: page.url(),
+        expected: PLATFORM_RULES.xingtu,
+      });
+    }
     throw manualBrowserError(
       "YPSCAN_MANUAL_LOGIN_REQUIRED",
       "星图已跳转到登录落地页，请在当前 Browser 页面完成登录",
@@ -174,6 +197,45 @@ const KNOWN_ORDINARY_PROMPTS = Object.freeze({
 });
 
 /**
+ * Bypass pointer hit-testing only after a platform-specific ordinary prompt
+ * and its exact dismiss button have both been verified.
+ *
+ * @param {import("playwright-core").Locator} button
+ */
+async function clickKnownDismissButton(button) {
+  try {
+    await button.click();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("intercepts pointer events")) throw error;
+    try {
+      await button.evaluate((element) => {
+        const view = element.ownerDocument.defaultView;
+        if (view && element instanceof view.HTMLElement) {
+          view.HTMLElement.prototype.click.call(element);
+          return;
+        }
+        const event = element.ownerDocument.createEvent("MouseEvent");
+        event.initEvent("click", true, true);
+        element.dispatchEvent(event);
+      });
+    } catch {
+      throw error;
+    }
+  }
+}
+
+/** @param {import("playwright-core").Locator} dialog @param {import("playwright-core").Page} page */
+async function waitForDialogDismissal(dialog, page) {
+  const started = Date.now();
+  while (Date.now() - started < 1_000) {
+    if (!(await dialog.isVisible().catch(() => false))) return true;
+    await page.waitForTimeout(50);
+  }
+  return !(await dialog.isVisible().catch(() => false));
+}
+
+/**
  * Close only ordinary, reversible page prompts. Authentication, CAPTCHA,
  * agreements and consequential confirmations are deliberately left intact.
  *
@@ -189,6 +251,7 @@ export async function dismissOrdinaryPopups(page, platform) {
       const dialogs = page.locator(ORDINARY_DIALOG_SELECTOR);
       const dialogCount = Math.min(await dialogs.count().catch(() => 0), 12);
       let knownButton = null;
+      let knownDialog = null;
       for (let index = 0; index < dialogCount; index += 1) {
         const dialog = dialogs.nth(index);
         if (!(await dialog.isVisible().catch(() => false))) continue;
@@ -198,13 +261,20 @@ export async function dismissOrdinaryPopups(page, platform) {
           .getByRole("button", { name: knownPrompt.dismissButton })
           .filter({ visible: true })
           .first();
+        knownDialog = dialog;
         break;
       }
-      if (knownButton && (await knownButton.isVisible().catch(() => false))) {
-        await knownButton.click();
+      if (knownDialog && knownButton && (await knownButton.isVisible().catch(() => false))) {
+        await clickKnownDismissButton(knownButton);
+        if (!(await waitForDialogDismissal(knownDialog, page))) {
+          throw manualBrowserError(
+            "YPSCAN_MANUAL_PROMPT_NOT_DISMISSED",
+            `普通提示未关闭：${knownPrompt.title}`,
+            { prompt: knownPrompt.title },
+          );
+        }
         dismissed.push(knownPrompt.title);
         changed = true;
-        await page.waitForTimeout(120);
       }
     }
 
@@ -227,9 +297,13 @@ export async function dismissOrdinaryPopups(page, platform) {
       const target = (await button.isVisible().catch(() => false)) ? button : icon;
       if (!(await target.isVisible().catch(() => false))) continue;
       await target.click();
+      if (!(await waitForDialogDismissal(dialog, page))) {
+        throw manualBrowserError("YPSCAN_MANUAL_PROMPT_NOT_DISMISSED", "普通提示点击后仍然可见", {
+          prompt: text.slice(0, 80) || "ordinary_dialog",
+        });
+      }
       dismissed.push(text.slice(0, 80) || "ordinary_dialog");
       changed = true;
-      await page.waitForTimeout(120);
     }
     if (!changed) break;
   }
@@ -377,7 +451,13 @@ async function visibleEditableInputCount(root) {
   const count = await inputs.count().catch(() => 0);
   let visible = 0;
   for (let index = 0; index < count; index += 1) {
-    if (await inputs.nth(index).isVisible().catch(() => false)) visible += 1;
+    if (
+      await inputs
+        .nth(index)
+        .isVisible()
+        .catch(() => false)
+    )
+      visible += 1;
   }
   return visible;
 }

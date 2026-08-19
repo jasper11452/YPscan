@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { basename, extname, isAbsolute, join } from "node:path";
 import { hostToolResult } from "./tool-result.js";
-import { nonemptyString } from "../util/hash.js";
+import { nonemptyString } from "../util/value.js";
 import { excelArtifactTestDownloadUrl } from "./test-adapter.js";
 import { submissionEnrichmentQuestionPayload } from "./post-save-questions.js";
 

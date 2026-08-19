@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -164,6 +164,80 @@ test("login interruption still returns a diagnostic Excel and resume arguments",
   assert.equal((await readFile(data.artifact.excel_path)).subarray(0, 2).toString("utf8"), "PK");
 });
 
+test("a CAPTCHA after complete extraction preserves one completed detail", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-captcha-captured-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const fakeAdapter = adapter(20);
+  fakeAdapter.collectDetail = async (candidate) => {
+    throw Object.assign(new Error("平台要求用户完成安全验证"), {
+      code: "YPSCAN_MANUAL_CAPTCHA_REQUIRED",
+      details: {
+        captured_detail: {
+          status: "complete",
+          reason: "manual_challenge_after_capture",
+          platform_id: candidate.platform_id,
+          nickname: candidate.nickname,
+          detail_url: candidate.detail_url,
+          fields: {
+            followers_raw: "10万",
+            recent_content: [{ title: "办公工具实测", url: null }],
+          },
+          completed_groups: ["summary", "recent_content"],
+          missing_groups: [],
+        },
+      },
+    });
+  };
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => fakeAdapter,
+  });
+
+  const data = payload(await run(params()));
+
+  assert.equal(data.status, "needs_user_action");
+  assert.equal(data.detail_progress.attempted, 1);
+  assert.equal(data.detail_progress.completed, 1);
+  assert.equal(data.detail_progress.partial, 0);
+});
+
+test("a successful resume clears the previous login interruption", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-login-resume-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  let pageCalls = 0;
+  const browserRuntime = {
+    acquire() {
+      return { acquired: true, release() {} };
+    },
+    async page() {
+      pageCalls += 1;
+      if (pageCalls === 1) {
+        throw Object.assign(new Error("请登录"), { code: "YPSCAN_MANUAL_LOGIN_REQUIRED" });
+      }
+      return {
+        url: () => "https://www.xingtu.cn/ad/creator/market",
+        async evaluate() {
+          return [];
+        },
+      };
+    },
+  };
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime,
+    createAdapter: () => adapter(20),
+  });
+  const interrupted = payload(await run(params()));
+
+  const resumed = payload(await run(interrupted.resume_args));
+
+  assert.equal(resumed.status, "complete");
+  assert.equal(resumed.artifact.run_info.error_code, null);
+  assert.equal(resumed.artifact.run_info.error_message, null);
+  assert.equal(pageCalls, 2);
+});
+
 test("runner marks fallback collection as degraded and keeps its candidate artifact", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-fallback-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
@@ -175,11 +249,95 @@ test("runner marks fallback collection as degraded and keeps its candidate artif
 
   const data = payload(await run(params()));
 
-  assert.equal(data.status, "complete");
+  assert.equal(data.status, "partial");
   assert.equal(data.quality_level, "degraded");
   assert.equal(data.candidate_count, 1);
   assert.equal(data.candidates[0].collection_mode, "filtered");
   assert.ok(data.artifact.excel_path);
+  assert.deepEqual(data.detail_progress, {
+    target: 3,
+    attempted: 1,
+    completed: 1,
+    partial: 0,
+    failed: 0,
+    shortfall: 2,
+  });
+});
+
+test("runner replaces failed detail attempts until ten complete records are collected", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-detail-refill-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const fakeAdapter = adapter(16);
+  fakeAdapter.collectDetail = async (candidate) => {
+    const index = Number(candidate.platform_id.split("-").at(-1));
+    if (index <= 6) {
+      throw Object.assign(new Error(`详情 ${index} 超时`), {
+        code: "YPSCAN_MANUAL_DETAIL_FAILED",
+      });
+    }
+    return {
+      status: "complete",
+      platform_id: candidate.platform_id,
+      nickname: candidate.nickname,
+      detail_url: candidate.detail_url,
+      fields: { followers_raw: "10万" },
+    };
+  };
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => fakeAdapter,
+  });
+
+  const data = payload(
+    await run(
+      params({
+        facts: [
+          fact("product", "product_name", "办公软件"),
+          fact("count", "creator_count", 10, { role: "submission" }),
+        ],
+      }),
+    ),
+  );
+
+  assert.equal(data.status, "complete");
+  assert.deepEqual(data.detail_progress, {
+    target: 10,
+    attempted: 16,
+    completed: 10,
+    partial: 0,
+    failed: 6,
+    shortfall: 0,
+  });
+  assert.equal(data.detail_failures.length, 6);
+  assert.equal(data.detail_failures[0].candidate_ref, "creator-1");
+  assert.match(data.detail_failures[0].message, /详情 1 超时/u);
+});
+
+test("runner reports partial when fewer than ten complete detail records exist", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-detail-shortfall-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => adapter(9),
+  });
+
+  const data = payload(
+    await run(
+      params({
+        facts: [
+          fact("product", "product_name", "办公软件"),
+          fact("count", "creator_count", 10, { role: "submission" }),
+        ],
+      }),
+    ),
+  );
+
+  assert.equal(data.status, "partial");
+  assert.equal(data.detail_progress.target, 10);
+  assert.equal(data.detail_progress.completed, 9);
+  assert.equal(data.detail_progress.shortfall, 1);
 });
 
 test("runner recovers and retries one failed browser action", async (t) => {
@@ -215,6 +373,8 @@ test("resuming a terminal run returns its artifact without opening the browser a
     createAdapter: () => adapter(20),
   });
   const first = payload(await run(params()));
+  const originalWorkbook = await readFile(first.artifact.excel_path);
+  const originalWorkbookStat = await stat(first.artifact.excel_path);
 
   const resumed = payload(
     await run({
@@ -226,7 +386,57 @@ test("resuming a terminal run returns its artifact without opening the browser a
   );
 
   assert.equal(resumed.status, "complete");
+  assert.equal(resumed.terminal_replay, true);
   assert.equal(resumed.artifact.excel_path, first.artifact.excel_path);
+  assert.deepEqual(await readFile(first.artifact.excel_path), originalWorkbook);
+  assert.equal((await stat(first.artifact.excel_path)).mtimeMs, originalWorkbookStat.mtimeMs);
+  assert.equal(pageCalls.count, 1);
+});
+
+test("terminal failure replay preserves diagnostics without mutating the checkpoint", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-failed-replay-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const pageCalls = { count: 0 };
+  const failedAdapter = adapter(0);
+  failedAdapter.prepare = async () => {
+    throw Object.assign(new Error("tool-section intercepts pointer events"), {
+      code: "YPSCAN_MANUAL_RESEARCH_FAILED",
+    });
+  };
+  failedAdapter.recover = async () => {};
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime(pageCalls),
+    createAdapter: () => failedAdapter,
+  });
+  const first = payload(await run(params()));
+  const originalCheckpoint = await readFile(first.artifact.checkpoint_path, "utf8");
+  const checkpointEvents = originalCheckpoint.trim().split("\n").map(JSON.parse);
+  const originalRunnerState = checkpointEvents.findLast((event) => event.type === "runner_state");
+  await appendFile(
+    first.artifact.checkpoint_path,
+    `${JSON.stringify({
+      ...originalRunnerState,
+      captured_at: "2026-08-19T08:39:54.777Z",
+      state: { ...originalRunnerState.state, error_code: null, error_message: null },
+    })}\n`,
+  );
+  const checkpointBefore = await readFile(first.artifact.checkpoint_path, "utf8");
+
+  const replayed = payload(
+    await run({
+      operation: "resume",
+      requirement_id: first.requirement_id,
+      platform: first.platform,
+      run_id: first.run_id,
+    }),
+  );
+
+  assert.equal(replayed.status, "failed_with_artifact");
+  assert.equal(replayed.terminal_replay, true);
+  assert.equal(replayed.artifact.run_info.error_code, "YPSCAN_MANUAL_RESEARCH_FAILED");
+  assert.match(replayed.artifact.run_info.error_message, /tool-section intercepts pointer events/u);
+  assert.equal(await readFile(first.artifact.checkpoint_path, "utf8"), checkpointBefore);
   assert.equal(pageCalls.count, 1);
 });
 

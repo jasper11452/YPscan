@@ -99,6 +99,111 @@ test("known ordinary platform prompts are closed without user handoff", async ()
   assert.equal(clicks, 1);
 });
 
+test("known ordinary prompts fall back to a DOM click when pointer events are intercepted", async () => {
+  let promptVisible = true;
+  let domClicks = 0;
+  const button = {
+    filter() {
+      return this;
+    },
+    first() {
+      return this;
+    },
+    isVisible: async () => promptVisible,
+    click: async () => {
+      throw new Error("tool-section intercepts pointer events");
+    },
+    evaluate: async (callback) => {
+      class FakeHTMLElement {
+        constructor() {
+          this.ownerDocument = { defaultView: { HTMLElement: FakeHTMLElement } };
+        }
+
+        click() {
+          domClicks += 1;
+          promptVisible = false;
+        }
+      }
+      callback(new FakeHTMLElement());
+    },
+  };
+  const dialog = {
+    isVisible: async () => promptVisible,
+    innerText: async () => "完善基础资质信息 企业资质名称 经营地区 提 交",
+    getByRole: () => button,
+    locator: () => ({
+      first() {
+        return this;
+      },
+      isVisible: async () => false,
+    }),
+  };
+  const dialogs = { count: async () => 1, nth: () => dialog };
+  const page = {
+    locator: () => dialogs,
+    waitForTimeout: async () => {},
+  };
+
+  assert.deepEqual(await dismissOrdinaryPopups(page, "xingtu"), ["完善基础资质信息"]);
+  assert.equal(domClicks, 1);
+});
+
+test("a known prompt is not reported as dismissed while it remains visible", async () => {
+  const button = {
+    filter() {
+      return this;
+    },
+    first() {
+      return this;
+    },
+    isVisible: async () => true,
+    click: async () => {},
+  };
+  const dialog = {
+    isVisible: async () => true,
+    innerText: async () => "完善基础资质信息 企业资质名称 经营地区 提 交",
+    getByRole: () => button,
+  };
+  const page = {
+    locator: () => ({ count: async () => 1, nth: () => dialog }),
+    waitForTimeout: async () => {},
+  };
+
+  await assert.rejects(() => dismissOrdinaryPopups(page, "xingtu"), {
+    code: "YPSCAN_MANUAL_PROMPT_NOT_DISMISSED",
+  });
+});
+
+test("known ordinary prompts do not bypass unrelated click failures", async () => {
+  let evaluated = false;
+  const button = {
+    filter() {
+      return this;
+    },
+    first() {
+      return this;
+    },
+    isVisible: async () => true,
+    click: async () => {
+      throw new Error("target was detached");
+    },
+    evaluate: async () => {
+      evaluated = true;
+    },
+  };
+  const dialog = {
+    isVisible: async () => true,
+    innerText: async () => "完善基础资质信息",
+    getByRole: () => button,
+  };
+  const page = {
+    locator: () => ({ count: async () => 1, nth: () => dialog }),
+  };
+
+  await assert.rejects(() => dismissOrdinaryPopups(page, "xingtu"), /target was detached/u);
+  assert.equal(evaluated, false);
+});
+
 test("login and security dialogs are never dismissed as ordinary prompts", async () => {
   const dialog = {
     isVisible: async () => true,
@@ -134,6 +239,7 @@ test("a visible verify-center iframe is treated as a real CAPTCHA handoff", asyn
   const body = { innerText: async () => "达人广场" };
   const page = {
     url: () => "https://www.xingtu.cn/ad/creator/market",
+    waitForTimeout: async () => {},
     locator(selector) {
       if (selector === "body") return body;
       if (selector.includes("captcha")) return challenge;
@@ -144,6 +250,36 @@ test("a visible verify-center iframe is treated as a real CAPTCHA handoff", asyn
     () => assertUsablePage(page, "xingtu"),
     (error) => error.code === "YPSCAN_MANUAL_CAPTCHA_REQUIRED",
   );
+});
+
+test("a transient verify-center component that disappears is not a user handoff", async () => {
+  let checks = 0;
+  const hidden = {
+    first() {
+      return this;
+    },
+    isVisible: async () => false,
+  };
+  const challenge = {
+    first() {
+      return this;
+    },
+    isVisible: async () => {
+      checks += 1;
+      return checks === 1;
+    },
+  };
+  const page = {
+    url: () => "https://www.xingtu.cn/ad/creator/market",
+    waitForTimeout: async () => {},
+    locator(selector) {
+      if (selector === "body") return { innerText: async () => "达人广场" };
+      if (selector.includes("captcha")) return challenge;
+      return hidden;
+    },
+  };
+
+  await assert.doesNotReject(() => assertUsablePage(page, "xingtu"));
 });
 
 test("a harmless security-verification phrase in page text does not pause collection", async () => {

@@ -70,3 +70,73 @@ test("browser runtime rejects a profile stored inside the workspace", async (t) 
     code: "YPSCAN_MANUAL_PROFILE_INVALID",
   });
 });
+
+test("browser runtime enters an authenticated Xingtu workspace from the redirect landing", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ypscan-browser-auth-redirect-"));
+  const workspaceDir = join(root, "workspace");
+  const profileDir = join(root, "profile");
+  await mkdir(workspaceDir);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const actions = [];
+  const account = {
+    filter() {
+      return this;
+    },
+    first() {
+      return this;
+    },
+    isVisible: async () => true,
+    click: async () => {
+      actions.push(["account-click"]);
+      page.currentUrl = "https://www.xingtu.cn/ad/creator/index";
+    },
+  };
+  const page = {
+    currentUrl: "about:blank",
+    url() {
+      return this.currentUrl;
+    },
+    async goto(url) {
+      actions.push(["goto", url]);
+      this.currentUrl =
+        actions.filter(([kind]) => kind === "goto").length === 1
+          ? "https://www.xingtu.cn/ad/creator/market"
+          : url;
+    },
+    locator: () => account,
+    getByPlaceholder: () => ({
+      first() {
+        return this;
+      },
+      isVisible: async () => false,
+    }),
+    waitForURL: async () => {},
+    waitForTimeout: async () => {
+      if (actions.filter(([kind]) => kind === "goto").length === 1) {
+        page.currentUrl = "https://www.xingtu.cn/?redirect_uri=/ad/creator/market";
+      }
+    },
+    bringToFront: async () => {},
+  };
+  const launcher = {
+    async launchPersistentContext() {
+      return {
+        pages: () => [page],
+        setDefaultTimeout() {},
+        setDefaultNavigationTimeout() {},
+        once() {},
+        close: async () => {},
+      };
+    },
+  };
+  const runtime = createManualBrowserRuntime({ profileDir, launcher });
+
+  const result = await runtime.page("xingtu", workspaceDir);
+
+  assert.equal(result.url(), "https://www.xingtu.cn/ad/creator/market");
+  assert.deepEqual(actions, [
+    ["goto", "https://www.xingtu.cn/ad/creator/market"],
+    ["account-click"],
+    ["goto", "https://www.xingtu.cn/ad/creator/market"],
+  ]);
+});

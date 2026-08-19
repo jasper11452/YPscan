@@ -1,4 +1,4 @@
-import { isRecord, nonemptyString } from "../util/hash.js";
+import { isRecord, nonemptyString } from "../util/value.js";
 import { hostToolResult } from "./tool-result.js";
 
 export const REQUIREMENT_FACT_KINDS = Object.freeze([

@@ -4,7 +4,12 @@ import { isAbsolute, join, relative } from "node:path";
 
 import { chromium } from "playwright-core";
 
-import { manualBrowserError, pageMatches, PLATFORM_RULES } from "./common.js";
+import {
+  isXingtuLoginRedirect,
+  manualBrowserError,
+  pageMatches,
+  PLATFORM_RULES,
+} from "./common.js";
 
 const DEFAULT_PROFILE_DIR = join(homedir(), ".ypscan", "browser-profile");
 
@@ -52,16 +57,48 @@ async function launchContext(launcher, profileDir) {
         acceptDownloads: true,
       });
     } catch (chromiumError) {
-      throw manualBrowserError(
-        "YPSCAN_MANUAL_BROWSER_UNAVAILABLE",
-        "无法启动手扒专用 Chrome",
-        {
-          chrome: chromeError?.message ?? String(chromeError),
-          chromium: chromiumError?.message ?? String(chromiumError),
-        },
-      );
+      throw manualBrowserError("YPSCAN_MANUAL_BROWSER_UNAVAILABLE", "无法启动手扒专用 Chrome", {
+        chrome: chromeError?.message ?? String(chromeError),
+        chromium: chromiumError?.message ?? String(chromiumError),
+      });
     }
   }
+}
+
+/** Enter the Xingtu workspace when the public landing page already shows an authenticated account. */
+async function enterAuthenticatedXingtuWorkspace(page) {
+  if (!isXingtuLoginRedirect(page.url()) || typeof page.locator !== "function") return false;
+  const account = page
+    .locator(".user-info:visible")
+    .filter({ hasText: /ID\s*[:：]\s*\d+/u })
+    .first();
+  const started = Date.now();
+  while (Date.now() - started < 5_000) {
+    if (await account.isVisible().catch(() => false)) {
+      await account.click();
+      await page.waitForURL(/\/ad\/creator\//u, { timeout: 10_000 });
+      return true;
+    }
+    await page.waitForTimeout(200);
+  }
+  return false;
+}
+
+/** Wait through Xingtu's client-side market → landing redirect before deciding login state. */
+async function settleXingtuWorkspace(page) {
+  if (typeof page.locator !== "function") return false;
+  const started = Date.now();
+  while (Date.now() - started < 12_000) {
+    if (isXingtuLoginRedirect(page.url())) {
+      if (await enterAuthenticatedXingtuWorkspace(page)) return true;
+    } else if (pageMatches("xingtu", page.url())) {
+      if (typeof page.getByPlaceholder !== "function") return false;
+      const marketInput = page.getByPlaceholder(/按内容关键词找达人|内容关键词/u).first();
+      if (await marketInput.isVisible().catch(() => false)) return false;
+    }
+    await page.waitForTimeout(200);
+  }
+  return false;
 }
 
 /** Create one persistent, serialized browser runtime for the gateway. */
@@ -106,6 +143,11 @@ export function createManualBrowserRuntime({
       page ??= await current.newPage();
       if (!pageMatches(platform, page.url())) {
         await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+      }
+      if (platform === "xingtu" && (await settleXingtuWorkspace(page))) {
+        if (!pageMatches(platform, page.url())) {
+          await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+        }
       }
       await page.bringToFront().catch(() => {});
       return page;

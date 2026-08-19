@@ -1,12 +1,8 @@
 {
   "schemaVersion": 2,
-  "profile": "fixed-provider-flow-native-browser-and-wecom-confirmation-v1",
-  "implementation": "src/hooks/register-wecom-confirmation-only.js",
+  "profile": "fixed-provider-flow-native-browser-and-provider-idempotency-v1",
+  "implementation": "src/hooks/register-flow-directives.js",
   "events": {
-    "before_tool_call": [
-      "normalize supported Provider argument representations",
-      "require one exact-payload user confirmation before create_with_distributions"
-    ],
     "tool_result_persist": [
       "ypscan_parse_requirement success carries the fixed validate_requirement next-step directive",
       "validate_requirement success carries the fixed search_creators next-step directive",
@@ -15,22 +11,11 @@
       "fixed-flow failures carry a retry/end AskUserQuestion directive",
       "native Browser failures carry an action-specific AskUserQuestion directive"
     ],
-    "after_tool_call": [
-      "record the matching AskUserQuestion confirmation in memory"
-    ],
     "before_prompt_build": [
-      "request one full media-assistant Skill read per host run",
-      "inject the fixed Provider sequence and AskUserQuestion waiting rule"
+      "inject the fixed Provider sequence, recipient contract, and AskUserQuestion waiting rule"
     ],
-    "gateway_start": ["clear transient confirmation state"],
-    "gateway_stop": ["clear transient confirmation state"]
-  },
-  "confirmation": {
-    "tool": "create_with_distributions",
-    "ttlSeconds": 600,
-    "singleUse": true,
-    "storage": "gateway-memory",
-    "payloadBinding": "canonical-sha256"
+    "gateway_start": ["clear per-gateway startup instruction state"],
+    "gateway_stop": ["clear per-gateway startup instruction state"]
   },
   "removed": [
     "legacy Browser workflow state",
@@ -38,6 +23,8 @@
     "evidence gates",
     "SQLite ledger",
     "runtime readiness gate",
-    "field callback capture gate"
+    "field callback capture gate",
+    "WeCom send confirmation gate",
+    "ranked supplier name cache"
   ]
 }

@@ -1,22 +1,13 @@
-import { fingerprint, firstString, isRecord, newId, nonemptyString } from "../util/hash.js";
-import { normalizeToolCallParams, stripHostPrefix } from "../contract/registry.js";
+import { firstString, isRecord, nonemptyString } from "../util/value.js";
+import { stripHostPrefix } from "../contract/registry.js";
 
 const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
-const GRANT_TTL_MS = 10 * 60_000;
-const RANKED_SUPPLIER_TTL_MS = 24 * 60 * 60_000;
-const SEND_CONFIRM_LABEL = "确认发送";
-const CANCEL_LABEL = "取消";
-const CHALLENGE_PATTERN = /\[悦普识星 询价确认 (wc_[0-9a-f-]+)\]/iu;
 
 function paramsFromEvent(event) {
   if (isRecord(event?.params)) return event.params;
   if (isRecord(event?.arguments)) return event.arguments;
   if (isRecord(event?.input)) return event.input;
   return {};
-}
-
-function resultFromEvent(event) {
-  return event?.result ?? event?.output ?? event?.message;
 }
 
 function messageText(message) {
@@ -93,7 +84,7 @@ function fieldSelectionDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。先把 FIELD_SELECTION_URL 里的原始 url 原样输出为单独一行用户可见正文：禁止 Markdown 包装、重写、用 Browser 打开或替用户选择字段。",
     "用户在选择页提交后，select_inquiry_form_fields 会把所选字段按 requirement ID 持久化到 Provider 数据库；requirement ID 来自 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不是 demand_id。不得调用已弃用的 get_selected_inquiry_form_fields，不得查询、重建、转存或把 columns 放入 Agent 上下文；后续 Provider 工具只传当前 schema 要求的业务标识，由后端关联字段。",
-    "现在停止业务调用并等待用户完成选择后回复“好了”。收到后保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、返点、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message；不得调用 create_submission_batch。消息准备好后调用 create_with_distributions，由 Hook 在同一次确认中展示机构列表和完整消息。",
+    "现在停止业务调用并等待用户完成选择后回复“好了”。收到后保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、返点、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message；不得调用 create_submission_batch。消息准备好后按当前 Provider schema 直接调用 create_with_distributions，不再追加企微发送确认。",
     `FIELD_SELECTION_URL=${url}`,
   ].join("\n");
 }
@@ -197,15 +188,36 @@ function distributionDirective(message) {
   const result = parsedToolResult(message);
   if (result?.success !== true) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 未确认成功。企微属于外发副作用，禁止盲目重发。先用当前 requirement_id/project_id 调用 sync_mcn_inquiry_status 核对；只有确认未创建发送记录后才能重新发起发送确认。",
+      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 返回失败或部分成功。原始 Provider 结果可能同时包含已发送机构、未精确匹配机构、候选机构或幂等冲突，必须原样展示，不得用通用错误覆盖或把部分成功表述为全部失败。",
+      "禁止自动重发原始完整参数：同一 requirement_id 下已经成功发送的机构不得再次加入。若 Provider 返回模糊或不唯一的候选机构，使用真实候选调用 AskUserQuestion 让用户选择；选择后仅把选中候选的 supplier ID 放入 supplierIds，supplier_name 传空数组。若 Provider 返回重复发送错误，原样告知当前需求已向该机构发送过询价消息并停止重试。",
     ].join("\n");
   }
   const status = result?.data?.send_status;
-  const sent = Array.isArray(status?.sent_suppliers) ? status.sent_suppliers : [];
-  const failed = Array.isArray(status?.failed_suppliers) ? status.failed_suppliers : [];
-  return [
-    "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 已返回发送结果。先展示真实发送状态、成功机构和失败机构，不得把部分成功表述为全部成功。然后立即逐字调用下面的 AskUserQuestion，询问是否继续人工拓展。",
+  if (
+    !isRecord(status) ||
+    !Array.isArray(status.sent_suppliers) ||
+    !Array.isArray(status.failed_suppliers) ||
+    status.sent_suppliers.length + status.failed_suppliers.length === 0
+  ) {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 返回 success=true，但缺少完整逐机构发送状态或状态列表为空，不能证明任何机构已发送。必须原样展示 Provider 结果并将本次状态标为未知。",
+      "不得询问发送后的人工拓展、不得把 0 家成功/0 家失败表述为已执行，也不得自动重发原始完整参数；停止本轮发送处理，后续只根据 Provider 的独立状态核验继续。",
+    ].join("\n");
+  }
+  const sent = status.sent_suppliers;
+  const failed = status.failed_suppliers;
+  const lines = [
+    "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 已返回发送结果。先展示真实发送状态、成功机构和失败机构，不得把部分成功表述为全部成功。",
     `企微发送摘要：成功 ${sent.length} 家，失败 ${failed.length} 家。`,
+  ];
+  if (failed.length > 0) {
+    lines.push(
+      "当前响应包含失败机构，必须原样展示 Provider 返回的失败原因与候选机构，不得自动重发完整参数。若存在模糊或不唯一候选，先调用 AskUserQuestion 让用户选择，并在新调用中排除本次已成功机构。",
+    );
+    return lines.join("\n");
+  }
+  lines.push(
+    "本次没有失败机构，然后立即逐字调用下面的 AskUserQuestion，询问是否继续人工拓展。",
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
       askQuestion(
         "询价后续",
@@ -222,7 +234,8 @@ function distributionDirective(message) {
       ),
     )}`,
     "用户之后说“填好了”“已回收”或“生成表格”时，固定从 sync_mcn_inquiry_status 开始取回，禁止直接 rank_creators 或 create_submission_batch。",
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 function syncInquiryDirective(message) {
@@ -526,7 +539,7 @@ function manualResearchSuccessDirective(message) {
     if (["complete", "partial", "empty", "failed_with_artifact"].includes(status)) {
       return [
         `YPSCAN_FLOW_DIRECTIVE=插件内手扒 Runner 已终止：状态=${status}，质量=${result?.quality_level ?? "未知"}。不得调用 Browser、Bash、Playwright CLI、capture_list、capture_detail 或 finalize。`,
-        `候选池=${result?.candidate_count ?? 0}，缺口=${result?.delivery_shortfall ?? "未知"}。未复核候选只属于“候选达人”，不得表述为最终推荐。`,
+        `候选池=${result?.candidate_count ?? 0}，候选缺口=${result?.delivery_shortfall ?? "未知"}；完整详情=${result?.detail_progress?.completed ?? 0}/${result?.detail_progress?.target ?? "未知"}，详情缺口=${result?.detail_progress?.shortfall ?? "未知"}。未复核候选只属于“候选达人”，不得表述为最终推荐；详情未补足时不得表述为已取得目标人数。`,
         ...(runnerExcelPath
           ? [
               `MANUAL_RESEARCH_EXCEL_PATH=${runnerExcelPath}`,
@@ -684,275 +697,22 @@ function scopeKey(event, context) {
   );
 }
 
-function inquiryFingerprint(params) {
-  return fingerprint(JSON.stringify(params ?? {}));
-}
-
-function rankedSupplierKey(scope, requirementId) {
-  return JSON.stringify([scope, requirementId]);
-}
-
-function recipientNameMissingBlock(missingSupplierIds) {
-  const recoveryDirective = {
-    schema_version: 1,
-    code: "INQUIRY_RECIPIENT_NAME_MISSING",
-    category: "control",
-    action: "stop",
-    retry_original: false,
-    params_valid: true,
-    modify_params: false,
-    missing_supplier_ids: missingSupplierIds,
-  };
-  return {
-    block: true,
-    blockReason: [
-      "INQUIRY_RECIPIENT_NAME_MISSING: 【企微状态：本次未发送｜机构名称无法确认】",
-      `YPSCAN_BLOCK_DIRECTIVE=${JSON.stringify(recoveryDirective)}`,
-      `MISSING_SUPPLIER_IDS=${JSON.stringify(missingSupplierIds)}`,
-      "当前会话没有以上机构 ID 的可靠名称映射。不得显示“名称未知”、不得请求发送确认、不得调用 Provider。请停止本次发送并让用户重新选择当前可验证名称与 ID 的机构；若 Gateway 已重启，需重新开始当前需求的机构选择流程。",
-    ].join("\n"),
-    recoveryDirective,
-  };
-}
-
-function answerTexts(result) {
-  if (typeof result === "string") return [result];
-  if (!isRecord(result)) return [];
-  return [
-    result.answer,
-    ...(isRecord(result.answers) ? Object.values(result.answers) : []),
-    ...(Array.isArray(result.content) ? result.content.map((part) => part?.text) : []),
-  ].filter(nonemptyString);
-}
-
-function challengeIdFrom(params, result) {
-  const texts = [
-    ...(Array.isArray(params?.questions)
-      ? params.questions.map((question) => question?.question)
-      : []),
-    ...answerTexts(result),
-  ].filter(nonemptyString);
-  for (const value of texts) {
-    const match = value.match(CHALLENGE_PATTERN);
-    if (match) return match[1];
-  }
-  return null;
-}
-
-function selectedLabel(result, expectedLabel) {
-  for (const text of answerTexts(result)) {
-    const lastLine =
-      text
-        .trim()
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .at(-1) ?? "";
-    const candidate = lastLine.replace(/[。.!！?？\s]+$/u, "");
-    if (
-      candidate === expectedLabel ||
-      new RegExp(`[:：]\\s*${expectedLabel}$`, "u").test(candidate)
-    ) {
-      return expectedLabel;
-    }
-    if (
-      candidate === CANCEL_LABEL ||
-      new RegExp(`[:：]\\s*${CANCEL_LABEL}$`, "u").test(candidate)
-    ) {
-      return CANCEL_LABEL;
-    }
-  }
-  return null;
-}
-
-function sendConfirmationQuestion(challenge, supplierNames = new Map()) {
-  const supplierIds = Array.isArray(challenge?.params?.supplierIds)
-    ? challenge.params.supplierIds
-    : [];
-  const recipients = supplierIds.map((supplierId, index) => {
-    const name = supplierNames.get(supplierId);
-    return `${index + 1}. ${name}（${supplierId}）`;
-  });
-  const requirement = nonemptyString(challenge?.params?.requirement_id)
-    ? challenge.params.requirement_id.trim()
-    : "未提供";
-  const message = nonemptyString(challenge?.params?.wechat_notification_message)
-    ? challenge.params.wechat_notification_message
-    : "（未提供企微正文）";
-  return {
-    questions: [
-      {
-        header: "确认企微发送",
-        question: [
-          `[悦普识星 询价确认 ${challenge.id}] 企微尚未发送。`,
-          `需求：${requirement}`,
-          `即将发送给 ${supplierIds.length} 家机构：`,
-          ...recipients,
-          "即将发送的消息内容：",
-          message,
-          "确认仅授权以上机构列表和消息内容的一次发送，10 分钟内有效。",
-        ].join("\n"),
-        options: [
-          { label: SEND_CONFIRM_LABEL, description: "确认向以上机构发送一次" },
-          { label: CANCEL_LABEL, description: "不执行该操作" },
-        ],
-        multiSelect: false,
-      },
-    ],
-  };
-}
-
-function normalizedManualConfirmation(value) {
-  if (!nonemptyString(value)) return null;
-  return value
-    .trim()
-    .replace(/[。.!！?？]+$/u, "")
-    .trim();
-}
-
-function currentUserReply(event) {
-  const messages = Array.isArray(event?.messages) ? event.messages : [];
-  const current = [...messages].reverse().find((message) => message?.role === "user");
-  let value = current ? messageText(current) : firstString(event?.prompt);
-  if (!nonemptyString(value)) return null;
-  const marker = value.lastIndexOf("[Current user request]");
-  if (marker >= 0) value = value.slice(marker + "[Current user request]".length);
-  const lines = value
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return normalizedManualConfirmation(lines.at(-1));
-}
-
-/** Register the only business gate: one confirmation before one WeCom send. */
-export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {}) {
-  const challenges = new Map();
-  const rankedSuppliers = new Map();
+/** Register fixed-flow prompt and result directives. */
+export function registerFlowDirectiveHooks(api) {
   const startupScopes = new Set();
-
-  const prune = (callNow) => {
-    for (const [challengeId, challenge] of challenges) {
-      if (callNow - challenge.createdAt > GRANT_TTL_MS || challenge.consumed) {
-        challenges.delete(challengeId);
-      }
-    }
-    for (const [key, ranked] of rankedSuppliers) {
-      if (callNow - ranked.createdAt > RANKED_SUPPLIER_TTL_MS) rankedSuppliers.delete(key);
-    }
-  };
-
-  const supplierNamesFor = (params, scope) => {
-    const requirementId = firstString(params?.requirement_id, params?.id);
-    const ranked = requirementId
-      ? rankedSuppliers.get(rankedSupplierKey(scope, requirementId))
-      : null;
-    return ranked?.names ?? new Map();
-  };
-
-  const pendingForScope = (scope) =>
-    [...challenges.values()].filter(
-      (challenge) =>
-        !challenge.consumed && challenge.scope === scope && challenge.stage === "pending",
-    );
-
-  api.on(
-    "before_tool_call",
-    async (event, context) => {
-      const callNow = now();
-      prune(callNow);
-      const toolName = firstString(event?.toolName, event?.name) ?? "";
-      const normalizedName = toolName.toLowerCase();
-      const params = normalizeToolCallParams(normalizedName, paramsFromEvent(event));
-      const bare = stripHostPrefix(normalizedName);
-
-      if (bare === "create_with_distributions") {
-        const key = inquiryFingerprint(params);
-        const scope = scopeKey(event, context);
-        const challenge = [...challenges.values()].find(
-          (challenge) =>
-            !challenge.consumed &&
-            challenge.fingerprint === key &&
-            challenge.scope === scope &&
-            callNow - challenge.createdAt <= GRANT_TTL_MS,
-        );
-        if (challenge?.stage === "authorized") {
-          challenge.consumed = true;
-          return undefined;
-        }
-        let active = challenge;
-        if (!active) {
-          const supplierNames = supplierNamesFor(params, scope);
-          const supplierIds = Array.isArray(params?.supplierIds) ? params.supplierIds : [];
-          const missingSupplierIds = supplierIds.filter(
-            (supplierId) => !nonemptyString(supplierNames.get(supplierId)),
-          );
-          if (missingSupplierIds.length > 0) {
-            return recipientNameMissingBlock(missingSupplierIds);
-          }
-          active = {
-            id: newId("wc"),
-            fingerprint: key,
-            createdAt: callNow,
-            consumed: false,
-            scope,
-            stage: "pending",
-            params,
-            supplierNames,
-          };
-          challenges.set(active.id, active);
-        }
-        const askUserQuestion = sendConfirmationQuestion(active, active.supplierNames);
-        const recoveryDirective = {
-          schema_version: 1,
-          code: "HITL_REQUIRED",
-          category: "control",
-          action: "call_host_tool",
-          next_tool: "AskUserQuestion",
-          next_args_from: "ASK_USER_QUESTION_ARGS",
-          retry_original: true,
-          params_valid: true,
-          modify_params: false,
-        };
-        return {
-          block: true,
-          blockReason: [
-            "HITL_REQUIRED: 【企微状态：本次未发送｜等待发送确认】",
-            `YPSCAN_BLOCK_DIRECTIVE=${JSON.stringify(recoveryDirective)}`,
-            "ASK_USER_QUESTION_REQUIRED: 必须立即调用宿主 AskUserQuestion，逐字使用下一行 JSON 参数；不得改写问题或用普通文本代替。用户确认后原样重试。",
-            `ASK_USER_QUESTION_ARGS=${JSON.stringify(askUserQuestion)}`,
-          ].join("\n"),
-          recoveryDirective,
-          askUserQuestion,
-        };
-      }
-
-      return undefined;
-    },
-    HOOK_OPTIONS,
-  );
 
   api.on(
     "before_prompt_build",
     (event, context) => {
       const scope = scopeKey(event, context);
-      const reply = currentUserReply(event);
-      const scopedPending = pendingForScope(scope);
-      const challenge = scopedPending.length === 1 ? scopedPending[0] : null;
       const lines = [];
-      if (challenge && reply === SEND_CONFIRM_LABEL && challenge.stage === "pending") {
-        challenge.stage = "authorized";
-        lines.push(
-          "YPSCAN_CONFIRMATION_DIRECTIVE=机构列表和消息内容已由用户固定确认词确认。现在原样调用 create_with_distributions 一次，不得修改任何参数。",
-          `CREATE_WITH_DISTRIBUTIONS_ARGS=${JSON.stringify(challenge.params)}`,
-        );
-      }
 
       if (!startupScopes.has(scope)) {
         startupScopes.add(scope);
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → create_with_distributions 在同一次弹窗确认机构列表和完整消息 → 发送后询问是否继续人工拓展。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
+          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → 按 Provider 当前 schema 直接调用一次 create_with_distributions，不追加企微发送确认。supplierIds 和 supplier_name 始终都是数组，空侧传 []，至少一侧非空；排序机构使用 supplierIds，用户单独提名的机构使用 supplier_name，两者可同时非空。模糊、不唯一或重复发送结果必须原样展示，禁止把已成功机构重新加入后续调用。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
           "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
           "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。人工拓展直接调用 ypscan_manual_research(operation=start)：星图报价只支持植入视频/定制视频，蒲公英图文/视频报价与笔记类型独立，多报价类型先让用户选择单次运行类型。由插件内专用持久 Chrome 完成筛选、降级、分页、详情和 Excel；禁止调用宿主 Browser、Bash、Playwright CLI、selection_id、observation_id、element_id 或旧 capture 操作，任何前缀的 manual_source_creators 都不得调用。",
@@ -971,31 +731,8 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
 
   api.on(
     "tool_result_persist",
-    (event, context) => {
+    (event) => {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
-      const bare = stripHostPrefix(toolName);
-      const result = parsedToolResult(event?.message);
-      if (bare === "rank_mcns" && result?.success === true) {
-        const mcns = Array.isArray(result?.data?.mcns) ? result.data.mcns : [];
-        const requirementId = firstString(
-          event?.params?.id,
-          event?.params?.requirement_id,
-          mcns[0]?.requirement_id,
-        );
-        if (requirementId) {
-          const scope = scopeKey(event, context);
-          rankedSuppliers.set(rankedSupplierKey(scope, requirementId), {
-            createdAt: now(),
-            names: new Map(
-              mcns
-                .filter(
-                  (mcn) => nonemptyString(mcn?.supplier_id) && nonemptyString(mcn?.agency_name),
-                )
-                .map((mcn) => [mcn.supplier_id, mcn.agency_name.trim()]),
-            ),
-          });
-        }
-      }
       return appendDirective(
         event?.message,
         flowDirective(toolName, event?.message, paramsFromEvent(event)),
@@ -1004,35 +741,8 @@ export function registerWecomConfirmationOnlyHooks(api, { now = Date.now } = {})
     HOOK_OPTIONS,
   );
 
-  api.on(
-    "after_tool_call",
-    async (event, context) => {
-      const toolName = firstString(event?.toolName, event?.name) ?? "";
-      if (!/askuserquestion/iu.test(toolName)) return;
-      const params = paramsFromEvent(event);
-      const result = resultFromEvent(event);
-      const challengeId = challengeIdFrom(params, result);
-      const scopedPending = challengeId ? [] : pendingForScope(scopeKey(event, context));
-      const challenge = challengeId
-        ? challenges.get(challengeId)
-        : scopedPending.length === 1
-          ? scopedPending[0]
-          : null;
-      if (!challenge) return;
-      const selected = selectedLabel(result, SEND_CONFIRM_LABEL);
-      if (selected === SEND_CONFIRM_LABEL && challenge.stage === "pending") {
-        challenge.stage = "authorized";
-      } else {
-        challenges.delete(challenge.id);
-      }
-    },
-    HOOK_OPTIONS,
-  );
-
   return {
     resetTransientState() {
-      challenges.clear();
-      rankedSuppliers.clear();
       startupScopes.clear();
     },
   };

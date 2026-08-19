@@ -87,56 +87,11 @@ try {
 
   const hookNames = registered.hooks.map((hook) => hook.name);
   assert.deepEqual([...new Set(hookNames)].sort(), [
-    "after_tool_call",
     "before_prompt_build",
-    "before_tool_call",
     "gateway_start",
     "gateway_stop",
     "tool_result_persist",
   ]);
-  const beforeHook = registered.hooks.find((hook) => hook.name === "before_tool_call").handler;
-  const persistHook = registered.hooks.find((hook) => hook.name === "tool_result_persist").handler;
-  assert.equal(
-    await beforeHook(
-      {
-        toolName: "ypscan__get_workflow_state",
-        params: { requirement_id: "smoke" },
-      },
-      {},
-    ),
-    undefined,
-  );
-
-  const sendParams = {
-    requirement_id: "smoke-requirement",
-    supplierIds: ["smoke-supplier"],
-    description: "smoke",
-    wechat_notification_message: "smoke WeCom body",
-  };
-  const sendContext = { runId: "smoke-run" };
-  await persistHook(
-    {
-      toolName: "ypmcn__rank_mcns",
-      params: { id: sendParams.requirement_id },
-      message: {
-        content: JSON.stringify({
-          success: true,
-          data: {
-            mcns: [{ supplier_id: "smoke-supplier", agency_name: "Smoke 机构" }],
-          },
-        }),
-      },
-    },
-    sendContext,
-  );
-  const blocked = await beforeHook(
-    {
-      toolName: "ypmcn__create_with_distributions",
-      params: sendParams,
-    },
-    sendContext,
-  );
-  assert.match(blocked.blockReason, /^HITL_REQUIRED:/u);
 
   console.log(`smoke test OK: tools=${toolNames.length}, hooks=${hookNames.length}`);
 } finally {

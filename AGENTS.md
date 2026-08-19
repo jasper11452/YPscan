@@ -13,7 +13,7 @@
 - `npm test` — `node --test tests/*.test.mjs`，必须全绿。
 - `npm run lint` — ESLint（flat config，见 `eslint.config.js`）。
 - `npm run typecheck` — `tsc -p tsconfig.json`（checkJs），必须 0 错。
-- `npm run smoke` — 加载插件校验注册，期望 `tools=4, hooks=6`。
+- `npm run smoke` — 加载插件校验注册，期望 `tools=3, hooks=4`。
 - `npm run format:check` / `npm run format` — Prettier（`format` 会全量重排，慎用）。
 
 **改完代码至少跑 `npm run lint && npm run typecheck && npm test && npm run smoke`。**
@@ -29,8 +29,8 @@
   - `manual-research.js`、`manual-research/` — 通过 Playwright Core 连接共享 Browser CDP，执行星图/蒲公英多关键词硬筛、报价视图、分页、原生导出和稳定身份去重；无状态，不做语义筛选。
   - `test-adapter.js`、`tool-result.js`、`post-save-questions.js` — 测试下载与结果适配。
 - `src/contract/registry.js` — 参数归一化和平台别名。
-- `src/hooks/register-wecom-confirmation-only.js` — 唯一门禁：`create_with_distributions` 企微外发需一次性确认（内存态、10 分钟 TTL、challenge 用 canonical-sha256 绑定）。
-- `skills/media-assistant/` — 强制 agent 行为规范：`SKILL.md`（固定链路、native Browser 四动作、价格浮动 70%/120%、HITL 规则）+ `references/`（Provider 工具和双平台 SOP）。
+- `src/hooks/register-flow-directives.js` — 注入固定 Provider 链路、询价结果、Runner 恢复与交付指令；不拦截 `create_with_distributions`。
+- `skills/media-assistant/` — 强制 agent 行为规范：`SKILL.md`（固定链路、native Browser 四动作、价格浮动 70%/120%、Provider 幂等规则）+ `references/`（Provider 工具和双平台 SOP）。
 - `spec/`、`docs/mcp-developer-tool-by-tool-tickets.md` — 声明式规范与 MCP 侧工单，**只读参考，不是本仓库运行时代码**。
 - `skills/media-assistant/references/` — Provider 工具说明和 Browser + native 最小 SOP。
 
@@ -39,7 +39,7 @@
 1. **分析 vs 修改**：默认只做分析评审；只有用户明确要求时才改代码。
 2. **Provider 与 Browser 不混用**：解析结果只提供 Provider 参数和残余条件；Browser 只在 MCN 分支选择后由 Agent 直接操作，平台证据缺失必须如实标明。
 3. **不跨需求混用**：结果只使用当前真实 Provider 或 Browser 证据，不用历史 MCN、达人或覆盖数补齐当前列表。
-4. **门禁只有企微确认**：企微确认 challenge 存内存，gateway 重启即失效；固定链路和 native Browser 使用说明是静态下一步指令，不实现状态机或顺序拦截器。
+4. **企微幂等在 Provider**：插件不预检、不确认、不匹配、不缓存发送状态；`create_with_distributions` 的机构名匹配、合并去重和同一需求/机构幂等全部由 Provider 负责。固定链路和 native Browser 使用说明仅是静态下一步指令。
 5. **改动最小化**：不顺手重构无关代码；改完跑完整验证清单。
 
 ## 常见坑
@@ -53,5 +53,5 @@
 1. `npm run lint` → 0 错
 2. `npm run typecheck` → 0 错
 3. `npm test` → 全绿
-4. `npm run smoke` → `tools=4, hooks=6`
+4. `npm run smoke` → `tools=3, hooks=4`
 5. 若动了打包/发布，`npm pack --dry-run --cache /tmp/ypscan-npm-cache` 确认发布包不含已删除 Runner、选择器脚本和测试文件。

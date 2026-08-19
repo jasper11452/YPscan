@@ -31,7 +31,7 @@ MCN 结果必须使用 Markdown 表格，禁止改成项目符号或编号列表
 
 rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必须按“搜索后保存 → 机构排序 → 表格 → 真实本地路径 → 弹窗”顺序执行，下载链接不向用户展示。
 
-正常成功交付可以直接结束，不额外弹“完成确认”。企微正式发送继续保留现有一次性确认。
+正常成功交付可以直接结束，不额外弹“完成确认”。`create_with_distributions` 在用户已选择询价机构并完成字段选择后直接调用一次，不再追加企微发送确认；发送去重与幂等完全由 Provider 负责。
 
 ## 人工拓展：按分支延迟加载
 
@@ -41,11 +41,11 @@ rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必�
 
 浏览器筛选、有限重试、逐级降级、分页、有限详情和 Excel 刷新全部由插件内专用持久 Chrome Runner 完成。Agent 禁止调用宿主 Browser、Bash、Playwright CLI、`capture_list`、`capture_detail`、`finalize`、`selection_id`、`observation_id` 或 `element_id`。插件不读取 Cookie/Token、不主动重放私有 API；价格仍按客户原始达人单价扩展为 50%–120%。蒲公英报价类型为图文或视频笔记，且与“笔记类型”内容筛选相互独立；星图本期只支持植入视频或定制视频。原需求同时包含多个报价类型时，必须先调用 AskUserQuestion 让用户选择单次运行类型；不得用“全部报价/起”代替目标类型精确报价。
 
-`complete`、`partial`、`empty`、`failed_with_artifact` 都必须原样展示真实 `artifact.excel_path`、候选数量、质量等级和缺口；候选表交付即满足产物优先任务。`needs_user_action` 或 `busy` 时先展示当前 Excel，再调用返回的 AskUserQuestion；用户选择继续后原样使用 `resume_args`。Excel 固定含“达人推荐List”“候选达人”“运行说明”三个 Sheet；未验证或降级候选只进入“候选达人”。详情语义复核、`apply_reviews`、`create_submission` 和继续询价都是可选后续，不得阻断候选产物交付。任何前缀的 `manual_source_creators` 都不得调用。
+`complete`、`partial`、`empty`、`failed_with_artifact` 都必须原样展示真实 `artifact.excel_path`、候选数量、质量等级、候选缺口和 `detail_progress`；只有完整详情达到 `min(需求人数, 10)` 才能称为 `complete`，不得把尝试数冒充完成数。候选表交付即满足产物优先任务。`needs_user_action` 或 `busy` 时先展示当前 Excel，再调用返回的 AskUserQuestion；用户选择继续后原样使用 `resume_args`。Excel 固定含“达人推荐List”“候选达人”“运行说明”三个 Sheet；未验证或降级候选只进入“候选达人”。详情语义复核、`apply_reviews`、`create_submission` 和继续询价都是可选后续，不得阻断候选产物交付。任何前缀的 `manual_source_creators` 都不得调用。
 
 ## Provider 后续
 
-用户选择“询价机构”后，继续使用真实 MCN 名称/ID、企微确认和询价工具链。按 Provider 当前 schema 调用实际名称为 `select_inquiry_form_fields` 的可用工具，传入当前 requirement ID，绝不传 `demand_id`；返回后把原始 `url` 原样单独输出一行用户可见正文（禁止 Markdown 包装、禁止用 Browser 打开）。用户在选择页提交时，Provider 会把字段按 requirement ID 持久化；不得调用已弃用的 `get_selected_inquiry_form_fields`，不得读取、重建、缓存或向后续工具传 `columns`。`create_submission_batch`、`create_with_distributions`、`get_creator_detail_export` 和 `get_creator_detail` 只传各自当前 schema 要求的业务参数，由后端关联字段；任何前缀的 `manual_source_creators` 都不得调用。Provider 返回 Excel 下载 URL 时，使用 `ypscan_save_excel_artifact` 保存并原样交付 `file_path`；Browser 人工拓展不走该工具。
+用户选择“询价机构”后，继续使用真实 MCN ID 和用户明确提名的机构名进入询价工具链。按 Provider 当前 schema 调用实际名称为 `select_inquiry_form_fields` 的可用工具，传入当前 requirement ID，绝不传 `demand_id`；返回后把原始 `url` 原样单独输出一行用户可见正文（禁止 Markdown 包装、禁止用 Browser 打开）。用户在选择页提交时，Provider 会把字段按 requirement ID 持久化；不得调用已弃用的 `get_selected_inquiry_form_fields`，不得读取、重建、缓存或向后续工具传 `columns`。随后直接调用一次 `create_with_distributions`：`supplierIds` 和 `supplier_name` 始终传数组，空侧固定传 `[]`，至少一侧非空；排序机构放入 `supplierIds`，单独提名机构放入 `supplier_name`，两类可同时发送。Provider 负责机构名匹配、合并去重和同一 requirement_id/机构的发送幂等。精确匹配会先发送；模糊、不唯一或重复发送结果必须原样展示，禁止重发完整参数或再次包含已经成功的机构。模糊候选由用户通过 AskUserQuestion 选择，选定后只把候选的真实 ID 放入新的 `supplierIds`，并传 `supplier_name: []`。`create_submission_batch`、`create_with_distributions`、`get_creator_detail_export` 和 `get_creator_detail` 不传 `columns`；任何前缀的 `manual_source_creators` 都不得调用。Provider 返回 Excel 下载 URL 时，使用 `ypscan_save_excel_artifact` 保存并原样交付 `file_path`；Browser 人工拓展不走该工具。
 
 机构回填取回固定执行 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators`。`ingest_mcn_submissions` 成功只表示异步任务已创建：复制其真实 `job_id` 调用 `get_ingest_job`，不得把 ingest 响应当作最终 Excel。若查询尚未成功或未返回完整 Excel，使用同一个 `job_id` 继续调用 `get_ingest_job`，不重新 ingest、不更换或猜测 ID，也不询问用户；单轮最多查询 10 次。只有 `get_ingest_job` 成功返回本轮真实 Excel 后才保存并继续精排。
 

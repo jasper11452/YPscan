@@ -4,7 +4,7 @@
 
 `ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → AskUserQuestion`
 
-用户选择“人工拓展并提报”后，调用 `ypscan_manual_research(operation=start)` 创建运行。Runner 使用独立持久 Profile，依次尝试完整硬筛、仅关键词、无筛选广场和通用可见 DOM，并在动作失败后恢复页面、重试一次。每页结果增量写入 checkpoint 并刷新 Excel；登录或全局验证码时保留当前 Excel，用户处理后用同一 `run_id` 调用 `resume`。Agent 不接管 Browser、shell 或页面快照。
+用户选择“人工拓展并提报”后，调用 `ypscan_manual_research(operation=start)` 创建运行。Runner 使用独立持久 Profile，依次尝试完整硬筛、仅关键词、无筛选广场和通用可见 DOM。星图登录态首页会自动进入达人工作区；详情页优先读取真实网络响应和弹窗下 DOM，普通资质提示不阻断采集，真实验证码则保存当前证据并暂停。每页结果增量写入 checkpoint 并刷新 Excel，用户处理登录或验证码后用同一 `run_id` 调用 `resume`。Agent 不接管 Browser、shell 或页面快照。
 
 ## 当前组成
 
@@ -15,7 +15,7 @@
 - `src/tools/manual-research-runner.js`：执行有界的双平台筛选、降级、分页、详情采集、恢复和产物刷新。
 - `src/tools/manual-research/browser-runtime.js`：管理插件独立的持久 Chrome Profile 和单运行互斥。
 - `src/tools/manual-research-artifact.js`：稳定身份去重、checkpoint、复核以及三 Sheet Excel 产物。
-- `src/hooks/register-wecom-confirmation-only.js`：注入固定链路、Runner 恢复与交付指令，并保留企微外发一次性确认。
+- `src/hooks/register-flow-directives.js`：注入固定链路、Runner 恢复、Provider 询价结果与交付指令；企微发送匹配和幂等由 Provider 负责。
 
 ## 本地工具
 
@@ -27,7 +27,7 @@
 
 初始状态先写入当前项目的 JSONL checkpoint 和本地 `.xlsx`。Excel 固定包含“达人推荐List”“候选达人”“运行说明”三个 Sheet，并单列“报价类型”；未复核、降级或通用 DOM 召回只进入候选表。手扒价格以客户原始值为锚点按 50%–120% 验收，蒲公英绑定图文/视频笔记报价，星图绑定植入视频/定制视频报价；“全部报价/起”只作展示，不参与目标类型价格验收。价格失败者不进入推荐名单，人数不足如实报告缺口。只有初始 Excel 无法创建才属于无产物硬失败。
 
-Runner 总预算为 180 秒，并预留 15 秒落盘；单分支最多 5 页、整轮最多 12 页、详情最多 10 位。它保证在工作区可写时交付状态 Excel，并在页面可用时尽力交付候选；不保证目标人数或最终推荐数量。
+Runner 总预算为 180 秒，并预留 15 秒落盘；单分支最多 5 页、整轮最多 12 页，详情目标为 `min(需求人数, 10)` 个成功记录。详情失败会记录诊断并继续用后续候选补位；未补足时只能返回 `partial`，同时通过 `detail_progress.shortfall` 报告缺口。终态重放校验并复用原 Excel，不改写文件。它保证在工作区可写时交付状态 Excel，并在页面可用时尽力交付候选；不保证目标人数或最终推荐数量。
 
 ## 验证
 
@@ -39,4 +39,4 @@ npm run smoke
 npm pack --dry-run --cache /tmp/ypscan-npm-cache
 ```
 
-Smoke 断言本地工具为 3 个、字段选择由远端 MCP 直接暴露且旧字段查询工具不再暴露、自定义 Browser 状态机入口未注册、Hook 集合完整，以及企微确认仍按一次性挑战工作。
+Smoke 断言本地工具为 3 个、字段选择由远端 MCP 直接暴露且旧字段查询工具不再暴露、自定义 Browser 状态机入口未注册、Hook 集合仅包含流程指令与 Gateway 生命周期事件，不包含企微发送前后门禁。

@@ -1,4 +1,4 @@
-import { registerWecomConfirmationOnlyHooks } from "./src/hooks/register-wecom-confirmation-only.js";
+import { registerFlowDirectiveHooks } from "./src/hooks/register-flow-directives.js";
 import {
   createRequirementParser,
   PARSE_REQUIREMENT_OUTPUT_SCHEMA,
@@ -18,7 +18,7 @@ export default {
   register(api) {
     const testAdapterBaseUrl = resolveTestAdapterBaseUrl(api.pluginConfig ?? {});
     const parseRequirement = createRequirementParser();
-    const hookRuntime = registerWecomConfirmationOnlyHooks(api);
+    const hookRuntime = registerFlowDirectiveHooks(api);
     const manualBrowserRuntime = createManualBrowserRuntime({
       profileDir: api.pluginConfig?.manualBrowserProfileDir,
     });

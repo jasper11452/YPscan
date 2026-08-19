@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "ypscan",
   "version": "0.1.24-beta13",
-  "profile": "fixed-provider-flow-native-browser-and-wecom-confirmation-v1",
+  "profile": "fixed-provider-flow-native-browser-and-provider-idempotency-v1",
   "entry": "./index.js",
   "specifications": {
     "hooks": "./spec/hooks.json",

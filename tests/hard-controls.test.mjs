@@ -1,18 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { registerWecomConfirmationOnlyHooks } from "../src/hooks/register-wecom-confirmation-only.js";
+import { registerFlowDirectiveHooks } from "../src/hooks/register-flow-directives.js";
 
-function registeredHooks({ skillPath = null } = {}) {
+function registeredHooks() {
   const hooks = new Map();
-  registerWecomConfirmationOnlyHooks(
-    {
-      on(name, handler) {
-        hooks.set(name, handler);
-      },
+  registerFlowDirectiveHooks({
+    on(name, handler) {
+      hooks.set(name, handler);
     },
-    { now: () => 1, skillPath },
-  );
+  });
   return hooks;
 }
 
@@ -437,6 +434,7 @@ test("manual research terminal directive reports candidate shortfall without pad
       needs_review_candidate_count: 0,
       delivery_shortfall: 2,
       delivery_status: "shortfall",
+      detail_progress: { target: 5, completed: 3, shortfall: 2 },
       plan: {
         target_count: 5,
         planned_filters: [{ control: "creator_price", min: 10_000, max: 24_000, unit: "yuan" }],
@@ -448,7 +446,8 @@ test("manual research terminal directive reports candidate shortfall without pad
     }),
   });
   const directive = directiveText(result);
-  assert.match(directive, /候选池=5，缺口=2/u);
+  assert.match(directive, /候选池=5，候选缺口=2/u);
+  assert.match(directive, /完整详情=3\/5，详情缺口=2/u);
   assert.match(directive, /未复核候选只属于“候选达人”/u);
   assert.match(directive, /不得表述为最终推荐/u);
   assert.match(directive, /MANUAL_RESEARCH_EXCEL_PATH=.*shortfall\.xlsx/u);
@@ -533,8 +532,7 @@ test("invalid parse arguments allow unlimited Agent repairs instead of asking th
 });
 
 test("startup instruction fixes the chain and reserves the internal Runner for the manual branch", () => {
-  const skillPath = "/plugin/skills/media-assistant/SKILL.md";
-  const hooks = registeredHooks({ skillPath });
+  const hooks = registeredHooks();
   const context = { runId: "startup-run" };
   const first = hooks.get("before_prompt_build")({}, context);
 
@@ -568,7 +566,6 @@ test("startup instruction fixes the chain and reserves the internal Runner for t
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
   assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
 
-  hooks.get("before_tool_call")({ toolName: "Read", params: { path: skillPath } }, context);
   assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
 });
 
@@ -706,8 +703,7 @@ test("rank and startup directives ban any manual_source_creators call", () => {
   });
   assert.match(directiveText(rank), /manual_source_creators 都不得调用/u);
 
-  const skillPath = "/plugin/skills/media-assistant/SKILL.md";
-  const hooks = registeredHooks({ skillPath });
+  const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /manual_source_creators 都不得调用/u);
   assert.match(startup.prependContext, /ypscan_manual_research\(operation=start\)/u);

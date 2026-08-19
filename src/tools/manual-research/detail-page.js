@@ -99,6 +99,53 @@ function xingtuIdFromDetailUrl(value) {
   return clean(value).match(/\/author-homepage\/douyin-video\/([^/?#]{6,})/iu)?.[1] ?? null;
 }
 
+function xingtuDetailRedirect(value, candidate) {
+  try {
+    const url = new URL(value);
+    const redirect = url.searchParams.get("redirect_uri") ?? "";
+    return (
+      url.hostname === "www.xingtu.cn" &&
+      url.pathname.replace(/\/+$/u, "") === "" &&
+      redirect.includes(`/author-homepage/douyin-video/${clean(candidate.platform_id)}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Follow Xingtu's authenticated landing redirect back to the requested creator detail. */
+async function resolveXingtuDetailRedirect(page, candidate) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const currentUrl = page.url?.() ?? "";
+    if (xingtuDetailRedirect(currentUrl, candidate)) {
+      const account = page
+        .locator(".user-info:visible")
+        .filter({ hasText: /ID\s*[:：]\s*\d+/u })
+        .first();
+      if (await account.isVisible().catch(() => false)) {
+        await account.click();
+        await page.waitForURL(/\/ad\/creator\//u, { timeout: 10_000 }).catch(() => {});
+        if (xingtuIdFromDetailUrl(page.url?.() ?? "") === clean(candidate.platform_id)) return;
+        await page.goto(candidate.detail_url, {
+          waitUntil: "domcontentloaded",
+          timeout: 15_000,
+        });
+        continue;
+      }
+    } else if (!xingtuIdFromDetailUrl(currentUrl)) {
+      return;
+    }
+    await page.waitForTimeout(200);
+  }
+  if (xingtuDetailRedirect(page.url?.() ?? "", candidate)) {
+    throw manualBrowserError(
+      "YPSCAN_MANUAL_LOGIN_REQUIRED",
+      "星图已跳转到详情登录落地页，请在当前 Browser 页面完成登录",
+      { page_url: page.url?.() ?? "", candidate_ref: candidateReference(candidate) },
+    );
+  }
+}
+
 /** @param {import("playwright-core").Page} page */
 async function readDetailDom(page, candidate, platform) {
   const body = cleanText(
@@ -170,7 +217,33 @@ async function readDetailDom(page, candidate, platform) {
         .slice(0, 3),
     )
     .catch(() => []);
-  if (recentContent.length) fields.recent_content = recentContent;
+  const videoCards = recentContent.length
+    ? []
+    : await page
+        .locator(".content-video-card:visible")
+        .evaluateAll((cards) =>
+          cards
+            .map((card) => {
+              const title = String(card.querySelector(".title")?.textContent ?? "")
+                .replace(/\s+/gu, " ")
+                .trim();
+              const metrics = [...card.querySelectorAll(".data-value")].map((item) =>
+                String(item.textContent ?? "").trim(),
+              );
+              return {
+                title,
+                url: null,
+                views: metrics[0] || null,
+                interactions: metrics[1] || null,
+              };
+            })
+            .filter((item) => item.title.length >= 4)
+            .slice(0, 3),
+        )
+        .catch(() => []);
+  if (recentContent.length || videoCards.length) {
+    fields.recent_content = recentContent.length ? recentContent : videoCards;
+  }
   return Object.fromEntries(
     Object.entries(fields).filter(([, value]) =>
       Array.isArray(value)
@@ -178,6 +251,20 @@ async function readDetailDom(page, candidate, platform) {
         : value !== null && value !== undefined && value !== "",
     ),
   );
+}
+
+async function waitForInitialDetailFields(page, candidate, platform, groups, timeoutMs = 8_000) {
+  const fields = {};
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    mergeFields(fields, await readDetailDom(page, candidate, platform));
+    const passiveGroupsReady = groups
+      .filter((group) => ["summary", "recent_content"].includes(group))
+      .every((group) => groupHasCompleteEvidence(group, fields));
+    if (groupHasCompleteEvidence("summary", fields) && passiveGroupsReady) break;
+    await page.waitForTimeout(200);
+  }
+  return fields;
 }
 
 /** @param {import("playwright-core").Page} page */
@@ -204,6 +291,10 @@ function groupHasEvidence(group, fields) {
       ? value.length > 0
       : value !== null && value !== undefined && value !== "";
   });
+}
+
+function groupHasCompleteEvidence(group, fields) {
+  return group === "summary" ? Object.keys(fields).length > 0 : groupHasEvidence(group, fields);
 }
 
 export function detailGroupHasEvidence(group, fields) {
@@ -398,6 +489,7 @@ async function openDetail(listPage, platform, candidate, groups, learnedPaths) {
     candidate,
     expectedGroups: groups,
     learnedPaths,
+    settleMs: 8_000,
     action: async () => {
       if (candidate.detail_url && context?.newPage) {
         detailPage = await context.newPage();
@@ -406,6 +498,7 @@ async function openDetail(listPage, platform, candidate, groups, learnedPaths) {
           waitUntil: "domcontentloaded",
           timeout: 15_000,
         });
+        if (platform === "xingtu") await resolveXingtuDetailRedirect(detailPage, candidate);
         return true;
       }
       const popupPromise = context?.waitForEvent
@@ -548,11 +641,46 @@ export async function collectCreatorDetail(
     for (const group of opened.capture.groups ?? []) completedGroups.add(group);
   }
   try {
-    const body = await assertNoManualChallenge(detailPage);
-    if (platform === "pgy" && /选择合作品牌|请先选择品牌|选择品牌后查看|暂无权限查看/u.test(body)) {
+    const initialBody = cleanText(
+      await detailPage
+        .locator("body")
+        .innerText()
+        .catch(() => ""),
+    );
+    if (
+      platform === "pgy" &&
+      /选择合作品牌|请先选择品牌|选择品牌后查看|暂无权限查看/u.test(initialBody)
+    ) {
       return { ...base, status: "blocked", reason: "detail_not_accessible", fields: {} };
     }
+    mergeFields(fields, await waitForInitialDetailFields(detailPage, candidate, platform, groups));
+    try {
+      await assertNoManualChallenge(detailPage);
+    } catch (error) {
+      if (/CAPTCHA|DETAIL_RISK/u.test(error?.code ?? "") && Object.keys(fields).length) {
+        const completed = groups.filter((group) => groupHasCompleteEvidence(group, fields));
+        const missing = groups.filter((group) => !completed.includes(group));
+        error.details = {
+          ...(error.details ?? {}),
+          captured_detail: {
+            ...base,
+            status: missing.length ? "partial" : "complete",
+            reason: missing.length ? "manual_challenge" : "manual_challenge_after_capture",
+            fields,
+            completed_groups: completed,
+            missing_groups: missing,
+            response_endpoints: [...new Set(endpoints)],
+            source_type: [...new Set(sourceTypes)].join("+") || "dom",
+          },
+        };
+      }
+      throw error;
+    }
     for (const group of groups.filter((item) => item !== "summary")) {
+      if (groupHasEvidence(group, fields)) {
+        completedGroups.add(group);
+        continue;
+      }
       const patterns = DETAIL_TABS[platform][group] ?? [];
       const observed = await captureDetailResponsesDuring(detailPage, {
         platform,

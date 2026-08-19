@@ -165,9 +165,10 @@ function pgyGroup(value) {
   return PGY_DETAIL_PATTERNS.find(({ pattern }) => pattern.test(value))?.group ?? null;
 }
 
-function candidateIdentityMatches(payload, url, candidate) {
+function candidateIdentityMatches(payload, url, candidate, requestBody = "") {
   const expected = clean(candidate?.platform_id);
   if (!expected) return Boolean(candidate?.detail_url && url.startsWith(candidate.detail_url));
+  if (clean(requestBody).includes(expected)) return true;
   try {
     const parsed = new URL(url);
     if ([...parsed.searchParams.values()].some((value) => clean(value) === expected)) return true;
@@ -177,6 +178,34 @@ function candidateIdentityMatches(payload, url, candidate) {
   }
   const bag = valueBag(payload);
   return ID_ALIASES.some((alias) => clean(bag.get(normalizedKey(alias))) === expected);
+}
+
+function sourcePageMatchesCandidate(sourcePageUrl, candidate) {
+  const expected = clean(candidate?.platform_id);
+  return Boolean(expected && clean(sourcePageUrl).includes(expected));
+}
+
+function capturedFields(captures) {
+  const fields = {};
+  for (const capture of captures) mergeFields(fields, capture.fields);
+  return fields;
+}
+
+function expectedEvidenceCaptured(captures, expectedGroups) {
+  const fields = capturedFields(captures);
+  return expectedGroups.every((group) => {
+    if (group === "recent_content") return Boolean(fields.recent_content?.length);
+    if (group === "audience") return Object.keys(fields).some((key) => key.startsWith("audience_"));
+    if (group === "performance") {
+      return Object.keys(fields).some((key) =>
+        /^(?:cpm|cpe|interaction|expected_views|read_median|interaction_median)/u.test(key),
+      );
+    }
+    if (group === "growth") return Boolean(fields.updated_at);
+    return Object.keys(fields).some(
+      (key) => !["platform_id", "nickname", "tags", "recent_content"].includes(key),
+    );
+  });
 }
 
 function detailLikelihood(bag) {
@@ -382,11 +411,11 @@ function mergeFields(target, source) {
  * The browser remains responsible for authentication, cookies and signatures.
  *
  * @param {import("playwright-core").Page} page
- * @param {{platform: "xingtu"|"pgy", candidate: any, expectedGroups: string[], learnedPaths?: Set<string>, action: () => Promise<any>}} options
+ * @param {{platform: "xingtu"|"pgy", candidate: any, expectedGroups: string[], learnedPaths?: Set<string>, settleMs?: number, action: () => Promise<any>}} options
  */
 export async function captureDetailResponsesDuring(
   page,
-  { platform, candidate, expectedGroups, learnedPaths = new Set(), action },
+  { platform, candidate, expectedGroups, learnedPaths = new Set(), settleMs = 1_200, action },
 ) {
   const captures = [];
   const pending = new Set();
@@ -400,11 +429,14 @@ export async function captureDetailResponsesDuring(
     const path = safePath(url);
     const knownPgyGroup = platform === "pgy" ? pgyGroup(url) : null;
     const learned = path && learnedPaths.has(path);
-    const identityInUrl = candidateIdentityMatches(null, url, candidate);
+    const requestBody = request.postData?.() ?? "";
+    const sourcePageUrl = request.frame?.().page?.().url?.() ?? "";
+    const requestMatchesCandidate = candidateIdentityMatches(null, url, candidate, requestBody);
+    const sourcePageMatches = sourcePageMatchesCandidate(sourcePageUrl, candidate);
     if (platform === "pgy" && !knownPgyGroup) return;
     if (
       [401, 403, 429].includes(response.status()) &&
-      (knownPgyGroup || learned || identityInUrl)
+      (knownPgyGroup || requestMatchesCandidate || (learned && sourcePageMatches))
     ) {
       risk = { status: response.status(), path };
       return;
@@ -416,9 +448,20 @@ export async function captureDetailResponsesDuring(
       .then((payload) => {
         const group = knownPgyGroup ?? expectedGroups[0] ?? "summary";
         if (!expectedGroups.includes(group) && platform === "pgy") return;
-        if (!candidateIdentityMatches(payload, url, candidate)) return;
         const normalized = normalizeDetailResponse(payload);
-        if (platform === "xingtu" && !learned && normalized.likelihood < 2) return;
+        const payloadMatchesCandidate = candidateIdentityMatches(
+          payload,
+          url,
+          candidate,
+          requestBody,
+        );
+        const pageBoundEvidence =
+          sourcePageMatches &&
+          (Boolean(knownPgyGroup) || learned || Boolean(normalized.fields.recent_content?.length));
+        if (!payloadMatchesCandidate && !pageBoundEvidence) return;
+        if (platform === "xingtu" && !learned && !pageBoundEvidence && normalized.likelihood < 2) {
+          return;
+        }
         if (!Object.keys(normalized.fields).length) return;
         if (platform === "xingtu" && path) learnedPaths.add(path);
         captures.push({ group, endpoint: path, fields: normalized.fields });
@@ -431,10 +474,11 @@ export async function captureDetailResponsesDuring(
   let actionResult;
   try {
     actionResult = await action();
-    const started = Date.now();
-    while (!captures.length && !risk && Date.now() - started < 1_200) {
+    const attempts = Math.max(1, Math.ceil(settleMs / 50));
+    for (let attempt = 0; attempt < attempts && !risk; attempt += 1) {
       if (pending.size) await Promise.allSettled([...pending]);
-      if (!captures.length && !risk) await page.waitForTimeout(50);
+      if (expectedEvidenceCaptured(captures, expectedGroups)) break;
+      await page.waitForTimeout(50);
     }
     if (pending.size) await Promise.allSettled([...pending]);
   } finally {

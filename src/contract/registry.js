@@ -1,5 +1,5 @@
 /**
- * Small argument-normalization boundary shared by the confirmation Hook.
+ * Small argument-normalization boundary shared by Provider-facing flows.
  * Workflow gates, evidence extractors, readiness probes, and retry policy used
  * to live here; those responsibilities were removed with the local ledger.
  */
