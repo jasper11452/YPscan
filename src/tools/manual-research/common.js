@@ -33,6 +33,19 @@ export function pageMatches(platform, value) {
   }
 }
 
+function isXingtuLoginRedirect(value) {
+  try {
+    const url = new URL(value);
+    return (
+      url.hostname === PLATFORM_RULES.xingtu.host &&
+      url.pathname.replace(/\/+$/u, "") === "" &&
+      url.searchParams.get("redirect_uri") === PLATFORM_RULES.xingtu.path
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** @param {import("playwright-core").Page} page */
 export async function assertNoManualChallenge(page) {
   const body = cleanText(
@@ -89,19 +102,12 @@ export async function assertNoManualChallenge(page) {
 
 /** @param {import("playwright-core").Page} page */
 export async function assertUsablePage(page, platform) {
-  if (platform === "xingtu") {
-    try {
-      const current = new URL(page.url());
-      if (
-        current.hostname === PLATFORM_RULES.xingtu.host &&
-        current.pathname.replace(/\/+$/u, "") === "" &&
-        current.searchParams.get("redirect_uri") === PLATFORM_RULES.xingtu.path
-      ) {
-        await page.goto(PLATFORM_RULES.xingtu.url, { waitUntil: "domcontentloaded" });
-      }
-    } catch {
-      // The regular wrong-page error below reports malformed or unavailable URLs.
-    }
+  if (platform === "xingtu" && isXingtuLoginRedirect(page.url())) {
+    throw manualBrowserError(
+      "YPSCAN_MANUAL_LOGIN_REQUIRED",
+      "星图已跳转到登录落地页，请在当前 Browser 页面完成登录",
+      { page_url: page.url(), redirect_uri: PLATFORM_RULES.xingtu.path },
+    );
   }
   if (!pageMatches(platform, page.url())) {
     throw manualBrowserError("YPSCAN_MANUAL_WRONG_PAGE", "当前标签页不是目标达人筛选页面", {
@@ -162,6 +168,10 @@ const ORDINARY_DIALOG_SELECTOR = [
 const PROTECTED_DIALOG_TEXT =
   /登录|扫码|验证码|安全验证|人机验证|滑块验证|用户协议|隐私政策|授权|导出|下载|删除|提交|保存|发布|付款|支付/u;
 const SAFE_DISMISS_BUTTON = /^(?:Close|关闭|取消|跳过|稍后再说|以后再说|知道了|我知道了)$/iu;
+const KNOWN_ORDINARY_PROMPTS = Object.freeze({
+  xingtu: { title: "完善基础资质信息", dismissButton: /^Close$/iu },
+  pgy: { title: "寻找博主&内容", dismissButton: /^跳过$/u },
+});
 
 /**
  * Close only ordinary, reversible page prompts. Authentication, CAPTCHA,
@@ -172,27 +182,27 @@ const SAFE_DISMISS_BUTTON = /^(?:Close|关闭|取消|跳过|稍后再说|以后�
  */
 export async function dismissOrdinaryPopups(page, platform) {
   const dismissed = [];
+  const knownPrompt = KNOWN_ORDINARY_PROMPTS[platform];
   for (let pass = 0; pass < 4; pass += 1) {
     let changed = false;
-    const body = cleanText(
-      await page
-        .locator("body")
-        .innerText()
-        .catch(() => ""),
-    );
-    const knownPrompt =
-      (platform === "xingtu" && body.includes("完善基础资质信息")) ||
-      (platform === "pgy" && body.includes("寻找博主&内容"));
     if (knownPrompt) {
-      const knownButton = page
-        .getByRole("button", {
-          name: platform === "xingtu" ? /^Close$/iu : /^跳过$/u,
-        })
-        .filter({ visible: true })
-        .first();
-      if (await knownButton.isVisible().catch(() => false)) {
+      const dialogs = page.locator(ORDINARY_DIALOG_SELECTOR);
+      const dialogCount = Math.min(await dialogs.count().catch(() => 0), 12);
+      let knownButton = null;
+      for (let index = 0; index < dialogCount; index += 1) {
+        const dialog = dialogs.nth(index);
+        if (!(await dialog.isVisible().catch(() => false))) continue;
+        const dialogText = cleanText(await dialog.innerText().catch(() => ""));
+        if (!dialogText.includes(knownPrompt.title)) continue;
+        knownButton = dialog
+          .getByRole("button", { name: knownPrompt.dismissButton })
+          .filter({ visible: true })
+          .first();
+        break;
+      }
+      if (knownButton && (await knownButton.isVisible().catch(() => false))) {
         await knownButton.click();
-        dismissed.push(platform === "xingtu" ? "完善基础资质信息" : "寻找博主&内容");
+        dismissed.push(knownPrompt.title);
         changed = true;
         await page.waitForTimeout(120);
       }

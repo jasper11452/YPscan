@@ -63,9 +63,8 @@ test("an already-open semantic range popover is adopted without toggling its tri
 });
 
 test("known ordinary platform prompts are closed without user handoff", async () => {
-  let bodyText = "达人广场 完善基础资质信息";
+  let promptVisible = true;
   let clicks = 0;
-  const emptyDialogs = { count: async () => 0 };
   const button = {
     filter() {
       return this;
@@ -73,18 +72,26 @@ test("known ordinary platform prompts are closed without user handoff", async ()
     first() {
       return this;
     },
-    isVisible: async () => bodyText.includes("完善基础资质信息"),
+    isVisible: async () => promptVisible,
     click: async () => {
       clicks += 1;
-      bodyText = "达人广场";
+      promptVisible = false;
     },
   };
-  const page = {
-    locator(selector) {
-      if (selector === "body") return { innerText: async () => bodyText };
-      return emptyDialogs;
-    },
+  const dialog = {
+    isVisible: async () => promptVisible,
+    innerText: async () => "完善基础资质信息 企业资质名称 经营地区 提 交",
     getByRole: () => button,
+    locator: () => ({
+      first() {
+        return this;
+      },
+      isVisible: async () => false,
+    }),
+  };
+  const dialogs = { count: async () => 1, nth: () => dialog };
+  const page = {
+    locator: () => dialogs,
     waitForTimeout: async () => {},
   };
 
@@ -105,10 +112,7 @@ test("login and security dialogs are never dismissed as ordinary prompts", async
   };
   const dialogs = { count: async () => 1, nth: () => dialog };
   const page = {
-    locator(selector) {
-      if (selector === "body") return { innerText: async () => "达人广场" };
-      return dialogs;
-    },
+    locator: () => dialogs,
   };
 
   assert.deepEqual(await dismissOrdinaryPopups(page, "xingtu"), []);
@@ -162,30 +166,19 @@ test("a harmless security-verification phrase in page text does not pause collec
   await assert.doesNotReject(() => assertUsablePage(page, "xingtu"));
 });
 
-test("the Xingtu redirect landing page is returned to the creator market automatically", async () => {
-  let currentUrl = "https://www.xingtu.cn/?redirect_uri=/ad/creator/market";
-  const navigations = [];
-  const hidden = {
-    first() {
-      return this;
-    },
-    isVisible: async () => false,
-  };
+test("the Xingtu redirect landing page requires user login without navigating again", async () => {
+  const currentUrl = "https://www.xingtu.cn/?redirect_uri=/ad/creator/market";
   const page = {
     url: () => currentUrl,
-    goto: async (url) => {
-      navigations.push(url);
-      currentUrl = url;
-    },
-    locator(selector) {
-      if (selector === "body") return { innerText: async () => "达人广场" };
-      return hidden;
-    },
   };
 
-  await assertUsablePage(page, "xingtu");
-
-  assert.deepEqual(navigations, ["https://www.xingtu.cn/ad/creator/market"]);
+  await assert.rejects(
+    () => assertUsablePage(page, "xingtu"),
+    (error) =>
+      error.code === "YPSCAN_MANUAL_LOGIN_REQUIRED" &&
+      error.details.page_url === currentUrl &&
+      error.details.redirect_uri === "/ad/creator/market",
+  );
 });
 
 test("range conversion preserves yuan, converts ratios to percent and honors 万 inputs", () => {
