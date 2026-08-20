@@ -8,6 +8,8 @@ Provider risk labels, supply multipliers, institution count, and `recommended_ac
 
 ## Presentation
 
+Do not design an institution table from the response schema. Extra fields in the response are internal context, never optional display columns. Do not reuse a table format from an earlier turn, example, or prior version.
+
 After every successful response, before any other text or user interaction, use every candidate supplier from that same real response, in response order. Show one compact Markdown table; never replace it with bullets or a numbered list:
 
 | 排名 | 机构 | 覆盖达人 | 返点 | 综合分 |

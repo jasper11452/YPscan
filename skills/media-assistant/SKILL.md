@@ -13,6 +13,15 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 即使用户一开始明确要求手扒，也不得跳过前四步或提前打开 Browser。
 
+## MCN 输出格式锁
+
+`rank_mcns` 成功后不得自行设计、总结或扩展机构表，也不得因原始响应含有更多字段就展示它们。用户可见机构结果必须且只能使用以下五列，列名、顺序和数量都不得改动：
+
+| 排名 | 机构 | 覆盖达人 | 返点 | 综合分 |
+| ---- | ---- | -------- | ---- | ------ |
+
+尤其禁止展示 `Supplier ID`/`supplier_id`、候选达人、供给占比、手扒补量、推荐理由，也禁止展示其他 `rank_mcns` 字段或汇总。这些字段即使真实存在也只是内部上下文，不是可选展示列。
+
 ## 固定 Provider 链路
 
 1. **需求解析**：`ypscan_parse_requirement` 是 Provider 前置格式校验与编译层；按 [解析参考](references/tools/ypscan_parse_requirement.md) 中每个 kind 的契约提取原文事实，普通 fact 只传 `kind`、原文 `quote`、归一化 `value`。工具必须在调用 `validate_requirement` 前确认达人数量为明确正整数、返点和其他比例/区间格式合法、截止时间为未来绝对时间、内容形式/时长能唯一映射。品牌名、项目名、达人数量、提报截止时间、最低返点、粉丝量范围、内容方向、达人单价缺失，或业务值模糊、冲突、无法合法编译时，逐字调用返回的单次多问题 `AskUserQuestion`；宿主自定义输入框必须保留。`YPSCAN_REQUIREMENT_INVALID` 只表示 Agent 构造错误，按 `violation_details` 的 `code/path/expected/repair` 一次性修正全部错误并只重试一次；相同 code/path 再次出现即报告集成错误。保留 Provider 参数、搜索分组和 residual conditions。
@@ -23,7 +32,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 “先输出”只指已经发出的用户可见 assistant 文本块；工具结果里的表头、directive、思考过程都不算，AskUserQuestion 返回后补写的表格或本地路径也不满足。AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block。
 
-MCN 结果必须使用 Markdown 表格，禁止改成项目符号或编号列表。表格固定且只包含：排名、机构、覆盖达人、返点、综合分。排名按当前响应顺序从 1 开始连续编号；每行覆盖达人只取该机构对象自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，严禁用作本机构人数，严禁与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。禁止在表格内外展示匹配机构数、推荐数量或其他 `rank_mcns` 汇总。其他值同样只取当前响应中该机构自己的对象；缺失值写“未知”，不使用历史结果补齐。
+MCN 表格按当前响应顺序从 1 开始连续编号；每行覆盖达人只取该机构对象自己的 `candidate_count` 原值。`mcn_covered_creator_count` 是累计字段，严禁用作本机构人数，严禁与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。缺失值写“未知”，不使用历史结果补齐。
 
 ## AskUserQuestion 规则
 

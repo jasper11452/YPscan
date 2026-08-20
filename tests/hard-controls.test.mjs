@@ -120,7 +120,13 @@ test("fixed result directives enforce parse → validate → search → save →
   });
   assert.match(directiveText(rank), /完整 MCN Markdown 表格/u);
   assert.match(directiveText(rank), /用户可见正文文本块/u);
+  assert.match(directiveText(rank), /MCN_OUTPUT_FORMAT_LOCK=/u);
+  assert.match(directiveText(rank), /不得根据响应 schema、原始字段、旧模板或上一轮结果/u);
   assert.match(directiveText(rank), /\| 排名 \| 机构 \| 覆盖达人 \| 返点 \| 综合分 \|/u);
+  assert.ok(
+    directiveText(rank).indexOf("MCN_OUTPUT_FORMAT_LOCK=") <
+      directiveText(rank).indexOf("输出顺序："),
+  );
   assert.match(directiveText(rank), /禁止改成项目符号或编号列表/u);
   assert.match(directiveText(rank), /排名、机构、覆盖达人、返点、综合分/u);
   assert.match(directiveText(rank), /只显示这一张五列表格/u);
@@ -129,6 +135,10 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /禁止在表格内外另行展示 supplier_id/u);
   assert.match(directiveText(rank), /匹配机构数、推荐数量/u);
   assert.match(directiveText(rank), /MCN:人工、推荐理由/u);
+  assert.match(
+    directiveText(rank),
+    /Supplier ID\/supplier_id、候选达人、供给占比、手扒补量和推荐理由/u,
+  );
   assert.match(directiveText(rank), /candidate_count 原值/u);
   assert.match(directiveText(rank), /严禁使用累计字段 mcn_covered_creator_count/u);
   assert.match(directiveText(rank), /严禁与前序机构累加/u);
@@ -837,6 +847,12 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /立即调用保存工具/u);
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
+  assert.match(first.prependContext, /MCN 用户可见输出格式锁/u);
+  assert.match(first.prependContext, /不得根据响应 schema、原始字段、旧模板或上一轮结果/u);
+  assert.match(
+    first.prependContext,
+    /Supplier ID\/supplier_id、候选达人、供给占比、手扒补量、推荐理由/u,
+  );
   assert.match(first.prependContext, /同一 requirement_id/u);
   assert.match(first.prependContext, /直接调用 manual_source_creators/u);
   assert.match(first.prependContext, /不得再次调用 select_inquiry_form_fields/u);
