@@ -1,4 +1,9 @@
-import { assertNoManualChallenge, cleanText, manualBrowserError } from "./common.js";
+import {
+  assertNoManualChallenge,
+  cleanText,
+  dismissOrdinaryPopups,
+  manualBrowserError,
+} from "./common.js";
 import { captureDetailResponsesDuring } from "./detail-response-capture.js";
 import { candidateReference } from "../manual-research-detail.js";
 
@@ -639,13 +644,13 @@ async function closeDetail(listPage, detailPage, temporary) {
  * @param {import("playwright-core").Page} listPage
  * @param {"xingtu"|"pgy"} platform
  * @param {any} candidate
- * @param {{groups: string[], learnedPaths?: Set<string>, capturedAt: string, onHtmlSnapshot?: (snapshot: any) => Promise<any>}} options
+ * @param {{groups: string[], learnedPaths?: Set<string>, capturedAt: string, onHtmlSnapshot?: (snapshot: any) => Promise<any>, challengeRetry?: boolean}} options
  */
 export async function collectCreatorDetail(
   listPage,
   platform,
   candidate,
-  { groups, learnedPaths = new Set(), capturedAt, onHtmlSnapshot },
+  { groups, learnedPaths = new Set(), capturedAt, onHtmlSnapshot, challengeRetry = true },
 ) {
   const base = {
     candidate_ref: candidateReference(candidate),
@@ -802,7 +807,40 @@ export async function collectCreatorDetail(
       html_snapshots: htmlSnapshots,
     };
   } catch (error) {
-    if (/CAPTCHA|DETAIL_RISK/u.test(error?.code ?? "")) throw error;
+    if (/CAPTCHA|DETAIL_RISK/u.test(error?.code ?? "")) {
+      if (platform === "xingtu") {
+        await dismissOrdinaryPopups(detailPage, platform).catch(() => []);
+        const recoveredSnapshot = await captureRawHtml(
+          detailPage,
+          "challenge_recovery",
+          capturedAt,
+          onHtmlSnapshot,
+        ).catch(() => null);
+        if (recoveredSnapshot) htmlSnapshots.push(recoveredSnapshot);
+        const challengeCleared = await assertNoManualChallenge(detailPage)
+          .then(() => true)
+          .catch(() => false);
+        if (challengeCleared && htmlSnapshots.length) {
+          return {
+            ...base,
+            status: "partial",
+            reason: "challenge_dismissed_after_capture",
+            fields,
+            html_snapshots: htmlSnapshots,
+          };
+        }
+        if (challengeRetry && candidate.detail_url) {
+          return collectCreatorDetail(listPage, platform, candidate, {
+            groups,
+            learnedPaths,
+            capturedAt,
+            onHtmlSnapshot,
+            challengeRetry: false,
+          });
+        }
+      }
+      throw error;
+    }
     throw manualBrowserError("YPSCAN_MANUAL_DETAIL_FAILED", error?.message ?? "详情页采集失败", {
       candidate_ref: base.candidate_ref,
     });

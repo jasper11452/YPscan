@@ -664,9 +664,13 @@ function templateRows({ plan, generatedAt, submittedCount, candidates, sheetKind
   ];
 }
 
-function finalCandidates(candidates, details, reviews, targetCount) {
+function qualifiedCandidates(candidates, details, reviews) {
   const detailMap = detailMapFor(details);
   const reviewMap = reviewMapFor(reviews);
+  const score = (candidate) => {
+    const value = reviewMap.get(candidateReference(candidate))?.recommendation_score;
+    return Number.isFinite(value) ? value : 0;
+  };
   return candidates
     .filter((candidate) => {
       const candidateRef = candidateReference(candidate);
@@ -676,7 +680,18 @@ function finalCandidates(candidates, details, reviews, targetCount) {
         reviewMap.get(candidateRef)?.decision === "include"
       );
     })
-    .slice(0, targetCount ?? candidates.length);
+    .sort(
+      (left, right) =>
+        score(right) - score(left) ||
+        candidateReference(left).localeCompare(candidateReference(right), "zh-CN"),
+    );
+}
+
+function finalCandidates(candidates, details, reviews, targetCount) {
+  return qualifiedCandidates(candidates, details, reviews).slice(
+    0,
+    targetCount ?? candidates.length,
+  );
 }
 
 const RUN_INFO_WIDTHS = Object.freeze([18, 28, 18, 70, ...Array(9).fill(2)]);
@@ -733,11 +748,14 @@ export function buildManualResearchWorkbook({
   const timestamp = artifact.generated_at;
   const targetCount = plan.target_count ?? candidates.length;
   const checkedCandidates = candidatesWithPriceCheck(candidates, plan);
-  const finalRows = finalCandidates(checkedCandidates, details, reviews, targetCount);
+  const qualifiedRows = qualifiedCandidates(checkedCandidates, details, reviews);
+  const finalRows = qualifiedRows.slice(0, targetCount);
+  const remainingQualifiedRows = qualifiedRows.slice(targetCount);
+  const candidateRows = qualifiedRows.length >= targetCount ? remainingQualifiedRows : checkedCandidates;
   const selectedRows = talentRows(plan, finalRows, details, reviews, finalRows, timestamp);
   const candidateSheetRows = talentRows(
     plan,
-    checkedCandidates,
+    candidateRows,
     details,
     reviews,
     finalRows,
@@ -1504,7 +1522,7 @@ export async function createManualResearchSubmission({
     requirementId,
     platform,
   });
-  const target = Math.min(10, loaded.plan.target_count ?? 10);
+  const target = loaded.plan.target_count ?? 1;
   const usesHtmlExtraction = loaded.details.some((detail) => detail.html_snapshots?.length);
   const checkedCandidates = candidatesWithPriceCheck(loaded.candidates, loaded.plan);
   const selected = finalCandidates(
@@ -1513,8 +1531,9 @@ export async function createManualResearchSubmission({
     loaded.reviews,
     loaded.plan.target_count,
   );
+  const qualified = qualifiedCandidates(checkedCandidates, loaded.details, loaded.reviews);
   const pending =
-    usesHtmlExtraction && selected.length >= target
+    usesHtmlExtraction && qualified.length >= target
       ? { tasks: [], remaining: 0 }
       : reviewBatch(loaded.candidates, loaded.details, loaded.reviews, {
           plan: loaded.plan,
@@ -1826,7 +1845,7 @@ export async function applyManualResearchReviews({
     });
   }
   const mergedReviews = mergeReviewRecords([...restored.reviews, ...reviews]);
-  const target = Math.min(10, plan.target_count ?? 10);
+  const target = detailQueueLimit(plan);
   const usesHtmlExtraction = details.some((detail) => detail.html_snapshots?.length);
   const completed = details.filter(
     (detail) =>
@@ -1834,7 +1853,7 @@ export async function applyManualResearchReviews({
       (!usesHtmlExtraction || (detail.html_snapshots?.length && detail.extracted_at)),
   ).length;
   const selected = finalCandidates(candidates, details, mergedReviews, plan.target_count);
-  const qualified = selected.length;
+  const qualified = qualifiedCandidates(candidates, details, mergedReviews).length;
   const targetReached = qualified >= target;
   const pendingBatch = reviewBatch(candidates, details, mergedReviews, {
     plan,
@@ -1850,6 +1869,23 @@ export async function applyManualResearchReviews({
     : batch.remaining > 0
       ? "reviewing"
       : "complete";
+  const reviewedReferences = new Set(details.map((detail) => detail.candidate_ref));
+  const hasUncapturedCandidates = candidates.some(
+    (candidate) => !reviewedReferences.has(candidateReference(candidate)),
+  );
+  const nextCall =
+    status === "partial" && hasUncapturedCandidates
+      ? {
+          tool: "ypscan_manual_research",
+          args: {
+            operation: "resume",
+            requirement_id: requirementId,
+            platform,
+            run_id: runId,
+          },
+          reason: "合格达人尚未达到需求数量两倍，继续采集剩余达人详情",
+        }
+      : null;
   const artifact = createArtifactMetadata({
     runId: entry.name,
     checkpointPath,
@@ -1899,5 +1935,6 @@ export async function applyManualResearchReviews({
     },
     status,
     artifact,
+    ...(nextCall ? { next_call: nextCall } : {}),
   };
 }

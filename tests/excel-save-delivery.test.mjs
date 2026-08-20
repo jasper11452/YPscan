@@ -61,6 +61,14 @@ test("only Provider submission save offers enrichment", async (t) => {
   )).content[0].text);
   assert.equal(mcnPreview.success, true);
   assert.equal(mcnPreview.delivery.next_tool, undefined);
+
+  const manualSource = JSON.parse((await saveFixture(
+    workspaceDir,
+    "manual_source",
+    "manual-source.xlsx",
+  )).content[0].text);
+  assert.equal(manualSource.success, true);
+  assert.equal(manualSource.delivery.next_tool, undefined);
 });
 
 test("Excel download accepts HTTPS URLs under eshypdata.com", async (t) => {

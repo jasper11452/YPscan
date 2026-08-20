@@ -22,8 +22,8 @@ assert.equal(
 assert.equal(packageJson.files.includes("skills"), true, "published package must include skills");
 assert.equal(
   manifest.mcpServers.ypscan.toolFilter.include.includes("manual_source_creators"),
-  false,
-  "deprecated manual sourcing must never be exposed by this plugin",
+  true,
+  "default backend manual sourcing must be exposed by this plugin",
 );
 assert.equal(
   manifest.mcpServers.ypscan.toolFilter.include.includes("select_inquiry_form_fields"),
@@ -67,6 +67,7 @@ try {
   const excelSaver = registered.tools.find((tool) => tool.name === "ypscan_save_excel_artifact");
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("creator_preview"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_creator_preview"));
+  assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("manual_source"));
   assert.equal(toolNames.includes("ypscan__select_inquiry_form_fields"), false);
   assert.equal(toolNames.length, 3);
   assert.equal(toolNames.includes("ypscan_runtime_status"), false);

@@ -46,6 +46,19 @@ export function isXingtuLoginRedirect(value) {
   }
 }
 
+export function isXingtuMarketRedirect(value) {
+  try {
+    const url = new URL(value);
+    return (
+      isXingtuLoginRedirect(value) ||
+      (url.hostname === PLATFORM_RULES.xingtu.host &&
+        url.pathname.replace(/\/+$/u, "") === "/redirect_to/ad/creator/market")
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** @param {import("playwright-core").Page} page */
 export async function assertNoManualChallenge(page) {
   const body = cleanText(
@@ -110,7 +123,7 @@ export async function assertNoManualChallenge(page) {
 
 /** @param {import("playwright-core").Page} page */
 export async function assertUsablePage(page, platform) {
-  if (platform === "xingtu" && isXingtuLoginRedirect(page.url())) {
+  if (platform === "xingtu" && isXingtuMarketRedirect(page.url())) {
     const authenticated =
       typeof page.locator === "function"
         ? await page

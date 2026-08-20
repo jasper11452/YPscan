@@ -155,6 +155,92 @@ test("runner completes with candidates and a three-sheet Excel", async (t) => {
   assert.equal((workbookXml.match(/<sheet /gu) ?? []).length, 3);
 });
 
+test("runner keeps filters while changing keywords and reads every result page", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-all-pages-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const actions = [];
+  let keyword = "";
+  let pageNumber = 1;
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => ({
+      async prepare() {},
+      async reset() {
+        actions.push("reset");
+      },
+      async verifyBaseline() {
+        return { valid: true };
+      },
+      async applyFilter() {
+        actions.push("filter");
+        return { applied: true };
+      },
+      async search(value) {
+        keyword = value;
+        pageNumber = 1;
+        actions.push(`search:${value}`);
+        return { applied: true };
+      },
+      async readPage() {
+        actions.push(`read:${keyword}:${pageNumber}`);
+        return {
+          rows: [
+            {
+              platform_id: `${keyword}-${pageNumber}`,
+              nickname: `${keyword}达人${pageNumber}`,
+              detail_url: `https://www.xingtu.cn/creator/${keyword}-${pageNumber}`,
+            },
+          ],
+          source_url: "https://www.xingtu.cn/ad/creator/market",
+        };
+      },
+      async nextPage() {
+        if (pageNumber >= 3) return false;
+        pageNumber += 1;
+        return true;
+      },
+      async collectDetail(candidate) {
+        return {
+          status: "complete",
+          platform_id: candidate.platform_id,
+          nickname: candidate.nickname,
+          detail_url: candidate.detail_url,
+          fields: {},
+        };
+      },
+      async dispose() {},
+    }),
+  });
+
+  const data = payload(
+    await run(
+      params({
+        facts: [
+          fact("product", "product_name", "办公软件"),
+          fact("count", "creator_count", 1, { role: "submission" }),
+          fact("gender", "creator_gender", "female"),
+        ],
+        keywords: ["效率", "办公"],
+      }),
+    ),
+  );
+
+  assert.equal(data.candidate_count, 6);
+  assert.deepEqual(actions, [
+    "reset",
+    "filter",
+    "search:效率",
+    "read:效率:1",
+    "read:效率:2",
+    "read:效率:3",
+    "search:办公",
+    "read:办公:1",
+    "read:办公:2",
+    "read:办公:3",
+  ]);
+});
+
 test("raw HTML is checkpointed by manifest, read in chunks, and completed only after Agent extraction", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-html-evidence-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
@@ -390,7 +476,7 @@ test("raw HTML is checkpointed by manifest, read in chunks, and completed only a
   );
   assert.equal(reviewingReplay.status, "reviewing");
   assert.equal(reviewingReplay.detail_progress.qualified, 0);
-  assert.equal(reviewingReplay.detail_progress.shortfall, 1);
+  assert.equal(reviewingReplay.detail_progress.shortfall, 2);
   assert.equal(
     reviewingReplay.next_call.args.candidate_ref,
     excluded.review_batch[0].candidate_ref,
@@ -431,9 +517,10 @@ test("raw HTML is checkpointed by manifest, read in chunks, and completed only a
       ],
     }),
   );
-  assert.equal(applied.status, "complete");
+  assert.equal(applied.status, "partial");
   assert.equal(applied.detail_progress.completed, 2);
   assert.equal(applied.detail_progress.qualified, 1);
+  assert.equal(applied.detail_progress.shortfall, 1);
   assert.equal(applied.artifact.target_row_count, 1);
   assert.equal((await stat(started.artifact.checkpoint_path)).mode & 0o777, 0o600);
 
@@ -445,7 +532,7 @@ test("raw HTML is checkpointed by manifest, read in chunks, and completed only a
       run_id: started.run_id,
     }),
   );
-  assert.equal(replayed.status, "complete");
+  assert.equal(replayed.status, "partial");
   assert.equal(replayed.next_call, undefined);
 
   const submission = payload(
@@ -569,19 +656,19 @@ test("runner marks fallback collection as degraded and keeps its candidate artif
   assert.equal(data.candidates[0].collection_mode, "filtered");
   assert.ok(data.artifact.excel_path);
   assert.deepEqual(data.detail_progress, {
-    target: 3,
+    target: 6,
     attempted: 1,
     completed: 1,
     partial: 0,
     failed: 0,
-    shortfall: 2,
+    shortfall: 5,
   });
 });
 
-test("runner replaces failed detail attempts until ten complete records are collected", async (t) => {
+test("runner replaces failed detail attempts until twice the requested count is collected", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-detail-refill-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const fakeAdapter = adapter(16);
+  const fakeAdapter = adapter(26);
   fakeAdapter.collectDetail = async (candidate) => {
     const index = Number(candidate.platform_id.split("-").at(-1));
     if (index <= 6) {
@@ -616,9 +703,9 @@ test("runner replaces failed detail attempts until ten complete records are coll
 
   assert.equal(data.status, "complete");
   assert.deepEqual(data.detail_progress, {
-    target: 10,
-    attempted: 16,
-    completed: 10,
+    target: 20,
+    attempted: 26,
+    completed: 20,
     partial: 0,
     failed: 6,
     shortfall: 0,
@@ -628,7 +715,7 @@ test("runner replaces failed detail attempts until ten complete records are coll
   assert.match(data.detail_failures[0].message, /详情 1 超时/u);
 });
 
-test("runner reports partial when fewer than ten complete detail records exist", async (t) => {
+test("runner reports partial when fewer than twice the requested detail records exist", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-detail-shortfall-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   const run = createManualResearchRunner({
@@ -649,9 +736,9 @@ test("runner reports partial when fewer than ten complete detail records exist",
   );
 
   assert.equal(data.status, "partial");
-  assert.equal(data.detail_progress.target, 10);
+  assert.equal(data.detail_progress.target, 20);
   assert.equal(data.detail_progress.completed, 9);
-  assert.equal(data.detail_progress.shortfall, 1);
+  assert.equal(data.detail_progress.shortfall, 11);
 });
 
 test("runner recovers and retries one failed browser action", async (t) => {
@@ -809,7 +896,11 @@ test("detail budget prioritizes candidates missing the selected exact quote", as
 
   assert.deepEqual(
     collected,
-    Array.from({ length: 10 }, (_, index) => `creator-${index + 3}`),
+    [
+      ...Array.from({ length: 10 }, (_, index) => `creator-${index + 3}`),
+      "creator-1",
+      "creator-2",
+    ],
   );
 });
 
@@ -931,4 +1022,70 @@ test("generic DOM candidates remain outside the recommendation sheet after revie
   assert.doesNotMatch(recommendation, /通用召回达人/u);
   assert.match(recommendation, /已验证达人/u);
   assert.match(candidates, /通用召回达人/u);
+});
+
+test("review score orders recommendations and sends the remainder to candidates", () => {
+  const plan = compileManualResearchPlan(
+    params({
+      facts: [
+        fact("product", "product_name", "办公软件"),
+        fact("count", "creator_count", 1, { role: "submission" }),
+      ],
+    }),
+  );
+  const lowScore = {
+    platform: "xingtu",
+    platform_id: "low-score",
+    nickname: "低分达人",
+    detail_url: "https://www.xingtu.cn/creator/low-score",
+    collection_mode: "filtered",
+  };
+  const highScore = {
+    ...lowScore,
+    platform_id: "high-score",
+    nickname: "高分达人",
+    detail_url: "https://www.xingtu.cn/creator/high-score",
+  };
+  const workbook = buildManualResearchWorkbook({
+    plan,
+    candidates: [lowScore, highScore],
+    details: [lowScore, highScore].map((candidate) => ({
+      candidate_ref: candidate.platform_id,
+      status: "complete",
+      fields: {},
+      hard_evaluation: { status: "pass", checks: [] },
+    })),
+    reviews: [
+      {
+        candidate_ref: "low-score",
+        decision: "include",
+        recommendation_score: 10,
+        reasons: ["可作为候选"],
+        evidence: ["详情证据"],
+      },
+      {
+        candidate_ref: "high-score",
+        decision: "include",
+        recommendation_score: 90,
+        reasons: ["优先推荐"],
+        evidence: ["详情证据"],
+      },
+    ],
+    artifact: {
+      run_id: "score-run",
+      status: "complete",
+      generated_at: "2026-08-20T00:00:00.000Z",
+      candidate_row_count: 2,
+      target_row_count: 1,
+      delivery_shortfall: 0,
+      run_info: {},
+    },
+  });
+
+  const recommendation = storedZipEntry(workbook, "xl/worksheets/sheet1.xml");
+  const candidates = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
+  assert.match(recommendation, /高分达人/u);
+  assert.doesNotMatch(recommendation, /低分达人/u);
+  assert.match(candidates, /低分达人/u);
+  assert.doesNotMatch(candidates, /高分达人/u);
 });

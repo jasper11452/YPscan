@@ -113,7 +113,7 @@ test("browser runtime enters an authenticated Xingtu workspace from the redirect
     waitForURL: async () => {},
     waitForTimeout: async () => {
       if (actions.filter(([kind]) => kind === "goto").length === 1) {
-        page.currentUrl = "https://www.xingtu.cn/?redirect_uri=/ad/creator/market";
+        page.currentUrl = "https://www.xingtu.cn/redirect_to/ad/creator/market";
       }
     },
     bringToFront: async () => {},
@@ -125,6 +125,10 @@ test("browser runtime enters an authenticated Xingtu workspace from the redirect
         setDefaultTimeout() {},
         setDefaultNavigationTimeout() {},
         once() {},
+        async newPage() {
+          actions.push(["new-page"]);
+          return page;
+        },
         close: async () => {},
       };
     },
@@ -136,7 +140,7 @@ test("browser runtime enters an authenticated Xingtu workspace from the redirect
   assert.equal(result.url(), "https://www.xingtu.cn/ad/creator/market");
   assert.deepEqual(actions, [
     ["goto", "https://www.xingtu.cn/ad/creator/market"],
-    ["account-click"],
+    ["new-page"],
     ["goto", "https://www.xingtu.cn/ad/creator/market"],
   ]);
 });

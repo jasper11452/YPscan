@@ -1,6 +1,6 @@
 # 蒲公英插件内人工拓展
 
-完成固定 Provider 链路并由用户选择“人工拓展并提报”后，调用：
+默认 `manual_source_creators` Excel 已保存，且用户明确选择“浏览器详细手扒”后，调用：
 
 `ypscan_manual_research(operation=start, requirement_id, platform=pgy, facts, keywords, quote_type?)`
 

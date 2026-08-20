@@ -5,7 +5,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { chromium } from "playwright-core";
 
 import {
-  isXingtuLoginRedirect,
+  isXingtuMarketRedirect,
   manualBrowserError,
   pageMatches,
   PLATFORM_RULES,
@@ -67,7 +67,7 @@ async function launchContext(launcher, profileDir) {
 
 /** Enter the Xingtu workspace when the public landing page already shows an authenticated account. */
 async function enterAuthenticatedXingtuWorkspace(page) {
-  if (!isXingtuLoginRedirect(page.url()) || typeof page.locator !== "function") return false;
+  if (!isXingtuMarketRedirect(page.url()) || typeof page.locator !== "function") return false;
   const account = page
     .locator(".user-info:visible")
     .filter({ hasText: /ID\s*[:：]\s*\d+/u })
@@ -75,8 +75,6 @@ async function enterAuthenticatedXingtuWorkspace(page) {
   const started = Date.now();
   while (Date.now() - started < 5_000) {
     if (await account.isVisible().catch(() => false)) {
-      await account.click();
-      await page.waitForURL(/\/ad\/creator\//u, { timeout: 10_000 });
       return true;
     }
     await page.waitForTimeout(200);
@@ -89,7 +87,7 @@ async function settleXingtuWorkspace(page) {
   if (typeof page.locator !== "function") return false;
   const started = Date.now();
   while (Date.now() - started < 12_000) {
-    if (isXingtuLoginRedirect(page.url())) {
+    if (isXingtuMarketRedirect(page.url())) {
       if (await enterAuthenticatedXingtuWorkspace(page)) return true;
     } else if (pageMatches("xingtu", page.url())) {
       if (typeof page.getByPlaceholder !== "function") return false;
@@ -145,9 +143,8 @@ export function createManualBrowserRuntime({
         await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: 15_000 });
       }
       if (platform === "xingtu" && (await settleXingtuWorkspace(page))) {
-        if (!pageMatches(platform, page.url())) {
-          await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: 15_000 });
-        }
+        page = typeof current.newPage === "function" ? await current.newPage() : page;
+        await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: 15_000 });
       }
       await page.bringToFront().catch(() => {});
       return page;

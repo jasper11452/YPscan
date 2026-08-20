@@ -76,6 +76,7 @@ export default {
                   "creator_detail_export",
                   "creator_preview",
                   "mcn_creator_preview",
+                  "manual_source",
                 ],
               },
               artifact_id: {

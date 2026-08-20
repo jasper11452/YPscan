@@ -8,6 +8,7 @@ import {
 } from "./manual-research-artifact.js";
 import {
   candidateReference,
+  detailQueueLimit,
   detailGroupsForPlan,
   evaluateCandidateDetail,
   mergeDetailRecords,
@@ -26,9 +27,6 @@ const RUN_BUDGET_MS = 180_000;
 const PERSIST_RESERVE_MS = 15_000;
 const ACTION_TIMEOUT_MS = 6_000;
 const DETAIL_TIMEOUT_MS = 20_000;
-const MAX_PAGES_PER_BRANCH = 5;
-const MAX_PAGES_TOTAL = 12;
-const MAX_DETAILS = 10;
 
 const PUBLIC_OPERATIONS = Object.freeze([
   "start",
@@ -77,6 +75,7 @@ export const MANUAL_RESEARCH_RUNNER_PARAMETERS = Object.freeze({
           decision: { type: "string", enum: ["include", "exclude"] },
           reasons: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
           evidence: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+          recommendation_score: { type: "integer", minimum: 0, maximum: 100 },
           extracted_fields: { type: "object" },
           field_evidence: {
             type: "array",
@@ -296,7 +295,25 @@ function cleanDiagnosticMessage(error) {
 }
 
 function detailTarget(plan) {
-  return Math.min(MAX_DETAILS, plan.target_count ?? MAX_DETAILS);
+  return detailQueueLimit(plan);
+}
+
+function qualifiedDetailCount(details, reviews) {
+  const detailMap = new Map(details.map((item) => [item.candidate_ref, item]));
+  return reviews.filter((review) => {
+    const detail = detailMap.get(review.candidate_ref);
+    return (
+      review.decision === "include" &&
+      detail?.status === "complete" &&
+      detail?.hard_evaluation?.status === "pass"
+    );
+  }).length;
+}
+
+function capturedOrCompletedDetailCount(details) {
+  return details.filter(
+    (detail) => detail.html_snapshots?.length || detail.status === "complete",
+  ).length;
 }
 
 function createRunInfo(params, plan, state, now, candidateCount = 0) {
@@ -450,7 +467,7 @@ function publicPayload({
         0,
       ),
     },
-    detail_failures: failedDetails.slice(-MAX_DETAILS).map((item) => ({
+    detail_failures: failedDetails.slice(-MANUAL_RESEARCH_PREVIEW_LIMIT).map((item) => ({
       candidate_ref: item.candidate_ref,
       nickname: item.nickname ?? null,
       stage: item.failure?.stage ?? "collect_detail",
@@ -564,7 +581,9 @@ export function createManualResearchRunner({
             ? {
                 next_call: htmlReadCall(params, params.run_id, result.review_batch[0]),
               }
-            : {}),
+            : result.next_call && typeof result.next_call === "object"
+              ? { next_call: result.next_call }
+              : {}),
         });
       }
       if (params.operation === "create_submission") {
@@ -629,7 +648,6 @@ export function createManualResearchRunner({
       const reviews = mergeReviewRecords(saved.reviews ?? []);
       const branches = [...(saved.branches ?? [])];
       const state = createState(saved);
-      const poolTarget = Math.min(200, Math.max(plan.target_count ?? 20, 20));
       const deadline = now() + RUN_BUDGET_MS - PERSIST_RESERVE_MS;
 
       const materialize = async (status, final = false) => {
@@ -648,10 +666,15 @@ export function createManualResearchRunner({
       };
 
       const latestRunnerState = saved.runner_states?.at(-1);
-      if (latestRunnerState?.phase === "terminal" && params.fresh_run !== true) {
+      const latestTerminalStatus =
+        saved.final_events?.at(-1)?.status ?? latestRunnerState?.execution_status;
+      if (
+        latestRunnerState?.phase === "terminal" &&
+        params.fresh_run !== true &&
+        latestTerminalStatus !== "partial"
+      ) {
         state.phase = "terminal";
-        const terminalStatus =
-          saved.final_events?.at(-1)?.status ?? latestRunnerState.execution_status ?? "complete";
+        const terminalStatus = latestTerminalStatus ?? "complete";
         const diagnosticRunnerState = [...(saved.runner_states ?? [])]
           .reverse()
           .find(
@@ -749,20 +772,16 @@ export function createManualResearchRunner({
           state.quality_level = "exact";
         }
 
-        const collect = async (branch, mode, applyFilters) => {
-          if (
-            now() >= deadline ||
-            candidates.length >= poolTarget ||
-            state.completed_pages >= MAX_PAGES_TOTAL
-          )
-            return;
+        const collect = async (branch, mode, applyFilters, preserveFilters = false) => {
           state.phase = "filtering";
           state.branch_index = branch.branch_index;
           state.keyword = branch.keyword;
           state.collection_mode = mode;
           if (mode !== "filtered") state.fallback_modes.add(mode);
-          await retryBrowserAction("重置筛选", () => adapter.reset(), adapter);
-          if (typeof adapter.verifyBaseline === "function") {
+          if (!preserveFilters) {
+            await retryBrowserAction("重置筛选", () => adapter.reset(), adapter);
+          }
+          if (!preserveFilters && typeof adapter.verifyBaseline === "function") {
             const baseline = await retryBrowserAction(
               "验证筛选复位",
               () => adapter.verifyBaseline(),
@@ -774,7 +793,7 @@ export function createManualResearchRunner({
             }
           }
           let allApplied = true;
-          if (applyFilters) {
+          if (applyFilters && !preserveFilters) {
             if (plan.price_view) {
               try {
                 const result = await retryBrowserAction(
@@ -794,7 +813,6 @@ export function createManualResearchRunner({
               }
             }
             for (const filter of plan.filters) {
-              if (now() >= deadline) break;
               const label = `${filter.control}:${filter.values?.join("/") ?? `${filter.min ?? ""}-${filter.max ?? ""}`}`;
               try {
                 const result = await retryBrowserAction(
@@ -834,15 +852,7 @@ export function createManualResearchRunner({
             }
           }
           state.phase = "collecting_list";
-          for (let pageNumber = 1; pageNumber <= MAX_PAGES_PER_BRANCH; pageNumber += 1) {
-            if (
-              now() >= deadline ||
-              candidates.length >= poolTarget ||
-              state.completed_pages >= MAX_PAGES_TOTAL
-            ) {
-              timedOut ||= now() >= deadline;
-              break;
-            }
+          for (let pageNumber = 1; ; pageNumber += 1) {
             state.page_number = pageNumber;
             let usedGenericDom = false;
             let pageData;
@@ -908,9 +918,9 @@ export function createManualResearchRunner({
           }
         };
 
-        const collectSafely = async (branch, mode, applyFilters) => {
+        const collectSafely = async (branch, mode, applyFilters, preserveFilters = false) => {
           try {
-            await collect(branch, mode, applyFilters);
+            await collect(branch, mode, applyFilters, preserveFilters);
           } catch (error) {
             if (needsUser(error) || persistenceFailure(error)) throw error;
             state.error_code = error?.code ?? "YPSCAN_MANUAL_PAGE_UNAVAILABLE";
@@ -920,21 +930,19 @@ export function createManualResearchRunner({
           }
         };
 
+        let filteredBranchCount = 0;
         for (const branch of plan.branches) {
           if (state.completed_branch_indexes.has(branch.branch_index)) continue;
-          await collectSafely(branch, "filtered", true);
-          if (candidates.length < poolTarget && now() < deadline) {
-            await collectSafely(branch, "keyword_only", false);
-          }
+          await collectSafely(branch, "filtered", true, filteredBranchCount > 0);
+          filteredBranchCount += 1;
           state.completed_branch_indexes.add(branch.branch_index);
           state.completed_keywords.add(branch.keyword);
           const completed = { ...branch, collection: { status: "complete" } };
           branches.push(completed);
           await store.saveBranch(completed);
-          if (candidates.length >= poolTarget || now() >= deadline) break;
         }
 
-        if (candidates.length < poolTarget && now() < deadline) {
+        if (candidates.length < detailTarget(plan) && now() < deadline) {
           await collectSafely(
             { branch_index: plan.branches.length, branch_id: "market-unfiltered", keyword: "" },
             "market_unfiltered",
@@ -954,12 +962,12 @@ export function createManualResearchRunner({
             (left, right) =>
               Number(needsExactPrice(right, plan)) - Number(needsExactPrice(left, plan)),
           );
-        const htmlCaptureTarget = Math.min(detailTarget(plan) * 2, 20);
+        const qualifiedCount = qualifiedDetailCount(details, reviews);
+        const htmlCaptureTarget =
+          capturedOrCompletedDetailCount(details) +
+          Math.max(detailTarget(plan) - qualifiedCount, 0);
         for (const candidate of detailCandidates) {
-          if (
-            state.detail_completed >= detailTarget(plan) ||
-            state.detail_captured >= htmlCaptureTarget
-          ) {
+          if (capturedOrCompletedDetailCount(details) >= htmlCaptureTarget) {
             break;
           }
           if (now() >= deadline) {
@@ -1072,10 +1080,13 @@ export function createManualResearchRunner({
 
         timedOut ||= now() >= deadline;
         state.phase = "terminal";
-        const detailShortfall = state.detail_completed < detailTarget(plan);
         const hasPendingExtraction = details.some(
           (detail) => detail.status === "awaiting_extraction",
         );
+        const detailCompleteCount = details.some((detail) => detail.html_snapshots?.length)
+          ? qualifiedDetailCount(details, reviews)
+          : state.detail_completed;
+        const detailShortfall = detailCompleteCount < detailTarget(plan);
         const status = hasPendingExtraction
           ? "awaiting_extraction"
           : candidates.length
@@ -1151,8 +1162,6 @@ export function createManualResearchRunner({
 export const MANUAL_RESEARCH_RUNNER_LIMITS = Object.freeze({
   run_budget_ms: RUN_BUDGET_MS,
   persist_reserve_ms: PERSIST_RESERVE_MS,
-  max_pages_per_branch: MAX_PAGES_PER_BRANCH,
-  max_pages_total: MAX_PAGES_TOTAL,
-  max_details: MAX_DETAILS,
+  detail_target_multiplier: 2,
   detail_timeout_ms: DETAIL_TIMEOUT_MS,
 });
