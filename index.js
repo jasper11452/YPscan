@@ -32,7 +32,7 @@ export default {
         return {
           name: "ypscan_manual_research",
           description:
-            "产物优先的双平台手扒 Runner：start/resume 由插件直接控制专用持久 Chrome，筛选失败逐级降级并始终优先生成本地 Excel；apply_reviews/create_submission 为可选后续。",
+            "产物优先的双平台手扒 Runner：start/resume 控制专用持久 Chrome 并保存原始详情 HTML；read_detail_html 分块交给 Agent 提炼，apply_reviews 回写字段和逐字证据；create_submission 为可选后续。",
           parameters: MANUAL_RESEARCH_RUNNER_PARAMETERS,
           async execute(_id, params) {
             return manualResearch(params);

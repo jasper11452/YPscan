@@ -380,11 +380,12 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
         reason: advanced ? null : "result_refresh_not_observed",
       };
     },
-    async collectDetail(candidate, { groups }) {
+    async collectDetail(candidate, { groups, onHtmlSnapshot }) {
       return collectCreatorDetail(page, "pgy", candidate, {
         groups,
         learnedPaths: learnedDetailPaths,
         capturedAt: new Date(now()).toISOString(),
+        onHtmlSnapshot,
       });
     },
     async paceDetail() {

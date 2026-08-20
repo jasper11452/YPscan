@@ -1,22 +1,40 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, realpath, rename, stat, unlink } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  stat,
+  unlink,
+} from "node:fs/promises";
+import { isAbsolute, join, relative } from "node:path";
 import { checkCandidatePrice, parseManualPrice } from "./manual-research-price-check.js";
 import { mergeManualCandidates } from "./manual-research-plan.js";
 import {
   candidateReference,
+  DETAIL_EXTRACTION_FIELDS,
   detailQueueLimit,
+  evaluateCandidateDetail,
   evaluateCandidateList,
   mergeDetailRecords,
   mergeReviewRecords,
+  missingRequiredDetailFields,
   reviewEvidenceGaps,
   reviewBatch,
 } from "./manual-research-detail.js";
 
 export const MANUAL_RESEARCH_PREVIEW_LIMIT = 20;
 
-const CHECKPOINT_VERSION = 2;
+const CHECKPOINT_VERSION = 3;
 const ARTIFACT_DIR = "ypscan-manual-research";
+const HTML_CHUNK_SIZE = 32_000;
+const MAX_FIELD_EVIDENCE = 128;
+const MAX_EVIDENCE_QUOTE_LENGTH = 4_000;
+const RUNTIME_IGNORE_CONTENT = "*\n!.gitignore\n";
+const AGENT_DETAIL_FIELDS = new Set(DETAIL_EXTRACTION_FIELDS);
 
 function clean(value) {
   return String(value ?? "")
@@ -136,6 +154,7 @@ function replayCheckpointEvents(events, fingerprint = null) {
     phase_transitions: [],
     runner_states: [],
     final_events: [],
+    html_reads: [],
   };
   const branchMap = new Map();
   for (const event of events) {
@@ -163,6 +182,7 @@ function replayCheckpointEvents(events, fingerprint = null) {
       state.phase_transitions.push(event.transition);
     }
     if (event.type === "runner_state" && event.state) state.runner_states.push(event.state);
+    if (event.type === "html_read" && event.read) state.html_reads.push(event.read);
     if (event.type === "final") state.final_events.push(event);
   }
   state.branches = [...branchMap.values()];
@@ -185,6 +205,68 @@ async function writeAtomic(path, buffer) {
   } finally {
     await unlink(tempPath).catch(() => {});
   }
+}
+
+function evidenceStorageKey(candidateRef, sha256) {
+  const candidateHash = createHash("sha256").update(String(candidateRef)).digest("hex");
+  return join("evidence", candidateHash, `${sha256}.html`);
+}
+
+async function ensureRuntimeIgnore(root) {
+  const path = join(root, ".gitignore");
+  try {
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw Object.assign(new Error("运行目录 .gitignore 不是普通文件"), {
+        code: "YPSCAN_MANUAL_RUNTIME_IGNORE_INVALID",
+      });
+    }
+    if ((await readFile(path, "utf8")) !== RUNTIME_IGNORE_CONTENT) {
+      await writeAtomic(path, Buffer.from(RUNTIME_IGNORE_CONTENT, "utf8"));
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    await writeAtomic(path, Buffer.from(RUNTIME_IGNORE_CONTENT, "utf8"));
+  }
+}
+
+async function writeHtmlEvidence(runDir, candidateRef, snapshot) {
+  const html = String(snapshot.html ?? "");
+  if (!html) {
+    throw Object.assign(new Error("详情 HTML 为空"), {
+      code: "YPSCAN_MANUAL_HTML_EVIDENCE_EMPTY",
+    });
+  }
+  const sha256 = createHash("sha256").update(html).digest("hex");
+  const storageKey = evidenceStorageKey(candidateRef, sha256);
+  const evidenceDir = join(
+    runDir,
+    "evidence",
+    createHash("sha256").update(String(candidateRef)).digest("hex"),
+  );
+  await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
+  const path = join(runDir, storageKey);
+  try {
+    const existing = await lstat(path);
+    if (existing.isSymbolicLink() || !existing.isFile()) {
+      throw Object.assign(new Error("HTML 证据目标不是普通文件"), {
+        code: "YPSCAN_MANUAL_HTML_EVIDENCE_INVALID",
+      });
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    await writeAtomic(path, Buffer.from(html, "utf8"));
+  }
+  return {
+    snapshot_id: randomUUID(),
+    group: snapshot.group ?? "summary",
+    url: snapshot.url ?? null,
+    captured_at: snapshot.captured_at ?? new Date().toISOString(),
+    sha256,
+    character_count: html.length,
+    byte_count: Buffer.byteLength(html),
+    storage_key: storageKey,
+  };
 }
 
 function xml(value) {
@@ -850,10 +932,16 @@ function disabledStore() {
       phase_transitions: [],
       runner_states: [],
       final_events: [],
+      html_reads: [],
     },
     async savePage() {},
     async saveBranch() {},
     async saveDetail() {},
+    async saveDetailHtmlSnapshot() {
+      throw Object.assign(new Error("workspace_dir_unavailable"), {
+        code: "YPSCAN_MANUAL_WORKSPACE_UNAVAILABLE",
+      });
+    },
     async saveInterruption() {},
     async saveSelection() {},
     async saveBrowserState() {},
@@ -882,6 +970,7 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
   if (!(await stat(workspacePath)).isDirectory()) return disabledStore();
   const root = join(workspacePath, ARTIFACT_DIR);
   await mkdir(root, { recursive: true });
+  await ensureRuntimeIgnore(root);
   const fingerprint = fingerprintFor(params, plan);
   const baseRunName = `${params.platform}-${safeSegment(params.requirement_id)}-${fingerprint.slice(0, 12)}`;
   const latestPointerPath = join(root, `${baseRunName}.latest`);
@@ -1113,6 +1202,14 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
       await append({ type: "detail", detail });
       return materialize({ ...state, appendFinal: false });
     },
+    async saveDetailHtmlSnapshot({ candidateRef, ...snapshot }) {
+      try {
+        return await writeHtmlEvidence(runDir, candidateRef, snapshot);
+      } catch (error) {
+        if (!error?.code) error.code = "YPSCAN_MANUAL_HTML_EVIDENCE_FAILED";
+        throw error;
+      }
+    },
     async saveInterruption(interruption) {
       await append({ type: "interruption", interruption });
     },
@@ -1203,8 +1300,193 @@ export async function loadManualResearchRun({ workspaceDir, runId, requirementId
     phase_transitions: restored.phase_transitions,
     runner_states: restored.runner_states,
     final_events: restored.final_events,
+    html_reads: restored.html_reads,
     event_count: restored.event_count,
     page_count: restored.page_count,
+    checkpoint_version: runEvent.version ?? 1,
+  };
+}
+
+function safeEvidencePath(runDir, storageKey) {
+  if (!/^evidence\/[a-f0-9]{64}\/[a-f0-9]{64}\.html$/u.test(String(storageKey ?? ""))) {
+    throw Object.assign(new Error("HTML 证据路径无效"), {
+      code: "YPSCAN_MANUAL_HTML_EVIDENCE_INVALID",
+    });
+  }
+  return join(runDir, storageKey);
+}
+
+async function htmlForSnapshot(runDir, snapshot) {
+  const path = safeEvidencePath(runDir, snapshot.storage_key);
+  const fileInfo = await lstat(path);
+  if (fileInfo.isSymbolicLink() || !fileInfo.isFile()) {
+    throw Object.assign(new Error("HTML 证据不是普通文件"), {
+      code: "YPSCAN_MANUAL_HTML_EVIDENCE_INVALID",
+    });
+  }
+  const resolvedRunDir = await realpath(runDir);
+  const resolvedPath = await realpath(path);
+  const relativePath = relative(resolvedRunDir, resolvedPath);
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw Object.assign(new Error("HTML 证据路径越界"), {
+      code: "YPSCAN_MANUAL_HTML_EVIDENCE_INVALID",
+    });
+  }
+  const html = await readFile(resolvedPath, "utf8");
+  const sha256 = createHash("sha256").update(html).digest("hex");
+  if (sha256 !== snapshot.sha256) {
+    throw Object.assign(new Error("HTML 证据与检查点记录不一致"), {
+      code: "YPSCAN_MANUAL_HTML_EVIDENCE_MISMATCH",
+    });
+  }
+  return html;
+}
+
+function htmlReadProgress(snapshot, candidateRef, reads) {
+  let progress = 0;
+  for (const read of reads ?? []) {
+    if (
+      read.candidate_ref !== candidateRef ||
+      read.snapshot_id !== snapshot.snapshot_id ||
+      read.sha256 !== snapshot.sha256
+    ) {
+      continue;
+    }
+    if (read.cursor === progress && read.next_cursor > progress) {
+      progress = Math.min(read.next_cursor, snapshot.character_count);
+    }
+  }
+  return progress;
+}
+
+function incompleteHtmlSnapshots(detail, reads) {
+  return (detail.html_snapshots ?? []).filter(
+    (snapshot) =>
+      htmlReadProgress(snapshot, detail.candidate_ref, reads) < snapshot.character_count,
+  );
+}
+
+/** Read one bounded chunk from a persisted raw creator-detail HTML snapshot. */
+export async function readManualResearchHtml({
+  workspaceDir,
+  runId,
+  requirementId,
+  platform,
+  candidateRef,
+  snapshotId,
+  cursor = 0,
+}) {
+  const loaded = await loadManualResearchRun({
+    workspaceDir,
+    runId,
+    requirementId,
+    platform,
+  });
+  if (loaded.checkpoint_version < 3) {
+    throw Object.assign(new Error("旧运行没有原始 HTML 证据，请使用 fresh_run 重新采集"), {
+      code: "YPSCAN_MANUAL_HTML_EVIDENCE_REQUIRED",
+    });
+  }
+  const detail = loaded.details.find((item) => item.candidate_ref === candidateRef);
+  const snapshots = detail?.html_snapshots ?? [];
+  const snapshotIndex = snapshots.findIndex((item) => item.snapshot_id === snapshotId);
+  const snapshot = snapshots[snapshotIndex];
+  if (!snapshot) {
+    throw Object.assign(new Error("未找到该达人对应的 HTML 快照"), {
+      code: "YPSCAN_MANUAL_HTML_EVIDENCE_NOT_FOUND",
+    });
+  }
+  if (!Number.isInteger(cursor) || cursor < 0 || cursor >= snapshot.character_count) {
+    throw Object.assign(new Error("HTML 读取游标无效"), {
+      code: "YPSCAN_MANUAL_ARGUMENT_INVALID",
+    });
+  }
+  const progress = htmlReadProgress(snapshot, candidateRef, loaded.html_reads);
+  const replayedRead = loaded.html_reads.find(
+    (read) =>
+      read.candidate_ref === candidateRef &&
+      read.snapshot_id === snapshotId &&
+      read.sha256 === snapshot.sha256 &&
+      read.cursor === cursor,
+  );
+  if (cursor !== progress && !replayedRead) {
+    throw Object.assign(new Error(`HTML 必须从游标 ${progress} 连续读取`), {
+      code: "YPSCAN_MANUAL_HTML_READ_OUT_OF_SEQUENCE",
+    });
+  }
+  const earlierIncomplete = snapshots
+    .slice(0, snapshotIndex)
+    .some((item) => htmlReadProgress(item, candidateRef, loaded.html_reads) < item.character_count);
+  if (!replayedRead && earlierIncomplete) {
+    throw Object.assign(new Error("必须先读完当前达人更早的 HTML 快照"), {
+      code: "YPSCAN_MANUAL_HTML_READ_OUT_OF_SEQUENCE",
+    });
+  }
+  const runDir = join(await realpath(workspaceDir), ARTIFACT_DIR, safeRunId(runId));
+  const html = await htmlForSnapshot(runDir, snapshot);
+  const nextCursor = replayedRead?.next_cursor ?? Math.min(cursor + HTML_CHUNK_SIZE, html.length);
+  const eof = nextCursor >= html.length;
+  if (!replayedRead) {
+    await appendDurable(join(runDir, "checkpoint.jsonl"), {
+      version: CHECKPOINT_VERSION,
+      fingerprint: loaded.fingerprint,
+      captured_at: new Date().toISOString(),
+      type: "html_read",
+      read: {
+        candidate_ref: candidateRef,
+        snapshot_id: snapshot.snapshot_id,
+        sha256: snapshot.sha256,
+        cursor,
+        next_cursor: nextCursor,
+        eof,
+      },
+    });
+  }
+  const reads = replayedRead
+    ? loaded.html_reads
+    : [
+        ...loaded.html_reads,
+        {
+          candidate_ref: candidateRef,
+          snapshot_id: snapshot.snapshot_id,
+          sha256: snapshot.sha256,
+          cursor,
+          next_cursor: nextCursor,
+          eof,
+        },
+      ];
+  const nextSnapshot = eof
+    ? (snapshots.find(
+        (item) => htmlReadProgress(item, candidateRef, reads) < item.character_count,
+      ) ?? null)
+    : null;
+  const extractionReady = snapshots.every(
+    (item) => htmlReadProgress(item, candidateRef, reads) >= item.character_count,
+  );
+  const extractionTask = extractionReady
+    ? reviewBatch(loaded.candidates, loaded.details, loaded.reviews, {
+        plan: loaded.plan,
+        requirements: loaded.plan.review_requirements,
+      }).tasks.find((task) => task.candidate_ref === candidateRef)
+    : null;
+  return {
+    candidate_ref: candidateRef,
+    snapshot: {
+      snapshot_id: snapshot.snapshot_id,
+      group: snapshot.group,
+      url: snapshot.url,
+      captured_at: snapshot.captured_at,
+      sha256: snapshot.sha256,
+      character_count: snapshot.character_count,
+      byte_count: snapshot.byte_count,
+    },
+    cursor,
+    html_chunk: html.slice(cursor, nextCursor),
+    next_cursor: eof ? null : nextCursor,
+    eof,
+    next_snapshot_id: nextSnapshot?.snapshot_id ?? null,
+    extraction_ready: extractionReady,
+    ...(extractionTask ? { extraction_task: extractionTask } : {}),
   };
 }
 
@@ -1222,14 +1504,8 @@ export async function createManualResearchSubmission({
     requirementId,
     platform,
   });
-  const pending = reviewBatch(loaded.candidates, loaded.details, loaded.reviews, {
-    requirements: loaded.plan.review_requirements,
-  });
-  if (pending.remaining > 0) {
-    throw Object.assign(new Error("仍有达人尚未完成语义复核"), {
-      code: "YPSCAN_MANUAL_SUBMISSION_REVIEW_PENDING",
-    });
-  }
+  const target = Math.min(10, loaded.plan.target_count ?? 10);
+  const usesHtmlExtraction = loaded.details.some((detail) => detail.html_snapshots?.length);
   const checkedCandidates = candidatesWithPriceCheck(loaded.candidates, loaded.plan);
   const selected = finalCandidates(
     checkedCandidates,
@@ -1237,6 +1513,18 @@ export async function createManualResearchSubmission({
     loaded.reviews,
     loaded.plan.target_count,
   );
+  const pending =
+    usesHtmlExtraction && selected.length >= target
+      ? { tasks: [], remaining: 0 }
+      : reviewBatch(loaded.candidates, loaded.details, loaded.reviews, {
+          plan: loaded.plan,
+          requirements: loaded.plan.review_requirements,
+        });
+  if (pending.remaining > 0) {
+    throw Object.assign(new Error("仍有达人尚未完成语义复核"), {
+      code: "YPSCAN_MANUAL_SUBMISSION_REVIEW_PENDING",
+    });
+  }
   if (!selected.length) {
     throw Object.assign(new Error("当前运行没有最终纳入达人"), {
       code: "YPSCAN_MANUAL_SUBMISSION_EMPTY",
@@ -1273,6 +1561,163 @@ export async function createManualResearchSubmission({
 
 function mergeStoredCandidates(candidates) {
   return mergeManualCandidates(candidates);
+}
+
+function hasExtractedValue(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") return Object.keys(value).length > 0;
+  return value !== null && value !== undefined && value !== "";
+}
+
+function comparableEvidenceText(value) {
+  return String(value ?? "")
+    .replace(/&amp;/giu, "&")
+    .replace(/&quot;/giu, '"')
+    .replace(/(?:&#39;|&apos;)/giu, "'")
+    .replace(/&lt;/giu, "<")
+    .replace(/&gt;/giu, ">")
+    .replace(/[\s,，¥￥$元]/gu, "")
+    .toLowerCase();
+}
+
+function evidenceValues(field, value) {
+  const values = [];
+  const visit = (item) => {
+    if (Array.isArray(item)) {
+      for (const entry of item) visit(entry);
+      return;
+    }
+    if (item && typeof item === "object") {
+      for (const entry of Object.values(item)) visit(entry);
+      return;
+    }
+    if (hasExtractedValue(item)) values.push(item);
+  };
+  visit(value);
+  if (field === "price_by_tier" && value && typeof value === "object" && !Array.isArray(value)) {
+    values.push(...Object.keys(value));
+  }
+  return values;
+}
+
+function quoteSupportsValue(quotes, value) {
+  const expected = comparableEvidenceText(value);
+  if (!expected) return true;
+  if (quotes.some((quote) => comparableEvidenceText(quote).includes(expected))) return true;
+  if (typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) > 1) return false;
+  const percentage = comparableEvidenceText(`${value * 100}%`);
+  return quotes.some((quote) => comparableEvidenceText(quote).includes(percentage));
+}
+
+async function validateAgentExtraction(runDir, detail, review, plan, candidate) {
+  if (!review.extracted_fields || typeof review.extracted_fields !== "object") {
+    throw Object.assign(new Error(`达人缺少 Agent 提炼字段：${review.candidate_ref}`), {
+      code: "YPSCAN_MANUAL_EXTRACTION_FIELDS_REQUIRED",
+    });
+  }
+  const unknownFields = Object.keys(review.extracted_fields).filter(
+    (field) => !AGENT_DETAIL_FIELDS.has(field),
+  );
+  if (unknownFields.length) {
+    throw Object.assign(new Error(`Agent 提炼包含未知字段：${unknownFields.join(", ")}`), {
+      code: "YPSCAN_MANUAL_EXTRACTION_FIELD_INVALID",
+    });
+  }
+  if (JSON.stringify(review.extracted_fields).length > 200_000) {
+    throw Object.assign(new Error("Agent 提炼字段过大"), {
+      code: "YPSCAN_MANUAL_EXTRACTION_FIELDS_TOO_LARGE",
+    });
+  }
+  if (!Array.isArray(review.field_evidence) || review.field_evidence.length > MAX_FIELD_EVIDENCE) {
+    throw Object.assign(new Error("字段证据必须是有界数组"), {
+      code: "YPSCAN_MANUAL_EXTRACTION_EVIDENCE_INVALID",
+    });
+  }
+  const snapshots = new Map(
+    (detail.html_snapshots ?? []).map((snapshot) => [snapshot.snapshot_id, snapshot]),
+  );
+  const htmlBySnapshot = new Map();
+  const loadHtml = (snapshot) => {
+    if (!htmlBySnapshot.has(snapshot.snapshot_id)) {
+      htmlBySnapshot.set(snapshot.snapshot_id, htmlForSnapshot(runDir, snapshot));
+    }
+    return htmlBySnapshot.get(snapshot.snapshot_id);
+  };
+  const evidenceByField = new Map();
+  for (const evidence of review.field_evidence) {
+    if (!AGENT_DETAIL_FIELDS.has(evidence?.field)) {
+      throw Object.assign(new Error(`字段证据名称无效：${evidence?.field ?? "空"}`), {
+        code: "YPSCAN_MANUAL_EXTRACTION_EVIDENCE_INVALID",
+      });
+    }
+    const snapshot = snapshots.get(evidence.snapshot_id);
+    if (!snapshot) {
+      throw Object.assign(new Error(`字段证据不属于当前达人：${evidence.snapshot_id}`), {
+        code: "YPSCAN_MANUAL_EXTRACTION_EVIDENCE_INVALID",
+      });
+    }
+    const quote = String(evidence.quote ?? "");
+    if (!quote) {
+      throw Object.assign(new Error(`字段证据为空：${evidence.field}`), {
+        code: "YPSCAN_MANUAL_EXTRACTION_EVIDENCE_INVALID",
+      });
+    }
+    if (quote.length > MAX_EVIDENCE_QUOTE_LENGTH) {
+      throw Object.assign(new Error(`字段证据过长：${evidence.field}`), {
+        code: "YPSCAN_MANUAL_EXTRACTION_EVIDENCE_INVALID",
+      });
+    }
+    const html = await loadHtml(snapshot);
+    if (!html.includes(quote)) {
+      throw Object.assign(new Error(`字段证据未在原始 HTML 中找到：${evidence.field}`), {
+        code: "YPSCAN_MANUAL_EXTRACTION_EVIDENCE_NOT_FOUND",
+      });
+    }
+    const fieldEvidence = evidenceByField.get(evidence.field) ?? [];
+    fieldEvidence.push(evidence);
+    evidenceByField.set(evidence.field, fieldEvidence);
+  }
+  const fieldsWithoutEvidence = Object.entries(review.extracted_fields)
+    .filter(([, value]) => hasExtractedValue(value))
+    .map(([field]) => field)
+    .filter((field) => !evidenceByField.has(field));
+  if (fieldsWithoutEvidence.length) {
+    throw Object.assign(
+      new Error(`Agent 提炼字段缺少 HTML 引用：${fieldsWithoutEvidence.join(", ")}`),
+      { code: "YPSCAN_MANUAL_EXTRACTION_EVIDENCE_REQUIRED" },
+    );
+  }
+  for (const [field, value] of Object.entries(review.extracted_fields)) {
+    if (!hasExtractedValue(value)) continue;
+    const quotes = (evidenceByField.get(field) ?? []).map((evidence) => evidence.quote);
+    const unsupported = evidenceValues(field, value).filter(
+      (item) => !quoteSupportsValue(quotes, item),
+    );
+    if (unsupported.length) {
+      throw Object.assign(new Error(`字段值与 HTML 引用不一致：${field}`), {
+        code: "YPSCAN_MANUAL_EXTRACTION_VALUE_MISMATCH",
+        details: { field, unsupported_values: unsupported.slice(0, 10) },
+      });
+    }
+  }
+  const evaluation = evaluateCandidateDetail(candidate, { fields: review.extracted_fields }, plan);
+  const missingFields = missingRequiredDetailFields(plan, evaluation.fields);
+  const status = missingFields.length ? "partial" : "complete";
+  if (review.decision === "include" && (status !== "complete" || evaluation.status !== "pass")) {
+    throw Object.assign(new Error(`达人未通过完整度或硬条件校验：${review.candidate_ref}`), {
+      code: "YPSCAN_MANUAL_REVIEW_EVIDENCE_MISSING",
+      details: { missing_fields: missingFields, hard_status: evaluation.status },
+    });
+  }
+  return {
+    ...detail,
+    status,
+    reason: missingFields.length ? "required_fields_missing" : null,
+    fields: evaluation.fields,
+    hard_evaluation: evaluation,
+    missing_fields: missingFields,
+    extracted_at: new Date().toISOString(),
+  };
 }
 
 /** Apply one Agent review batch to an existing checkpointed run. */
@@ -1313,33 +1758,64 @@ export async function applyManualResearchReviews({
       code: "YPSCAN_MANUAL_REVIEW_RUN_MISMATCH",
     });
   }
+  if ((runEvent.version ?? 1) < 3) {
+    throw Object.assign(new Error("旧运行没有原始 HTML 证据，只能读取已有终态产物"), {
+      code: "YPSCAN_MANUAL_HTML_EVIDENCE_REQUIRED",
+    });
+  }
   const plan = runEvent.plan;
   const params = runEvent.params;
   const restored = replayCheckpointEvents(events);
   const candidates = mergeStoredCandidates(restored.candidates);
-  const details = restored.details;
+  let details = restored.details;
   const detailMap = detailMapFor(details);
   const candidateReferences = new Set(candidates.map(candidateReference));
+  const updatedDetails = [];
   for (const review of reviews) {
-    if (
-      !candidateReferences.has(review.candidate_ref) ||
-      detailMap.get(review.candidate_ref)?.hard_evaluation?.status !== "pass"
-    ) {
+    const detail = detailMap.get(review.candidate_ref);
+    const candidate = candidates.find((item) => candidateReference(item) === review.candidate_ref);
+    if (!candidateReferences.has(review.candidate_ref) || !detail || !candidate) {
       throw Object.assign(new Error(`达人不在当前待复核批次：${review.candidate_ref}`), {
         code: "YPSCAN_MANUAL_REVIEW_CANDIDATE_INVALID",
       });
     }
-    if (
-      review.decision === "include" &&
-      reviewEvidenceGaps(detailMap.get(review.candidate_ref), plan.review_requirements).length
-    ) {
-      throw Object.assign(new Error(`达人缺少必要复核证据：${review.candidate_ref}`), {
-        code: "YPSCAN_MANUAL_REVIEW_EVIDENCE_MISSING",
-      });
+    if (detail.html_snapshots?.length) {
+      const unreadSnapshots = incompleteHtmlSnapshots(detail, restored.html_reads);
+      if (unreadSnapshots.length) {
+        throw Object.assign(new Error(`达人 HTML 尚未读完：${review.candidate_ref}`), {
+          code: "YPSCAN_MANUAL_HTML_READ_INCOMPLETE",
+          details: { snapshot_ids: unreadSnapshots.map((snapshot) => snapshot.snapshot_id) },
+        });
+      }
+      updatedDetails.push(await validateAgentExtraction(runDir, detail, review, plan, candidate));
+    } else {
+      if (detail.hard_evaluation?.status !== "pass") {
+        throw Object.assign(new Error(`达人不在当前待复核批次：${review.candidate_ref}`), {
+          code: "YPSCAN_MANUAL_REVIEW_CANDIDATE_INVALID",
+        });
+      }
+      if (
+        review.decision === "include" &&
+        reviewEvidenceGaps(detail, plan.review_requirements).length
+      ) {
+        throw Object.assign(new Error(`达人缺少必要复核证据：${review.candidate_ref}`), {
+          code: "YPSCAN_MANUAL_REVIEW_EVIDENCE_MISSING",
+        });
+      }
     }
   }
   const fingerprint = runEvent.fingerprint;
   const capturedAt = new Date(now()).toISOString();
+  for (const detail of updatedDetails) {
+    await appendDurable(checkpointPath, {
+      version: CHECKPOINT_VERSION,
+      fingerprint,
+      captured_at: capturedAt,
+      type: "detail",
+      detail: { ...detail, extracted_at: capturedAt },
+    });
+  }
+  details = mergeDetailRecords([...details, ...updatedDetails]);
   for (const review of reviews) {
     await appendDurable(checkpointPath, {
       version: CHECKPOINT_VERSION,
@@ -1350,11 +1826,30 @@ export async function applyManualResearchReviews({
     });
   }
   const mergedReviews = mergeReviewRecords([...restored.reviews, ...reviews]);
-  const batch = reviewBatch(candidates, details, mergedReviews, {
+  const target = Math.min(10, plan.target_count ?? 10);
+  const usesHtmlExtraction = details.some((detail) => detail.html_snapshots?.length);
+  const completed = details.filter(
+    (detail) =>
+      detail.status === "complete" &&
+      (!usesHtmlExtraction || (detail.html_snapshots?.length && detail.extracted_at)),
+  ).length;
+  const selected = finalCandidates(candidates, details, mergedReviews, plan.target_count);
+  const qualified = selected.length;
+  const targetReached = qualified >= target;
+  const pendingBatch = reviewBatch(candidates, details, mergedReviews, {
+    plan,
     requirements: plan.review_requirements,
   });
-  const status = batch.remaining > 0 ? "reviewing" : "complete";
-  const selected = finalCandidates(candidates, details, mergedReviews, plan.target_count);
+  const batch = usesHtmlExtraction && targetReached ? { tasks: [], remaining: 0 } : pendingBatch;
+  const status = usesHtmlExtraction
+    ? targetReached
+      ? "complete"
+      : batch.remaining > 0
+        ? "reviewing"
+        : "partial"
+    : batch.remaining > 0
+      ? "reviewing"
+      : "complete";
   const artifact = createArtifactMetadata({
     runId: entry.name,
     checkpointPath,
@@ -1365,7 +1860,7 @@ export async function applyManualResearchReviews({
     detailPlannedCount: detailQueueLimit(plan),
     targetRowCount: selected.length,
     deliveryShortfall: plan.target_count ? Math.max(plan.target_count - selected.length, 0) : 0,
-    checkpointEventCount: events.length + reviews.length + 1,
+    checkpointEventCount: events.length + updatedDetails.length + reviews.length + 1,
     generatedAt: capturedAt,
     deliveryMessage: "复核结果已写回同一 Excel；请向用户展示 excel_path。",
   });
@@ -1391,6 +1886,17 @@ export async function applyManualResearchReviews({
     reviews: mergedReviews,
     review_batch: batch.tasks,
     review_remaining: batch.remaining,
+    detail_progress: {
+      target,
+      captured: details.filter((detail) => detail.html_snapshots?.length).length,
+      awaiting_extraction: details.filter((detail) => detail.status === "awaiting_extraction")
+        .length,
+      completed,
+      qualified,
+      partial: details.filter((detail) => detail.status === "partial").length,
+      failed: details.filter((detail) => detail.status === "failed").length,
+      shortfall: Math.max(target - qualified, 0),
+    },
     status,
     artifact,
   };
