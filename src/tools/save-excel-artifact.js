@@ -20,6 +20,7 @@ export const EXCEL_ARTIFACT_KINDS = Object.freeze([
   "creator_detail_export",
   "creator_preview",
   "mcn_creator_preview",
+  "manual_source",
 ]);
 export const MAX_EXCEL_ARTIFACT_BYTES = 20 * 1024 * 1024;
 export const EXCEL_ARTIFACT_TIMEOUT_MS = 20_000;

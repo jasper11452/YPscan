@@ -136,10 +136,9 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /CREATOR_PREVIEW_LOCAL_PATH/u);
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
+  assert.match(directiveText(rank), /默认直接调用 manual_source_creators/u);
+  assert.match(directiveText(rank), /Excel 保存到本地后/u);
   assert.match(directiveText(rank), /ypscan_manual_research\(operation=start\)/u);
-  assert.match(directiveText(rank), /插件内专用持久 Chrome/u);
-  assert.match(directiveText(rank), /不得调用 Browser、Bash、Playwright CLI/u);
-  assert.match(directiveText(rank), /旧 capture\/selection 工具/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
   const question = argsFromDirective(directiveText(rank));
   assert.deepEqual(
@@ -185,6 +184,50 @@ test("creator preview save keeps the local path and continues to rank", () => {
   assert.deepEqual(
     argsFromDirective(failedText).questions[0].options.map((option) => option.label),
     ["重试", "结束本次"],
+  );
+});
+
+test("default manual sourcing saves its Excel before offering browser detail research", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const sourced = persist({
+    toolName: "ypmcn__manual_source_creators",
+    params: { requirement_id: "req-manual", size: "10" },
+    message: toolMessage({
+      success: true,
+      data: {
+        batch_id: "manual-batch-1",
+        excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
+      },
+    }),
+  });
+  const sourceText = directiveText(sourced);
+  assert.match(sourceText, /不得在保存成功前启动 Browser/u);
+  assert.deepEqual(saveExcelArgsFromDirective(sourceText), {
+    artifact_kind: "manual_source",
+    artifact_id: "manual-batch-1",
+    excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
+  });
+  assert.doesNotMatch(sourceText, /ASK_USER_QUESTION_ARGS=/u);
+
+  const saved = persist({
+    toolName: "ypscan_save_excel_artifact",
+    params: {
+      artifact_kind: "manual_source",
+      artifact_id: "manual-batch-1",
+      excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
+    },
+    message: toolMessage({
+      success: true,
+      data: { file_path: "/workspace/manual.xlsx" },
+    }),
+  });
+  const savedText = directiveText(saved);
+  assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
+  assert.match(savedText, /耗时较长/u);
+  assert.match(savedText, /可能多次出现登录、验证或资质弹窗/u);
+  assert.deepEqual(
+    argsFromDirective(savedText).questions[0].options.map((option) => option.label),
+    ["使用默认手扒结果（推荐）", "浏览器详细手扒"],
   );
 });
 
@@ -577,7 +620,7 @@ test("invalid parse arguments allow unlimited Agent repairs instead of asking th
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
-test("startup instruction fixes the chain and reserves the internal Runner for the manual branch", () => {
+test("startup instruction makes backend manual sourcing the default and Browser optional", () => {
   const hooks = registeredHooks();
   const context = { runId: "startup-run" };
   const first = hooks.get("before_prompt_build")({}, context);
@@ -596,12 +639,9 @@ test("startup instruction fixes the chain and reserves the internal Runner for t
   assert.match(first.prependContext, /立即调用保存工具/u);
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
+  assert.match(first.prependContext, /人工拓展默认调用 manual_source_creators/u);
+  assert.match(first.prependContext, /默认手扒 Excel 保存成功后才提示/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
-  assert.match(first.prependContext, /星图报价只支持植入视频\/定制视频/u);
-  assert.match(first.prependContext, /蒲公英图文\/视频报价与笔记类型独立/u);
-  assert.match(first.prependContext, /插件内专用持久 Chrome/u);
-  assert.match(first.prependContext, /禁止调用宿主 Browser、Bash、Playwright CLI/u);
-  assert.match(first.prependContext, /旧 capture 操作/u);
   assert.match(first.prependContext, /有限重试与逐级降级全部由插件 Runner 执行/u);
   assert.match(first.prependContext, /同一 run_id 调用 resume/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
@@ -741,19 +781,17 @@ test("field-selection failure without usable links pauses through AskUserQuestio
   );
 });
 
-test("rank and startup directives ban any manual_source_creators call", () => {
+test("rank and startup directives prefer manual_source_creators before Browser", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const rank = persist({
     toolName: "ypmcn__rank_mcns",
     message: toolMessage({ success: true, data: { mcns: [] } }),
   });
-  assert.match(directiveText(rank), /manual_source_creators 都不得调用/u);
+  assert.match(directiveText(rank), /默认直接调用 manual_source_creators/u);
+  assert.match(directiveText(rank), /保存到本地后/u);
 
   const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
-  assert.match(startup.prependContext, /manual_source_creators 都不得调用/u);
+  assert.match(startup.prependContext, /人工拓展默认调用 manual_source_creators/u);
   assert.match(startup.prependContext, /ypscan_manual_research\(operation=start\)/u);
-  assert.match(startup.prependContext, /插件内专用持久 Chrome/u);
-  assert.match(startup.prependContext, /禁止调用宿主 Browser、Bash、Playwright CLI/u);
-  assert.match(startup.prependContext, /旧 capture 操作/u);
 });
