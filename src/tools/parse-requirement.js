@@ -597,11 +597,86 @@ function rateValueViolation(path, kind) {
   return `${path} 的比例必须在 0–1：百分比原文保留百分数 value，例如 70% 应传 value=70，而不是小数 0.7`;
 }
 
-function rebateOperatorViolation(path) {
-  return `${path} 的返点只接受最低值或不限，不能传区间或上限。请先确认最低返点；若确认为30%，传 value=30，工具会输出 rebate="[0.3,1]"`;
+function violationCode(message) {
+  if (/source_quote 不是/u.test(message)) return "SOURCE_QUOTE_NOT_EXACT";
+  if (/数字值无法由 source_quote/u.test(message)) return "VALUE_NOT_SUPPORTED_BY_QUOTE";
+  if (/返点比例/u.test(message)) return "REBATE_PERCENT_SCALE_INVALID";
+  if (/女粉比例/u.test(message)) return "AUDIENCE_RATE_SCALE_INVALID";
+  if (/互动率/u.test(message) && /0–1/u.test(message)) return "INTERACTION_RATE_SCALE_INVALID";
+  if (/\.value 不是 picture\/video/u.test(message)) return "CONTENT_FORMAT_INVALID";
+  if (/抖音时长档/u.test(message)) return "VIDEO_DURATION_INVALID";
+  if (/必须是精确到秒的绝对时间/u.test(message)) return "DEADLINE_FORMAT_INVALID";
+  if (/between 必须同时提供/u.test(message)) return "NUMERIC_RANGE_BOUNDS_MISSING";
+  if (/\.value 必须是有限数字/u.test(message)) return "NUMERIC_VALUE_INVALID";
+  if (/\.value 不得为空/u.test(message)) return "FACT_VALUE_MISSING";
+  if (/不受支持/u.test(message)) return "FACT_ENUM_INVALID";
+  return "FACT_INPUT_INVALID";
 }
 
-function invalid(violations) {
+function violationExpected(code, message) {
+  if (code === "CONTENT_FORMAT_INVALID") {
+    return "value 必须是 picture 或 video；原文同时允许图文和视频时拆成两条 content_format fact";
+  }
+  if (code === "VIDEO_DURATION_INVALID") {
+    return "value 必须是 duration_l1、duration_l2 或 duration_l3";
+  }
+  if (code === "NUMERIC_RANGE_BOUNDS_MISSING") {
+    return "operator=between 时必须同时提供有限数字 minimum 和 maximum";
+  }
+  if (code === "NUMERIC_VALUE_INVALID") return "value 必须是已换算的有限数字";
+  if (code === "FACT_VALUE_MISSING") return "present fact 必须提供非空 value";
+  const expected = message.match(/(?:必须|应为|只允许|只接受)(.+)$/u)?.[1]?.trim();
+  if (expected) return expected;
+  if (/source_quote 不是/u.test(message)) return "quote 必须是用户原文中的连续逐字子串";
+  if (/数字值无法由 source_quote/u.test(message)) return "value/minimum/maximum 必须能由对应原文数字直接换算得到";
+  return "符合该 fact kind 的输入契约";
+}
+
+function violationContext(message, input) {
+  const match = message.match(/^facts\[(\d+)\](?:\.([A-Za-z_]+))?/u);
+  const rawFact = match && Array.isArray(input?.facts) ? input.facts[Number(match[1])] : null;
+  const field = match?.[2] ?? null;
+  const actual = isRecord(rawFact) && field ? rawFact[field] : rawFact;
+  const percentage = String(rawFact?.quote ?? "").match(/(\d+(?:\.\d+)?)\s*%/u)?.[1];
+  let replacement;
+  if (percentage && RATE_KINDS.has(rawFact?.kind)) replacement = { value: Number(percentage) };
+  else if (rawFact?.kind === "content_format") {
+    const value = normalizedContentFormat(rawFact.value) ?? normalizedContentFormat(rawFact.quote);
+    if (value) replacement = { value };
+  } else if (rawFact?.kind === "video_duration") {
+    const value = normalizedDurationTier(rawFact.value) ?? normalizedDurationTier(rawFact.quote);
+    if (value) replacement = { value };
+  }
+  return { actual, replacement };
+}
+
+function violationDetail(message, input) {
+  const path = message.match(/^(facts\[\d+\](?:\.[A-Za-z_]+)?)/u)?.[1] ?? "$";
+  const code = violationCode(message);
+  const { actual, replacement } = violationContext(message, input);
+  const remove =
+    !replacement && ["SOURCE_QUOTE_NOT_EXACT", "VALUE_NOT_SUPPORTED_BY_QUOTE"].includes(code);
+  const expected = violationExpected(code, message);
+  return {
+    code,
+    path,
+    message,
+    ...(actual !== undefined ? { actual } : {}),
+    expected,
+    repair: {
+      action: remove ? "remove" : "replace",
+      instruction: remove
+        ? "删除这条无原文证据的 fact，或改用原文中真实存在且语义匹配的 quote/value 重新构造"
+        : replacement
+          ? `将 ${path} 按 replacement 精确替换；不要更改用户业务含义`
+          : `将 ${path} 修正为：${expected}；不要更改用户业务含义`,
+      ...(replacement ? { replacement } : {}),
+    },
+  };
+}
+
+function invalid(violations, input) {
+  const violationDetails = violations.map((message) => violationDetail(message, input));
   return {
     success: false,
     error: {
@@ -611,11 +686,13 @@ function invalid(violations) {
       details: {
         outcome: "invalid_agent_input",
         violations,
+        violation_details: violationDetails,
         repair: {
           instruction:
-            "逐项替换 violations 指向的 facts 字段后重试；百分比保留原始百分点，例如 70% 传 value=70。",
+            "按 violation_details 一次性修正全部 facts 后只重试一次；百分比保留原始百分点，例如 70% 传 value=70。若相同 code/path 再次出现，停止重试并报告集成错误。",
           retry_policy: {
-            automatic_retries_unlimited: true,
+            automatic_retries_max: 1,
+            stop_on_repeated_code_path: true,
             ask_user_only_for_business_ambiguity: true,
           },
           rebate_example: REBATE_REPAIR_EXAMPLE,
@@ -1062,6 +1139,7 @@ function expandCompactFacts(input, sources) {
 
 function normalizeFacts(input, sources) {
   const violations = [];
+  const issues = [];
   const ids = new Set();
   const facts = [];
   const inputFacts = Array.isArray(input.facts) ? input.facts : [];
@@ -1167,26 +1245,35 @@ function normalizeFacts(input, sources) {
       ) {
         violations.push(`${path} 的数字范围无效`);
       }
-      if (fact.kind === "creator_count") {
-        const countValues = [normalizedValue, minimum, maximum].filter((value) => value !== null);
-        if (
-          !["exact", "gte", "lte", "between"].includes(fact.operator) ||
-          countValues.some((value) => !Number.isSafeInteger(value) || value <= 0)
-        ) {
-          violations.push(`${path} 的达人数量必须是正整数或正整数范围`);
-        }
-      }
       if (RATE_KINDS.has(fact.kind)) {
         if (values.some((value) => value > 1)) {
-          violations.push(
-            fact.kind === "rebate_min"
-              ? rebateRateViolation(path)
-              : rateValueViolation(path, fact.kind),
+          const rawTargets = rawNumericTargets(fact);
+          const candidates = source
+            ? numericCandidates(evidenceContext(source, fact.source_quote), fact.kind, fact.unit)
+            : [];
+          const sourceContainsInvalidRate = rawTargets.some(
+            (target) =>
+              target > 100 &&
+              candidates.some(
+                (value) => nearlyEqual(value, target) || nearlyEqual(value, target / 100),
+              ),
           );
+          if (sourceContainsInvalidRate) {
+            issues.push(
+              issue(
+                "RATE_VALUE_OUT_OF_RANGE",
+                `比例必须在 0%–100% 之间；当前原文“${fact.source_quote}”超出合法范围`,
+                [fact.id],
+              ),
+            );
+          } else {
+            violations.push(
+              fact.kind === "rebate_min"
+                ? rebateRateViolation(path)
+                : rateValueViolation(path, fact.kind),
+            );
+          }
         }
-      }
-      if (fact.kind === "rebate_min" && !["any", "exact", "gte"].includes(fact.operator)) {
-        violations.push(rebateOperatorViolation(path));
       }
       if (source && fact.source_quote && fact.operator !== "any") {
         const context = evidenceContext(source, fact.source_quote);
@@ -1232,7 +1319,13 @@ function normalizeFacts(input, sources) {
       if (fact.kind === "submission_deadline") {
         const text = String(normalizedValue ?? "");
         if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})?$/u.test(text)) {
-          violations.push(`${path}.value 必须是精确到秒的绝对时间`);
+          issues.push(
+            issue(
+              "DEADLINE_ABSOLUTE_TIME_REQUIRED",
+              `提报截止时间必须是精确到秒的未来绝对时间；当前值“${text || fact.source_quote}”无法直接落库`,
+              [fact.id],
+            ),
+          );
         }
       }
     }
@@ -1275,7 +1368,7 @@ function normalizeFacts(input, sources) {
       disposition,
     });
   });
-  return { facts, violations };
+  return { facts, violations, issues };
 }
 
 function collectConflicts(facts) {
@@ -1528,6 +1621,19 @@ function countResolution(facts, segment = null) {
       ),
     };
   }
+  const invalidExact = counts.filter(
+    (fact) => !Number.isSafeInteger(fact.normalized_value) || fact.normalized_value <= 0,
+  );
+  if (invalidExact.length > 0) {
+    return {
+      value: null,
+      issue: issue(
+        "CREATOR_COUNT_MUST_BE_POSITIVE_INTEGER",
+        "需要的达人数必须是大于 0 的明确整数",
+        invalidExact.map((fact) => fact.id),
+      ),
+    };
+  }
   const generic = counts.filter((fact) => fact.qualifier === "generic");
   const qualified = counts.filter((fact) => fact.qualifier !== "generic");
   if (generic.length > 0 && qualified.length > 0) {
@@ -1665,27 +1771,45 @@ function providerJobProjection(input, facts, now, globalIssues, segment) {
   }
   const deadline = firstFact(facts, "submission_deadline");
   if (deadline) {
-    params.submissionDeadlineAt = deadlineValue(deadline);
-    const parsed = deadlineInstant(deadline);
-    if (!Number.isFinite(parsed.getTime()) || parsed.getTime() <= now.getTime()) {
-      issues.push(issue("DEADLINE_NOT_FUTURE", "提报截止时间必须晚于当前时间", [deadline.id]));
+    const deadlineText = String(deadline.normalized_value ?? "");
+    const absolute = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})?$/u.test(
+      deadlineText,
+    );
+    if (absolute) {
+      params.submissionDeadlineAt = deadlineValue(deadline);
+      const parsed = deadlineInstant(deadline);
+      if (!Number.isFinite(parsed.getTime()) || parsed.getTime() <= now.getTime()) {
+        issues.push(
+          issue(
+            "DEADLINE_NOT_FUTURE",
+            `提报截止时间必须晚于当前时间；当前值为“${params.submissionDeadlineAt}”`,
+            [deadline.id],
+          ),
+        );
+      }
     }
   }
   const rebate = firstProviderFact(facts, "rebate_min", segment);
   if (rebate) {
     let minimum = null;
+    const supportedOperator = ["any", "gte", "exact"].includes(rebate.operator);
     if (rebate.operator === "any") minimum = 0;
-    else if (["gte", "exact"].includes(rebate.operator)) minimum = rebate.normalized_value;
-    else if (rebate.operator === "between") minimum = rebate.minimum;
-    if (minimum === null) {
+    else if (
+      ["gte", "exact"].includes(rebate.operator) &&
+      rebate.normalized_value >= 0 &&
+      rebate.normalized_value <= 1
+    ) {
+      minimum = rebate.normalized_value;
+    }
+    if (minimum === null && !supportedOperator) {
       issues.push(
         issue(
           "REBATE_SEMANTICS_UNSUPPORTED",
-          '返点只能表达最小值或不限：原文“返点30%以上”应为 operator=gte、unit=percent、value=30，Provider 参数为 rebate="[0.3,1]"；不限使用 operator=any，参数为 "[0,1]"',
+          '最低返点必须是单一最低值或不限，不能使用区间或上限；例如“返点30%以上”编译为 rebate="[0.3,1]"',
           [rebate.id],
         ),
       );
-    } else {
+    } else if (minimum !== null) {
       params.rebate = JSON.stringify([minimum, 1]);
       transforms.push(
         transform(
@@ -1812,10 +1936,18 @@ function providerJobProjection(input, facts, now, globalIssues, segment) {
     const range = numericRange(firstProviderFact(facts, kind, segment), {
       unrestrictedMaximum: RATE_KINDS.has(kind) ? 1 : 999_999_999,
     });
+    if (range && RATE_KINDS.has(kind) && (range.minimum < 0 || range.maximum > 1)) continue;
     if (range) params[field] = serializeRange(range);
   }
   const maleRate = firstProviderFact(facts, "audience_male_rate", segment);
-  if (maleRate && params.femaleRate === undefined) {
+  const maleRateRange = numericRange(maleRate, { unrestrictedMaximum: 1 });
+  if (
+    maleRate &&
+    maleRateRange &&
+    maleRateRange.minimum >= 0 &&
+    maleRateRange.maximum <= 1 &&
+    params.femaleRate === undefined
+  ) {
     const range = inverseRateRange(maleRate);
     if (range) {
       const output = serializeRange(range);
@@ -2156,7 +2288,7 @@ function questionsFor(projection) {
  * @param {{ now?: Date }} [options]
  */
 export function compileRequirementFacts(input, { now = new Date() } = {}) {
-  if (!isRecord(input)) return invalid(["输入必须是对象"]);
+  if (!isRecord(input)) return invalid(["输入必须是对象"], input);
   const violations = [];
   if (!nonemptyString(input.original_brief)) violations.push("original_brief 必须是非空字符串");
   if (!["xiaohongshu", "douyin"].includes(input.platform)) {
@@ -2182,7 +2314,7 @@ export function compileRequirementFacts(input, { now = new Date() } = {}) {
   }
   const normalized = normalizeFacts(expandCompactFacts(input, sources), sources);
   violations.push(...normalized.violations);
-  if (violations.length > 0) return invalid(violations);
+  if (violations.length > 0) return invalid(violations, input);
   const facts = normalized.facts;
   const conflicts = collectConflicts(facts);
   const unresolvedFacts = facts
@@ -2199,6 +2331,7 @@ export function compileRequirementFacts(input, { now = new Date() } = {}) {
     blockingUnresolvedFacts,
     coverage.uncoveredSegments,
   );
+  globalIssues.push(...normalized.issues);
   const provider = providerProjection(input, facts, now, globalIssues, coverage.uncoveredSegments);
   const data = {
     schema_version: "requirement-search/v2",

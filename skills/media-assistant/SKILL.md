@@ -15,7 +15,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 固定 Provider 链路
 
-1. **需求解析**：提取原文事实并调用 `ypscan_parse_requirement`。普通 fact 只传 `kind`、原文 `quote`、归一化 `value`；抖音 `60s+` 拆成 `video` 与 `duration_l3`。无精确数值或主体的条件只作 soft/preferred_content 或原文 external_condition，禁止猜数值、补主体。仅真实必填信息缺失或冲突时询问用户；`YPSCAN_REQUIREMENT_INVALID` 属于 Agent 参数错误，按每次返回的全部 violations 一次性修正并继续重试，不限制解析工具调用次数。保留 Provider 参数、搜索分组和 residual conditions。
+1. **需求解析**：`ypscan_parse_requirement` 是 Provider 前置格式校验与编译层；按 [解析参考](references/tools/ypscan_parse_requirement.md) 中每个 kind 的契约提取原文事实，普通 fact 只传 `kind`、原文 `quote`、归一化 `value`。工具必须在调用 `validate_requirement` 前确认达人数量为明确正整数、返点和其他比例/区间格式合法、截止时间为未来绝对时间、内容形式/时长能唯一映射。品牌名、项目名、达人数量、提报截止时间、最低返点、粉丝量范围、内容方向、达人单价缺失，或业务值模糊、冲突、无法合法编译时，逐字调用返回的单次多问题 `AskUserQuestion`；宿主自定义输入框必须保留。`YPSCAN_REQUIREMENT_INVALID` 只表示 Agent 构造错误，按 `violation_details` 的 `code/path/expected/repair` 一次性修正全部错误并只重试一次；相同 code/path 再次出现即报告集成错误。保留 Provider 参数、搜索分组和 residual conditions。
 2. **创建需求**：按解析结果调用 `validate_requirement`。此后“需求 ID”始终指 requirement ID：优先取响应 `data.requirement_id`，该字段缺失时兼容 `data.id`；绝不能使用 `data.demand_id`。同时保留真实 `platform`，成功后立即进入 `search_creators`。
 3. **搜索达人并保存预览表**：将上述 requirement ID 作为 `search_creators.id`，保留 Hook 给出的 `SAVE_EXCEL_ARTIFACT_ARGS` 并立即逐字调用 `ypscan_save_excel_artifact`；不得向用户输出 `creators_export_path` 或 Excel 下载链接，也不得用 Browser、shell、curl、Python 或其他下载/写文件方式代替保存工具。包括 0 命中也先保存再继续。
 4. **机构排序**：保存成功后将同一个 requirement ID 作为 `rank_mcns.id`，并传当前平台。成功后按响应顺序输出全部 MCN，不得只说“已完成”或只列部分机构；表格后原样展示保存工具返回的真实本地路径。

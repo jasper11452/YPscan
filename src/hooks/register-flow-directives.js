@@ -96,10 +96,125 @@ function requirementInputRepairDirective(message) {
   const violations = Array.isArray(result?.error?.details?.violations)
     ? result.error.details.violations.filter(nonemptyString)
     : [];
+  const violationDetails = Array.isArray(result?.error?.details?.violation_details)
+    ? result.error.details.violation_details.filter(isRecord)
+    : [];
+  const repair = isRecord(result?.error?.details?.repair) ? result.error.details.repair : {};
   return [
     "YPSCAN_FLOW_DIRECTIVE=ypscan_parse_requirement 拒绝的是 Agent 构造参数，不是用户业务需求。不得让用户为字段形状、枚举、数值单位或引用方式纠错。",
     `PARSE_REPAIR_VIOLATIONS=${JSON.stringify(violations)}`,
-    "根据每次返回的 violations 和工具 repair 示例一次性修正全部 facts 并继续重试，不限制需求解析工具的调用次数；不要逐字段试探。external_condition 的 value 必须使用 quote 的原文，不得补写“受众/粉丝”等原文没有的主体。只有缺少或冲突的真实业务信息才调用 AskUserQuestion。",
+    `PARSE_REPAIR_DETAILS=${JSON.stringify(violationDetails)}`,
+    `PARSE_REPAIR_POLICY=${JSON.stringify(repair)}`,
+    "严格按每条 code/path/expected/repair 一次性修正全部 facts，只允许自动重试一次，不要逐字段试探。若相同 code/path 再次出现，立即停止并原样报告集成错误，不得继续撞墙。external_condition 的 value 必须使用 quote 原文，不得补写原文没有的主体。只有缺少、冲突或无法生成合法 Provider 值的真实业务信息才调用 AskUserQuestion。",
+  ].join("\n");
+}
+
+function repeatedRequirementInputErrorDirective(message) {
+  const result = parsedToolResult(message);
+  const details = Array.isArray(result?.error?.details?.violation_details)
+    ? result.error.details.violation_details.filter(isRecord)
+    : [];
+  return [
+    "YPSCAN_FLOW_DIRECTIVE=ypscan_parse_requirement 在一次自动修复后仍返回 Agent 构造错误。立即停止解析重试，不得继续调用工具或把 schema 修复责任转给用户。",
+    `REPEATED_PARSE_ERRORS=${JSON.stringify(details)}`,
+    "向用户原样报告这是需求解析集成错误，并保留每条 code/path/expected 供开发排查。",
+  ].join("\n");
+}
+
+function requirementIssueValues(result, factIds) {
+  const facts = Array.isArray(result?.data?.facts) ? result.data.facts : [];
+  const ids = new Set(Array.isArray(factIds) ? factIds : []);
+  const displayValue = (fact, value) => {
+    if (fact.unit === "percent" && typeof value === "number") {
+      return `${Number((value * 100).toFixed(6))}%`;
+    }
+    return value;
+  };
+  return [
+    ...new Set(
+      facts
+        .filter((fact) => isRecord(fact) && ids.has(fact.id))
+        .flatMap((fact) => {
+          const values =
+            fact.operator === "between"
+              ? [fact.minimum, fact.maximum]
+              : Array.isArray(fact.normalized_value)
+                ? fact.normalized_value
+                : [fact.normalized_value];
+          return values.map((value) => displayValue(fact, value));
+        })
+        .filter((value) => value !== null && value !== undefined && String(value).trim()),
+    ),
+  ];
+}
+
+function clarificationOptions(result, issue) {
+  const values = requirementIssueValues(result, issue.fact_ids).slice(0, 4);
+  if (values.length >= 2) {
+    return values.map((value) => ({
+      label: String(value).slice(0, 32),
+      description: "采用原需求中出现的这个明确值",
+    }));
+  }
+  return [
+    { label: "稍后补充", description: "暂停当前流程，准备好准确信息后再继续" },
+    { label: "结束本次", description: "保留当前上下文并结束本次流程" },
+  ];
+}
+
+function groupedRequirementIssues(issues) {
+  const unique = [
+    ...new Map(
+      issues.map((item) => [
+        `${item.code}:${item.message}:${(item.fact_ids ?? []).join(",")}`,
+        item,
+      ]),
+    ).values(),
+  ];
+  const missing = unique.filter((item) => item.code === "PROVIDER_REQUIRED_FACT_MISSING");
+  const other = unique.filter((item) => item.code !== "PROVIDER_REQUIRED_FACT_MISSING");
+  const groups = [];
+  if (missing.length > 0) {
+    groups.push({
+      code: "PROVIDER_REQUIRED_FACT_MISSING",
+      message: `请一次补充这些 Provider 必填信息：${missing
+        .map((item) => item.message.replace(/^Provider 缺少/u, ""))
+        .join("、")}`,
+      fact_ids: [],
+    });
+  }
+  groups.push(...other);
+  if (groups.length <= 4) return groups;
+  return [
+    ...groups.slice(0, 3),
+    {
+      code: "MULTIPLE_REQUIREMENT_ISSUES",
+      message: `请同时澄清：${groups
+        .slice(3)
+        .map((item) => item.message)
+        .join("；")}`,
+      fact_ids: groups.slice(3).flatMap((item) => item.fact_ids ?? []),
+    },
+  ];
+}
+
+function requirementClarificationDirective(message) {
+  const result = parsedToolResult(message);
+  const provider = result?.data?.projections?.provider;
+  const issues = Array.isArray(provider?.issues) ? provider.issues.filter(isRecord) : [];
+  const groups = groupedRequirementIssues(issues);
+  const questions = groups.map((item, index) => ({
+    header: `需求澄清${index + 1}`,
+    question: item.message,
+    options: clarificationOptions(result, item),
+    multiSelect: false,
+  }));
+  if (questions.length === 0) return flowPauseDirective("需求解析", message);
+  return [
+    "YPSCAN_FLOW_DIRECTIVE=需求解析发现真实业务信息缺失、模糊、冲突或无法生成合法 Provider 参数。必须一次调用 AskUserQuestion 提交下面全部问题，不得改成逐项追问或自行猜值。",
+    "宿主会默认保留自定义输入框；不得添加假的“其他/自行填写”选项。用户回答后，把回答原文按顺序追加到 clarifications，更新对应 facts，再重新调用 ypscan_parse_requirement。",
+    `REQUIREMENT_CLARIFICATION_ISSUES=${JSON.stringify(issues)}`,
+    `ASK_USER_QUESTION_ARGS=${JSON.stringify({ questions })}`,
   ].join("\n");
 }
 
@@ -735,12 +850,6 @@ function flowDirective(toolName, message, params = {}) {
   if (bare === "create_submission_batch") return submissionBatchDirective(message, params);
   if (bare === "get_workflow_state") return workflowStateDirective(message);
   if (result?.success !== true) {
-    if (
-      /(?:^|__)ypscan_parse_requirement$/iu.test(normalizedName) &&
-      result?.error?.code === "YPSCAN_REQUIREMENT_INVALID"
-    ) {
-      return requirementInputRepairDirective(message);
-    }
     if (/(?:^|__)ypscan_manual_research$/iu.test(normalizedName)) {
       if (params?.operation === "create_submission") {
         return flowPauseDirective("手扒提报表生成", message);
@@ -760,7 +869,7 @@ function flowDirective(toolName, message, params = {}) {
   if (/(?:^|__)ypscan_parse_requirement$/iu.test(normalizedName)) {
     const provider = result?.data?.projections?.provider;
     const ready = provider?.ready;
-    if (ready !== true) return flowPauseDirective("需求解析", message);
+    if (ready !== true) return requirementClarificationDirective(message);
     const jobs = Array.isArray(provider?.search_jobs) ? provider.search_jobs : [];
     const lines = [
       "YPSCAN_FLOW_DIRECTIVE=需求解析成功。下一步固定调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
@@ -822,6 +931,7 @@ function scopeKey(event, context) {
 /** Register fixed-flow prompt and result directives. */
 export function registerFlowDirectiveHooks(api) {
   const startupScopes = new Set();
+  const parseRepairAttempts = new Map();
 
   api.on(
     "before_prompt_build",
@@ -839,8 +949,8 @@ export function registerFlowDirectiveHooks(api) {
           "search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
           "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。用户选择人工拓展后，先调用 select_inquiry_form_fields；用户提交字段并回复“好了”后，再调用 manual_source_creators，按当前 Provider schema 传本轮 requirement_id 和用户要求的 size；后台返回 Excel 后立即用 ypscan_save_excel_artifact(manual_source) 保存。",
           "默认手扒 Excel 保存成功后才提示用户是否继续浏览器详细手扒，并明确该方式耗时较长、期间可能多次出现登录、验证或资质弹窗。只有用户明确选择后才调用 ypscan_manual_research(operation=start)；start/resume 返回 next_call 时必须原样执行 read_detail_html，读完当前达人全部 HTML 后由 Agent 提炼字段并 apply_reviews。",
-          "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion；需求解析按最新 violations 持续修正并重试，不限制调用次数；其他普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
-          "需求解析性能约束：普通 fact 只传 kind/quote/value；抖音 60s+ 必须表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；参考达人统一使用 reference_creator，昵称和 http/https 链接可作为两条 fact 或同一 value 数组传入，最终分别透传为 refNickname/refUrl；女粉偏多、城市集中等无精确数值或主体不明的条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌、数量、截止时间等必填业务信息缺失时才向用户澄清。YPSCAN_REQUIREMENT_INVALID 是 Agent 参数构造错误，必须按最新 violations 一次性修正并继续调用需求解析工具，不限制调用次数。",
+          "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion。需求解析的 Agent 构造错误必须按 violation_details 一次性全部修正，只自动重试一次；相同 code/path 重复出现时停止并报告集成错误。其他普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
+          "需求解析性能约束：普通 fact 只传 kind/quote/value，具体 kind 的 value/operator/qualifier/role 契约以 media-assistant 的 ypscan_parse_requirement 解析参考为准；抖音 60s+ 表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；参考达人统一使用 reference_creator；无精确数值或主体不明的软条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌名、项目名、达人数量、提报截止时间、最低返点、粉丝量范围、内容方向、达人单价任一缺失，或任一业务值模糊、冲突、不能生成合法 Provider 格式时，必须使用工具给出的多问题 AskUserQuestion 一次性澄清。ypscan_parse_requirement 负责前置格式校验与 Provider 参数编译；validate_requirement 只做后端最终必填与服务端约束校验。",
           "用户在默认手扒保存后选择浏览器详细手扒时，start 必须保留完整硬条件 facts 和 1–4 个关键词；Runner 连接宿主 Browser CDP，复用宿主 Profile、Cookie 和登录态。页面操作、有限重试与逐级降级全部由插件 Runner 执行。登录、全局 CAPTCHA、宿主 Browser 未启动或网络恢复后，使用同一 run_id 调用 resume；终态失败后用户要求重试时使用返回的 fresh_run=true 参数创建新运行。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           "手扒达人价格必须从当前 ypscan_parse_requirement.data.facts 复制客户原始 operator 和原始数值；禁止把 Provider 区间或手工计算后的 50%–120% 区间再次传入。除本轮唯一 creator_count 外，不重算价格事实。",
@@ -853,11 +963,28 @@ export function registerFlowDirectiveHooks(api) {
 
   api.on(
     "tool_result_persist",
-    (event) => {
+    (event, context) => {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
+      const params = paramsFromEvent(event);
+      const result = parsedToolResult(event?.message);
+      const parseTool = /(?:^|__)ypscan_parse_requirement$/iu.test(toolName);
+      const scope = scopeKey(event, context);
+      const parseRepairKey = `${String(params?.platform ?? "")}:${String(
+        params?.original_brief ?? "",
+      )}`;
+      let directive;
+      if (parseTool && result?.success === false && result?.error?.code === "YPSCAN_REQUIREMENT_INVALID") {
+        directive = parseRepairAttempts.get(scope) === parseRepairKey
+          ? repeatedRequirementInputErrorDirective(event?.message)
+          : requirementInputRepairDirective(event?.message);
+        parseRepairAttempts.set(scope, parseRepairKey);
+      } else {
+        if (parseTool && result?.success === true) parseRepairAttempts.delete(scope);
+        directive = flowDirective(toolName, event?.message, params);
+      }
       return appendDirective(
         event?.message,
-        flowDirective(toolName, event?.message, paramsFromEvent(event)),
+        directive,
       );
     },
     HOOK_OPTIONS,
@@ -866,6 +993,7 @@ export function registerFlowDirectiveHooks(api) {
   return {
     resetTransientState() {
       startupScopes.clear();
+      parseRepairAttempts.clear();
     },
   };
 }

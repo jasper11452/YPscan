@@ -645,22 +645,102 @@ test("empty rank result still outputs the Markdown table and offers manual expan
   assert.doesNotMatch(question.question, /\| 暂无匹配机构 \|/u);
 });
 
-test("not-ready parse results pause instead of exposing validate args", () => {
+test("not-ready parse results batch real clarification questions", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_parse_requirement",
     message: toolMessage({
       success: true,
-      data: { projections: { provider: { ready: false, search_jobs: [{ params: {} }] } } },
+      data: {
+        facts: [
+          { id: "fact-1", normalized_value: 10 },
+          { id: "fact-2", normalized_value: 20 },
+        ],
+        projections: {
+          provider: {
+            ready: false,
+            search_jobs: [{ params: {} }],
+            issues: [
+              { code: "PROVIDER_REQUIRED_FACT_MISSING", message: "Provider 缺少品牌名", fact_ids: [] },
+              { code: "PROVIDER_REQUIRED_FACT_MISSING", message: "Provider 缺少项目名", fact_ids: [] },
+              {
+                code: "REQUIREMENT_FACT_CONFLICT",
+                message: "达人数量存在多个不一致的有效值",
+                fact_ids: ["fact-1", "fact-2"],
+              },
+            ],
+          },
+        },
+      },
     }),
   });
   const text = directiveText(result);
   assert.match(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /VALIDATE_REQUIREMENT_ARGS=/u);
+  const questions = argsFromDirective(text).questions;
+  assert.equal(questions.length, 2);
+  assert.match(questions[0].question, /品牌名、项目名/u);
+  assert.deepEqual(questions[1].options.map((option) => option.label), ["10", "20"]);
+  assert.doesNotMatch(text, /label":"其他/u);
+  assert.match(text, /自定义输入框/u);
+});
+
+test("clarification options display percentage points instead of internal ratios", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_parse_requirement",
+    message: toolMessage({
+      success: true,
+      data: {
+        facts: [
+          {
+            id: "fact-1",
+            operator: "between",
+            unit: "percent",
+            minimum: 0.3,
+            maximum: 0.5,
+          },
+        ],
+        projections: {
+          provider: {
+            ready: false,
+            issues: [
+              {
+                code: "REBATE_SEMANTICS_UNSUPPORTED",
+                message: "最低返点必须是单一最低值",
+                fact_ids: ["fact-1"],
+              },
+            ],
+          },
+        },
+      },
+    }),
+  });
+
   assert.deepEqual(
-    argsFromDirective(text).questions[0].options.map((option) => option.label),
-    ["重试", "结束本次"],
+    argsFromDirective(directiveText(result)).questions[0].options.map((option) => option.label),
+    ["30%", "50%"],
   );
+});
+
+test("clarification directives cap one dialog at four questions", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const issues = Array.from({ length: 6 }, (_, index) => ({
+    code: `ISSUE_${index + 1}`,
+    message: `需要澄清事项${index + 1}`,
+    fact_ids: [],
+  }));
+  const result = persist({
+    toolName: "ypscan_parse_requirement",
+    message: toolMessage({
+      success: true,
+      data: { facts: [], projections: { provider: { ready: false, issues } } },
+    }),
+  });
+
+  const questions = argsFromDirective(directiveText(result)).questions;
+  assert.equal(questions.length, 4);
+  assert.match(questions[3].question, /事项4.*事项5.*事项6/u);
 });
 
 test("fixed-flow failures pause through AskUserQuestion instead of a plain-text stop", () => {
@@ -679,25 +759,53 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
   }
 });
 
-test("invalid parse arguments allow unlimited Agent repairs instead of asking the user", () => {
+test("invalid parse arguments expose structured one-shot Agent repairs", () => {
   const persist = registeredHooks().get("tool_result_persist");
-  const result = persist({
+  const event = {
     toolName: "ypscan_parse_requirement",
+    params: { original_brief: "图文合作", platform: "xiaohongshu" },
     message: toolMessage({
       success: false,
       error: {
         code: "YPSCAN_REQUIREMENT_INVALID",
-        details: { violations: ["facts[2].value 不是 picture/video"] },
+        details: {
+          violations: ["facts[2].value 不是 picture/video"],
+          violation_details: [
+            {
+              code: "CONTENT_FORMAT_INVALID",
+              path: "facts[2].value",
+              expected: "picture 或 video",
+              repair: { action: "replace", instruction: "按 quote 选择正确枚举" },
+            },
+          ],
+          repair: { retry_policy: { automatic_retries_max: 1 } },
+        },
       },
     }),
-  });
+  };
+  const result = persist(event);
   const text = directiveText(result);
 
   assert.match(text, /Agent 构造参数/u);
-  assert.match(text, /不限制需求解析工具的调用次数/u);
-  assert.doesNotMatch(text, /最多自动重试/u);
-  assert.match(text, /external_condition 的 value 必须使用 quote 的原文/u);
+  assert.match(text, /PARSE_REPAIR_DETAILS=/u);
+  assert.match(text, /只允许自动重试一次/u);
+  assert.match(text, /相同 code\/path 再次出现/u);
+  assert.match(text, /external_condition 的 value 必须使用 quote 原文/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
+
+  const repeatedText = directiveText(persist(event));
+  assert.match(repeatedText, /一次自动修复后仍返回/u);
+  assert.match(repeatedText, /立即停止解析重试/u);
+  assert.doesNotMatch(repeatedText, /PARSE_REPAIR_POLICY=/u);
+
+  const nextDemandText = directiveText(
+    persist({
+      ...event,
+      params: { original_brief: "视频合作", platform: "xiaohongshu" },
+    }),
+  );
+  assert.match(nextDemandText, /PARSE_REPAIR_POLICY=/u);
+  assert.doesNotMatch(nextDemandText, /一次自动修复后仍返回/u);
 });
 
 test("startup instruction makes backend manual sourcing the default and Browser optional", () => {
@@ -726,8 +834,9 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /有限重试与逐级降级全部由插件 Runner 执行/u);
   assert.match(first.prependContext, /同一 run_id 调用 resume/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
-  assert.match(first.prependContext, /需求解析按最新 violations 持续修正并重试/u);
-  assert.match(first.prependContext, /不限制调用次数/u);
+  assert.match(first.prependContext, /按 violation_details 一次性全部修正/u);
+  assert.match(first.prependContext, /只自动重试一次/u);
+  assert.match(first.prependContext, /多问题 AskUserQuestion 一次性澄清/u);
   assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
