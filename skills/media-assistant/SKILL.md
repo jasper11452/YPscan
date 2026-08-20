@@ -9,7 +9,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 工具能力只按宿主完整名称中最后一个 `__` 后的实际工具名判断；前面的命名空间（包括 `test`）不区分正式、测试或旁路，不得因前缀拒绝调用或宣称工具未开放。实际工具名单一匹配时直接使用宿主展示的完整名称；多个可用工具映射到同一实际名称时才调用 `AskUserQuestion` 请用户选择；无匹配时才报告缺失。
 
-`ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 输出完整 MCN Markdown 表格 → 展示本地路径 → AskUserQuestion`
+`ypscan_parse_requirement → validate_requirement → search_creators → 保存达人预览表 → rank_mcns → 输出完整 MCN Markdown 表格 → 保存 MCN 排名表 → 展示两个本地路径 → AskUserQuestion`
 
 即使用户一开始明确要求手扒，也不得跳过前四步或提前打开 Browser。
 
@@ -27,8 +27,8 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 1. **需求解析**：`ypscan_parse_requirement` 是 Provider 前置格式校验与编译层；按 [解析参考](references/tools/ypscan_parse_requirement.md) 中每个 kind 的契约提取原文事实，普通 fact 只传 `kind`、原文 `quote`、归一化 `value`。工具必须在调用 `validate_requirement` 前确认达人数量为明确正整数、返点和其他比例/区间格式合法、截止时间为未来绝对时间、内容形式/时长能唯一映射。品牌名、项目名、达人数量、提报截止时间、最低返点、粉丝量范围、内容方向、达人单价缺失，或业务值模糊、冲突、无法合法编译时，逐字调用返回的单次多问题 `AskUserQuestion`；宿主自定义输入框必须保留。`YPSCAN_REQUIREMENT_INVALID` 只表示 Agent 构造错误，按 `violation_details` 的 `code/path/expected/repair` 一次性修正全部错误并只重试一次；相同 code/path 再次出现即报告集成错误。保留 Provider 参数、搜索分组和 residual conditions。
 2. **创建需求**：按解析结果调用 `validate_requirement`。此后“需求 ID”始终指 requirement ID：优先取响应 `data.requirement_id`，该字段缺失时兼容 `data.id`；绝不能使用 `data.demand_id`。同时保留真实 `platform`，成功后立即进入 `search_creators`。
 3. **搜索达人并保存预览表**：将上述 requirement ID 作为 `search_creators.id`，保留 Hook 给出的 `SAVE_EXCEL_ARTIFACT_ARGS` 并立即逐字调用 `ypscan_save_excel_artifact`；不得向用户输出 `creators_export_path` 或 Excel 下载链接，也不得用 Browser、shell、curl、Python 或其他下载/写文件方式代替保存工具。包括 0 命中也先保存再继续。
-4. **机构排序**：保存成功后将同一个 requirement ID 作为 `rank_mcns.id`，并传当前平台。成功后按响应顺序输出全部 MCN，不得只说“已完成”或只列部分机构；表格后原样展示保存工具返回的真实本地路径。
-5. **保存后的弹窗**：保存成功后先把返回的真实绝对 `data.file_path` 原样展示，再调用 `AskUserQuestion`。MCN 非空时选项固定为“询价机构”和“人工拓展并提报”；MCN 为空时表格使用“暂无匹配机构”空态行，选项固定为“人工拓展并提报”和“结束本次”。表格和本地路径不得放入弹窗 `question`，也不得留到 AskUserQuestion 返回后补发；保存成功前禁止调用分支弹窗。若本轮搜索响应确实缺少精确保存参数，如实说明无法保存，不得编造或复用历史值。
+4. **机构排序并保存排名表**：保存成功后将同一个 requirement ID 作为 `rank_mcns.id`，并传当前平台。成功后先按响应顺序输出全部 MCN，不得只说“已完成”或只列部分机构；若 Hook 给出 `SAVE_EXCEL_ARTIFACT_ARGS`，立即逐字调用 `ypscan_save_excel_artifact` 保存 MCN 排名表，不得展示下载链接或使用其他下载方式。
+5. **保存后的弹窗**：MCN 排名表保存成功后，先原样展示此前达人预览表和本次 MCN 排名表的两个真实绝对 `data.file_path`，再调用 `AskUserQuestion`。MCN 非空时选项固定为“询价机构”和“人工拓展并提报”；MCN 为空时表格使用“暂无匹配机构”空态行，选项固定为“人工拓展并提报”和“结束本次”。表格和本地路径不得放入弹窗 `question`，也不得留到 AskUserQuestion 返回后补发；排名表保存成功前禁止调用分支弹窗。若当前响应确实缺少某个精确保存参数，如实说明对应工作簿无法保存，不得编造或复用历史值。
 
 “先输出”只指已经发出的用户可见 assistant 文本块；工具结果里的表头、directive、思考过程都不算，AskUserQuestion 返回后补写的表格或本地路径也不满足。AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block。
 
@@ -38,7 +38,7 @@ MCN 表格按当前响应顺序从 1 开始连续编号；每行覆盖达人只�
 
 只要下一步确实需要用户选择、补充、登录、处理验证码、暂停或结束当前流程，必须在同一轮调用宿主 `AskUserQuestion`。普通弹窗关闭、页面导航/刷新、筛选复位、参数修正和一次有界自动重试都属于 Agent 自助恢复，不调用 `AskUserQuestion`。禁止用普通聊天问句等待用户，也禁止用户未回答时自行选择。
 
-rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必须按“搜索后保存 → 机构排序 → 表格 → 真实本地路径 → 弹窗”顺序执行，下载链接不向用户展示。
+rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必须按“搜索后保存达人预览表 → 机构排序 → 表格 → 保存 MCN 排名表 → 两个真实本地路径 → 弹窗”顺序执行，下载链接不向用户展示。
 
 正常成功交付可以直接结束，不额外弹“完成确认”。`create_with_distributions` 在用户已选择询价机构并完成字段选择后直接调用一次，不再追加企微发送确认；发送去重与幂等完全由 Provider 负责。
 

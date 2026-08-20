@@ -75,6 +75,7 @@ export default {
                   "submission_batch",
                   "creator_detail_export",
                   "creator_preview",
+                  "mcn_ranking",
                   "mcn_creator_preview",
                   "manual_source",
                 ],
