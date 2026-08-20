@@ -4,7 +4,7 @@
 
 `ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → AskUserQuestion`
 
-用户选择“人工拓展并提报”后，先通过 `select_inquiry_form_fields` 选择字段，再调用 `manual_source_creators` 获取默认 Excel。用户明确继续浏览器详细手扒后，调用 `ypscan_manual_research(operation=start)` 创建运行。Runner 复用宿主 Browser 的 Profile、Cookie 和登录态，依次尝试完整硬筛、仅关键词、无筛选广场和通用可见 DOM。星图登录态首页会自动进入达人工作区；详情页优先读取真实网络响应和弹窗下 DOM，普通资质提示不阻断采集，真实验证码则保存当前证据并暂停。每页结果增量写入 checkpoint 并刷新 Excel，用户处理登录、验证、宿主 Browser 启动或网络恢复后用同一 `run_id` 调用 `resume`；终态失败后用 `fresh_run=true` 新建运行。Agent 不直接接管 Browser、shell 或页面快照。
+用户选择“人工拓展并提报”后，若当前对话已经确认同一 requirement ID 的字段选择已提交，则直接复用 Provider 持久化字段并调用 `manual_source_creators`；否则先通过 `select_inquiry_form_fields` 选择字段。Provider 返回字段未配置时再回退到字段选择。用户明确继续浏览器详细手扒后，调用 `ypscan_manual_research(operation=start)` 创建运行。Runner 复用宿主 Browser 的 Profile、Cookie 和登录态，依次尝试完整硬筛、仅关键词、无筛选广场和通用可见 DOM。星图登录态首页会自动进入达人工作区；详情页优先读取真实网络响应和弹窗下 DOM，普通资质提示不阻断采集，真实验证码则保存当前证据并暂停。每页结果增量写入 checkpoint 并刷新 Excel，用户处理登录、验证、宿主 Browser 启动或网络恢复后用同一 `run_id` 调用 `resume`；终态失败后用 `fresh_run=true` 新建运行。Agent 不直接接管 Browser、shell 或页面快照。
 
 ## 当前组成
 

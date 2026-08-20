@@ -81,11 +81,11 @@ test("browser runtime reuses the host Browser profile and serializes every run",
   const actions = [];
   const pages = [fakePage(actions)];
   const browser = hostBrowser(pages, actions);
-  const endpoints = [];
+  const connections = [];
   const runtime = createManualBrowserRuntime({
     browserCdpUrl: "http://127.0.0.1:19999",
-    async connectOverCDP(endpoint) {
-      endpoints.push(endpoint);
+    async connectOverCDP(endpoint, options) {
+      connections.push([endpoint, options]);
       return browser;
     },
   });
@@ -97,7 +97,7 @@ test("browser runtime reuses the host Browser profile and serializes every run",
   await runtime.page("pgy");
   await runtime.page("pgy");
 
-  assert.deepEqual(endpoints, ["http://127.0.0.1:19999"]);
+  assert.deepEqual(connections, [["http://127.0.0.1:19999", { noDefaults: true }]]);
   assert.equal(pages.length, 1);
   assert.deepEqual(actions[0], ["goto", "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol"]);
 
