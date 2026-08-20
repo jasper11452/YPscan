@@ -54,6 +54,15 @@ test("only Provider submission save offers enrichment", async (t) => {
   assert.equal(preview.delivery.next_tool, undefined);
   assert.equal(preview.delivery.next_args, undefined);
 
+  const mcnRanking = JSON.parse((await saveFixture(
+    workspaceDir,
+    "mcn_ranking",
+    "mcn-ranking.xlsx",
+  )).content[0].text);
+  assert.equal(mcnRanking.success, true);
+  assert.equal(mcnRanking.delivery.next_tool, undefined);
+  assert.equal(mcnRanking.delivery.next_args, undefined);
+
   const mcnPreview = JSON.parse((await saveFixture(
     workspaceDir,
     "mcn_creator_preview",

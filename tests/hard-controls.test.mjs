@@ -179,6 +179,53 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.doesNotMatch(question.questions[0].question, /匹配机构：/u);
 });
 
+test("rank result saves the Provider MCN workbook before the branch question", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const rank = persist({
+    toolName: "ypmcn__rank_mcns",
+    params: { id: "req-1", platform: "douyin" },
+    message: toolMessage({
+      success: true,
+      data: {
+        mcns: [{ agency_name: "机构 A", supplier_id: "supplier-a" }],
+        mcns_export_path:
+          "https://mcp.eshypdata.com/api/download?file_path=mcn-ranking.xlsx",
+      },
+    }),
+  });
+  const rankText = directiveText(rank);
+  assert.match(rankText, /完整 MCN Markdown 表格输出后.*ypscan_save_excel_artifact/u);
+  assert.match(rankText, /保存成功前不得展示本地路径或调用 AskUserQuestion/u);
+  assert.deepEqual(saveExcelArgsFromDirective(rankText), {
+    artifact_kind: "mcn_ranking",
+    artifact_id: "req-1",
+    excel_file_url: "https://mcp.eshypdata.com/api/download?file_path=mcn-ranking.xlsx",
+  });
+
+  const saved = persist({
+    toolName: "ypscan_save_excel_artifact",
+    params: saveExcelArgsFromDirective(rankText),
+    message: toolMessage({
+      success: true,
+      data: { file_path: "/workspace/mcn-ranking.xlsx" },
+      delivery: { local_path: "/workspace/mcn-ranking.xlsx" },
+    }),
+  });
+  const savedText = directiveText(saved);
+  assert.match(savedText, /MCN 排名表 Excel 已保存到当前项目/u);
+  assert.match(savedText, /MCN_RANKING_LOCAL_PATH=\/workspace\/mcn-ranking\.xlsx/u);
+  assert.match(savedText, /CREATOR_PREVIEW_LOCAL_PATH/u);
+  assert.match(savedText, /rank_mcns 结果中的 ASK_USER_QUESTION_ARGS/u);
+  assert.match(savedText, /两个本地路径都不得放进弹窗 question/u);
+
+  const failed = persist({
+    toolName: "ypscan_save_excel_artifact",
+    params: saveExcelArgsFromDirective(rankText),
+    message: toolMessage({ success: false, error: { code: "YPSCAN_EXCEL_DOWNLOAD_FAILED" } }),
+  });
+  assert.match(directiveText(failed), /MCN 排名表保存 已暂停/u);
+});
+
 test("creator preview save keeps the local path and continues to rank", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const params = {
@@ -843,16 +890,17 @@ test("startup instruction makes backend manual sourcing the default and Browser 
 
   assert.match(
     first.prependContext,
-    /ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns/u,
+    /ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact\(creator_preview\) → rank_mcns → 完整 MCN Markdown 表格 → ypscan_save_excel_artifact\(mcn_ranking\) → 两个本地路径/u,
   );
   assert.match(
     first.prependContext,
     /rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出/u,
   );
-  assert.match(first.prependContext, /search_creators → ypscan_save_excel_artifact → rank_mcns/u);
+  assert.match(first.prependContext, /rank_mcns 成功后先输出完整五列表格/u);
   assert.match(first.prependContext, /精确 SAVE_EXCEL_ARTIFACT_ARGS/u);
   assert.match(first.prependContext, /不向用户输出 creators_export_path 或 Excel 下载链接/u);
-  assert.match(first.prependContext, /立即调用保存工具/u);
+  assert.match(first.prependContext, /保存 MCN 排名表/u);
+  assert.match(first.prependContext, /展示两个真实本地路径/u);
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
   assert.match(first.prependContext, /MCN 用户可见输出格式锁/u);

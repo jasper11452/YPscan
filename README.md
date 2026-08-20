@@ -2,7 +2,7 @@
 
 悦普识星是一个 OpenClaw 客户端集成层：通过 SSE 调用 Provider，并在用户选择浏览器详细手扒后由插件 Runner 连接宿主 Browser CDP 完成双平台采集。所有达人筛选固定执行：
 
-`ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → AskUserQuestion`
+`ypscan_parse_requirement → validate_requirement → search_creators → 保存达人预览表 → rank_mcns → 完整 MCN Markdown 表格 → 保存 MCN 排名表 → 展示两个本地路径 → AskUserQuestion`
 
 用户选择“人工拓展并提报”后，若当前对话已经确认同一 requirement ID 的字段选择已提交，则直接复用 Provider 持久化字段并调用 `manual_source_creators`；否则先通过 `select_inquiry_form_fields` 选择字段。Provider 返回字段未配置时再回退到字段选择。用户明确继续浏览器详细手扒后，调用 `ypscan_manual_research(operation=start)` 创建运行。Runner 复用宿主 Browser 的 Profile、Cookie 和登录态，依次尝试完整硬筛、仅关键词、无筛选广场和通用可见 DOM。星图登录态首页会自动进入达人工作区；详情页优先读取真实网络响应和弹窗下 DOM，普通资质提示不阻断采集，真实验证码则保存当前证据并暂停。每页结果增量写入 checkpoint 并刷新 Excel，用户处理登录、验证、宿主 Browser 启动或网络恢复后用同一 `run_id` 调用 `resume`；终态失败后用 `fresh_run=true` 新建运行。Agent 不直接接管 Browser、shell 或页面快照。
 
@@ -11,7 +11,7 @@
 - `index.js`：注册 3 个本地能力工具、远端 MCP 白名单和 Hook。
 - `src/tools/parse-requirement.js`：把紧凑原文证据 facts 编译成 Provider 参数、搜索分组和残余条件。
 - Provider 询价字段选择直接使用远端 MCP `select_inquiry_form_fields`，用户提交后按 requirement ID 在后端持久化；Agent 不调用已弃用的字段查询工具，也不向后续工具传 `columns`。
-- `src/tools/save-excel-artifact.js`：保存 Provider 返回的 Excel 下载结果。
+- `src/tools/save-excel-artifact.js`：保存 Provider 返回的 Excel 下载结果，包括达人预览表和 MCN 排名表。
 - `src/tools/manual-research-runner.js`：执行有界的双平台筛选、降级、分页、原始详情 HTML 采集、Agent 分块提炼、恢复和产物刷新。
 - `src/tools/manual-research/browser-runtime.js`：管理插件独立的持久 Chrome Profile 和单运行互斥。
 - `src/tools/manual-research-artifact.js`：稳定身份去重、checkpoint、复核以及三 Sheet Excel 产物。
