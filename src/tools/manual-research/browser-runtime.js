@@ -107,7 +107,7 @@ async function openMarketPage(context, platform, reopen = false) {
 /** Connect to the host Browser so Runner and Browser use the same profile and cookies. */
 export function createManualBrowserRuntime({
   browserCdpUrl = DEFAULT_CDP_URL,
-  connectOverCDP = (endpointURL) => chromium.connectOverCDP(endpointURL),
+  connectOverCDP = (endpointURL, options) => chromium.connectOverCDP(endpointURL, options),
 } = {}) {
   const endpointURL =
     String(browserCdpUrl ?? "")
@@ -120,7 +120,7 @@ export function createManualBrowserRuntime({
     if (browser && connected(browser)) return browser;
     browser = null;
     try {
-      browser = await connectOverCDP(endpointURL);
+      browser = await connectOverCDP(endpointURL, { noDefaults: true });
       return browser;
     } catch (error) {
       throw manualBrowserError(

@@ -138,10 +138,13 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /CREATOR_PREVIEW_LOCAL_PATH/u);
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
-  assert.match(directiveText(rank), /先调用 select_inquiry_form_fields/u);
-  assert.match(directiveText(rank), /回复“好了”后，才调用 manual_source_creators/u);
+  assert.match(directiveText(rank), /同一 requirement_id/u);
+  assert.match(directiveText(rank), /直接复用 Provider 持久化字段并调用 manual_source_creators/u);
+  assert.match(directiveText(rank), /不得再次调用 select_inquiry_form_fields/u);
+  assert.match(directiveText(rank), /否则先调用 select_inquiry_form_fields/u);
+  assert.match(directiveText(rank), /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
   assert.match(directiveText(rank), /“手扒”“手动拓展”“人工拓展”“直接手扒”/u);
-  assert.match(directiveText(rank), /一律默认先走 MCP/u);
+  assert.match(directiveText(rank), /一律默认走 MCP/u);
   assert.match(directiveText(rank), /不得把这些说法解释为浏览器详细手扒/u);
   assert.match(directiveText(rank), /Excel 保存到本地后/u);
   assert.match(directiveText(rank), /ypscan_manual_research\(operation=start\)/u);
@@ -834,11 +837,14 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /立即调用保存工具/u);
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
-  assert.match(first.prependContext, /一律默认先走 MCP：先调用 select_inquiry_form_fields/u);
-  assert.match(first.prependContext, /回复“好了”后，再调用 manual_source_creators/u);
+  assert.match(first.prependContext, /同一 requirement_id/u);
+  assert.match(first.prependContext, /直接调用 manual_source_creators/u);
+  assert.match(first.prependContext, /不得再次调用 select_inquiry_form_fields/u);
+  assert.match(first.prependContext, /否则先调用 select_inquiry_form_fields/u);
+  assert.match(first.prependContext, /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
   assert.match(first.prependContext, /默认手扒 Excel 保存成功后才提示/u);
   assert.match(first.prependContext, /“手扒”“手动拓展”“人工拓展”“直接手扒”/u);
-  assert.match(first.prependContext, /一律默认先走 MCP/u);
+  assert.match(first.prependContext, /一律默认走 MCP/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
   assert.match(first.prependContext, /有限重试与逐级降级全部由插件 Runner 执行/u);
   assert.match(first.prependContext, /同一 run_id 调用 resume/u);
@@ -942,7 +948,10 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /不得调用已弃用的 get_selected_inquiry_form_fields/u);
   assert.match(text, /不得.*把 columns 放入 Agent 上下文/u);
   assert.match(text, /等待用户完成选择后回复“好了”/u);
-  assert.match(text, /调用 create_with_distributions/u);
+  assert.match(text, /恢复发起本次字段选择的原分支/u);
+  assert.match(text, /询价机构分支.*调用 create_with_distributions/u);
+  assert.match(text, /人工拓展分支.*调用 manual_source_creators/u);
+  assert.match(text, /不得再次调用 select_inquiry_form_fields/u);
   assert.match(text, /不得调用 create_submission_batch/u);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
@@ -980,19 +989,24 @@ test("field-selection failure without usable links pauses through AskUserQuestio
   );
 });
 
-test("rank and startup directives select fields before manual_source_creators", () => {
+test("rank and startup directives reuse submitted fields for the same requirement", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const rank = persist({
     toolName: "ypmcn__rank_mcns",
     message: toolMessage({ success: true, data: { mcns: [] } }),
   });
-  assert.match(directiveText(rank), /先调用 select_inquiry_form_fields/u);
-  assert.match(directiveText(rank), /回复“好了”后，才调用 manual_source_creators/u);
+  assert.match(directiveText(rank), /同一 requirement_id/u);
+  assert.match(directiveText(rank), /不得再次调用 select_inquiry_form_fields/u);
+  assert.match(directiveText(rank), /否则先调用 select_inquiry_form_fields/u);
+  assert.match(directiveText(rank), /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
   assert.match(directiveText(rank), /保存到本地后/u);
 
   const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
-  assert.match(startup.prependContext, /一律默认先走 MCP：先调用 select_inquiry_form_fields/u);
-  assert.match(startup.prependContext, /回复“好了”后，再调用 manual_source_creators/u);
+  assert.match(startup.prependContext, /同一 requirement_id/u);
+  assert.match(startup.prependContext, /直接调用 manual_source_creators/u);
+  assert.match(startup.prependContext, /不得再次调用 select_inquiry_form_fields/u);
+  assert.match(startup.prependContext, /否则先调用 select_inquiry_form_fields/u);
+  assert.match(startup.prependContext, /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
   assert.match(startup.prependContext, /ypscan_manual_research\(operation=start\)/u);
 });

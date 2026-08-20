@@ -35,9 +35,9 @@ rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必�
 
 ## 人工拓展：默认后端手扒，浏览器按需补充
 
-用户在 MCN 表格和达人预览表本地路径后的弹窗选择“人工拓展并提报”后，先调用 `select_inquiry_form_fields` 并原样展示字段选择 URL。用户在页面提交字段并回复“好了”后，才调用 [manual_source_creators](references/tools/manual_source_creators.md)：传当前 requirement ID 和用户要求的交付人数 `size`，由后端全自动完成手扒。返回 Excel 后立即用 `ypscan_save_excel_artifact(artifact_kind=manual_source)` 保存并展示真实本地路径；保存成功前不得启动 Browser。
+用户在 MCN 表格和达人预览表本地路径后的弹窗选择“人工拓展并提报”后，先判断当前对话是否已有同一 requirement ID 的字段选择链接和用户明确回复提交完成的证据。有证据时直接复用 Provider 按 requirement ID 持久化的字段并调用 [manual_source_creators](references/tools/manual_source_creators.md)，不得再次调用 `select_inquiry_form_fields`；没有证据时才调用 `select_inquiry_form_fields`，原样展示字段选择 URL，等待用户在页面提交字段并回复“好了”后再调用 `manual_source_creators`。传当前 requirement ID 和用户要求的交付人数 `size`，由后端全自动完成手扒；若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`，再按工具结果指令进入字段选择。返回 Excel 后立即用 `ypscan_save_excel_artifact(artifact_kind=manual_source)` 保存并展示真实本地路径；保存成功前不得启动 Browser。
 
-用户说“手扒”“手动拓展”“人工拓展”或“直接手扒”时同样适用上述默认 MCP 链路；这些说法都不代表浏览器详细手扒。只有用户明确选择“浏览器详细手扒”后，才允许启动 Browser Runner。
+用户说“手扒”“手动拓展”“人工拓展”或“直接手扒”时同样适用上述默认 MCP 链路和同一 requirement ID 的字段复用规则；这些说法都不代表浏览器详细手扒。只有用户明确选择“浏览器详细手扒”后，才允许启动 Browser Runner。
 
 默认 Excel 保存后才调用返回的 AskUserQuestion。默认推荐直接使用该结果；浏览器详细手扒必须明确提示耗时较长，期间可能多次出现登录、验证或资质弹窗。只有用户选择“浏览器详细手扒”后，才完整读取当前平台 SOP（星图读取 [xingtu-browser-handpick.md](references/xingtu-browser-handpick.md)，蒲公英读取 [pgy-browser-handpick.md](references/pgy-browser-handpick.md)）以及 [ypscan_manual_research.md](references/tools/ypscan_manual_research.md)，然后调用 `ypscan_manual_research(operation=start)`。
 
