@@ -12,7 +12,7 @@
 - `src/tools/parse-requirement.js`：把紧凑原文证据 facts 编译成 Provider 参数、搜索分组和残余条件。
 - Provider 询价字段选择直接使用远端 MCP `select_inquiry_form_fields`，用户提交后按 requirement ID 在后端持久化；Agent 不调用已弃用的字段查询工具，也不向后续工具传 `columns`。
 - `src/tools/save-excel-artifact.js`：保存 Provider 返回的 Excel 下载结果。
-- `src/tools/manual-research-runner.js`：执行有界的双平台筛选、降级、分页、详情采集、恢复和产物刷新。
+- `src/tools/manual-research-runner.js`：执行有界的双平台筛选、降级、分页、原始详情 HTML 采集、Agent 分块提炼、恢复和产物刷新。
 - `src/tools/manual-research/browser-runtime.js`：管理插件独立的持久 Chrome Profile 和单运行互斥。
 - `src/tools/manual-research-artifact.js`：稳定身份去重、checkpoint、复核以及三 Sheet Excel 产物。
 - `src/hooks/register-flow-directives.js`：注入固定链路、Runner 恢复、Provider 询价结果与交付指令；企微发送匹配和幂等由 Provider 负责。

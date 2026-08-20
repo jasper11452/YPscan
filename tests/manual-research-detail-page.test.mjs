@@ -25,6 +25,7 @@ function detailHarness(
     videoCards = [],
     authenticatedRedirect = false,
     authenticatedRedirectViaIndex = false,
+    html = `<html><body>${bodyText}</body></html>`,
   } = {},
 ) {
   const context = new EventEmitter();
@@ -32,6 +33,8 @@ function detailHarness(
   let currentUrl = detailUrl;
   let gotoCount = 0;
   const detailPage = {
+    content: async () => html,
+    evaluate: async (callback, argument) => callback(argument),
     async goto() {
       gotoCount += 1;
       currentUrl =
@@ -196,6 +199,37 @@ test("detail collection falls back to visible DOM when no structured response is
   assert.equal(detail.fields.interaction_rate_raw, "8.5%");
   assert.equal(detail.fields.price_by_tier.植入视频, "18,000");
   assert.equal(harness.wasClosed(), true, "the temporary detail tab must be closed");
+});
+
+test("detail collection hands the original full-page HTML to the evidence store", async () => {
+  const html = "<html><head><script>window.unmapped='保留'</script></head><body>粉丝数：12.5万</body></html>";
+  const harness = detailHarness(
+    "粉丝数：12.5万",
+    "https://www.xingtu.cn/ad/creator/detail/star-html",
+    { html },
+  );
+  const snapshots = [];
+  const detail = await collectCreatorDetail(
+    harness.listPage,
+    "xingtu",
+    {
+      platform_id: "star-html",
+      nickname: "HTML达人",
+      detail_url: "https://www.xingtu.cn/ad/creator/detail/star-html",
+    },
+    {
+      groups: ["summary"],
+      capturedAt: "2026-08-20T00:00:00.000Z",
+      async onHtmlSnapshot(snapshot) {
+        snapshots.push(snapshot);
+        return { snapshot_id: "snapshot-html", group: snapshot.group, sha256: "test" };
+      },
+    },
+  );
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0].html, html);
+  assert.equal(detail.html_snapshots[0].snapshot_id, "snapshot-html");
 });
 
 test("Xingtu detail URLs backfill and verify the stable creator ID", async () => {

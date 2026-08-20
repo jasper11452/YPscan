@@ -4,6 +4,7 @@ import {
   createManualResearchSubmission,
   loadManualResearchRun,
   MANUAL_RESEARCH_PREVIEW_LIMIT,
+  readManualResearchHtml,
 } from "./manual-research-artifact.js";
 import {
   candidateReference,
@@ -29,7 +30,13 @@ const MAX_PAGES_PER_BRANCH = 5;
 const MAX_PAGES_TOTAL = 12;
 const MAX_DETAILS = 10;
 
-const PUBLIC_OPERATIONS = Object.freeze(["start", "resume", "apply_reviews", "create_submission"]);
+const PUBLIC_OPERATIONS = Object.freeze([
+  "start",
+  "resume",
+  "read_detail_html",
+  "apply_reviews",
+  "create_submission",
+]);
 const PLATFORMS = Object.freeze(["xingtu", "pgy", "douyin", "xiaohongshu"]);
 
 export const MANUAL_RESEARCH_RUNNER_PARAMETERS = Object.freeze({
@@ -41,6 +48,9 @@ export const MANUAL_RESEARCH_RUNNER_PARAMETERS = Object.freeze({
     requirement_id: { type: "string", minLength: 1 },
     platform: { type: "string", enum: [...PLATFORMS] },
     run_id: { type: "string", minLength: 1 },
+    candidate_ref: { type: "string", minLength: 1 },
+    snapshot_id: { type: "string", minLength: 1 },
+    cursor: { type: "integer", minimum: 0 },
     facts: { type: "array", items: { type: "object" } },
     quote_type: {
       type: "string",
@@ -67,6 +77,21 @@ export const MANUAL_RESEARCH_RUNNER_PARAMETERS = Object.freeze({
           decision: { type: "string", enum: ["include", "exclude"] },
           reasons: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
           evidence: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+          extracted_fields: { type: "object" },
+          field_evidence: {
+            type: "array",
+            maxItems: 128,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["field", "snapshot_id", "quote"],
+              properties: {
+                field: { type: "string", minLength: 1 },
+                snapshot_id: { type: "string", minLength: 1 },
+                quote: { type: "string", minLength: 1, maxLength: 4000 },
+              },
+            },
+          },
         },
       },
     },
@@ -126,6 +151,14 @@ function validateParams(input = {}) {
       throw argumentError("apply_reviews 必须提供 1–20 条 reviews");
     }
     params.reviews = input.reviews;
+  }
+  if (operation === "read_detail_html") {
+    params.candidate_ref = required(input.candidate_ref, "candidate_ref");
+    params.snapshot_id = required(input.snapshot_id, "snapshot_id");
+    params.cursor = input.cursor ?? 0;
+    if (!Number.isInteger(params.cursor) || params.cursor < 0) {
+      throw argumentError("cursor 必须是非负整数");
+    }
   }
   return params;
 }
@@ -285,6 +318,7 @@ function createRunInfo(params, plan, state, now, candidateCount = 0) {
     applied_filters: [...state.applied_filters],
     unapplied_filters: [...state.unapplied_filters],
     detail_attempted: state.detail_attempted,
+    detail_captured: state.detail_captured,
     detail_completed: state.detail_completed,
     detail_target: detailTarget(plan),
     detail_shortfall: Math.max(detailTarget(plan) - state.detail_completed, 0),
@@ -335,11 +369,31 @@ function createState(restored = {}) {
     unapplied_filters: new Set(latest.unapplied_filters ?? []),
     quality_level: latest.quality_level ?? "unverified",
     detail_attempted: latest.detail_cursor ?? restored.details?.length ?? 0,
+    detail_captured:
+      restored.details?.filter((item) => item.html_snapshots?.length > 0).length ?? 0,
     detail_completed: restored.details?.filter((item) => item.status === "complete").length ?? 0,
     error_code: null,
     error_message: null,
     resume_available: false,
     resume_instruction: null,
+  };
+}
+
+function htmlReadCall(params, runId, task, snapshotId = null, cursor = 0) {
+  const firstSnapshotId = snapshotId ?? task?.html_snapshots?.[0]?.snapshot_id;
+  if (!task?.candidate_ref || !firstSnapshotId) return null;
+  return {
+    tool: "ypscan_manual_research",
+    args: {
+      operation: "read_detail_html",
+      requirement_id: params.requirement_id,
+      platform: params.platform,
+      run_id: runId,
+      candidate_ref: task.candidate_ref,
+      snapshot_id: firstSnapshotId,
+      cursor,
+    },
+    reason: "读取当前达人全部原始 HTML 快照后由 Agent 提炼字段",
   };
 }
 
@@ -355,10 +409,14 @@ function publicPayload({
   artifact,
 }) {
   const pending = reviewBatch(candidates, details, reviews, {
+    plan,
     requirements: plan.review_requirements,
   });
   const target = detailTarget(plan);
   const partialCount = details.filter((item) => item.status === "partial").length;
+  const capturedCount = details.filter((item) => item.html_snapshots?.length > 0).length;
+  const htmlWorkflow = capturedCount > 0;
+  const awaitingExtraction = details.filter((item) => item.status === "awaiting_extraction").length;
   const failedDetails = details.filter((item) => item.status === "failed");
   return {
     success: status !== "failed",
@@ -372,14 +430,25 @@ function publicPayload({
     candidates: candidates.slice(0, MANUAL_RESEARCH_PREVIEW_LIMIT),
     review_batch: pending.tasks,
     review_remaining: pending.remaining,
+    ...(["awaiting_extraction", "reviewing"].includes(status) &&
+    pending.tasks[0]?.html_snapshots?.length
+      ? { next_call: htmlReadCall(params, store.run_id, pending.tasks[0]) }
+      : {}),
     delivery_shortfall: plan.target_count ? Math.max(plan.target_count - candidates.length, 0) : 0,
     detail_progress: {
       target,
       attempted: state.detail_attempted,
+      ...(htmlWorkflow || awaitingExtraction
+        ? { captured: capturedCount, awaiting_extraction: awaitingExtraction }
+        : {}),
       completed: state.detail_completed,
+      ...(htmlWorkflow || awaitingExtraction ? { qualified: artifact?.target_row_count ?? 0 } : {}),
       partial: partialCount,
       failed: failedDetails.length,
-      shortfall: Math.max(target - state.detail_completed, 0),
+      shortfall: Math.max(
+        target - (htmlWorkflow ? (artifact?.target_row_count ?? 0) : state.detail_completed),
+        0,
+      ),
     },
     detail_failures: failedDetails.slice(-MAX_DETAILS).map((item) => ({
       candidate_ref: item.candidate_ref,
@@ -433,6 +502,44 @@ export function createManualResearchRunner({
     let params;
     try {
       params = validateParams(rawParams);
+      if (params.operation === "read_detail_html") {
+        const result = await readManualResearchHtml({
+          workspaceDir,
+          runId: params.run_id,
+          requirementId: params.requirement_id,
+          platform: params.platform,
+          candidateRef: params.candidate_ref,
+          snapshotId: params.snapshot_id,
+          cursor: params.cursor,
+        });
+        const nextSnapshotId = result.eof ? result.next_snapshot_id : result.snapshot.snapshot_id;
+        const nextCursor = result.eof ? 0 : result.next_cursor;
+        const nextCall = nextSnapshotId
+          ? {
+              tool: "ypscan_manual_research",
+              args: {
+                operation: "read_detail_html",
+                requirement_id: params.requirement_id,
+                platform: params.platform,
+                run_id: params.run_id,
+                candidate_ref: params.candidate_ref,
+                snapshot_id: nextSnapshotId,
+                cursor: nextCursor,
+              },
+              reason: "继续读取当前达人原始 HTML；未读完前不得提炼或回写",
+            }
+          : null;
+        return hostToolResult({
+          success: true,
+          status: result.eof ? "html_snapshot_complete" : "html_chunk",
+          operation: params.operation,
+          requirement_id: params.requirement_id,
+          platform: params.platform,
+          run_id: params.run_id,
+          ...result,
+          ...(nextCall ? { next_call: nextCall } : {}),
+        });
+      }
       if (params.operation === "apply_reviews") {
         const result = await applyManualResearchReviews({
           workspaceDir,
@@ -451,7 +558,13 @@ export function createManualResearchRunner({
           run_id: params.run_id,
           review_batch: result.review_batch,
           review_remaining: result.review_remaining,
+          detail_progress: result.detail_progress,
           artifact: result.artifact,
+          ...(result.review_batch[0]?.html_snapshots?.length
+            ? {
+                next_call: htmlReadCall(params, params.run_id, result.review_batch[0]),
+              }
+            : {}),
         });
       }
       if (params.operation === "create_submission") {
@@ -487,6 +600,19 @@ export function createManualResearchRunner({
           requirementId: params.requirement_id,
           platform: params.platform,
         });
+        if (restored.checkpoint_version < 3 && !restored.final_events?.length) {
+          throw Object.assign(new Error("旧运行没有原始 HTML 证据，请使用 fresh_run 重新采集"), {
+            code: "YPSCAN_MANUAL_HTML_EVIDENCE_REQUIRED",
+            details: {
+              fresh_run_args: {
+                operation: "start",
+                requirement_id: params.requirement_id,
+                platform: params.platform,
+                fresh_run: true,
+              },
+            },
+          });
+        }
         plan = restored.plan;
       }
       const store = await createStore({
@@ -524,7 +650,8 @@ export function createManualResearchRunner({
       const latestRunnerState = saved.runner_states?.at(-1);
       if (latestRunnerState?.phase === "terminal" && params.fresh_run !== true) {
         state.phase = "terminal";
-        const terminalStatus = latestRunnerState.execution_status ?? "complete";
+        const terminalStatus =
+          saved.final_events?.at(-1)?.status ?? latestRunnerState.execution_status ?? "complete";
         const diagnosticRunnerState = [...(saved.runner_states ?? [])]
           .reverse()
           .find(
@@ -827,8 +954,14 @@ export function createManualResearchRunner({
             (left, right) =>
               Number(needsExactPrice(right, plan)) - Number(needsExactPrice(left, plan)),
           );
+        const htmlCaptureTarget = Math.min(detailTarget(plan) * 2, 20);
         for (const candidate of detailCandidates) {
-          if (state.detail_completed >= detailTarget(plan)) break;
+          if (
+            state.detail_completed >= detailTarget(plan) ||
+            state.detail_captured >= htmlCaptureTarget
+          ) {
+            break;
+          }
           if (now() >= deadline) {
             timedOut = true;
             break;
@@ -839,19 +972,32 @@ export function createManualResearchRunner({
             const collected = await bounded(
               "采集达人详情",
               Promise.resolve().then(() =>
-                adapter.collectDetail(candidate, { groups: detailGroupsForPlan(plan) }),
+                adapter.collectDetail(candidate, {
+                  groups: detailGroupsForPlan(plan),
+                  onHtmlSnapshot: (snapshot) =>
+                    store.saveDetailHtmlSnapshot({
+                      candidateRef: candidateReference(candidate),
+                      ...snapshot,
+                    }),
+                }),
               ),
               DETAIL_TIMEOUT_MS,
             );
             const evaluation = evaluateCandidateDetail(candidate, collected, plan);
+            const awaitingExtraction = Boolean(collected.html_snapshots?.length);
             const detail = {
               ...collected,
               candidate_ref: candidateReference(candidate),
-              fields: evaluation.fields,
+              status: awaitingExtraction ? "awaiting_extraction" : collected.status,
+              reason: awaitingExtraction ? "agent_extraction_required" : collected.reason,
+              fields: awaitingExtraction ? {} : evaluation.fields,
               hard_evaluation:
-                collected.status === "blocked" ? { ...evaluation, status: "unknown" } : evaluation,
+                collected.status === "blocked" || awaitingExtraction
+                  ? { ...evaluation, status: "unknown", fields: {} }
+                  : evaluation,
             };
             details = mergeDetailRecords([...details, detail]);
+            if (awaitingExtraction) state.detail_captured += 1;
             if (detail.status === "complete") state.detail_completed += 1;
             artifact = await store.saveDetail({
               detail,
@@ -867,16 +1013,20 @@ export function createManualResearchRunner({
             const captured = error?.details?.captured_detail;
             if (captured) {
               const evaluation = evaluateCandidateDetail(candidate, captured, plan);
+              const awaitingExtraction = Boolean(captured.html_snapshots?.length);
               const detail = {
                 ...captured,
                 candidate_ref: candidateReference(candidate),
-                fields: evaluation.fields,
+                status: awaitingExtraction ? "awaiting_extraction" : captured.status,
+                reason: awaitingExtraction ? "agent_extraction_required" : captured.reason,
+                fields: awaitingExtraction ? {} : evaluation.fields,
                 hard_evaluation:
-                  captured.status === "complete"
+                  captured.status === "complete" && !awaitingExtraction
                     ? evaluation
-                    : { ...evaluation, status: "unknown" },
+                    : { ...evaluation, status: "unknown", fields: {} },
               };
               details = mergeDetailRecords([...details, detail]);
+              if (awaitingExtraction) state.detail_captured += 1;
               if (detail.status === "complete") state.detail_completed += 1;
               artifact = await store.saveDetail({
                 detail,
@@ -923,13 +1073,18 @@ export function createManualResearchRunner({
         timedOut ||= now() >= deadline;
         state.phase = "terminal";
         const detailShortfall = state.detail_completed < detailTarget(plan);
-        const status = candidates.length
-          ? timedOut || state.error_code || detailShortfall
-            ? "partial"
-            : "complete"
-          : state.error_code
-            ? "failed_with_artifact"
-            : "empty";
+        const hasPendingExtraction = details.some(
+          (detail) => detail.status === "awaiting_extraction",
+        );
+        const status = hasPendingExtraction
+          ? "awaiting_extraction"
+          : candidates.length
+            ? timedOut || state.error_code || detailShortfall
+              ? "partial"
+              : "complete"
+            : state.error_code
+              ? "failed_with_artifact"
+              : "empty";
         artifact = await materialize(status, true);
         return hostToolResult(
           publicPayload({

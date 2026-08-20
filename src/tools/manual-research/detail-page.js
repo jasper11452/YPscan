@@ -67,6 +67,7 @@ const DETAIL_CONTROL_SELECTOR = [
 ].join(",");
 const DANGEROUS_DETAIL_ACTION = /提交|确认合作|立即合作|发送|支付|删除|下单|投放|邀约/u;
 const DETAIL_ACTION_BUDGET = 6;
+const DETAIL_SCROLL_STEPS = 12;
 
 function clean(value) {
   return String(value ?? "")
@@ -85,6 +86,35 @@ function mergeFields(target, source) {
       target[key] = value;
     }
   }
+}
+
+async function captureRawHtml(page, group, capturedAt, onHtmlSnapshot) {
+  if (typeof onHtmlSnapshot !== "function" || typeof page.content !== "function") return null;
+  const height = await page
+    .evaluate(() => Math.max(globalThis.document?.documentElement?.scrollHeight ?? 0, 0))
+    .catch(() => 0);
+  if (height > 0) {
+    const step = Math.max(Math.ceil(height / DETAIL_SCROLL_STEPS), 1);
+    for (let offset = 0; offset < height; offset += step) {
+      await page.evaluate((top) => globalThis.scrollTo?.(0, top), offset).catch(() => {});
+      await page.waitForTimeout(50).catch(() => {});
+    }
+    await page.evaluate(() => globalThis.scrollTo?.(0, 0)).catch(() => {});
+  }
+  let html = await page.content();
+  let stablePolls = 0;
+  for (let attempt = 0; attempt < 5 && stablePolls < 2; attempt += 1) {
+    await page.waitForTimeout(100).catch(() => {});
+    const current = await page.content();
+    stablePolls = current === html ? stablePolls + 1 : 0;
+    html = current;
+  }
+  return onHtmlSnapshot({
+    group,
+    url: page.url?.() ?? null,
+    captured_at: capturedAt,
+    html,
+  });
 }
 
 function firstMatch(text, patterns) {
@@ -609,13 +639,13 @@ async function closeDetail(listPage, detailPage, temporary) {
  * @param {import("playwright-core").Page} listPage
  * @param {"xingtu"|"pgy"} platform
  * @param {any} candidate
- * @param {{groups: string[], learnedPaths?: Set<string>, capturedAt: string}} options
+ * @param {{groups: string[], learnedPaths?: Set<string>, capturedAt: string, onHtmlSnapshot?: (snapshot: any) => Promise<any>}} options
  */
 export async function collectCreatorDetail(
   listPage,
   platform,
   candidate,
-  { groups, learnedPaths = new Set(), capturedAt },
+  { groups, learnedPaths = new Set(), capturedAt, onHtmlSnapshot },
 ) {
   const base = {
     candidate_ref: candidateReference(candidate),
@@ -634,6 +664,7 @@ export async function collectCreatorDetail(
   const sourceTypes = [];
   const completedGroups = new Set();
   const navigation = [];
+  const htmlSnapshots = [];
   if (opened.capture) {
     mergeFields(fields, opened.capture.fields);
     endpoints.push(...opened.capture.endpoints);
@@ -654,6 +685,13 @@ export async function collectCreatorDetail(
       return { ...base, status: "blocked", reason: "detail_not_accessible", fields: {} };
     }
     mergeFields(fields, await waitForInitialDetailFields(detailPage, candidate, platform, groups));
+    const summarySnapshot = await captureRawHtml(
+      detailPage,
+      "summary",
+      capturedAt,
+      onHtmlSnapshot,
+    );
+    if (summarySnapshot) htmlSnapshots.push(summarySnapshot);
     try {
       await assertNoManualChallenge(detailPage);
     } catch (error) {
@@ -671,13 +709,14 @@ export async function collectCreatorDetail(
             missing_groups: missing,
             response_endpoints: [...new Set(endpoints)],
             source_type: [...new Set(sourceTypes)].join("+") || "dom",
+            html_snapshots: htmlSnapshots,
           },
         };
       }
       throw error;
     }
     for (const group of groups.filter((item) => item !== "summary")) {
-      if (groupHasEvidence(group, fields)) {
+      if (!onHtmlSnapshot && groupHasEvidence(group, fields)) {
         completedGroups.add(group);
         continue;
       }
@@ -715,6 +754,13 @@ export async function collectCreatorDetail(
           observed_controls: explored.observed_controls,
         });
       }
+      const groupSnapshot = await captureRawHtml(
+        detailPage,
+        group,
+        capturedAt,
+        onHtmlSnapshot,
+      );
+      if (groupSnapshot) htmlSnapshots.push(groupSnapshot);
       if (groupHasEvidence(group, fields)) completedGroups.add(group);
     }
     const domFields = await readDetailDom(detailPage, candidate, platform);
@@ -753,6 +799,7 @@ export async function collectCreatorDetail(
       navigation,
       response_endpoints: [...new Set(endpoints)],
       source_type: [...new Set(sourceTypes)].join("+") || "dom",
+      html_snapshots: htmlSnapshots,
     };
   } catch (error) {
     if (/CAPTCHA|DETAIL_RISK/u.test(error?.code ?? "")) throw error;
