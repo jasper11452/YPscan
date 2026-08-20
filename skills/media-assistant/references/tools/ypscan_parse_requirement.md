@@ -26,6 +26,8 @@ Do not send `id`, `source_id`, `source_quote`, `subject`, or `unit`: the tool ge
 
 Use `minimum`/`maximum` for a range. The tool derives ordinary upper/lower bounds, `不限`, 图文/视频 qualifier, and quantity role from the quote; only pass `operator`, `qualifier`, `role`, `segment`, `strength`, `status`, or `scope` when the default does not express the requirement. Keep an old corrected fact only when needed, with `status="superseded"`, so its original clause remains covered.
 
+小红书明确“图文和视频均可”时，将同一句原文分别写成 `value=picture` 和 `value=video` 的两条 `content_format`；共享单价只写一条 generic `creator_price`，工具会把同一个扩展区间写入 L1/L2。不得复制价格事实，也不得把未说明内容形式的通用单价当成“两者均可”。例如 `单价1-2万，图文和视频均可` 的 L1/L2 都是 `"[7000,24000]"`，小红书不写 L3。
+
 ### Rebate example
 
 For the original wording `返点30%以上`, pass:

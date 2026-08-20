@@ -136,7 +136,8 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /CREATOR_PREVIEW_LOCAL_PATH/u);
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
-  assert.match(directiveText(rank), /默认直接调用 manual_source_creators/u);
+  assert.match(directiveText(rank), /先调用 select_inquiry_form_fields/u);
+  assert.match(directiveText(rank), /回复“好了”后，才调用 manual_source_creators/u);
   assert.match(directiveText(rank), /Excel 保存到本地后/u);
   assert.match(directiveText(rank), /ypscan_manual_research\(operation=start\)/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
@@ -229,6 +230,85 @@ test("default manual sourcing saves its Excel before offering browser detail res
     argsFromDirective(savedText).questions[0].options.map((option) => option.label),
     ["使用默认手扒结果（推荐）", "浏览器详细手扒"],
   );
+});
+
+test("default manual sourcing repairs missing field selection before retrying", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypmcn__manual_source_creators",
+    params: { requirement_id: "req-manual", size: 10 },
+    message: toolMessage({
+      success: false,
+      error: { code: "REQUIREMENT_COLUMNS_NOT_CONFIGURED" },
+    }),
+  });
+  const text = directiveText(result);
+
+  assert.deepEqual(namedArgsFromDirective(text, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
+    requirement_id: "req-manual",
+  });
+  assert.match(text, /不得原参数重试 manual_source_creators/u);
+  assert.match(text, /提交并回复“好了”后/u);
+  assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
+});
+
+test("tool-result parsing finds JSON in a separate text block", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypmcn__manual_source_creators",
+    params: { requirement_id: "req-multipart", size: 10 },
+    message: {
+      role: "toolResult",
+      content: [
+        { type: "text", text: 'Metadata: {"notice":true}' },
+        {
+          type: "text",
+          text: JSON.stringify({
+            success: true,
+            data: {
+              batch_id: "batch-multipart",
+              excel_file_url: "https://files.eshypdata.com/exports/multipart.xlsx",
+            },
+          }),
+        },
+        { type: "text", text: "End of provider result." },
+      ],
+    },
+  });
+
+  assert.deepEqual(saveExcelArgsFromDirective(directiveText(result)), {
+    artifact_kind: "manual_source",
+    artifact_id: "batch-multipart",
+    excel_file_url: "https://files.eshypdata.com/exports/multipart.xlsx",
+  });
+});
+
+test("terminal browser failure provides an exact fresh-run retry", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const params = {
+    operation: "start",
+    requirement_id: "req-reopen",
+    platform: "pgy",
+    facts: [{ kind: "creator_count", value: 10 }],
+    keywords: ["家居"],
+  };
+  const result = persist({
+    toolName: "ypscan_manual_research",
+    params,
+    message: toolMessage({
+      success: true,
+      operation: "start",
+      status: "failed_with_artifact",
+      artifact: { excel_path: "/workspace/failed.xlsx" },
+    }),
+  });
+  const text = directiveText(result);
+
+  assert.deepEqual(namedArgsFromDirective(text, "MANUAL_RESEARCH_FRESH_RUN_ARGS"), {
+    ...params,
+    fresh_run: true,
+  });
+  assert.match(text, /不得再次调用缺少 fresh_run=true 的 start/u);
 });
 
 test("institutional retrieval polls the ingest job before Excel save, creator rank and submission", () => {
@@ -639,7 +719,8 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /立即调用保存工具/u);
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
-  assert.match(first.prependContext, /人工拓展默认调用 manual_source_creators/u);
+  assert.match(first.prependContext, /用户选择人工拓展后，先调用 select_inquiry_form_fields/u);
+  assert.match(first.prependContext, /回复“好了”后，再调用 manual_source_creators/u);
   assert.match(first.prependContext, /默认手扒 Excel 保存成功后才提示/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
   assert.match(first.prependContext, /有限重试与逐级降级全部由插件 Runner 执行/u);
@@ -781,17 +862,19 @@ test("field-selection failure without usable links pauses through AskUserQuestio
   );
 });
 
-test("rank and startup directives prefer manual_source_creators before Browser", () => {
+test("rank and startup directives select fields before manual_source_creators", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const rank = persist({
     toolName: "ypmcn__rank_mcns",
     message: toolMessage({ success: true, data: { mcns: [] } }),
   });
-  assert.match(directiveText(rank), /默认直接调用 manual_source_creators/u);
+  assert.match(directiveText(rank), /先调用 select_inquiry_form_fields/u);
+  assert.match(directiveText(rank), /回复“好了”后，才调用 manual_source_creators/u);
   assert.match(directiveText(rank), /保存到本地后/u);
 
   const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
-  assert.match(startup.prependContext, /人工拓展默认调用 manual_source_creators/u);
+  assert.match(startup.prependContext, /用户选择人工拓展后，先调用 select_inquiry_form_fields/u);
+  assert.match(startup.prependContext, /回复“好了”后，再调用 manual_source_creators/u);
   assert.match(startup.prependContext, /ypscan_manual_research\(operation=start\)/u);
 });

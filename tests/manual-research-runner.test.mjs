@@ -565,6 +565,31 @@ test("login interruption still returns a diagnostic Excel and resume arguments",
   assert.equal((await readFile(data.artifact.excel_path)).subarray(0, 2).toString("utf8"), "PK");
 });
 
+test("runner accepts compact creator price facts that use value", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-compact-price-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => adapter(20),
+  });
+
+  const data = payload(
+    await run(
+      params({
+        facts: [
+          { kind: "product_name", value: "办公软件" },
+          { kind: "creator_count", value: 3, role: "submission" },
+          { kind: "creator_price", value: 20_000, operator: "lte" },
+        ],
+      }),
+    ),
+  );
+
+  assert.equal(data.status, "complete");
+  assert.equal(data.error, undefined);
+});
+
 test("a CAPTCHA after complete extraction preserves one completed detail", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-captcha-captured-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
@@ -637,6 +662,48 @@ test("a successful resume clears the previous login interruption", async (t) => 
   assert.equal(resumed.artifact.run_info.error_code, null);
   assert.equal(resumed.artifact.run_info.error_message, null);
   assert.equal(pageCalls, 2);
+});
+
+test("a page-open timeout is resumable and reopens the host Browser", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-network-resume-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  let pageCalls = 0;
+  const pageOptions = [];
+  const browserRuntime = {
+    acquire() {
+      return { acquired: true, release() {} };
+    },
+    async page(_platform, options) {
+      pageCalls += 1;
+      pageOptions.push(options);
+      if (pageCalls === 1) {
+        throw Object.assign(new Error("打开蒲公英达人广场失败"), {
+          code: "YPSCAN_MANUAL_PAGE_OPEN_FAILED",
+        });
+      }
+      return {
+        url: () => "https://www.xingtu.cn/ad/creator/market",
+        async evaluate() {
+          return [];
+        },
+      };
+    },
+  };
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime,
+    createAdapter: () => adapter(20),
+  });
+
+  const interrupted = payload(await run(params()));
+  assert.equal(interrupted.status, "needs_user_action");
+  assert.equal(interrupted.error.code, "YPSCAN_MANUAL_PAGE_OPEN_FAILED");
+  assert.equal(interrupted.resume_args.operation, "resume");
+
+  const resumed = payload(await run(interrupted.resume_args));
+  assert.equal(resumed.status, "complete");
+  assert.equal(pageCalls, 2);
+  assert.deepEqual(pageOptions, [{ reopen: false }, { reopen: true }]);
 });
 
 test("runner marks fallback collection as degraded and keeps its candidate artifact", async (t) => {
@@ -894,14 +961,11 @@ test("detail budget prioritizes candidates missing the selected exact quote", as
     }),
   );
 
-  assert.deepEqual(
-    collected,
-    [
-      ...Array.from({ length: 10 }, (_, index) => `creator-${index + 3}`),
-      "creator-1",
-      "creator-2",
-    ],
-  );
+  assert.deepEqual(collected, [
+    ...Array.from({ length: 10 }, (_, index) => `creator-${index + 3}`),
+    "creator-1",
+    "creator-2",
+  ]);
 });
 
 test("PGY starting price is labeled as all-price evidence, never as a typed quote", () => {

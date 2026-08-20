@@ -131,7 +131,7 @@ function visibleOptionValue(control, value) {
 }
 
 function factRange(fact) {
-  const value = fact.normalized_value;
+  const value = fact.normalized_value ?? fact.value;
   const range = Array.isArray(value) && value.length === 2 ? value : null;
   let minimum = fact.minimum ?? range?.[0] ?? null;
   let maximum = fact.maximum ?? range?.[1] ?? null;
@@ -166,8 +166,9 @@ function normalizedRangeForMapping(fact, mapping) {
 
 function manualCreatorPriceRange(fact) {
   const between = fact.operator === "between";
-  const minAnchor = Number(between ? fact.minimum : fact.normalized_value);
-  const maxAnchor = Number(between ? fact.maximum : fact.normalized_value);
+  const value = fact.normalized_value ?? fact.value;
+  const minAnchor = Number(between ? fact.minimum : value);
+  const maxAnchor = Number(between ? fact.maximum : value);
   return {
     min: Math.floor(minAnchor * MANUAL_CREATOR_PRICE_MIN_FACTOR),
     max: Math.ceil(maxAnchor * MANUAL_CREATOR_PRICE_MAX_FACTOR),
@@ -177,7 +178,7 @@ function manualCreatorPriceRange(fact) {
 function manualCreatorPriceAnchor(fact) {
   return {
     operator: fact.operator,
-    normalized_value: fact.normalized_value ?? null,
+    normalized_value: fact.normalized_value ?? fact.value ?? null,
     minimum: fact.minimum ?? null,
     maximum: fact.maximum ?? null,
     qualifier: fact.qualifier ?? "generic",
@@ -214,7 +215,7 @@ function requestedCreatorCount(facts) {
     .filter(
       (fact) => activeFact(fact) && fact.kind === "creator_count" && fact.role !== "cooperation",
     )
-    .flatMap((fact) => [fact.normalized_value, fact.maximum, fact.minimum])
+    .flatMap((fact) => [fact.normalized_value, fact.value, fact.maximum, fact.minimum])
     .map(Number)
     .filter((value) => Number.isSafeInteger(value) && value > 0);
   return values.length ? Math.max(...values) : null;
