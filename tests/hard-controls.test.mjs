@@ -116,7 +116,10 @@ test("fixed result directives enforce parse → validate → search → save →
 
   const rank = persist({
     toolName: "ypmcn__rank_mcns",
-    message: toolMessage({ success: true, data: { mcns: [{ agency_name: "机构 A" }] } }),
+    message: toolMessage({
+      success: true,
+      data: { mcns: [{ agency_name: "机构 A", supplier_id: "supplier-a" }] },
+    }),
   });
   assert.match(directiveText(rank), /完整 MCN Markdown 表格/u);
   assert.match(directiveText(rank), /用户可见正文文本块/u);
@@ -139,6 +142,11 @@ test("fixed result directives enforce parse → validate → search → save →
     directiveText(rank),
     /Supplier ID\/supplier_id、候选达人、供给占比、手扒补量和推荐理由/u,
   );
+  assert.match(directiveText(rank), /supplier_id 仅禁止对用户展示/u);
+  assert.match(directiveText(rank), /不得丢失.*机构名与 supplier_id 的真实对应关系/u);
+  assert.match(directiveText(rank), /supplier_id 是第一优先级/u);
+  assert.match(directiveText(rank), /命中且有非空 supplier_id 就只放入 supplierIds/u);
+  assert.match(directiveText(rank), /未匹配或无 ID 才把原始名称放入 supplier_name/u);
   assert.match(directiveText(rank), /candidate_count 原值/u);
   assert.match(directiveText(rank), /严禁使用累计字段 mcn_covered_creator_count/u);
   assert.match(directiveText(rank), /严禁与前序机构累加/u);
@@ -853,6 +861,9 @@ test("startup instruction makes backend manual sourcing the default and Browser 
     first.prependContext,
     /Supplier ID\/supplier_id、候选达人、供给占比、手扒补量、推荐理由/u,
   );
+  assert.match(first.prependContext, /supplier_id 是第一优先级/u);
+  assert.match(first.prependContext, /命中且有非空 supplier_id 就只放入 supplierIds/u);
+  assert.match(first.prependContext, /未匹配或无 ID 才把原名放入 supplier_name/u);
   assert.match(first.prependContext, /同一 requirement_id/u);
   assert.match(first.prependContext, /直接调用 manual_source_creators/u);
   assert.match(first.prependContext, /不得再次调用 select_inquiry_form_fields/u);
