@@ -42,6 +42,16 @@ function clean(value) {
     .trim();
 }
 
+function agencyDisplay(value) {
+  if (typeof value !== "string") return "";
+  const agency = clean(value);
+  if (!agency || agency.length > 40) return "";
+  if (/https?:\/\/|所属机构|MCN机构|账号类型|达人类型|机构管理|机构信息/iu.test(agency)) {
+    return "";
+  }
+  return agency;
+}
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== "object") return value;
@@ -603,7 +613,7 @@ function talentRows(plan, candidates, details, reviews, selectedCandidates, gene
     const fields = detail?.fields ?? {};
     const quote = selectedQuote(plan, fields, candidate);
     return [
-      fields.agency,
+      agencyDisplay(fields.agency),
       candidateStatus(candidate, detail, review, selectedReferences),
       dateTimeDisplay(detail?.captured_at ?? generatedAt),
       candidate.nickname ?? detail?.nickname,
@@ -1709,6 +1719,12 @@ async function validateAgentExtraction(runDir, detail, review, plan, candidate) 
   for (const [field, value] of Object.entries(review.extracted_fields)) {
     if (!hasExtractedValue(value)) continue;
     const quotes = (evidenceByField.get(field) ?? []).map((evidence) => evidence.quote);
+    if (field === "agency" && !quotes.some((quote) => /所属机构|MCN机构/u.test(quote))) {
+      throw Object.assign(new Error("机构字段缺少明确的所属机构标签"), {
+        code: "YPSCAN_MANUAL_EXTRACTION_VALUE_MISMATCH",
+        details: { field },
+      });
+    }
     const unsupported = evidenceValues(field, value).filter(
       (item) => !quoteSupportsValue(quotes, item),
     );

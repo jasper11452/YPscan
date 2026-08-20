@@ -40,7 +40,7 @@ const FIELD_ALIASES = Object.freeze({
     "fansCount",
   ],
   city: ["city", "location", "province", "authorCity", "author_city"],
-  agency: ["agency", "mcn", "mcnName", "mcn_name", "institution", "organization"],
+  agency: ["agency", "agencyName", "agency_name", "mcnName", "mcn_name"],
   account_type: ["accountType", "account_type", "authorType", "author_type", "kolType"],
   content_type: ["contentType", "content_type", "authorCategory", "author_category", "category"],
   price_picture_raw: ["picturePrice", "picture_price", "picPrice", "pic_price", "notePrice"],
@@ -361,7 +361,9 @@ export function normalizeDetailResponse(payload) {
   const fields = {};
   for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
     const value = pick(bag, aliases);
-    if (value !== null) fields[field] = value;
+    if (value !== null && (field !== "agency" || typeof value === "string")) {
+      fields[field] = value;
+    }
   }
   const tierPrices = priceByTier(bag);
   if (Object.keys(tierPrices).length) fields.price_by_tier = tierPrices;

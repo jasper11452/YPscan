@@ -23,7 +23,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 “先输出”只指已经发出的用户可见 assistant 文本块；工具结果里的表头、directive、思考过程都不算，AskUserQuestion 返回后补写的表格或本地路径也不满足。AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block。
 
-MCN 结果必须使用 Markdown 表格，禁止改成项目符号或编号列表。表格固定包含：机构名、返点、综合分、达人数。每行达人数只取该机构对象自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，严禁用作本机构人数，严禁与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。其他值同样只取当前 `rank_mcns` 响应；缺失值写“未知”，不使用历史结果补齐。
+MCN 结果必须使用 Markdown 表格，禁止改成项目符号或编号列表。表格固定且只包含：排名、机构、覆盖达人、返点、综合分。排名按当前响应顺序从 1 开始连续编号；每行覆盖达人只取该机构对象自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，严禁用作本机构人数，严禁与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。禁止在表格内外展示匹配机构数、推荐数量或其他 `rank_mcns` 汇总。其他值同样只取当前响应中该机构自己的对象；缺失值写“未知”，不使用历史结果补齐。
 
 ## AskUserQuestion 规则
 
@@ -36,6 +36,8 @@ rank_mcns 后的弹窗只问分支，不承载机构表格或本地路径。必�
 ## 人工拓展：默认后端手扒，浏览器按需补充
 
 用户在 MCN 表格和达人预览表本地路径后的弹窗选择“人工拓展并提报”后，先调用 `select_inquiry_form_fields` 并原样展示字段选择 URL。用户在页面提交字段并回复“好了”后，才调用 [manual_source_creators](references/tools/manual_source_creators.md)：传当前 requirement ID 和用户要求的交付人数 `size`，由后端全自动完成手扒。返回 Excel 后立即用 `ypscan_save_excel_artifact(artifact_kind=manual_source)` 保存并展示真实本地路径；保存成功前不得启动 Browser。
+
+用户说“手扒”“手动拓展”“人工拓展”或“直接手扒”时同样适用上述默认 MCP 链路；这些说法都不代表浏览器详细手扒。只有用户明确选择“浏览器详细手扒”后，才允许启动 Browser Runner。
 
 默认 Excel 保存后才调用返回的 AskUserQuestion。默认推荐直接使用该结果；浏览器详细手扒必须明确提示耗时较长，期间可能多次出现登录、验证或资质弹窗。只有用户选择“浏览器详细手扒”后，才完整读取当前平台 SOP（星图读取 [xingtu-browser-handpick.md](references/xingtu-browser-handpick.md)，蒲公英读取 [pgy-browser-handpick.md](references/pgy-browser-handpick.md)）以及 [ypscan_manual_research.md](references/tools/ypscan_manual_research.md)，然后调用 `ypscan_manual_research(operation=start)`。
 

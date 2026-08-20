@@ -120,12 +120,14 @@ test("fixed result directives enforce parse → validate → search → save →
   });
   assert.match(directiveText(rank), /完整 MCN Markdown 表格/u);
   assert.match(directiveText(rank), /用户可见正文文本块/u);
-  assert.match(directiveText(rank), /\| 机构名 \| 返点 \| 综合分 \| 达人数 \|/u);
+  assert.match(directiveText(rank), /\| 排名 \| 机构 \| 覆盖达人 \| 返点 \| 综合分 \|/u);
   assert.match(directiveText(rank), /禁止改成项目符号或编号列表/u);
-  assert.match(directiveText(rank), /机构名、返点、综合分、达人数/u);
-  assert.match(directiveText(rank), /只显示这一张四列表格/u);
+  assert.match(directiveText(rank), /排名、机构、覆盖达人、返点、综合分/u);
+  assert.match(directiveText(rank), /只显示这一张五列表格/u);
   assert.match(directiveText(rank), /固定列且不得增减/u);
-  assert.match(directiveText(rank), /禁止在表格内外另行展示排名、supplier_id/u);
+  assert.match(directiveText(rank), /排名严格按当前响应顺序从 1 开始连续编号/u);
+  assert.match(directiveText(rank), /禁止在表格内外另行展示 supplier_id/u);
+  assert.match(directiveText(rank), /匹配机构数、推荐数量/u);
   assert.match(directiveText(rank), /MCN:人工、推荐理由/u);
   assert.match(directiveText(rank), /candidate_count 原值/u);
   assert.match(directiveText(rank), /严禁使用累计字段 mcn_covered_creator_count/u);
@@ -138,6 +140,9 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
   assert.match(directiveText(rank), /先调用 select_inquiry_form_fields/u);
   assert.match(directiveText(rank), /回复“好了”后，才调用 manual_source_creators/u);
+  assert.match(directiveText(rank), /“手扒”“手动拓展”“人工拓展”“直接手扒”/u);
+  assert.match(directiveText(rank), /一律默认先走 MCP/u);
+  assert.match(directiveText(rank), /不得把这些说法解释为浏览器详细手扒/u);
   assert.match(directiveText(rank), /Excel 保存到本地后/u);
   assert.match(directiveText(rank), /ypscan_manual_research\(operation=start\)/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
@@ -149,7 +154,8 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(question.questions[0].question, /弹窗打开前已在对话中完整展示/u);
   assert.match(question.questions[0].question, /达人预览表本地文件路径/u);
   assert.doesNotMatch(question.questions[0].question, /下载链接/u);
-  assert.doesNotMatch(question.questions[0].question, /\| 机构名 \|/u);
+  assert.doesNotMatch(question.questions[0].question, /\| 排名 \|/u);
+  assert.doesNotMatch(question.questions[0].question, /匹配机构：/u);
 });
 
 test("creator preview save keeps the local path and continues to rank", () => {
@@ -632,8 +638,8 @@ test("empty rank result still outputs the Markdown table and offers manual expan
   const text = directiveText(result);
   assert.match(text, /完整 MCN Markdown 表格/u);
   assert.match(text, /用户可见正文文本块/u);
-  assert.match(text, /\| 机构名 \| 返点 \| 综合分 \| 达人数 \|/u);
-  assert.match(text, /\| 暂无匹配机构 \| — \| — \| — \|/u);
+  assert.match(text, /\| 排名 \| 机构 \| 覆盖达人 \| 返点 \| 综合分 \|/u);
+  assert.match(text, /\| — \| 暂无匹配机构 \| — \| — \| — \|/u);
   const question = argsFromDirective(text).questions[0];
   assert.deepEqual(
     question.options.map((option) => option.label),
@@ -643,6 +649,7 @@ test("empty rank result still outputs the Markdown table and offers manual expan
   assert.match(question.question, /达人预览表本地文件路径/u);
   assert.doesNotMatch(question.question, /下载链接/u);
   assert.doesNotMatch(question.question, /\| 暂无匹配机构 \|/u);
+  assert.doesNotMatch(question.question, /匹配机构：/u);
 });
 
 test("not-ready parse results batch real clarification questions", () => {
@@ -827,9 +834,11 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /立即调用保存工具/u);
   assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
-  assert.match(first.prependContext, /用户选择人工拓展后，先调用 select_inquiry_form_fields/u);
+  assert.match(first.prependContext, /一律默认先走 MCP：先调用 select_inquiry_form_fields/u);
   assert.match(first.prependContext, /回复“好了”后，再调用 manual_source_creators/u);
   assert.match(first.prependContext, /默认手扒 Excel 保存成功后才提示/u);
+  assert.match(first.prependContext, /“手扒”“手动拓展”“人工拓展”“直接手扒”/u);
+  assert.match(first.prependContext, /一律默认先走 MCP/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
   assert.match(first.prependContext, /有限重试与逐级降级全部由插件 Runner 执行/u);
   assert.match(first.prependContext, /同一 run_id 调用 resume/u);
@@ -983,7 +992,7 @@ test("rank and startup directives select fields before manual_source_creators", 
 
   const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
-  assert.match(startup.prependContext, /用户选择人工拓展后，先调用 select_inquiry_form_fields/u);
+  assert.match(startup.prependContext, /一律默认先走 MCP：先调用 select_inquiry_form_fields/u);
   assert.match(startup.prependContext, /回复“好了”后，再调用 manual_source_creators/u);
   assert.match(startup.prependContext, /ypscan_manual_research\(operation=start\)/u);
 });
