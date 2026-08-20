@@ -1,7 +1,7 @@
 {
   "name": "ypscan",
-  "version": "0.1.24-beta65",
-  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展由插件内持久 Chrome Runner 完成。",
+  "version": "0.1.24-beta66",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，浏览器详细手扒复用宿主 Browser 登录态。",
   "type": "module",
   "private": true,
   "files": [

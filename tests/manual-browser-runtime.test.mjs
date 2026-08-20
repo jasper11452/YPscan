@@ -1,146 +1,198 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 
 import { createManualBrowserRuntime } from "../src/tools/manual-research/browser-runtime.js";
 
-function fakeLauncher(actions) {
-  const page = {
-    currentUrl: "about:blank",
-    url() {
-      return this.currentUrl;
-    },
-    async goto(url) {
-      this.currentUrl = url;
-      actions.push(["goto", url]);
-    },
-    async bringToFront() {},
-  };
-  const context = {
-    pages: () => [page],
-    setDefaultTimeout() {},
-    setDefaultNavigationTimeout() {},
-    once() {},
-    async close() {
-      actions.push(["close"]);
-    },
-  };
+function locator({ body = "", accountVisible = false } = {}) {
   return {
-    async launchPersistentContext(profileDir, options) {
-      actions.push(["launch", profileDir, options.channel]);
-      return context;
-    },
-  };
-}
-
-test("browser runtime uses a private persistent profile and serializes every run", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "ypscan-browser-runtime-"));
-  const workspaceDir = join(root, "workspace");
-  const profileDir = join(root, "profile");
-  await mkdir(workspaceDir);
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const actions = [];
-  const runtime = createManualBrowserRuntime({ profileDir, launcher: fakeLauncher(actions) });
-
-  const first = runtime.acquire("run-1");
-  assert.equal(first.acquired, true);
-  assert.deepEqual(runtime.acquire("run-1"), { acquired: false, active_run_id: "run-1" });
-  assert.deepEqual(runtime.acquire("run-2"), { acquired: false, active_run_id: "run-1" });
-  await runtime.page("xingtu", workspaceDir);
-  assert.equal((await stat(profileDir)).mode & 0o777, 0o700);
-  assert.deepEqual(actions[0], ["launch", await realpath(profileDir), "chrome"]);
-  assert.deepEqual(actions[1], ["goto", "https://www.xingtu.cn/ad/creator/market"]);
-
-  first.release();
-  assert.equal(runtime.acquire("run-2").acquired, true);
-  await runtime.close();
-});
-
-test("browser runtime rejects a profile stored inside the workspace", async (t) => {
-  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-browser-workspace-"));
-  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const runtime = createManualBrowserRuntime({
-    profileDir: join(workspaceDir, "browser-profile"),
-    launcher: fakeLauncher([]),
-  });
-
-  await assert.rejects(runtime.page("pgy", workspaceDir), {
-    code: "YPSCAN_MANUAL_PROFILE_INVALID",
-  });
-});
-
-test("browser runtime enters an authenticated Xingtu workspace from the redirect landing", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "ypscan-browser-auth-redirect-"));
-  const workspaceDir = join(root, "workspace");
-  const profileDir = join(root, "profile");
-  await mkdir(workspaceDir);
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const actions = [];
-  const account = {
     filter() {
       return this;
     },
     first() {
       return this;
     },
-    isVisible: async () => true,
-    click: async () => {
-      actions.push(["account-click"]);
-      page.currentUrl = "https://www.xingtu.cn/ad/creator/index";
+    nth() {
+      return this;
+    },
+    async count() {
+      return 0;
+    },
+    async innerText() {
+      return body;
+    },
+    async isVisible() {
+      return accountVisible;
     },
   };
-  const page = {
-    currentUrl: "about:blank",
-    url() {
-      return this.currentUrl;
-    },
+}
+
+function fakePage(actions, options = {}) {
+  const state = {
+    url: options.url ?? "about:blank",
+    gotoError: options.gotoError ?? null,
+  };
+  const pageLocator = locator(options);
+  return {
+    url: () => state.url,
     async goto(url) {
       actions.push(["goto", url]);
-      this.currentUrl =
-        actions.filter(([kind]) => kind === "goto").length === 1
-          ? "https://www.xingtu.cn/ad/creator/market"
-          : url;
+      if (state.gotoError) {
+        state.url = options.gotoUrl ?? state.url;
+        throw state.gotoError;
+      }
+      state.url = options.gotoUrl ?? url;
     },
-    locator: () => account,
+    async bringToFront() {
+      actions.push(["front", state.url]);
+    },
+    locator: () => pageLocator,
     getByPlaceholder: () => ({
       first() {
         return this;
       },
-      isVisible: async () => false,
+      async isVisible() {
+        return options.marketInputVisible ?? false;
+      },
     }),
-    waitForURL: async () => {},
-    waitForTimeout: async () => {
-      if (actions.filter(([kind]) => kind === "goto").length === 1) {
-        page.currentUrl = "https://www.xingtu.cn/redirect_to/ad/creator/market";
-      }
-    },
-    bringToFront: async () => {},
+    async waitForTimeout() {},
   };
-  const launcher = {
-    async launchPersistentContext() {
-      return {
-        pages: () => [page],
-        setDefaultTimeout() {},
-        setDefaultNavigationTimeout() {},
-        once() {},
-        async newPage() {
-          actions.push(["new-page"]);
-          return page;
-        },
-        close: async () => {},
-      };
-    },
-  };
-  const runtime = createManualBrowserRuntime({ profileDir, launcher });
+}
 
-  const result = await runtime.page("xingtu", workspaceDir);
+function hostBrowser(pages, actions) {
+  const context = {
+    pages: () => pages,
+    async newPage() {
+      const page = fakePage(actions, { marketInputVisible: true });
+      pages.push(page);
+      actions.push(["new-page"]);
+      return page;
+    },
+  };
+  return {
+    isConnected: () => true,
+    contexts: () => [context],
+    async close() {
+      actions.push(["browser-close"]);
+    },
+  };
+}
+
+test("browser runtime reuses the host Browser profile and serializes every run", async () => {
+  const actions = [];
+  const pages = [fakePage(actions)];
+  const browser = hostBrowser(pages, actions);
+  const endpoints = [];
+  const runtime = createManualBrowserRuntime({
+    browserCdpUrl: "http://127.0.0.1:19999",
+    async connectOverCDP(endpoint) {
+      endpoints.push(endpoint);
+      return browser;
+    },
+  });
+
+  const first = runtime.acquire("run-1");
+  assert.equal(first.acquired, true);
+  assert.deepEqual(runtime.acquire("run-1"), { acquired: false, active_run_id: "run-1" });
+  assert.deepEqual(runtime.acquire("run-2"), { acquired: false, active_run_id: "run-1" });
+  await runtime.page("pgy");
+  await runtime.page("pgy");
+
+  assert.deepEqual(endpoints, ["http://127.0.0.1:19999"]);
+  assert.equal(pages.length, 1);
+  assert.deepEqual(actions[0], ["goto", "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol"]);
+
+  first.release();
+  assert.equal(runtime.acquire("run-2").acquired, true);
+  await runtime.close();
+  assert.equal(
+    actions.some(([kind]) => kind === "browser-close"),
+    false,
+  );
+});
+
+test("browser runtime retries a failed page open in a new host tab", async () => {
+  const actions = [];
+  const pages = [fakePage(actions, { gotoError: new Error("net::ERR_TIMED_OUT") })];
+  const runtime = createManualBrowserRuntime({
+    connectOverCDP: async () => hostBrowser(pages, actions),
+  });
+
+  const page = await runtime.page("pgy");
+
+  assert.equal(page.url(), "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol");
+  assert.equal(actions.filter(([kind]) => kind === "goto").length, 2);
+  assert.equal(actions.filter(([kind]) => kind === "new-page").length, 1);
+});
+
+test("browser runtime explicitly reopens a recoverable run in a new host tab", async () => {
+  const actions = [];
+  const pages = [
+    fakePage(actions, {
+      url: "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol",
+    }),
+  ];
+  const runtime = createManualBrowserRuntime({
+    connectOverCDP: async () => hostBrowser(pages, actions),
+  });
+
+  const page = await runtime.page("pgy", { reopen: true });
+
+  assert.equal(page.url(), "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol");
+  assert.equal(pages.length, 2);
+  assert.equal(actions.filter(([kind]) => kind === "new-page").length, 1);
+  assert.equal(actions.filter(([kind]) => kind === "goto").length, 1);
+});
+
+test("browser runtime keeps a login page open for user recovery", async () => {
+  const actions = [];
+  const pages = [
+    fakePage(actions, {
+      gotoError: new Error("navigation interrupted"),
+      gotoUrl: "https://pgy.xiaohongshu.com/login",
+      body: "请登录",
+    }),
+  ];
+  const runtime = createManualBrowserRuntime({
+    connectOverCDP: async () => hostBrowser(pages, actions),
+  });
+
+  await assert.rejects(runtime.page("pgy"), {
+    code: "YPSCAN_MANUAL_LOGIN_REQUIRED",
+  });
+  assert.equal(actions.filter(([kind]) => kind === "new-page").length, 0);
+  assert.equal(
+    actions.some(([kind]) => kind === "front"),
+    true,
+  );
+});
+
+test("browser runtime reports an unavailable host Browser as recoverable", async () => {
+  const runtime = createManualBrowserRuntime({
+    connectOverCDP: async () => {
+      throw new Error("ECONNREFUSED");
+    },
+  });
+
+  await assert.rejects(runtime.page("xingtu"), {
+    code: "YPSCAN_MANUAL_BROWSER_UNAVAILABLE",
+  });
+});
+
+test("browser runtime re-enters Xingtu from an authenticated redirect", async () => {
+  const actions = [];
+  const pages = [
+    fakePage(actions, {
+      gotoUrl: "https://www.xingtu.cn/redirect_to/ad/creator/market",
+      accountVisible: true,
+    }),
+  ];
+  const runtime = createManualBrowserRuntime({
+    connectOverCDP: async () => hostBrowser(pages, actions),
+  });
+
+  const result = await runtime.page("xingtu");
 
   assert.equal(result.url(), "https://www.xingtu.cn/ad/creator/market");
-  assert.deepEqual(actions, [
-    ["goto", "https://www.xingtu.cn/ad/creator/market"],
-    ["new-page"],
-    ["goto", "https://www.xingtu.cn/ad/creator/market"],
-  ]);
+  assert.equal(actions.filter(([kind]) => kind === "goto").length, 2);
+  assert.equal(actions.filter(([kind]) => kind === "new-page").length, 1);
 });

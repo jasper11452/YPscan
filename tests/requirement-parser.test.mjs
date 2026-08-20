@@ -242,6 +242,53 @@ test("generic Xiaohongshu price follows the campaign's sole video format", () =>
   assert.equal(result.data.projections.provider.params.kolOfficialPriceL2, "[14000,24000]");
 });
 
+test("shared Xiaohongshu price covers both explicitly accepted content formats", () => {
+  const priceAndFormatQuote = "小红书达人单价1-2万，图文和视频均可";
+  const cpmQuote = "图文和视频CPM不超过100";
+  const cpeQuote = "图文和视频CPE不超过20";
+  const facts = [
+    ...baseFacts().map((item) =>
+      item.kind === "creator_price"
+        ? fact("price", "creator_price", priceAndFormatQuote, null, {
+            operator: "between",
+            minimum: 10_000,
+            maximum: 20_000,
+          })
+        : item,
+    ),
+    fact("picture-format", "content_format", priceAndFormatQuote, "picture"),
+    fact("video-format", "content_format", priceAndFormatQuote, "video"),
+    fact("shared-cpm", "cpm_max", cpmQuote, 100, { operator: "lte" }),
+    fact("shared-cpe", "cpe_max", cpeQuote, 20, { operator: "lte" }),
+  ];
+  const result = compile({
+    original_brief: `${brief().replace(
+      "单价2万以内",
+      priceAndFormatQuote,
+    )}；${cpmQuote}；${cpeQuote}`,
+    platform: "xiaohongshu",
+    facts,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.projections.provider.ready, true);
+  assert.equal(result.data.projections.provider.params.kolOfficialPriceL1, "[7000,24000]");
+  assert.equal(result.data.projections.provider.params.kolOfficialPriceL2, "[7000,24000]");
+  assert.equal(result.data.projections.provider.params.kolOfficialPriceL3, undefined);
+  assert.equal(result.data.projections.provider.params.cpmL1, "[0,100]");
+  assert.equal(result.data.projections.provider.params.cpmL2, "[0,100]");
+  assert.equal(result.data.projections.provider.params.cpmL3, undefined);
+  assert.equal(result.data.projections.provider.params.cpeL1, "[0,20]");
+  assert.equal(result.data.projections.provider.params.cpeL2, "[0,20]");
+  assert.equal(result.data.projections.provider.params.cpeL3, undefined);
+  assert.deepEqual(
+    result.data.facts
+      .filter((item) => item.kind === "content_format")
+      .map((item) => item.qualifier),
+    ["picture", "video"],
+  );
+});
+
 test("a negated low-follower expression supports an explicit lower-bound fact", () => {
   const facts = baseFacts().map((item) =>
     item.kind === "follower_count"

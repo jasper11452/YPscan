@@ -1,7 +1,7 @@
 {
   "id": "ypscan",
   "name": "悦普识星",
-  "version": "0.1.24-beta65",
+  "version": "0.1.24-beta66",
   "description": "悦普识星客户端集成层：固定 Provider 首发链路，默认手扒由后端自动完成，浏览器详细手扒按需执行。",
   "author": {
     "name": "Jasper"
@@ -52,11 +52,12 @@
       },
       "browserCdpUrl": {
         "type": "string",
-        "description": "已弃用并忽略，仅保留一个版本的旧配置兼容。"
+        "default": "http://127.0.0.1:18800",
+        "description": "宿主 Browser 的 CDP 地址；Runner 通过它复用宿主 Profile、Cookie 和登录态。"
       },
       "manualBrowserProfileDir": {
         "type": "string",
-        "description": "可选的手扒专用 Chrome Profile 绝对路径；不得位于项目工作区。"
+        "description": "已弃用并忽略，仅保留一个版本的旧配置兼容。"
       }
     }
   },

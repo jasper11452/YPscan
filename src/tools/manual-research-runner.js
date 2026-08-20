@@ -27,6 +27,21 @@ const RUN_BUDGET_MS = 180_000;
 const PERSIST_RESERVE_MS = 15_000;
 const ACTION_TIMEOUT_MS = 6_000;
 const DETAIL_TIMEOUT_MS = 20_000;
+const RESUMABLE_ERROR_CODES = new Set([
+  "YPSCAN_MANUAL_LOGIN_REQUIRED",
+  "YPSCAN_MANUAL_CAPTCHA_REQUIRED",
+  "YPSCAN_MANUAL_BROWSER_UNAVAILABLE",
+  "YPSCAN_MANUAL_PAGE_OPEN_FAILED",
+  "YPSCAN_MANUAL_PAGE_NOT_READY",
+  "YPSCAN_MANUAL_WRONG_PAGE",
+  "YPSCAN_MANUAL_ACTION_TIMEOUT",
+]);
+const REOPEN_ERROR_CODES = new Set([
+  "YPSCAN_MANUAL_PAGE_OPEN_FAILED",
+  "YPSCAN_MANUAL_PAGE_NOT_READY",
+  "YPSCAN_MANUAL_WRONG_PAGE",
+  "YPSCAN_MANUAL_ACTION_TIMEOUT",
+]);
 
 const PUBLIC_OPERATIONS = Object.freeze([
   "start",
@@ -255,7 +270,7 @@ async function retryBrowserAction(label, action, adapter, timeoutMs = ACTION_TIM
   try {
     return await bounded(label, Promise.resolve().then(action), timeoutMs);
   } catch (firstError) {
-    if (needsUser(firstError) || typeof adapter?.recover !== "function") throw firstError;
+    if (isResumableError(firstError) || typeof adapter?.recover !== "function") throw firstError;
     await bounded(
       `${label}恢复页面`,
       Promise.resolve().then(() => adapter.recover()),
@@ -265,11 +280,11 @@ async function retryBrowserAction(label, action, adapter, timeoutMs = ACTION_TIM
   }
 }
 
-function needsUser(error) {
-  return ["YPSCAN_MANUAL_LOGIN_REQUIRED", "YPSCAN_MANUAL_CAPTCHA_REQUIRED"].includes(error?.code);
+function isResumableError(error) {
+  return RESUMABLE_ERROR_CODES.has(error?.code);
 }
 
-function persistenceFailure(error) {
+function isPersistenceFailure(error) {
   return ["YPSCAN_MANUAL_CHECKPOINT_FAILED", "YPSCAN_MANUAL_ARTIFACT_FAILED"].includes(error?.code);
 }
 
@@ -311,9 +326,8 @@ function qualifiedDetailCount(details, reviews) {
 }
 
 function capturedOrCompletedDetailCount(details) {
-  return details.filter(
-    (detail) => detail.html_snapshots?.length || detail.status === "complete",
-  ).length;
+  return details.filter((detail) => detail.html_snapshots?.length || detail.status === "complete")
+    .length;
 }
 
 function createRunInfo(params, plan, state, now, candidateCount = 0) {
@@ -761,9 +775,11 @@ export function createManualResearchRunner({
       try {
         state.phase = "opening_browser";
         await store.saveRunnerState(runnerState(params, state, "running", now));
+        const reopen =
+          params.operation === "resume" && REOPEN_ERROR_CODES.has(latestRunnerState?.error_code);
         const page = await bounded(
           "启动浏览器",
-          browserRuntime.page(params.platform, workspaceDir),
+          browserRuntime.page(params.platform, { reopen }),
           20_000,
         );
         adapter = createAdapter(params.platform, page, { workspaceDir, now });
@@ -807,7 +823,7 @@ export function createManualResearchRunner({
                   state.unapplied_filters.add(`报价类型=${plan.price_view}`);
                 }
               } catch (error) {
-                if (needsUser(error) || persistenceFailure(error)) throw error;
+                if (isResumableError(error) || isPersistenceFailure(error)) throw error;
                 allApplied = false;
                 state.unapplied_filters.add(`报价类型=${plan.price_view}`);
               }
@@ -846,7 +862,7 @@ export function createManualResearchRunner({
               );
               if (!searched?.applied) state.unapplied_filters.add(`关键词=${branch.keyword}`);
             } catch (error) {
-              if (needsUser(error) || persistenceFailure(error)) throw error;
+              if (isResumableError(error) || isPersistenceFailure(error)) throw error;
               lowerQuality(state, "degraded");
               state.unapplied_filters.add(`关键词=${branch.keyword}`);
             }
@@ -864,7 +880,7 @@ export function createManualResearchRunner({
                 10_000,
               );
             } catch (error) {
-              if (needsUser(error) || persistenceFailure(error)) throw error;
+              if (isResumableError(error) || isPersistenceFailure(error)) throw error;
               state.error_code = error?.code ?? "YPSCAN_MANUAL_LIST_UNAVAILABLE";
               state.error_message = error?.message ?? String(error);
               lowerQuality(state, "unverified");
@@ -911,7 +927,7 @@ export function createManualResearchRunner({
             try {
               next = await retryBrowserAction("进入下一页", () => adapter.nextPage(), adapter);
             } catch (error) {
-              if (needsUser(error) || persistenceFailure(error)) throw error;
+              if (isResumableError(error) || isPersistenceFailure(error)) throw error;
               state.unapplied_filters.add(`分页:${pageNumber + 1}`);
             }
             if (!(next === true || next?.advanced === true)) break;
@@ -922,7 +938,7 @@ export function createManualResearchRunner({
           try {
             await collect(branch, mode, applyFilters, preserveFilters);
           } catch (error) {
-            if (needsUser(error) || persistenceFailure(error)) throw error;
+            if (isResumableError(error) || isPersistenceFailure(error)) throw error;
             state.error_code = error?.code ?? "YPSCAN_MANUAL_PAGE_UNAVAILABLE";
             state.error_message = error?.message ?? String(error);
             lowerQuality(state, "unverified");
@@ -1047,7 +1063,7 @@ export function createManualResearchRunner({
                 runInfo: createRunInfo(params, plan, state, now, candidates.length),
               });
             }
-            if (needsUser(error)) throw error;
+            if (isResumableError(error)) throw error;
             const failure = {
               candidate_ref: candidateReference(candidate),
               platform_id: candidate.platform_id ?? null,
@@ -1114,15 +1130,16 @@ export function createManualResearchRunner({
         state.error_code = error?.code ?? "YPSCAN_MANUAL_RESEARCH_FAILED";
         state.error_message = error?.message ?? String(error);
         lowerQuality(state, candidates.length ? "degraded" : "unverified");
-        const status = needsUser(error)
+        const resumable = isResumableError(error);
+        const status = resumable
           ? "needs_user_action"
           : candidates.length
             ? "partial"
             : "failed_with_artifact";
-        state.phase = needsUser(error) ? "awaiting_user" : "terminal";
-        state.resume_available = needsUser(error);
-        state.resume_instruction = needsUser(error)
-          ? "在专用浏览器完成登录或验证后原样调用 resume"
+        state.phase = resumable ? "awaiting_user" : "terminal";
+        state.resume_available = resumable;
+        state.resume_instruction = resumable
+          ? "在宿主 Browser 完成登录、验证或网络恢复后原样调用 resume"
           : null;
         artifact = await materialize(status, true).catch(() => artifact);
         return hostToolResult(

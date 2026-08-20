@@ -418,7 +418,7 @@ export const PARSE_REQUIREMENT_PARAMETERS = Object.freeze({
       type: "array",
       maxItems: 100,
       description:
-        "紧凑证据事实：通常只传 kind、quote、value。quote 必须是用户原文连续子串；数值使用已换算数值，比例使用原始百分数。",
+        "事实传 kind/quote/value；quote 是原文子串。图文视频均可拆成 picture/video 两条 content_format，共享价格只传一条。",
       items: {
         type: "object",
         additionalProperties: false,
@@ -966,8 +966,15 @@ function inferredOperator(rawFact, quote) {
 
 function inferredQualifier(rawFact, quote) {
   if (rawFact.qualifier !== undefined) return rawFact.qualifier;
-  if (/图文/u.test(quote)) return "picture";
-  if (/视频/u.test(quote)) return "video";
+  if (rawFact.kind === "content_format") {
+    const format = normalizedContentFormat(rawFact.value);
+    if (format) return format;
+  }
+  const mentionsPicture = /图文/u.test(quote);
+  const mentionsVideo = /视频/u.test(quote);
+  if (mentionsPicture && mentionsVideo) return "generic";
+  if (mentionsPicture) return "picture";
+  if (mentionsVideo) return "video";
   return "generic";
 }
 
@@ -1409,18 +1416,28 @@ function serializeRange(range) {
   return JSON.stringify([range.minimum, range.maximum]);
 }
 
-function priceTierForFact(fact, platform, durationFacts, formatFacts = []) {
+function priceTiersForFact(fact, platform, durationFacts, formatFacts = []) {
   if (platform === "xiaohongshu") {
     const formats = [
       ...new Set(
         formatFacts.map((item) => normalizedContentFormat(item.normalized_value)).filter(Boolean),
       ),
     ];
-    const qualifier =
-      fact.qualifier === "generic" && formats.length === 1 ? formats[0] : fact.qualifier;
-    if (qualifier === "video") return "kolOfficialPriceL2";
-    if (["generic", "picture"].includes(qualifier)) return "kolOfficialPriceL1";
-    return null;
+    const selectedFormats = fact.qualifier === "generic" ? formats : [fact.qualifier];
+    if (selectedFormats.length === 0) return ["kolOfficialPriceL1"];
+    return [
+      ...new Set(
+        selectedFormats
+          .map((format) =>
+            format === "picture"
+              ? "kolOfficialPriceL1"
+              : format === "video"
+                ? "kolOfficialPriceL2"
+                : null,
+          )
+          .filter(Boolean),
+      ),
+    ];
   }
   const durationTiers = [
     ...new Set(
@@ -1431,19 +1448,19 @@ function priceTierForFact(fact, platform, durationFacts, formatFacts = []) {
     ["generic", "video"].includes(fact.qualifier) && durationTiers.length === 1
       ? durationTiers[0]
       : fact.qualifier;
-  if (qualifier === "generic") return null;
-  return (
-    {
-      duration_l1: "kolOfficialPriceL1",
-      duration_l2: "kolOfficialPriceL2",
-      duration_l3: "kolOfficialPriceL3",
-    }[qualifier] ?? null
-  );
+  if (qualifier === "generic") return [];
+  const field = {
+    duration_l1: "kolOfficialPriceL1",
+    duration_l2: "kolOfficialPriceL2",
+    duration_l3: "kolOfficialPriceL3",
+  }[qualifier];
+  return field ? [field] : [];
 }
 
-function metricTierForFact(fact, platform, durationFacts, formatFacts = []) {
-  const priceTier = priceTierForFact(fact, platform, durationFacts, formatFacts);
-  return priceTier?.replace("kolOfficialPrice", "") ?? null;
+function metricTiersForFact(fact, platform, durationFacts, formatFacts = []) {
+  return priceTiersForFact(fact, platform, durationFacts, formatFacts).map((priceTier) =>
+    priceTier.replace("kolOfficialPrice", ""),
+  );
 }
 
 function providerPriceRange(fact) {
@@ -1724,8 +1741,8 @@ function providerJobProjection(input, facts, now, globalIssues, segment) {
       issues.push(issue("CREATOR_PRICE_UNRESOLVED", "达人单价不能为不限", [price.id]));
       continue;
     }
-    const field = priceTierForFact(price, input.platform, durationFacts, formatFacts);
-    if (!field) {
+    const fields = priceTiersForFact(price, input.platform, durationFacts, formatFacts);
+    if (fields.length === 0) {
       issues.push(
         issue(
           "PRICE_TIER_AMBIGUOUS",
@@ -1739,41 +1756,45 @@ function providerJobProjection(input, facts, now, globalIssues, segment) {
     }
     const range = providerPriceRange(price);
     const output = serializeRange(range);
-    if (projectedPrices.has(field) && projectedPrices.get(field) !== output) {
-      issues.push(issue("PRICE_FIELD_CONFLICT", `${field} 被多个不同价格事实占用`, [price.id]));
-      continue;
-    }
-    projectedPrices.set(field, output);
-    params[field] = output;
-    transforms.push(
-      transform(
-        price.id,
-        field,
-        "provider-price-retrieval-70-120/v1",
-        price.operator === "between" ? [price.minimum, price.maximum] : price.normalized_value,
-        output,
-        "仅供 Provider 供给检索：用户单价外沿扩展一次至 70%–120%",
-      ),
-    );
-    if (input.platform === "xiaohongshu" && price.qualifier === "generic") {
+    for (const field of fields) {
+      if (projectedPrices.has(field) && projectedPrices.get(field) !== output) {
+        issues.push(issue("PRICE_FIELD_CONFLICT", `${field} 被多个不同价格事实占用`, [price.id]));
+        continue;
+      }
+      projectedPrices.set(field, output);
+      params[field] = output;
       transforms.push(
         transform(
           price.id,
           field,
-          "provider-xhs-generic-price-compat/v1",
-          "generic",
-          field,
-          formatFacts.length === 1
-            ? "未在价格事实中限定内容形式，按唯一 campaign 内容形式选择 Provider 价档"
-            : "未限定内容形式的小红书单价写入 L1 只是 Provider 兼容编码，不代表图文需求",
+          "provider-price-retrieval-70-120/v1",
+          price.operator === "between" ? [price.minimum, price.maximum] : price.normalized_value,
+          output,
+          "仅供 Provider 供给检索：用户单价外沿扩展一次至 70%–120%",
         ),
       );
+      if (input.platform === "xiaohongshu" && price.qualifier === "generic") {
+        transforms.push(
+          transform(
+            price.id,
+            field,
+            "provider-xhs-generic-price-compat/v1",
+            "generic",
+            field,
+            fields.length > 1
+              ? "明确接受多个内容形式，共享单价写入对应的多个 Provider 价档"
+              : formatFacts.length === 1
+                ? "未在价格事实中限定内容形式，按唯一 campaign 内容形式选择 Provider 价档"
+                : "未限定内容形式的小红书单价写入 L1 只是 Provider 兼容编码，不代表图文需求",
+          ),
+        );
+      }
     }
   }
   for (const metricKind of ["cpm_max", "cpe_max"]) {
     for (const metric of providerFactList(facts, metricKind, segment)) {
-      const suffix = metricTierForFact(metric, input.platform, durationFacts, formatFacts);
-      if (!suffix) {
+      const suffixes = metricTiersForFact(metric, input.platform, durationFacts, formatFacts);
+      if (suffixes.length === 0) {
         issues.push(
           issue("METRIC_TIER_AMBIGUOUS", `${metricKind} 缺少内容形式/时长档`, [metric.id]),
         );
@@ -1781,8 +1802,10 @@ function providerJobProjection(input, facts, now, globalIssues, segment) {
       }
       const range = numericRange(metric);
       if (!range) continue;
-      const field = `${metricKind === "cpm_max" ? "cpm" : "cpe"}${suffix}`;
-      params[field] = serializeRange(range);
+      for (const suffix of suffixes) {
+        const field = `${metricKind === "cpm_max" ? "cpm" : "cpe"}${suffix}`;
+        params[field] = serializeRange(range);
+      }
     }
   }
   for (const [kind, field] of Object.entries(PROVIDER_RANGE_FIELDS)) {

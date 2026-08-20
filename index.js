@@ -20,7 +20,7 @@ export default {
     const parseRequirement = createRequirementParser();
     const hookRuntime = registerFlowDirectiveHooks(api);
     const manualBrowserRuntime = createManualBrowserRuntime({
-      profileDir: api.pluginConfig?.manualBrowserProfileDir,
+      browserCdpUrl: api.pluginConfig?.browserCdpUrl,
     });
 
     api.registerTool(

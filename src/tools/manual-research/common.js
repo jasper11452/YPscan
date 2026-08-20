@@ -13,6 +13,9 @@ export const PLATFORM_RULES = Object.freeze({
   },
 });
 
+const LOGIN_SIGNAL_TEXT = /扫码登录|手机号登录|登录后继续|授权登录|请登录|立即登录/u;
+const MARKET_SIGNAL_TEXT = /达人广场|博主广场|找达人|找博主/u;
+
 export function manualBrowserError(code, message, details = {}) {
   return Object.assign(new Error(message), { code, details });
 }
@@ -146,16 +149,33 @@ export async function assertUsablePage(page, platform) {
     );
   }
   if (!pageMatches(platform, page.url())) {
+    const pageUrl = page.url?.() ?? "";
+    const body =
+      typeof page.locator === "function"
+        ? cleanText(
+            await page
+              .locator("body")
+              .innerText()
+              .catch(() => ""),
+          )
+        : "";
+    if (
+      /login|passport|signin|authorize|oauth/iu.test(pageUrl) ||
+      (LOGIN_SIGNAL_TEXT.test(body) && !MARKET_SIGNAL_TEXT.test(body))
+    ) {
+      throw manualBrowserError(
+        "YPSCAN_MANUAL_LOGIN_REQUIRED",
+        "平台登录态不可用，请在当前宿主 Browser 页面登录",
+        { page_url: pageUrl },
+      );
+    }
     throw manualBrowserError("YPSCAN_MANUAL_WRONG_PAGE", "当前标签页不是目标达人筛选页面", {
-      actual_url: page.url(),
+      actual_url: pageUrl,
       expected: PLATFORM_RULES[platform],
     });
   }
   const body = await assertNoManualChallenge(page);
-  if (
-    /扫码登录|手机号登录|登录后继续/u.test(body) &&
-    !/达人广场|博主广场|找达人|找博主/u.test(body)
-  ) {
+  if (LOGIN_SIGNAL_TEXT.test(body) && !MARKET_SIGNAL_TEXT.test(body)) {
     throw manualBrowserError(
       "YPSCAN_MANUAL_LOGIN_REQUIRED",
       "平台登录态不可用，请在当前 Browser 页面登录",

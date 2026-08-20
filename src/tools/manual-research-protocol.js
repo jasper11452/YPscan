@@ -211,6 +211,7 @@ function normalizeManualSelectionFact(fact) {
 
 export function validateCreatorPriceFact(fact) {
   if (!fact || fact.kind !== "creator_price") return;
+  const value = fact.normalized_value ?? fact.value;
   const expandedRange = () => {
     throw argumentError("creator_price 必须传客户原始价格事实，不能传已扩展区间");
   };
@@ -221,8 +222,8 @@ export function validateCreatorPriceFact(fact) {
     value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
   if (Object.hasOwn(fact, "min") || Object.hasOwn(fact, "max")) expandedRange();
   if (["exact", "lte", "gte"].includes(fact.operator)) {
-    if (Array.isArray(fact.normalized_value)) expandedRange();
-    if (!finite(fact.normalized_value)) missingValue();
+    if (Array.isArray(value)) expandedRange();
+    if (!finite(value)) missingValue();
     return;
   }
   if (fact.operator === "between") {
