@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createPgyAdapter } from "../src/tools/manual-research/pgy-adapter.js";
+import {
+  createPgyAdapter,
+  fillPgyNestedRangeMenu,
+  pgyNestedRangeConfig,
+} from "../src/tools/manual-research/pgy-adapter.js";
 import { createXingtuAdapter } from "../src/tools/manual-research/xingtu-adapter.js";
 
 function locator({ visible = true, onClick = () => {}, evaluateAll = null, text = "" } = {}) {
@@ -48,6 +52,92 @@ test("PGY quote selection does not click the note-type content filter", async ()
 
   assert.deepEqual(result, { applied: true, readback: "图文", source: "internal_target" });
   assert.equal(interactiveCalls, 0);
+});
+
+test("PGY nested range controls target the correct picture or video item", () => {
+  assert.deepEqual(pgyNestedRangeConfig({ control: "creator_price" }, "图文"), {
+    item_label: "图文笔记",
+    opposite_item_label: "视频笔记",
+  });
+  assert.deepEqual(
+    pgyNestedRangeConfig({ control: "cpm", qualifier: "picture" }, "视频"),
+    {
+      item_label: "预估图文CPM",
+      opposite_item_label: "预估视频CPM",
+    },
+  );
+  assert.deepEqual(pgyNestedRangeConfig({ control: "cpe", qualifier: "video" }, "图文"), {
+    item_label: "预估视频互动单价",
+    opposite_item_label: "预估图文互动单价",
+  });
+  assert.equal(pgyNestedRangeConfig({ control: "cpm", qualifier: "generic" }, null), null);
+  assert.equal(pgyNestedRangeConfig({ control: "follower_count" }, "图文"), null);
+});
+
+test("PGY nested ranges fill the second menu and confirm both levels", async () => {
+  const events = [];
+  let secondMenuOpen = false;
+  const values = ["", ""];
+  const hidden = locator({ visible: false });
+  const editableInputs = {
+    count: async () => 2,
+    nth(index) {
+      return {
+        getAttribute: async (name) =>
+          name === "placeholder" ? (index === 0 ? "0" : "9,999,999") : null,
+        fill: async (value) => {
+          values[index] = value;
+          events.push(["fill", index, value]);
+        },
+        inputValue: async () => values[index],
+      };
+    },
+  };
+  const innerConfirm = locator({ onClick: () => events.push(["confirm", "inner"]) });
+  const rangeMenu = {
+    isVisible: async () => secondMenuOpen,
+    innerText: async () => "10以下 10～20 20～30 30～50 50以上",
+    getByText: () => hidden,
+    getByRole: () => innerConfirm,
+    locator: () => editableInputs,
+  };
+  const outerConfirm = locator({ onClick: () => events.push(["confirm", "outer"]) });
+  const readonlyInput = locator({ onClick: () => (secondMenuOpen = true) });
+  const formatItem = {
+    first() {
+      return this;
+    },
+    locator: () => readonlyInput,
+  };
+  const opened = {
+    menu: {
+      locator: () => ({ filter: () => formatItem }),
+      getByRole: () => outerConfirm,
+    },
+  };
+  const visibleMenus = {
+    count: async () => (secondMenuOpen ? 2 : 1),
+    last: () => rangeMenu,
+  };
+  const page = {
+    locator: () => visibleMenus,
+    waitForTimeout: async () => {},
+  };
+
+  const result = await fillPgyNestedRangeMenu(
+    page,
+    opened,
+    { min: 50, max: 120, unit: "yuan" },
+    "预估图文CPM",
+  );
+
+  assert.deepEqual(result, { applied: true, reason: null });
+  assert.deepEqual(events, [
+    ["fill", 1, "120"],
+    ["fill", 0, "50"],
+    ["confirm", "inner"],
+    ["confirm", "outer"],
+  ]);
 });
 
 test("Xingtu export returns only a newly observed Feishu link", async () => {

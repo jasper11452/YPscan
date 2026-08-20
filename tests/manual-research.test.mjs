@@ -253,6 +253,23 @@ test("manual plan accepts parser facts that carry numeric data in value", () => 
       creator_price: { min: 1_000, max: 2_400 },
     },
   );
+  assert.equal(plan.filters.find((filter) => filter.control === "cpm").qualifier, "generic");
+  assert.equal(plan.filters.find((filter) => filter.control === "cpe").qualifier, "generic");
+});
+
+test("PGY metric range filters preserve their picture or video qualifier", () => {
+  const plan = compileManualResearchPlan({
+    platform: "pgy",
+    quote_type: "视频",
+    facts: [
+      fact("price", "creator_price", 2_000, { operator: "lte" }),
+      fact("picture-cpm", "cpm_max", 100, { operator: "lte", qualifier: "picture" }),
+      fact("video-cpe", "cpe_max", 20, { operator: "lte", qualifier: "video" }),
+    ],
+  });
+
+  assert.equal(plan.filters.find((filter) => filter.control === "cpm").qualifier, "picture");
+  assert.equal(plan.filters.find((filter) => filter.control === "cpe").qualifier, "video");
 });
 
 test("manual price expansion turns a 100k cap into 50k–120k and expands range edges", () => {

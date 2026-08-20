@@ -298,12 +298,16 @@ export function compileManualResearchPlan({ platform, facts, keywords, quote_typ
   for (const fact of activeFacts.filter(hardFact)) {
     const mapping = FILTER_FACTS[fact.kind];
     if (mapping && (!mapping.platforms || mapping.platforms.includes(platform))) {
+      /** @type {any} */
       const filter = {
         fact_id: fact.id ?? null,
         fact_kind: fact.kind,
         control: mapping.control,
         mode: mapping.mode,
         source: fact.source ?? null,
+        ...(platform === "pgy" && ["cpm", "cpe"].includes(mapping.control)
+          ? { qualifier: fact.qualifier ?? "generic" }
+          : {}),
       };
       if (mapping.mode === "range") {
         Object.assign(
