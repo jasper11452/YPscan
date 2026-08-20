@@ -41,6 +41,39 @@ const FILTER_ROWS = Object.freeze({
   interaction_rate: ["互动率"],
 });
 
+const NESTED_RANGE_CONTROLS = new Set(["creator_price", "cpm", "cpe"]);
+
+function rangeView(qualifier, fallback) {
+  const normalized = cleanText(qualifier).toLowerCase();
+  if (["picture", "image", "图文"].includes(normalized)) return "图文";
+  if (["video", "视频"].includes(normalized)) return "视频";
+  return ["图文", "视频"].includes(fallback) ? fallback : null;
+}
+
+/** Resolve the first-level item that opens one PGY nested range menu. */
+export function pgyNestedRangeConfig(filter, selectedPriceView) {
+  if (!NESTED_RANGE_CONTROLS.has(filter?.control)) return null;
+  const view =
+    filter.control === "creator_price"
+      ? rangeView(null, selectedPriceView)
+      : rangeView(filter.qualifier, selectedPriceView);
+  if (!view) return null;
+  const opposite = view === "图文" ? "视频" : "图文";
+  const labels = {
+    creator_price: (value) => `${value}笔记`,
+    cpm: (value) => `预估${value}CPM`,
+    cpe: (value) => `预估${value}互动单价`,
+  };
+  return {
+    item_label: labels[filter.control](view),
+    opposite_item_label: labels[filter.control](opposite),
+  };
+}
+
+function escapePattern(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 /** @param {import("playwright-core").Page} page */
 async function waitForAdditionalFilterMenu(page, previousCount) {
   const started = Date.now();
@@ -68,6 +101,31 @@ async function waitForAdditionalFilterMenu(page, previousCount) {
     await page.waitForTimeout(75);
   }
   return null;
+}
+
+/** Apply one PGY nested range and commit both the inner and outer menus. */
+export async function fillPgyNestedRangeMenu(page, opened, filter, itemLabel) {
+  const formatItem = opened.menu
+    .locator(".filters-item")
+    .filter({ hasText: new RegExp(`^\\s*${escapePattern(itemLabel)}`, "u") })
+    .first();
+  const input = formatItem.locator("input[readonly]:visible").first();
+  if (!(await input.isVisible().catch(() => false))) {
+    return { applied: false, reason: "nested_range_input_not_found" };
+  }
+  const menuCountBefore = await page.locator(".filter-select-popover:visible").count();
+  await input.click();
+  const rangeMenu = await waitForAdditionalFilterMenu(page, menuCountBefore);
+  if (!rangeMenu) return { applied: false, reason: "nested_range_menu_not_found" };
+  const applied = await fillMenuRange(page, { menu: rangeMenu }, filter, {
+    requireConfirm: true,
+  });
+  if (!applied) return { applied: false, reason: "nested_range_input_not_applied" };
+  const confirm = opened.menu.getByRole("button", { name: /^(?:确定|确认)$/u }).last();
+  if (!(await clickOptional(confirm))) {
+    return { applied: false, reason: "nested_range_outer_confirm_not_found" };
+  }
+  return { applied: true, reason: null };
 }
 
 async function waitForPgyTableReady(page) {
@@ -205,46 +263,37 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
       await assertUsablePage(page, "pgy");
       const rowLabels = FILTER_ROWS[filter.control];
       if (!rowLabels) return { applied: false, reason: "platform_filter_not_supported" };
-      if (filter.control === "creator_price" && !selectedPriceView) {
-        return { applied: false, reason: "price_view_required_for_creator_price" };
+      const nestedRange =
+        filter.mode === "range" ? pgyNestedRangeConfig(filter, selectedPriceView) : null;
+      if (filter.mode === "range" && NESTED_RANGE_CONTROLS.has(filter.control) && !nestedRange) {
+        return { applied: false, reason: "nested_range_view_required" };
       }
       const opened = await openFilterMenu(page, rowLabels);
       if (!opened) return { applied: false, reason: "filter_row_not_found" };
-      if (filter.control === "creator_price") {
-        const formatItem = opened.menu
-          .locator(".filters-item")
-          .filter({ hasText: new RegExp(`^\\s*${selectedPriceView}笔记`, "u") })
-          .first();
-        const input = formatItem.locator("input[readonly]:visible").first();
-        if (!(await input.isVisible().catch(() => false))) {
-          return { applied: false, reason: "price_format_input_not_found" };
-        }
+      if (nestedRange) {
+        let nestedFailure = null;
         const observed = await captureListResponseDuring(page, "pgy", async () => {
-          const menuCountBefore = await page.locator(".filter-select-popover:visible").count();
-          await input.click();
-          const rangeMenu = await waitForAdditionalFilterMenu(page, menuCountBefore);
-          if (!rangeMenu) return false;
-          const applied = await fillMenuRange(page, { menu: rangeMenu }, filter, {
-            requireConfirm: true,
-          });
-          if (applied) {
-            const confirm = opened.menu.getByRole("button", { name: /^(?:确定|确认)$/u }).last();
-            if (!(await clickOptional(confirm))) return false;
-          }
+          const result = await fillPgyNestedRangeMenu(
+            page,
+            opened,
+            filter,
+            nestedRange.item_label,
+          );
+          nestedFailure = result.reason;
           await settleAfterAction(page);
           await waitForPgyTableReady(page);
-          return applied;
+          return result.applied;
         });
-        const summary = cleanText((await appliedFilterSummary(page, "合作报价")) ?? "");
-        const opposite = selectedPriceView === "图文" ? "视频" : "图文";
+        const summaryLabel = opened.trigger_text || rowLabels[0];
+        const summary = cleanText((await appliedFilterSummary(page, summaryLabel)) ?? "");
         const applied =
           observed.action_result &&
-          summary.includes(`${selectedPriceView}笔记`) &&
-          !summary.includes(`${opposite}笔记`);
+          summary.includes(nestedRange.item_label) &&
+          !summary.includes(nestedRange.opposite_item_label);
         capturedPage = observed.capture ?? null;
         return {
           applied,
-          reason: applied ? null : "price_range_readback_mismatch",
+          reason: applied ? null : (nestedFailure ?? "nested_range_readback_mismatch"),
           menu_id: opened.menu_id,
           readback: summary || null,
         };
