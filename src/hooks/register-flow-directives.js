@@ -219,10 +219,10 @@ function requirementClarificationDirective(message) {
 }
 
 const MCN_MARKDOWN_TABLE_HEADER = [
-  "| 机构名 | 返点 | 综合分 | 达人数 |",
-  "| --- | --- | --- | --- |",
+  "| 排名 | 机构 | 覆盖达人 | 返点 | 综合分 |",
+  "| --- | --- | --- | --- | --- |",
 ].join("\n");
-const MCN_MARKDOWN_EMPTY_ROW = "| 暂无匹配机构 | — | — | — |";
+const MCN_MARKDOWN_EMPTY_ROW = "| — | 暂无匹配机构 | — | — | — |";
 
 const FIELD_SELECTION_AUTO_OPEN_FAILED = "浏览器打开请求未成功";
 
@@ -248,9 +248,6 @@ function rankMcnsDirective(message) {
   const mcns = result?.data?.mcns;
   if (!Array.isArray(mcns)) return flowPauseDirective("rank_mcns", message);
   const empty = mcns.length === 0;
-  const totalRanked = Number.isFinite(result?.data?.total_ranked)
-    ? result.data.total_ranked
-    : mcns.length;
   const options = empty
     ? [
         { label: "人工拓展并提报", description: "推荐使用后台默认手扒并直接生成 Excel" },
@@ -263,9 +260,9 @@ function rankMcnsDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。本 tool result 里的表头只是格式提示，不是用户可见表格。",
     "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出，再原样展示此前 ypscan_save_excel_artifact 返回的 CREATOR_PREVIEW_LOCAL_PATH，最后调用 AskUserQuestion。不要输出达人预览表下载链接；表格禁止改成项目符号或编号列表。",
-    "用户可见机构结果只显示这一张四列表格，固定列且不得增减：机构名、返点、综合分、达人数。禁止在表格内外另行展示排名、supplier_id、候选数、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。每行达人数只读取该机构对象自己的 candidate_count 原值，严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
+    "用户可见机构结果只显示这一张五列表格，固定列且不得增减：排名、机构、覆盖达人、返点、综合分。排名严格按当前响应顺序从 1 开始连续编号；机构读取当前机构对象自己的机构名；每行覆盖达人只读取该机构对象自己的 candidate_count 原值。禁止在表格内外另行展示 supplier_id、候选总数、匹配机构数、推荐数量、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 search_creators 确实未返回 creators_export_path 或精确保存参数，必须如实说明无法保存，禁止编造或复用历史链接。",
-    "人工拓展并提报 = 先调用 select_inquiry_form_fields 并把原始 URL 单独展示；用户在页面提交字段并回复“好了”后，才调用 manual_source_creators，按当前 Provider schema 传本轮 requirement_id 和用户要求的交付人数 size；后台全自动完成手扒并返回 Excel，不先启动 Browser。",
+    "用户说“手扒”“手动拓展”“人工拓展”“直接手扒”或选择“人工拓展并提报”，一律默认先走 MCP：先调用 select_inquiry_form_fields 并把原始 URL 单独展示；用户在页面提交字段并回复“好了”后，才调用 manual_source_creators，按当前 Provider schema 传本轮 requirement_id 和用户要求的交付人数 size；后台全自动完成手扒并返回 Excel，不先启动 Browser。不得把这些说法解释为浏览器详细手扒。",
     "manual_source_creators 的 Excel 保存到本地后，才提示用户可选择浏览器详细手扒；该方式耗时更长，期间可能多次出现登录、验证或资质弹窗。只有用户明确选择后才调用 ypscan_manual_research(operation=start)。",
     MCN_MARKDOWN_TABLE_HEADER,
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
@@ -274,7 +271,6 @@ function rankMcnsDirective(message) {
         "悦普识星下一步",
         [
           "机构排序已完成。",
-          `匹配机构：${totalRanked} 家`,
           `机构明细：${empty ? "弹窗打开前已展示的“暂无匹配机构”Markdown 表格" : "弹窗打开前已在对话中完整展示"}`,
           "达人预览表本地文件路径：请以弹窗前展示的保存结果为准",
           "请选择下一步。",
@@ -947,7 +943,7 @@ export function registerFlowDirectiveHooks(api) {
           "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact → rank_mcns → 完整 MCN Markdown 表格 → 本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID；此处保存类型固定为 creator_preview。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → 按 Provider 当前 schema 直接调用一次 create_with_distributions，不追加企微发送确认。supplierIds 和 supplier_name 始终都是数组，空侧传 []，至少一侧非空；排序机构使用 supplierIds，用户单独提名的机构使用 supplier_name，两者可同时非空。模糊、不唯一或重复发送结果必须原样展示，禁止把已成功机构重新加入后续调用。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
           "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "search_creators 返回精确 SAVE_EXCEL_ARTIFACT_ARGS 时立即调用保存工具，不向用户输出 creators_export_path 或 Excel 下载链接；保存成功后再调用 rank_mcns。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
-          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。用户选择人工拓展后，先调用 select_inquiry_form_fields；用户提交字段并回复“好了”后，再调用 manual_source_creators，按当前 Provider schema 传本轮 requirement_id 和用户要求的 size；后台返回 Excel 后立即用 ypscan_save_excel_artifact(manual_source) 保存。",
+          "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再展示真实路径并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。用户说“手扒”“手动拓展”“人工拓展”“直接手扒”或选择人工拓展后，一律默认先走 MCP：先调用 select_inquiry_form_fields；用户提交字段并回复“好了”后，再调用 manual_source_creators，按当前 Provider schema 传本轮 requirement_id 和用户要求的 size；不得把这些说法解释为浏览器详细手扒。后台返回 Excel 后立即用 ypscan_save_excel_artifact(manual_source) 保存。",
           "默认手扒 Excel 保存成功后才提示用户是否继续浏览器详细手扒，并明确该方式耗时较长、期间可能多次出现登录、验证或资质弹窗。只有用户明确选择后才调用 ypscan_manual_research(operation=start)；start/resume 返回 next_call 时必须原样执行 read_detail_html，读完当前达人全部 HTML 后由 Agent 提炼字段并 apply_reviews。",
           "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion。需求解析的 Agent 构造错误必须按 violation_details 一次性全部修正，只自动重试一次；相同 code/path 重复出现时停止并报告集成错误。其他普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
           "需求解析性能约束：普通 fact 只传 kind/quote/value，具体 kind 的 value/operator/qualifier/role 契约以 media-assistant 的 ypscan_parse_requirement 解析参考为准；抖音 60s+ 表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；参考达人统一使用 reference_creator；无精确数值或主体不明的软条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌名、项目名、达人数量、提报截止时间、最低返点、粉丝量范围、内容方向、达人单价任一缺失，或任一业务值模糊、冲突、不能生成合法 Provider 格式时，必须使用工具给出的多问题 AskUserQuestion 一次性澄清。ypscan_parse_requirement 负责前置格式校验与 Provider 参数编译；validate_requirement 只做后端最终必填与服务端约束校验。",

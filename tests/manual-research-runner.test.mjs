@@ -247,7 +247,7 @@ test("raw HTML is checkpointed by manifest, read in chunks, and completed only a
   const artifactRoot = join(workspaceDir, "ypscan-manual-research");
   await mkdir(artifactRoot, { recursive: true });
   await writeFile(join(artifactRoot, ".gitignore"), "", "utf8");
-  const html = `<html><body>粉丝数：10万 <a>办公软件实测</a>${"x".repeat(33_000)}</body></html>`;
+  const html = `<html><body>粉丝数：10万 <span>组织：精准机构</span> <a>办公软件实测</a>${"x".repeat(33_000)}</body></html>`;
   const run = createManualResearchRunner({
     workspaceDir,
     browserRuntime: runtime({ count: 0 }),
@@ -436,6 +436,29 @@ test("raw HTML is checkpointed by manifest, read in chunks, and completed only a
   );
   assert.equal(fabricated.success, false);
   assert.equal(fabricated.error.code, "YPSCAN_MANUAL_EXTRACTION_VALUE_MISMATCH");
+
+  const unlabeledAgency = payload(
+    await run({
+      operation: "apply_reviews",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      reviews: [
+        {
+          candidate_ref: task.candidate_ref,
+          decision: "exclude",
+          reasons: ["机构证据标签不明确"],
+          evidence: ["精准机构"],
+          extracted_fields: { agency: "精准机构" },
+          field_evidence: [
+            { field: "agency", snapshot_id: snapshot.snapshot_id, quote: "组织：精准机构" },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(unlabeledAgency.success, false);
+  assert.equal(unlabeledAgency.error.code, "YPSCAN_MANUAL_EXTRACTION_VALUE_MISMATCH");
 
   const excluded = payload(
     await run({
@@ -1020,6 +1043,57 @@ test("PGY exact quote uses its independent typed label in Excel", () => {
   assert.match(candidateSheet, /视频笔记/u);
   assert.match(candidateSheet, /¥29,000/u);
   assert.doesNotMatch(candidateSheet, /全部报价（起）/u);
+});
+
+test("manual workbook keeps a precise agency and omits polluted agency text", () => {
+  const plan = compileManualResearchPlan({
+    platform: "xingtu",
+    facts: [],
+    keywords: ["办公"],
+  });
+  const workbook = buildManualResearchWorkbook({
+    plan,
+    candidates: [
+      {
+        platform: "xingtu",
+        platform_id: "polluted-agency",
+        nickname: "办公达人",
+        collection_mode: "filtered",
+      },
+      {
+        platform: "xingtu",
+        platform_id: "precise-agency",
+        nickname: "效率达人",
+        collection_mode: "filtered",
+      },
+      {
+        platform: "xingtu",
+        platform_id: "non-text-agency",
+        nickname: "数码达人",
+        collection_mode: "filtered",
+      },
+    ],
+    details: [
+      {
+        candidate_ref: "polluted-agency",
+        fields: { agency: "所属机构 精准机构 账号类型 个人达人" },
+      },
+      {
+        candidate_ref: "precise-agency",
+        fields: { agency: "精准机构" },
+      },
+      {
+        candidate_ref: "non-text-agency",
+        fields: { agency: true },
+      },
+    ],
+    artifact: { generated_at: "2026-08-20T00:00:00.000Z" },
+  });
+  const candidateSheet = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
+  assert.match(candidateSheet, /供应商名称/u);
+  assert.match(candidateSheet, /精准机构/u);
+  assert.doesNotMatch(candidateSheet, /所属机构 精准机构 账号类型 个人达人/u);
+  assert.doesNotMatch(candidateSheet, />true</u);
 });
 
 test("generic DOM candidates remain outside the recommendation sheet after review", () => {

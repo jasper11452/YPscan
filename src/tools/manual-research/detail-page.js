@@ -183,19 +183,20 @@ async function resolveXingtuDetailRedirect(page, candidate) {
 
 /** @param {import("playwright-core").Page} page */
 async function readDetailDom(page, candidate, platform) {
-  const body = cleanText(
-    await page
-      .locator("body")
-      .innerText()
-      .catch(() => ""),
-  );
+  const rawBody = await page
+    .locator("body")
+    .innerText()
+    .catch(() => "");
+  const body = cleanText(rawBody);
   const fields = {
     followers_raw: firstMatch(body, [
       /粉丝(?:数|量)?\s*[:：]?\s*([\d.,]+\s*[万wWkK亿]?)/u,
       /([\d.,]+\s*[万wWkK亿]?)\s*粉丝/u,
     ]),
     city: firstMatch(body, [/(?:所在地|所在地域|城市|地区)\s*[:：]?\s*([^\s|｜]{2,16})/u]),
-    agency: firstMatch(body, [/(?:所属机构|MCN机构|机构)\s*[:：]?\s*([^\n|｜]{2,40})/u]),
+    agency: firstMatch(rawBody, [
+      /(?:所属机构|MCN机构)\s*(?::|：|\r?\n)\s*([^\r\n|｜]{2,40})/u,
+    ]),
     account_type: firstMatch(body, [/(?:账号类型|达人类型)\s*[:：]?\s*([^\n|｜]{2,40})/u]),
     cpm_raw: firstMatch(body, [/(?:预期\s*)?CPM\s*[:：¥￥]?\s*([\d.]+)/iu]),
     cpe_raw: firstMatch(body, [/(?:预期\s*)?CPE\s*[:：¥￥]?\s*([\d.]+)/iu]),

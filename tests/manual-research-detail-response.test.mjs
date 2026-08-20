@@ -264,6 +264,19 @@ test("normalization keeps only mapped detail fields instead of raw payloads", ()
   assert.equal(normalized.fields.recent_content[0].title, "办公效率实测");
 });
 
+test("normalization accepts explicit agency fields and ignores generic organization metadata", () => {
+  const explicit = normalizeDetailResponse({ data: { mcnName: "精准机构" } });
+  assert.equal(explicit.fields.agency, "精准机构");
+
+  const generic = normalizeDetailResponse({
+    data: { organization: "页面组织信息", institution: "认证机构类型" },
+  });
+  assert.equal("agency" in generic.fields, false);
+
+  const nonText = normalizeDetailResponse({ data: { agency: true } });
+  assert.equal("agency" in nonText.fields, false);
+});
+
 test("normalization extracts labeled Xingtu audience distributions", () => {
   const normalized = normalizeDetailResponse({
     data: {
