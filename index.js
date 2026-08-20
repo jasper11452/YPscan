@@ -45,7 +45,7 @@ export default {
     api.registerTool({
       name: "ypscan_parse_requirement",
       description:
-        "需求解析入口：传紧凑证据 facts，工具补齐元数据并输出 Provider 参数、搜索分组和 residual_conditions。必须随后调用 validate_requirement；不启动 Browser、不创建需求。",
+        "Provider 前置格式校验与需求编译入口：按 media-assistant 解析参考中的逐 kind 契约传 facts；工具校验正整数、比例、区间、绝对时间和价档并输出 Provider 参数。Agent 构造错误返回 code/path/expected/repair，业务缺失或模糊返回批量澄清问题；ready 后才调用 validate_requirement。",
       parameters: PARSE_REQUIREMENT_PARAMETERS,
       outputSchema: PARSE_REQUIREMENT_OUTPUT_SCHEMA,
       async execute(_id, params) {

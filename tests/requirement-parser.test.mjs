@@ -508,7 +508,7 @@ test("rebate percentages always become a decimal minimum range", () => {
   }
 });
 
-test("rebate upper bounds fail instead of being silently dropped", () => {
+test("rebate upper bounds require business clarification instead of being silently dropped", () => {
   const result = compile({
     original_brief: "返点30%-50%",
     platform: "xiaohongshu",
@@ -522,9 +522,15 @@ test("rebate upper bounds fail instead of being silently dropped", () => {
     ],
   });
 
-  assert.equal(result.success, false);
-  assert.match(result.error.details.violations[0], /只接受最低值或不限/u);
-  assert.match(result.error.details.violations[0], /传 value=30/u);
+  assert.equal(result.success, true);
+  assert.equal(result.data.outcome, "clarification_required");
+  assert.equal(result.data.projections.provider.ready, false);
+  assert.equal(result.data.projections.provider.params.rebate, undefined);
+  assert.ok(
+    result.data.projections.provider.issues.some(
+      (item) => item.code === "REBATE_SEMANTICS_UNSUPPORTED",
+    ),
+  );
 });
 
 test("reversed direct ranges remain unmodified for Provider feedback", () => {
@@ -898,15 +904,76 @@ test("representative compact parse input is at least sixty percent smaller", () 
   );
 });
 
-test("malformed facts allow unlimited repeated Agent repairs", () => {
+test("malformed facts return exact structured repairs with one automatic retry", () => {
   const result = compile({ original_brief: "测试", platform: "xiaohongshu", facts: [{}] });
 
   assert.equal(result.success, false);
   assert.equal(result.error.code, "YPSCAN_REQUIREMENT_INVALID");
   assert.equal(result.error.details.outcome, "invalid_agent_input");
-  assert.equal(result.error.details.repair.retry_policy.automatic_retries_unlimited, true);
-  assert.equal(result.error.details.repair.retry_policy.max_automatic_retries, undefined);
+  assert.equal(result.error.details.repair.retry_policy.automatic_retries_max, 1);
+  assert.equal(result.error.details.repair.retry_policy.stop_on_repeated_code_path, true);
   assert.ok(Array.isArray(result.error.details.violations));
+  assert.ok(result.error.details.violation_details.length > 0);
+  for (const detail of result.error.details.violation_details) {
+    assert.equal(typeof detail.code, "string");
+    assert.equal(typeof detail.path, "string");
+    assert.equal(typeof detail.expected, "string");
+    assert.ok(["replace", "remove"].includes(detail.repair.action));
+  }
+});
+
+test("a non-integer creator quantity becomes a business clarification", () => {
+  const result = compile({
+    original_brief: "需要10.5个达人",
+    platform: "xiaohongshu",
+    facts: [{ kind: "creator_count", quote: "10.5个达人", value: 10.5 }],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.outcome, "clarification_required");
+  assert.ok(
+    result.data.projections.provider.issues.some(
+      (item) => item.code === "CREATOR_COUNT_MUST_BE_POSITIVE_INTEGER",
+    ),
+  );
+  assert.equal(
+    result.data.projections.provider.issues.filter(
+      (item) => item.code === "CREATOR_COUNT_MUST_BE_POSITIVE_INTEGER",
+    ).length,
+    1,
+  );
+  assert.equal(result.data.projections.provider.params.quantityTotal, undefined);
+});
+
+test("an out-of-range percentage becomes business clarification without malformed params", () => {
+  const result = compile({
+    original_brief: "女粉占比150%以上",
+    platform: "xiaohongshu",
+    facts: [{ kind: "audience_female_rate", quote: "女粉占比150%以上", value: 150 }],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.outcome, "clarification_required");
+  assert.ok(
+    result.data.projections.provider.issues.some(
+      (item) => item.code === "RATE_VALUE_OUT_OF_RANGE",
+    ),
+  );
+  assert.equal(result.data.projections.provider.params.femaleRate, undefined);
+});
+
+test("an incorrectly scaled percentage returns the exact replacement", () => {
+  const result = compile({
+    original_brief: "女粉占比70%以上",
+    platform: "xiaohongshu",
+    facts: [{ kind: "audience_female_rate", quote: "女粉占比70%以上", value: 0.7 }],
+  });
+
+  assert.equal(result.success, false);
+  const detail = result.error.details.violation_details.find(
+    (item) => item.path === "facts[0]",
+  );
+  assert.deepEqual(detail.repair.replacement, { value: 70 });
 });
 
 test("compact rebate facts always use raw percentage points", () => {
