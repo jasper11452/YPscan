@@ -689,9 +689,9 @@ function invalid(violations, input) {
         violation_details: violationDetails,
         repair: {
           instruction:
-            "按 violation_details 一次性修正全部 facts 后只重试一次；百分比保留原始百分点，例如 70% 传 value=70。若相同 code/path 再次出现，停止重试并报告集成错误。",
+            "按 violation_details 一次性修正全部 facts；每个 code/path 组合只自动修复一次。百分比保留原始百分点，例如 70% 传 value=70。若相同 code/path 再次出现，停止重试并报告集成错误；新的 code/path 仍按本次 repair 继续一次有界修复。",
           retry_policy: {
-            automatic_retries_max: 1,
+            automatic_retries_per_code_path: 1,
             stop_on_repeated_code_path: true,
             ask_user_only_for_business_ambiguity: true,
           },
@@ -1020,7 +1020,10 @@ function defaultUnitFor(kind) {
 }
 
 function inferredOperator(rawFact, quote) {
-  if (rawFact.operator !== undefined) return rawFact.operator;
+  const maximumMetric = ["cpm_max", "cpe_max"].includes(rawFact.kind);
+  if (rawFact.operator !== undefined) {
+    return maximumMetric && rawFact.operator === "exact" ? "lte" : rawFact.operator;
+  }
   if (rawFact.minimum !== undefined && rawFact.maximum !== undefined) return "between";
   if (rawFact.value === undefined && /不限|不限制|无要求/u.test(quote)) return "any";
   if (rawFact.kind === "excluded_content") return "not_in";
@@ -1035,8 +1038,9 @@ function inferredOperator(rawFact, quote) {
     );
   if (lowerRejected) return "gte";
   if (upperRejected) return "lte";
-  if (/至少|不低于|以上|起(?:步)?|[≥>]/u.test(quote)) return "gte";
-  if (/不超过|不高于|以内|以下|封顶|最高|低于|小于|[≤<]/u.test(quote)) return "lte";
+  if (/至少|不低于|以上|起(?:步)?|[≥>＞]/u.test(quote)) return "gte";
+  if (/不超过|不高于|以内|以下|封顶|最高|低于|小于|[≤<＜]/u.test(quote)) return "lte";
+  if (maximumMetric) return "lte";
   if (rawFact.kind === "rebate_min") return "gte";
   return "exact";
 }
@@ -1495,6 +1499,16 @@ function numericRange(fact, { unrestrictedMaximum = 999_999_999 } = {}) {
   return null;
 }
 
+function maximumMetricRange(fact) {
+  if (!fact) return null;
+  if (fact.operator === "any") return { minimum: 0, maximum: 999_999_999 };
+  if (fact.operator === "gte") return null;
+  const maximum = fact.operator === "between" ? fact.maximum : fact.normalized_value;
+  return typeof maximum === "number" && Number.isFinite(maximum) && maximum >= 0
+    ? { minimum: 0, maximum }
+    : null;
+}
+
 function inverseRateRange(fact) {
   const range = numericRange(fact, { unrestrictedMaximum: 1 });
   if (!range) return null;
@@ -1917,6 +1931,17 @@ function providerJobProjection(input, facts, now, globalIssues, segment) {
   }
   for (const metricKind of ["cpm_max", "cpe_max"]) {
     for (const metric of providerFactList(facts, metricKind, segment)) {
+      if (metric.operator === "gte") {
+        const label = metricKind === "cpm_max" ? "CPM" : "CPE";
+        issues.push(
+          issue(
+            `${label}_MAXIMUM_REQUIRED`,
+            `${label} 只支持最大可接受值；当前原文表达为下限，请确认 ${label} 上限`,
+            [metric.id],
+          ),
+        );
+        continue;
+      }
       const suffixes = metricTiersForFact(metric, input.platform, durationFacts, formatFacts);
       if (suffixes.length === 0) {
         issues.push(
@@ -1924,8 +1949,17 @@ function providerJobProjection(input, facts, now, globalIssues, segment) {
         );
         continue;
       }
-      const range = numericRange(metric);
-      if (!range) continue;
+      const range = maximumMetricRange(metric);
+      if (!range) {
+        issues.push(
+          issue(
+            "MAXIMUM_METRIC_RANGE_INVALID",
+            `${metricKind === "cpm_max" ? "CPM" : "CPE"} 最大值必须是非负有限数字`,
+            [metric.id],
+          ),
+        );
+        continue;
+      }
       for (const suffix of suffixes) {
         const field = `${metricKind === "cpm_max" ? "cpm" : "cpe"}${suffix}`;
         params[field] = serializeRange(range);

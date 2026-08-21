@@ -32,7 +32,7 @@ export default {
         return {
           name: "ypscan_manual_research",
           description:
-            "产物优先的双平台手扒 Runner：start/resume 控制专用持久 Chrome 并保存原始详情 HTML；read_detail_html 分块交给 Agent 提炼，apply_reviews 回写字段和逐字证据；create_submission 为可选后续。",
+            "仅在用户明确要求浏览器手扒后使用的双平台 Runner：start/resume 控制专用持久 Chrome 并保存原始详情 HTML；普通手扒、手动拓展、人工拓展、直接手扒和手捞筛选必须改用 MCP manual_source_creators。",
           parameters: MANUAL_RESEARCH_RUNNER_PARAMETERS,
           async execute(_id, params) {
             return manualResearch(params);

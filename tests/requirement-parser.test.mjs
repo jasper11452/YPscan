@@ -289,6 +289,65 @@ test("shared Xiaohongshu price covers both explicitly accepted content formats",
   );
 });
 
+test("CPM and CPE facts always compile as maximum filters", () => {
+  const result = compile({
+    original_brief: `${brief()}；合作形式，视频；数据要求：cpm＜500 cpe＜20`,
+    platform: "xiaohongshu",
+    facts: [
+      ...baseFacts(),
+      fact("format", "content_format", "合作形式，视频", "video"),
+      fact("cpm", "cpm_max", "cpm＜500", 500),
+      fact("cpe", "cpe_max", "cpe＜20", 20, { operator: "exact" }),
+    ],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.projections.provider.params.cpmL2, "[0,500]");
+  assert.equal(result.data.projections.provider.params.cpeL2, "[0,20]");
+  assert.deepEqual(
+    result.data.facts
+      .filter((item) => ["cpm_max", "cpe_max"].includes(item.kind))
+      .map((item) => item.operator),
+    ["lte", "lte"],
+  );
+});
+
+test("a CPM lower bound requires clarification instead of being reversed", () => {
+  const result = compile({
+    original_brief: `${brief()}；合作形式，视频；数据要求：CPM＞100`,
+    platform: "xiaohongshu",
+    facts: [
+      ...baseFacts(),
+      fact("format", "content_format", "合作形式，视频", "video"),
+      fact("cpm", "cpm_max", "CPM＞100", 100),
+    ],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.outcome, "clarification_required");
+  assert.equal(result.data.projections.provider.ready, false);
+  assert.equal(result.data.projections.provider.search_jobs[0].filters.cpmL2, undefined);
+  assert.ok(
+    result.data.projections.provider.issues.some((item) => item.code === "CPM_MAXIMUM_REQUIRED"),
+  );
+});
+
+test("negative CPM values are rejected before Provider projection", () => {
+  const result = compile({
+    original_brief: `${brief()}；合作形式，视频；数据要求：CPM -5`,
+    platform: "xiaohongshu",
+    facts: [
+      ...baseFacts(),
+      fact("format", "content_format", "合作形式，视频", "video"),
+      fact("cpm", "cpm_max", "CPM -5", -5),
+    ],
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "YPSCAN_REQUIREMENT_INVALID");
+  assert.ok(result.error.details.violations.some((message) => /数字范围无效/u.test(message)));
+});
+
 test("a negated low-follower expression supports an explicit lower-bound fact", () => {
   const facts = baseFacts().map((item) =>
     item.kind === "follower_count"
@@ -463,6 +522,9 @@ test("direct validate parameters normalize numeric filter formats to ranges", ()
     kolOfficialPriceL2: "[14000,24000]",
     cpmL1: 100,
     cpeL1: "20-50",
+    cpmL2: "[500,500]",
+    cpeL2: "[20,20]",
+    cpmL3: "[-5,-5]",
     interactionRate: "5%-10%",
     femaleRate: [70, 80],
     clickMedium: "500",
@@ -471,8 +533,11 @@ test("direct validate parameters normalize numeric filter formats to ranges", ()
   assert.deepEqual(normalized, {
     kolOfficialPriceL1: "[14000,36000]",
     kolOfficialPriceL2: "[14000,24000]",
-    cpmL1: "[100,100]",
-    cpeL1: "[20,50]",
+    cpmL1: "[0,100]",
+    cpeL1: "[0,50]",
+    cpmL2: "[0,500]",
+    cpeL2: "[0,20]",
+    cpmL3: "[-5,-5]",
     interactionRate: "[0.05,0.1]",
     femaleRate: "[0.7,0.8]",
     clickMedium: "[500,500]",
@@ -609,6 +674,45 @@ test("later clarification supersedes an earlier quantity without a conflict", ()
   assert.equal(result.success, true);
   assert.equal(result.data.audit.conflicts.length, 0);
   assert.equal(result.data.facts.find((item) => item.id === "fact-1").disposition, "superseded");
+});
+
+test("a relative deadline clarification supersedes the expired original deadline", () => {
+  const originalBrief = brief().replace(
+    "截止：2026-09-01 18:00:00",
+    "提交时间：8月20日17:00",
+  );
+  const result = compileRequirementFacts(
+    {
+      original_brief: originalBrief,
+      platform: "xiaohongshu",
+      clarifications: ["明天8点"],
+      facts: [
+        ...baseFacts().filter((item) => item.kind !== "submission_deadline"),
+        {
+          kind: "submission_deadline",
+          quote: "提交时间：8月20日17:00",
+          value: "2026-08-20T17:00:00+08:00",
+          status: "superseded",
+        },
+        {
+          kind: "submission_deadline",
+          quote: "明天8点",
+          value: "2026-08-22T08:00:00+08:00",
+        },
+      ],
+    },
+    { now: new Date("2026-08-21T12:00:00+08:00") },
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.projections.provider.params.submissionDeadlineAt, "2026-08-22 08:00:00");
+  const deadlineFacts = result.data.facts.filter((item) => item.kind === "submission_deadline");
+  assert.equal(deadlineFacts[0].disposition, "superseded");
+  assert.equal(deadlineFacts[1].source.id, "clarification-1");
+  assert.equal(
+    result.data.projections.provider.issues.some((item) => item.code === "DEADLINE_NOT_FUTURE"),
+    false,
+  );
 });
 
 test("two current quantities remain unresolved instead of being guessed", () => {
@@ -904,13 +1008,13 @@ test("representative compact parse input is at least sixty percent smaller", () 
   );
 });
 
-test("malformed facts return exact structured repairs with one automatic retry", () => {
+test("malformed facts return exact structured repairs per code and path", () => {
   const result = compile({ original_brief: "测试", platform: "xiaohongshu", facts: [{}] });
 
   assert.equal(result.success, false);
   assert.equal(result.error.code, "YPSCAN_REQUIREMENT_INVALID");
   assert.equal(result.error.details.outcome, "invalid_agent_input");
-  assert.equal(result.error.details.repair.retry_policy.automatic_retries_max, 1);
+  assert.equal(result.error.details.repair.retry_policy.automatic_retries_per_code_path, 1);
   assert.equal(result.error.details.repair.retry_policy.stop_on_repeated_code_path, true);
   assert.ok(Array.isArray(result.error.details.violations));
   assert.ok(result.error.details.violation_details.length > 0);
