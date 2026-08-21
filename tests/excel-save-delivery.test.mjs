@@ -45,15 +45,6 @@ test("only Provider submission save offers enrichment", async (t) => {
   assert.equal(enriched.delivery.next_tool, undefined);
   assert.equal(enriched.delivery.next_args, undefined);
 
-  const preview = JSON.parse((await saveFixture(
-    workspaceDir,
-    "creator_preview",
-    "creator-preview.xlsx",
-  )).content[0].text);
-  assert.equal(preview.success, true);
-  assert.equal(preview.delivery.next_tool, undefined);
-  assert.equal(preview.delivery.next_args, undefined);
-
   const mcnRanking = JSON.parse((await saveFixture(
     workspaceDir,
     "mcn_ranking",
@@ -80,28 +71,41 @@ test("only Provider submission save offers enrichment", async (t) => {
   assert.equal(manualSource.delivery.next_tool, undefined);
 });
 
+test("search creator previews are no longer accepted as save artifacts", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-removed-creator-preview-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+
+  const result = JSON.parse((await saveFixture(
+    workspaceDir,
+    "creator_preview",
+    "creator-preview.xlsx",
+  )).content[0].text);
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "YPSCAN_EXCEL_INVALID_INPUT");
+});
+
 test("Excel download accepts HTTPS URLs under eshypdata.com", async (t) => {
   const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-trusted-download-url-"));
   t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
   const excelFileUrl =
-    "https://test-agenta.eshypdata.com/api/mcp-tools/search-creators-exports/preview.xlsx";
+    "https://test-agenta.eshypdata.com/api/mcp-tools/rank-mcns-exports/ranking.xlsx";
   let fetchedUrl = null;
   const result = JSON.parse((await saveExcelArtifact({
-    artifact_kind: "creator_preview",
+    artifact_kind: "mcn_ranking",
     artifact_id: "artifact-trusted-url",
     excel_file_url: excelFileUrl,
   }, {
     workspaceDir,
     fetchImpl: async (url) => {
       fetchedUrl = url;
-      return new Response(Buffer.from("xlsx-preview"), { status: 200 });
+      return new Response(Buffer.from("xlsx-ranking"), { status: 200 });
     },
     retryDelaysMs: [],
   })).content[0].text);
 
   assert.equal(result.success, true);
   assert.equal(fetchedUrl, excelFileUrl);
-  assert.equal(result.data.file_name, "preview.xlsx");
+  assert.equal(result.data.file_name, "ranking.xlsx");
 });
 
 test("Excel download rejects URLs outside eshypdata.com before fetching", async (t) => {
