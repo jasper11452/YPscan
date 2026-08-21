@@ -65,7 +65,8 @@ try {
   assert.equal(toolNames.includes("ypscan_manual_browser_action"), false);
   assert.equal(toolNames.includes("ypscan_manual_select_filters"), false);
   const excelSaver = registered.tools.find((tool) => tool.name === "ypscan_save_excel_artifact");
-  assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("creator_preview"));
+  assert.equal(excelSaver.parameters.properties.artifact_kind.enum.includes("creator_preview"), false);
+  assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_ranking"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_creator_preview"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("manual_source"));
   assert.equal(toolNames.includes("ypscan__select_inquiry_form_fields"), false);

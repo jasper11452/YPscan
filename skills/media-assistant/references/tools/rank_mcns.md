@@ -2,7 +2,7 @@
 
 Risk tier: automatic Provider operation.
 
-This is the fourth fixed Provider call. Call after the successful `search_creators` result has been saved locally with `ypscan_save_excel_artifact` (including a successful zero-match result), then pass the exact current requirement ID as `id` and the current platform. The requirement ID is the `validate_requirement` result's `data.requirement_id`, falling back to `data.id` only when absent; never use `data.demand_id`, `demand_version`, or another workflow's ID.
+This is the fourth fixed Provider call. Call directly after a successful `search_creators` result, including a successful zero-match result; do not save the search workbook. Pass the exact current requirement ID as `id` and the current platform. The requirement ID is the `validate_requirement` result's `data.requirement_id`, falling back to `data.id` only when absent; never use `data.demand_id`, `demand_version`, or another workflow's ID.
 
 Provider risk labels, supply multipliers, institution count, and `recommended_action` are internal response context. They do not prohibit, shrink, or preselect institutional inquiry, and they are not user-visible ranking output. Never invent `medium_risk_confirmation` or recommend loosening the user's requirements merely because supply is low.
 
@@ -29,8 +29,8 @@ When no suppliers are returned, keep the same header and add exactly one empty-s
 | —    | 暂无匹配机构 | —        | —    | —      |
 ```
 
-Immediately after the full table, use the Hook-provided `SAVE_EXCEL_ARTIFACT_ARGS` to save the current `rank_mcns` workbook as `artifact_kind="mcn_ranking"`. Do not output its Provider URL, open it with Browser, substitute a historical value, or use another downloader/writer. After the save succeeds, show both absolute local paths in order: the preceding creator-preview path and the current MCN-ranking path. If either current response genuinely omitted exact save arguments, state which workbook could not be saved instead of inventing a path.
+Immediately after the full table, use the Hook-provided `SAVE_EXCEL_ARTIFACT_ARGS` to save the current `rank_mcns` workbook as `artifact_kind="mcn_ranking"`. Do not output its Provider URL, open it with Browser, substitute a historical value, or use another downloader/writer. After the save succeeds, show the current MCN-ranking absolute local path. If the current response genuinely omitted exact save arguments, state that the MCN-ranking workbook could not be saved instead of inventing a path.
 
-Only after writing the full table, saving the MCN-ranking workbook, and showing both local paths as user-visible body text, call host `AskUserQuestion` with options `询价机构` and `人工拓展并提报` when the table is non-empty. When the result is empty, output the empty-state table, save the returned workbook when present, show both paths, and use `人工拓展并提报` and `结束本次`. Only the current Ask answer chooses the next path; an initial user request like “直接手扒” does not count as that answer and does not skip the table, saves, local paths, or question. Do not rerank merely to ask the question or recover supplier names.
+Only after writing the full table, saving the MCN-ranking workbook, and showing its local path as user-visible body text, call host `AskUserQuestion` with options `询价机构` and `人工拓展并提报` when the table is non-empty. When the result is empty, output the empty-state table, save the returned workbook when present, show its path, and use `人工拓展并提报` and `结束本次`. Only the current Ask answer chooses the next path; an initial user request like “直接手扒” does not count as that answer and does not skip the table, save, local path, or question. Do not rerank merely to ask the question or recover supplier names.
 
 Stop on a failed envelope or a result too incomplete to identify suppliers truthfully.

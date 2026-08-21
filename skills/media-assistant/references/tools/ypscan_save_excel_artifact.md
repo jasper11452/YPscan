@@ -2,12 +2,12 @@
 
 Risk tier: local trusted-endpoint save.
 
-Use this tool after `search_creators`, `rank_mcns`, `create_submission_batch`, `get_creator_detail_export`, `get_ingest_job`, or `manual_source_creators` returns a Provider Excel download URL. For `search_creators`, save immediately without displaying the creator preview URL, then continue to `rank_mcns`. For `rank_mcns`, first output the complete five-column Markdown table, then save without displaying the ranking URL; show both local paths before the branch question.
+Use this tool after `rank_mcns`, `create_submission_batch`, `get_creator_detail_export`, `get_ingest_job`, or `manual_source_creators` returns a Provider Excel download URL. Never use it for the workbook returned by `search_creators`. For `rank_mcns`, first output the complete five-column Markdown table, then save without displaying the ranking URL; show its local path before the branch question.
 
 ## Arguments
 
-- `artifact_kind`: `creator_preview`, `mcn_ranking`, `mcn_creator_preview`, `manual_source`, `submission_batch`, or `creator_detail_export`.
-- `artifact_id`: caller correlation metadata; use the current requirement ID for `creator_preview`, `mcn_ranking`, and `mcn_creator_preview`, otherwise the non-empty batch/task identifier required by that flow.
+- `artifact_kind`: `mcn_ranking`, `mcn_creator_preview`, `manual_source`, `submission_batch`, or `creator_detail_export`.
+- `artifact_id`: caller correlation metadata; use the current requirement ID for `mcn_ranking` and `mcn_creator_preview`, otherwise the non-empty batch/task identifier required by that flow.
 - `excel_file_url`: exact Provider download URL.
 
 The caller cannot choose a destination or filename. The tool derives a safe `.xlsx` name from the URL and publishes it in the trusted current project.
@@ -22,6 +22,6 @@ The caller cannot choose a destination or filename. The tool derives a safe `.xl
 
 ## Result
 
-On success, show the returned absolute `data.file_path` to the user at the point required by the flow. `creator_preview` continues to `rank_mcns`; `mcn_ranking` shows both retained local paths and then uses the exact branch `ASK_USER_QUESTION_ARGS` from the preceding `rank_mcns` result. `submission_batch` may return exact `delivery.next_args` for the optional enrichment question; `creator_detail_export` finishes without repeating it. Follow only the returned delivery data and do not invent recovery state.
+On success, show the returned absolute `data.file_path` to the user at the point required by the flow. `mcn_ranking` shows its local path and then uses the exact branch `ASK_USER_QUESTION_ARGS` from the preceding `rank_mcns` result. `submission_batch` may return exact `delivery.next_args` for the optional enrichment question; `creator_detail_export` finishes without repeating it. Follow only the returned delivery data and do not invent recovery state.
 
 Stop on URL, size, response, path, symlink, or content-conflict errors. Do not fall back to Browser, shell, curl, `web_fetch`, Python, or a generic file writer.

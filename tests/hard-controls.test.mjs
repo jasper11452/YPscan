@@ -45,7 +45,7 @@ function namedArgsFromDirective(text, name) {
   return JSON.parse(line.slice(prefix.length));
 }
 
-test("fixed result directives enforce parse → validate → search → save → rank", () => {
+test("fixed result directives skip the search workbook and save only after rank", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const parse = persist({
     toolName: "ypscan_parse_requirement",
@@ -104,15 +104,10 @@ test("fixed result directives enforce parse → validate → search → save →
     }),
   });
   const searchText = directiveText(search);
-  assert.match(searchText, /下一步立即.*调用 ypscan_save_excel_artifact/u);
-  assert.match(searchText, /不向用户展示 excel_file_url/u);
-  assert.doesNotMatch(searchText, /CREATORS_EXPORT_PATH=/u);
-  assert.deepEqual(saveExcelArgsFromDirective(searchText), {
-    artifact_kind: "creator_preview",
-    artifact_id: "req-1",
-    excel_file_url: "https://mcp.eshypdata.com/api/download?file_path=creator-preview.xlsx",
-  });
-  assert.match(searchText, /不得用 Browser、shell、curl、web_fetch、Python 或通用文件写入代替/u);
+  assert.match(searchText, /不保存、不展示 creators_export_path/u);
+  assert.match(searchText, /不得调用 ypscan_save_excel_artifact/u);
+  assert.doesNotMatch(searchText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.deepEqual(namedArgsFromDirective(searchText, "RANK_MCNS_ARGS"), { id: "req-1" });
 
   const rank = persist({
     toolName: "ypmcn__rank_mcns",
@@ -152,8 +147,9 @@ test("fixed result directives enforce parse → validate → search → save →
   assert.match(directiveText(rank), /严禁与前序机构累加/u);
   assert.match(directiveText(rank), /不得用累计\/聚合覆盖字段或相邻行差值替代/u);
   assert.match(directiveText(rank), /表格不得放入弹窗 question/u);
-  assert.match(directiveText(rank), /不要输出达人预览表下载链接/u);
-  assert.match(directiveText(rank), /CREATOR_PREVIEW_LOCAL_PATH/u);
+  assert.match(directiveText(rank), /不要输出 MCN 排名表下载链接/u);
+  assert.match(directiveText(rank), /MCN_RANKING_LOCAL_PATH/u);
+  assert.doesNotMatch(directiveText(rank), /CREATOR_PREVIEW_LOCAL_PATH/u);
   assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
   assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
   assert.match(directiveText(rank), /同一 requirement_id/u);
@@ -173,7 +169,7 @@ test("fixed result directives enforce parse → validate → search → save →
     ["询价机构", "人工拓展并提报"],
   );
   assert.match(question.questions[0].question, /弹窗打开前已在对话中完整展示/u);
-  assert.match(question.questions[0].question, /达人预览表本地文件路径/u);
+  assert.match(question.questions[0].question, /MCN 排名表本地文件路径/u);
   assert.doesNotMatch(question.questions[0].question, /下载链接/u);
   assert.doesNotMatch(question.questions[0].question, /\| 排名 \|/u);
   assert.doesNotMatch(question.questions[0].question, /匹配机构：/u);
@@ -214,9 +210,9 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   const savedText = directiveText(saved);
   assert.match(savedText, /MCN 排名表 Excel 已保存到当前项目/u);
   assert.match(savedText, /MCN_RANKING_LOCAL_PATH=\/workspace\/mcn-ranking\.xlsx/u);
-  assert.match(savedText, /CREATOR_PREVIEW_LOCAL_PATH/u);
+  assert.doesNotMatch(savedText, /CREATOR_PREVIEW_LOCAL_PATH/u);
   assert.match(savedText, /rank_mcns 结果中的 ASK_USER_QUESTION_ARGS/u);
-  assert.match(savedText, /两个本地路径都不得放进弹窗 question/u);
+  assert.match(savedText, /本地路径不得放进弹窗 question/u);
 
   const failed = persist({
     toolName: "ypscan_save_excel_artifact",
@@ -224,42 +220,6 @@ test("rank result saves the Provider MCN workbook before the branch question", (
     message: toolMessage({ success: false, error: { code: "YPSCAN_EXCEL_DOWNLOAD_FAILED" } }),
   });
   assert.match(directiveText(failed), /MCN 排名表保存 已暂停/u);
-});
-
-test("creator preview save keeps the local path and continues to rank", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const params = {
-    artifact_kind: "creator_preview",
-    artifact_id: "req-1",
-    excel_file_url: "https://mcp.eshypdata.com/api/download?file_path=creator-preview.xlsx",
-  };
-  const saved = persist({
-    toolName: "ypscan_save_excel_artifact",
-    params,
-    message: toolMessage({
-      success: true,
-      data: { file_path: "/workspace/creator-preview.xlsx" },
-      delivery: { local_path: "/workspace/creator-preview.xlsx" },
-    }),
-  });
-  const savedText = directiveText(saved);
-  assert.match(savedText, /达人预览表 Excel 已保存到当前项目/u);
-  assert.match(savedText, /CREATOR_PREVIEW_LOCAL_PATH=\/workspace\/creator-preview\.xlsx/u);
-  assert.match(savedText, /下一步固定调用 rank_mcns/u);
-  assert.match(savedText, /完整 MCN Markdown 表格之后原样展示/u);
-  assert.match(savedText, /不得.*重复下载/u);
-
-  const failed = persist({
-    toolName: "ypscan_save_excel_artifact",
-    params,
-    message: toolMessage({ success: false, error: { code: "YPSCAN_EXCEL_DOWNLOAD_FAILED" } }),
-  });
-  const failedText = directiveText(failed);
-  assert.match(failedText, /达人预览表保存 已暂停/u);
-  assert.deepEqual(
-    argsFromDirective(failedText).questions[0].options.map((option) => option.label),
-    ["重试", "结束本次"],
-  );
 });
 
 test("default manual sourcing saves its Excel before offering browser detail research", () => {
@@ -714,13 +674,13 @@ test("empty rank result still outputs the Markdown table and offers manual expan
     ["人工拓展并提报", "结束本次"],
   );
   assert.match(question.question, /弹窗打开前已展示的“暂无匹配机构”Markdown 表格/u);
-  assert.match(question.question, /达人预览表本地文件路径/u);
+  assert.match(question.question, /MCN 排名表本地文件路径/u);
   assert.doesNotMatch(question.question, /下载链接/u);
   assert.doesNotMatch(question.question, /\| 暂无匹配机构 \|/u);
   assert.doesNotMatch(question.question, /匹配机构：/u);
 });
 
-test("not-ready parse results batch real clarification questions", () => {
+test("not-ready parse results ask one actionable question per missing field", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_parse_requirement",
@@ -753,11 +713,58 @@ test("not-ready parse results batch real clarification questions", () => {
   assert.match(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /VALIDATE_REQUIREMENT_ARGS=/u);
   const questions = argsFromDirective(text).questions;
-  assert.equal(questions.length, 2);
-  assert.match(questions[0].question, /品牌名、项目名/u);
-  assert.deepEqual(questions[1].options.map((option) => option.label), ["10", "20"]);
+  assert.equal(questions.length, 3);
+  assert.equal(questions[0].header, "品牌名");
+  assert.deepEqual(
+    questions[0].options.map((option) => option.label),
+    ["无独立品牌（白牌）", "个人品牌/IP"],
+  );
+  assert.equal(questions[1].header, "项目名");
+  assert.deepEqual(questions[2].options.map((option) => option.label), ["10", "20"]);
+  assert.doesNotMatch(text, /稍后补充|结束本次|取消本次|我来补齐/u);
   assert.doesNotMatch(text, /label":"其他/u);
   assert.match(text, /自定义输入框/u);
+});
+
+test("missing content direction and expired deadline offer direct usable answers", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_parse_requirement",
+    message: toolMessage({
+      success: true,
+      data: {
+        facts: [],
+        projections: {
+          provider: {
+            ready: false,
+            issues: [
+              {
+                code: "PROVIDER_REQUIRED_FACT_MISSING",
+                message: "Provider 缺少内容方向",
+                fact_ids: [],
+              },
+              {
+                code: "DEADLINE_NOT_FUTURE",
+                message: "提报截止时间必须晚于当前时间",
+                fact_ids: [],
+              },
+            ],
+          },
+        },
+      },
+    }),
+  });
+
+  const questions = argsFromDirective(directiveText(result)).questions;
+  assert.equal(questions.length, 2);
+  assert.deepEqual(
+    questions[0].options.map((option) => option.label),
+    ["产品种草", "真实测评", "场景化分享"],
+  );
+  assert.equal(questions[1].header, "提报截止");
+  assert.ok(
+    questions[1].options.every((option) => /^\d{4}-\d{2}-\d{2} 18:00:00$/u.test(option.label)),
+  );
 });
 
 test("clarification options display percentage points instead of internal ratios", () => {
@@ -815,7 +822,9 @@ test("clarification directives cap one dialog at four questions", () => {
 
   const questions = argsFromDirective(directiveText(result)).questions;
   assert.equal(questions.length, 4);
-  assert.match(questions[3].question, /事项4.*事项5.*事项6/u);
+  assert.equal(questions[3].question, "需要澄清事项4");
+  assert.match(directiveText(result), /REMAINING_REQUIREMENT_CLARIFICATION_ISSUES=/u);
+  assert.match(directiveText(result), /下一组问题/u);
 });
 
 test("fixed-flow failures pause through AskUserQuestion instead of a plain-text stop", () => {
@@ -890,7 +899,7 @@ test("startup instruction makes backend manual sourcing the default and Browser 
 
   assert.match(
     first.prependContext,
-    /ypscan_parse_requirement → validate_requirement → search_creators → ypscan_save_excel_artifact\(creator_preview\) → rank_mcns → 完整 MCN Markdown 表格 → ypscan_save_excel_artifact\(mcn_ranking\) → 两个本地路径/u,
+    /ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → ypscan_save_excel_artifact\(mcn_ranking\) → MCN 排名表本地路径/u,
   );
   assert.match(
     first.prependContext,
@@ -898,10 +907,10 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   );
   assert.match(first.prependContext, /rank_mcns 成功后先输出完整五列表格/u);
   assert.match(first.prependContext, /精确 SAVE_EXCEL_ARTIFACT_ARGS/u);
-  assert.match(first.prependContext, /不向用户输出 creators_export_path 或 Excel 下载链接/u);
+  assert.match(first.prependContext, /忽略其 creators_export_path 或其他表格链接/u);
+  assert.match(first.prependContext, /不调用保存工具/u);
   assert.match(first.prependContext, /保存 MCN 排名表/u);
-  assert.match(first.prependContext, /展示两个真实本地路径/u);
-  assert.match(first.prependContext, /保存成功后再调用 rank_mcns/u);
+  assert.match(first.prependContext, /展示该排名表的真实本地路径/u);
   assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
   assert.match(first.prependContext, /MCN 用户可见输出格式锁/u);
   assert.match(first.prependContext, /不得根据响应 schema、原始字段、旧模板或上一轮结果/u);
@@ -926,7 +935,9 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /按 violation_details 一次性全部修正/u);
   assert.match(first.prependContext, /只自动重试一次/u);
-  assert.match(first.prependContext, /多问题 AskUserQuestion 一次性澄清/u);
+  assert.match(first.prependContext, /多问题 AskUserQuestion 澄清/u);
+  assert.match(first.prependContext, /每个字段单独提问/u);
+  assert.match(first.prependContext, /单次超过四题时分组收集/u);
   assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
