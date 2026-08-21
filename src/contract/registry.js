@@ -178,6 +178,15 @@ const PRICE_RANGE_PARAMS = new Set([
   "kolOfficialPriceL3",
 ]);
 
+const MAXIMUM_METRIC_RANGE_PARAMS = new Set([
+  "cpeL1",
+  "cpeL2",
+  "cpeL3",
+  "cpmL1",
+  "cpmL2",
+  "cpmL3",
+]);
+
 const PLATFORM_ALIASES = Object.freeze({
   xiaohongshu: "xiaohongshu",
   xhs: "xiaohongshu",
@@ -187,7 +196,7 @@ const PLATFORM_ALIASES = Object.freeze({
   "抖音": "douyin",
 });
 
-function normalizedNumericRange(value, { rate = false, price = false } = {}) {
+function normalizedNumericRange(value, { rate = false, price = false, maximum = false } = {}) {
   let parsed = value;
   let percentNotation = false;
   let rawNumericInput = false;
@@ -230,6 +239,7 @@ function normalizedNumericRange(value, { rate = false, price = false } = {}) {
   const normalized = rate
     ? parsed.map((item) => (percentNotation || item > 1 ? item / 100 : item))
     : parsed;
+  if (maximum) return normalized[1] >= 0 ? JSON.stringify([0, normalized[1]]) : value;
   if (price && rawNumericInput) {
     return JSON.stringify([
       Math.floor(normalized[0] * 0.7),
@@ -425,6 +435,7 @@ export function normalizeToolCallParams(toolName, params) {
           : normalizedNumericRange(normalized[name], {
             rate: RATE_RANGE_PARAMS.has(name),
             price: PRICE_RANGE_PARAMS.has(name),
+            maximum: MAXIMUM_METRIC_RANGE_PARAMS.has(name),
           }));
     }
     for (const name of ["submissionDeadlineAt"]) {

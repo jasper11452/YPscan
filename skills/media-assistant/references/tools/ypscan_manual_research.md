@@ -1,6 +1,6 @@
 # ypscan_manual_research
 
-默认后端手扒 Excel 保存后可选的双平台浏览器详细手扒 Runner。Runner 通过 CDP 连接宿主 Browser，直接复用宿主 Profile、Cookie 和登录态。
+默认后端手扒 Excel 保存后可选的双平台浏览器详细手扒 Runner。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”或选择同名选项后，才读取本参考、激活 Runner 并调用 `start`；“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”均默认调用 MCP `manual_source_creators`。已授权启动的同一 run 可按工具返回参数 `resume`，无需重复询问。Runner 通过 CDP 连接宿主 Browser，直接复用宿主 Profile、Cookie 和登录态。
 
 ## 操作
 

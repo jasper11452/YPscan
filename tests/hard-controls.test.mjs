@@ -157,9 +157,11 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(directiveText(rank), /不得再次调用 select_inquiry_form_fields/u);
   assert.match(directiveText(rank), /否则先调用 select_inquiry_form_fields/u);
   assert.match(directiveText(rank), /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
-  assert.match(directiveText(rank), /“手扒”“手动拓展”“人工拓展”“直接手扒”/u);
+  assert.match(directiveText(rank), /“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”/u);
   assert.match(directiveText(rank), /一律默认走 MCP/u);
-  assert.match(directiveText(rank), /不得把这些说法解释为浏览器详细手扒/u);
+  assert.match(directiveText(rank), /不得激活浏览器手扒/u);
+  assert.match(directiveText(rank), /明确说要用“浏览器手扒”“浏览器详细手扒”/u);
+  assert.match(directiveText(rank), /resume 只用于此前已经由用户明确授权启动的同一 run/u);
   assert.match(directiveText(rank), /Excel 保存到本地后/u);
   assert.match(directiveText(rank), /ypscan_manual_research\(operation=start\)/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
@@ -260,6 +262,8 @@ test("default manual sourcing saves its Excel before offering browser detail res
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
   assert.match(savedText, /耗时较长/u);
   assert.match(savedText, /可能多次出现登录、验证或资质弹窗/u);
+  assert.match(savedText, /只有用户明确说要用浏览器手扒/u);
+  assert.match(savedText, /手捞筛选均不得启动/u);
   assert.deepEqual(
     argsFromDirective(savedText).questions[0].options.map((option) => option.label),
     ["使用默认手扒结果（推荐）", "浏览器详细手扒"],
@@ -765,6 +769,12 @@ test("missing content direction and expired deadline offer direct usable answers
   assert.ok(
     questions[1].options.every((option) => /^\d{4}-\d{2}-\d{2} 18:00:00$/u.test(option.label)),
   );
+  const text = directiveText(result);
+  assert.match(text, /不能只追加 clarifications/u);
+  assert.match(text, /旧 submission_deadline 标记 superseded/u);
+  assert.match(text, /quote 使用“明天8点”/u);
+  assert.match(text, /DEADLINE_NOT_FUTURE 是可继续澄清的业务问题/u);
+  assert.match(text, /不得声称解析器会从 clarifications 自动抽取或覆盖 facts/u);
 });
 
 test("clarification options display percentage points instead of internal ratios", () => {
@@ -802,6 +812,39 @@ test("clarification options display percentage points instead of internal ratios
   assert.deepEqual(
     argsFromDirective(directiveText(result)).questions[0].options.map((option) => option.label),
     ["30%", "50%"],
+  );
+});
+
+test("a CPM lower-bound conflict asks directly for a maximum", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_parse_requirement",
+    message: toolMessage({
+      success: true,
+      data: {
+        facts: [],
+        projections: {
+          provider: {
+            ready: false,
+            issues: [
+              {
+                code: "CPM_MAXIMUM_REQUIRED",
+                message: "CPM 只支持最大可接受值；当前原文表达为下限，请确认 CPM 上限",
+                fact_ids: ["fact-1"],
+              },
+            ],
+          },
+        },
+      },
+    }),
+  });
+
+  const question = argsFromDirective(directiveText(result)).questions[0];
+  assert.equal(question.header, "CPM 上限");
+  assert.equal(question.question, "本次可接受的 CPM 最大值是多少？");
+  assert.deepEqual(
+    question.options.map((option) => option.label),
+    ["50 以内", "100 以内", "200 以内"],
   );
 });
 
@@ -843,7 +886,7 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
   }
 });
 
-test("invalid parse arguments expose structured one-shot Agent repairs", () => {
+test("invalid parse arguments track bounded Agent repairs by code and path", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const event = {
     toolName: "ypscan_parse_requirement",
@@ -862,7 +905,7 @@ test("invalid parse arguments expose structured one-shot Agent repairs", () => {
               repair: { action: "replace", instruction: "按 quote 选择正确枚举" },
             },
           ],
-          repair: { retry_policy: { automatic_retries_max: 1 } },
+          repair: { retry_policy: { automatic_retries_per_code_path: 1 } },
         },
       },
     }),
@@ -872,15 +915,43 @@ test("invalid parse arguments expose structured one-shot Agent repairs", () => {
 
   assert.match(text, /Agent 构造参数/u);
   assert.match(text, /PARSE_REPAIR_DETAILS=/u);
-  assert.match(text, /只允许自动重试一次/u);
+  assert.match(text, /每个 code\/path 组合只允许自动修复一次/u);
   assert.match(text, /相同 code\/path 再次出现/u);
   assert.match(text, /external_condition 的 value 必须使用 quote 原文/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 
   const repeatedText = directiveText(persist(event));
-  assert.match(repeatedText, /一次自动修复后仍返回/u);
+  assert.match(repeatedText, /再次返回相同 code\/path/u);
   assert.match(repeatedText, /立即停止解析重试/u);
   assert.doesNotMatch(repeatedText, /PARSE_REPAIR_POLICY=/u);
+
+  const differentErrorEvent = {
+    ...event,
+    message: toolMessage({
+      success: false,
+      error: {
+        code: "YPSCAN_REQUIREMENT_INVALID",
+        details: {
+          violations: ["facts[3].source_quote 不是 source_id 对应用户原文的精确子串"],
+          violation_details: [
+            {
+              code: "SOURCE_QUOTE_NOT_EXACT",
+              path: "facts[3].quote",
+              expected: "用户原文中的连续逐字子串",
+              repair: { action: "replace", instruction: "改用用户原文逐字片段" },
+            },
+          ],
+        },
+      },
+    }),
+  };
+  const differentErrorText = directiveText(persist(differentErrorEvent));
+  assert.match(differentErrorText, /PARSE_REPAIR_POLICY=/u);
+  assert.doesNotMatch(differentErrorText, /立即停止解析重试/u);
+
+  const repeatedDifferentErrorText = directiveText(persist(differentErrorEvent));
+  assert.match(repeatedDifferentErrorText, /再次返回相同 code\/path/u);
+  assert.match(repeatedDifferentErrorText, /立即停止解析重试/u);
 
   const nextDemandText = directiveText(
     persist({
@@ -889,7 +960,7 @@ test("invalid parse arguments expose structured one-shot Agent repairs", () => {
     }),
   );
   assert.match(nextDemandText, /PARSE_REPAIR_POLICY=/u);
-  assert.doesNotMatch(nextDemandText, /一次自动修复后仍返回/u);
+  assert.doesNotMatch(nextDemandText, /再次返回相同 code\/path/u);
 });
 
 test("startup instruction makes backend manual sourcing the default and Browser optional", () => {
@@ -927,17 +998,23 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /否则先调用 select_inquiry_form_fields/u);
   assert.match(first.prependContext, /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
   assert.match(first.prependContext, /默认手扒 Excel 保存成功后才提示/u);
-  assert.match(first.prependContext, /“手扒”“手动拓展”“人工拓展”“直接手扒”/u);
+  assert.match(first.prependContext, /“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”/u);
   assert.match(first.prependContext, /一律默认走 MCP/u);
+  assert.match(first.prependContext, /不得激活浏览器手扒/u);
+  assert.match(first.prependContext, /明确说要用“浏览器手扒”“浏览器详细手扒”/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
   assert.match(first.prependContext, /有限重试与逐级降级全部由插件 Runner 执行/u);
   assert.match(first.prependContext, /同一 run_id 调用 resume/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /按 violation_details 一次性全部修正/u);
-  assert.match(first.prependContext, /只自动重试一次/u);
+  assert.match(first.prependContext, /每个 code\/path 组合只自动修复一次/u);
   assert.match(first.prependContext, /多问题 AskUserQuestion 澄清/u);
   assert.match(first.prependContext, /每个字段单独提问/u);
   assert.match(first.prependContext, /单次超过四题时分组收集/u);
+  assert.match(first.prependContext, /旧 fact 标记 superseded/u);
+  assert.match(first.prependContext, /绝不能只追加 clarifications 后继续提交旧 fact/u);
+  assert.match(first.prependContext, /仅指 success=false 且 error\.code=YPSCAN_REQUIREMENT_INVALID/u);
+  assert.match(first.prependContext, /DEADLINE_NOT_FUTURE.*不适用该停止规则/u);
   assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
