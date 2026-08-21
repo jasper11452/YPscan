@@ -522,7 +522,7 @@ test("manual research success directive makes the local Excel the primary large-
   assert.match(directive, /原始 HTML 已由 Agent 提炼/u);
 });
 
-test("manual research pause displays the diagnostic Excel and exact resume args", () => {
+test("manual research login pause displays the diagnostic Excel and exact resume args", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_manual_research",
@@ -531,6 +531,7 @@ test("manual research pause displays the diagnostic Excel and exact resume args"
       status: "needs_user_action",
       operation: "start",
       run_id: "run-entry-guard",
+      error: { code: "YPSCAN_MANUAL_LOGIN_REQUIRED" },
       artifact: { excel_path: "/workspace/manual-login.xlsx" },
       resume_args: {
         operation: "resume",
@@ -551,6 +552,51 @@ test("manual research pause displays the diagnostic Excel and exact resume args"
   });
   assert.match(directive, /禁止调用 Browser、Bash 或 Playwright CLI/u);
   assert.match(directive, /ASK_USER_QUESTION_ARGS=/u);
+});
+
+test("manual research starts an unavailable host Browser before resuming the same run", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_manual_research",
+    params: {
+      operation: "start",
+      requirement_id: "req-manual",
+      platform: "xiaohongshu",
+    },
+    message: toolMessage({
+      success: true,
+      status: "needs_user_action",
+      operation: "start",
+      platform: "pgy",
+      run_id: "run-browser-unavailable",
+      error: { code: "YPSCAN_MANUAL_BROWSER_UNAVAILABLE" },
+      artifact: { excel_path: "/workspace/manual-browser-unavailable.xlsx" },
+      resume_args: {
+        operation: "resume",
+        requirement_id: "req-manual",
+        platform: "pgy",
+        run_id: "run-browser-unavailable",
+      },
+    }),
+  });
+  const directive = directiveText(result);
+
+  assert.match(
+    directive,
+    /HOST_BROWSER_OPEN_URL=https:\/\/pgy\.xiaohongshu\.com\/solar\/pre-trade\/note\/kol/u,
+  );
+  assert.match(directive, /必须由 Agent 自助恢复/u);
+  assert.match(directive, /不得要求用户手动打开 Browser/u);
+  assert.match(directive, /不得停下或等待回复/u);
+  assert.match(directive, /立即原样调用上面的 resume 参数/u);
+  assert.doesNotMatch(directive, /ASK_USER_QUESTION_ARGS=/u);
+  assert.doesNotMatch(directive, /浏览器动作由插件负责，禁止调用 Browser/u);
+  assert.deepEqual(namedArgsFromDirective(directive, "MANUAL_RESEARCH_RESUME_ARGS"), {
+    operation: "resume",
+    requirement_id: "req-manual",
+    platform: "pgy",
+    run_id: "run-browser-unavailable",
+  });
 });
 
 test("completed HTML extraction does not force a follow-up dialog", () => {
@@ -1003,7 +1049,10 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /不得激活浏览器手扒/u);
   assert.match(first.prependContext, /明确说要用“浏览器手扒”“浏览器详细手扒”/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
+  assert.match(first.prependContext, /先使用宿主 Browser 能力打开当前平台达人广场/u);
   assert.match(first.prependContext, /有限重试与逐级降级全部由插件 Runner 执行/u);
+  assert.match(first.prependContext, /YPSCAN_MANUAL_BROWSER_UNAVAILABLE/u);
+  assert.match(first.prependContext, /不得要求用户代开/u);
   assert.match(first.prependContext, /同一 run_id 调用 resume/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /按 violation_details 一次性全部修正/u);

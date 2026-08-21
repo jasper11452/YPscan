@@ -4,7 +4,7 @@
 
 `ypscan_manual_research(operation=start, requirement_id, platform=xingtu, facts, keywords, quote_type?)`
 
-Runner 打开 `https://www.xingtu.cn/ad/creator/market`。若进入 `/redirect_to/ad/creator/market`，先判断登录状态：未登录则让用户登录后 resume；已登录则在同一浏览器新标签重新打开达人广场。普通资质验证弹窗直接关闭。
+Agent 先使用宿主 Browser 能力打开 `https://www.xingtu.cn/ad/creator/market`，Runner 再连接并接管后续页面动作。若进入 `/redirect_to/ad/creator/market`，先判断登录状态：未登录则让用户登录后 resume；已登录则由 Runner 在同一浏览器新标签重新打开达人广场。普通资质验证弹窗由 Runner 直接关闭。
 
 先通过 Playwright 应用全部级联筛选和精确范围最小值/最大值，关键词最后提交。切换关键词时保留其他筛选条件，只替换关键词。每个关键词持续翻页到没有下一页，保存所有达人及主页链接并按稳定 ID 去重。
 

@@ -2,6 +2,20 @@ import { firstString, isRecord, nonemptyString } from "../util/value.js";
 import { stripHostPrefix } from "../contract/registry.js";
 
 const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
+const MANUAL_MARKET_URLS = Object.freeze({
+  xingtu: "https://www.xingtu.cn/ad/creator/market",
+  pgy: "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol",
+});
+const MANUAL_BROWSER_UNAVAILABLE = "YPSCAN_MANUAL_BROWSER_UNAVAILABLE";
+
+function manualMarketUrl(...values) {
+  for (const value of values) {
+    const platform = firstString(value)?.toLowerCase();
+    if (["xingtu", "douyin"].includes(platform)) return MANUAL_MARKET_URLS.xingtu;
+    if (["pgy", "xiaohongshu"].includes(platform)) return MANUAL_MARKET_URLS.pgy;
+  }
+  return null;
+}
 
 function paramsFromEvent(event) {
   if (isRecord(event?.params)) return event.params;
@@ -428,7 +442,7 @@ function rankMcnsDirective(message, params = {}) {
     "用户可见机构结果只显示这一张五列表格，固定列且不得增减：排名、机构、覆盖达人、返点、综合分。排名严格按当前响应顺序从 1 开始连续编号；机构读取当前机构对象自己的机构名；每行覆盖达人只读取该机构对象自己的 candidate_count 原值。禁止在表格内外另行展示 supplier_id、候选总数、匹配机构数、推荐数量、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 rank_mcns 确实未返回精确保存参数，必须如实说明 MCN 排名表无法保存，禁止编造或复用历史链接。",
     "用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”或选择“人工拓展并提报”时，一律默认走 MCP，不得激活浏览器手扒或读取 Browser 手扒 SOP。若当前对话已有同一 requirement_id 的字段选择链接且用户已明确回复提交完成，直接复用 Provider 持久化字段并调用 manual_source_creators，不得再次调用 select_inquiry_form_fields；否则先调用 select_inquiry_form_fields 并把原始 URL 单独展示，等待用户提交并回复“好了”后再调用 manual_source_creators。manual_source_creators 按当前 Provider schema 传本轮 requirement_id 和用户要求的交付人数 size；后台全自动完成手扒并返回 Excel，不先启动 Browser。若 Provider 返回 REQUIREMENT_COLUMNS_NOT_CONFIGURED，再按工具结果指令进入字段选择。",
-    "manual_source_creators 的 Excel 保存到本地后，才提示用户可选择浏览器手扒；该方式耗时更长，期间可能多次出现登录、验证或资质弹窗。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活 Browser Runner、读取 Browser 手扒 SOP 并调用 ypscan_manual_research(operation=start)。resume 只用于此前已经由用户明确授权启动的同一 run。",
+    "manual_source_creators 的 Excel 保存到本地后，才提示用户可选择浏览器手扒；该方式耗时更长，期间可能多次出现登录、验证或资质弹窗。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活 Browser Runner、读取 Browser 手扒 SOP，先使用宿主 Browser 能力打开当前平台达人广场，再调用 ypscan_manual_research(operation=start)。resume 只用于此前已经由用户明确授权启动的同一 run。",
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
       askQuestion(
@@ -722,7 +736,7 @@ function excelArtifactSaveDirective(message, params = {}) {
     return [
       "YPSCAN_FLOW_DIRECTIVE=默认手扒已由后台自动完成，Excel 已保存到当前项目。",
       `MANUAL_SOURCE_LOCAL_PATH=${filePath}`,
-      "先向用户原样展示上面的真实绝对路径，然后逐字调用下面的 AskUserQuestion。默认结果是推荐交付方式；只有用户明确说要用浏览器手扒或选择浏览器详细手扒后，才允许激活并启动 Browser Runner。",
+      "先向用户原样展示上面的真实绝对路径，然后逐字调用下面的 AskUserQuestion。默认结果是推荐交付方式；只有用户明确说要用浏览器手扒或选择浏览器详细手扒后，才允许先打开宿主 Browser 并启动 Browser Runner。",
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(
         askQuestion(
           "手扒结果",
@@ -733,7 +747,7 @@ function excelArtifactSaveDirective(message, params = {}) {
           ],
         ),
       )}`,
-      "用户明确说要用“浏览器手扒”“浏览器详细手扒”，或选择“浏览器详细手扒”后，调用 ypscan_manual_research(operation=start)，传同一 requirement_id、platform、完整 facts、1–4 个关键词和必要 quote_type；只说手扒、手动拓展、人工拓展、直接手扒或手捞筛选均不得启动，否则结束人工拓展。",
+      "用户明确说要用“浏览器手扒”“浏览器详细手扒”，或选择“浏览器详细手扒”后，先使用宿主 Browser 能力打开当前平台达人广场（星图 https://www.xingtu.cn/ad/creator/market；蒲公英 https://pgy.xiaohongshu.com/solar/pre-trade/note/kol），再调用 ypscan_manual_research(operation=start)，传同一 requirement_id、platform、完整 facts、1–4 个关键词和必要 quote_type；只说手扒、手动拓展、人工拓展、直接手扒或手捞筛选均不得启动，否则结束人工拓展。",
     ].join("\n");
   }
   if (artifactKind === "mcn_creator_preview") {
@@ -821,7 +835,35 @@ function filterRangeDirective(message) {
   ].join("\n");
 }
 
-function manualResearchDirective(message) {
+function manualBrowserUnavailableDirective(result, params = {}, runnerExcelPath = null) {
+  const resumeArgs = isRecord(result?.resume_args)
+    ? result.resume_args
+    : isRecord(result?.user_action?.resume_args)
+      ? result.user_action.resume_args
+      : null;
+  const marketUrl = manualMarketUrl(result?.platform, params?.platform, resumeArgs?.platform);
+  return [
+    "YPSCAN_FLOW_DIRECTIVE=宿主 Browser 未启动。当前情况必须由 Agent 自助恢复，不得要求用户手动打开 Browser，也不得创建新 run。",
+    ...(runnerExcelPath
+      ? [
+          `MANUAL_RESEARCH_EXCEL_PATH=${runnerExcelPath}`,
+          "向用户展示当前状态 Excel 的真实绝对路径，但不得停下或等待回复；同一轮继续启动 Browser 并恢复运行。",
+        ]
+      : []),
+    ...(marketUrl ? [`HOST_BROWSER_OPEN_URL=${marketUrl}`] : []),
+    "立即使用宿主 Browser 能力打开并聚焦 HOST_BROWSER_OPEN_URL；这是仅用于启动宿主 Browser 的受限例外。不得用 Browser、Bash 或 Playwright CLI 执行筛选、翻页、抓取或验证码处理，后续页面动作仍由插件 Runner 负责。",
+    ...(resumeArgs
+      ? [
+          `MANUAL_RESEARCH_RESUME_ARGS=${JSON.stringify(resumeArgs)}`,
+          "宿主 Browser 可连接后，立即原样调用上面的 resume 参数继续同一 run；不得先等待用户回复或修改参数。",
+        ]
+      : [
+          "宿主 Browser 可连接后，使用当前真实参数重试本次 ypscan_manual_research 调用；若已有 run_id，必须恢复同一 run。",
+        ]),
+  ].join("\n");
+}
+
+function manualResearchDirective(message, params = {}) {
   const result = parsedToolResult(message);
   if (isRecord(result?.next_call)) {
     return [
@@ -833,6 +875,13 @@ function manualResearchDirective(message) {
   const code = nonemptyString(result?.error?.code)
     ? result.error.code
     : "YPSCAN_MANUAL_RESEARCH_FAILED";
+  if (code === MANUAL_BROWSER_UNAVAILABLE) {
+    return manualBrowserUnavailableDirective(
+      result,
+      params,
+      firstString(result?.artifact?.excel_path),
+    );
+  }
   const loginOrCaptcha = /LOGIN|CAPTCHA/u.test(code);
   if (["YPSCAN_MANUAL_SELECTION_REQUIRED", "YPSCAN_MANUAL_SELECTION_STALE"].includes(code)) {
     return [
@@ -894,6 +943,9 @@ function manualResearchSuccessDirective(message, params = {}) {
   if (["start", "resume"].includes(operation)) {
     if (["needs_user_action", "busy"].includes(status)) {
       const resumeArgs = isRecord(result?.resume_args) ? result.resume_args : null;
+      if (result?.error?.code === MANUAL_BROWSER_UNAVAILABLE) {
+        return manualBrowserUnavailableDirective(result, params, runnerExcelPath);
+      }
       return [
         `YPSCAN_FLOW_DIRECTIVE=插件内手扒 Runner 当前状态=${status}。浏览器动作由插件负责，禁止调用 Browser、Bash 或 Playwright CLI。`,
         ...(runnerExcelPath
@@ -1009,7 +1061,7 @@ function flowDirective(toolName, message, params = {}) {
       if (params?.operation === "create_submission") {
         return flowPauseDirective("手扒提报表生成", message);
       }
-      return manualResearchDirective(message);
+      return manualResearchDirective(message, params);
     }
     if (
       /(?:^|__)ypscan_parse_requirement$/iu.test(normalizedName) ||
@@ -1104,10 +1156,10 @@ export function registerFlowDirectiveHooks(api) {
           "search_creators 成功后忽略其 creators_export_path 或其他表格链接，不调用保存工具，直接使用同一 requirement ID 和当前平台调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再使用其精确 SAVE_EXCEL_ARTIFACT_ARGS 保存 MCN 排名表；保存成功后展示该排名表的真实本地路径，再调用分支弹窗。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手扒补量、推荐理由及其他 rank_mcns 字段或汇总。",
           "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再保存 MCN 排名表，展示该排名表的真实路径，并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”或选择人工拓展后，一律默认走 MCP，不得激活浏览器手扒或读取 Browser 手扒 SOP。若当前对话已有同一 requirement_id 的字段选择链接且用户已明确回复提交完成，直接调用 manual_source_creators，不得再次调用 select_inquiry_form_fields；否则先调用 select_inquiry_form_fields，用户提交字段并回复“好了”后再调用 manual_source_creators。按当前 Provider schema 传本轮 requirement_id 和用户要求的 size；若 Provider 返回 REQUIREMENT_COLUMNS_NOT_CONFIGURED，再按工具结果指令进入字段选择。后台返回 Excel 后立即用 ypscan_save_excel_artifact(manual_source) 保存。",
-          "默认手扒 Excel 保存成功后才提示用户是否继续浏览器手扒，并明确该方式耗时较长、期间可能多次出现登录、验证或资质弹窗。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活 Browser Runner、读取 Browser 手扒 SOP 并调用 ypscan_manual_research(operation=start)；resume 只用于此前已获用户明确授权的同一 run。start/resume 返回 next_call 时必须原样执行 read_detail_html，读完当前达人全部 HTML 后由 Agent 提炼字段并 apply_reviews。",
+          "默认手扒 Excel 保存成功后才提示用户是否继续浏览器手扒，并明确该方式耗时较长、期间可能多次出现登录、验证或资质弹窗。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活 Browser Runner、读取 Browser 手扒 SOP，先使用宿主 Browser 能力打开当前平台达人广场，再调用 ypscan_manual_research(operation=start)；resume 只用于此前已获用户明确授权的同一 run。start/resume 返回 next_call 时必须原样执行 read_detail_html，读完当前达人全部 HTML 后由 Agent 提炼字段并 apply_reviews。",
           "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion。需求解析的 Agent 构造错误仅指 success=false 且 error.code=YPSCAN_REQUIREMENT_INVALID：必须按 violation_details 一次性全部修正，每个 code/path 组合只自动修复一次；相同 code/path 重复出现时停止并报告集成错误，新的 code/path 仍按本次 repair 继续一次有界修复。DEADLINE_NOT_FUTURE 等 success=true 的 Provider 业务 issues 不适用该停止规则；收到用户答案后必须按新证据重建 facts 并继续解析。其他普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
           "需求解析性能约束：普通 fact 只传 kind/quote/value，具体 kind 的 value/operator/qualifier/role 契约以 media-assistant 的 ypscan_parse_requirement 解析参考为准；抖音 60s+ 表达为 content_format=video 和 video_duration=duration_l3（工具也会从同一明确 quote 安全补齐）；参考达人统一使用 reference_creator；无精确数值或主体不明的软条件保留为 soft/preferred_content 或 external_condition，禁止猜数值。品牌名、项目名、达人数量、提报截止时间、最低返点、粉丝量范围、内容方向、达人单价任一缺失，或任一业务值模糊、冲突、不能生成合法 Provider 格式时，必须使用工具给出的多问题 AskUserQuestion 澄清：每个字段单独提问并提供可直接采用的业务值，保留宿主自定义输入；不得改成警告及“取消本次 / 我来补齐 / 稍后补充”选项。用户回复必须逐字加入 clarifications；更正事实时旧 fact 标记 superseded，并新增 quote 来自回复原文、value 为归一化结果的 present fact，绝不能只追加 clarifications 后继续提交旧 fact。单次超过四题时分组收集。ypscan_parse_requirement 负责前置格式校验与 Provider 参数编译；validate_requirement 只做后端最终必填与服务端约束校验。",
-          "用户在默认手扒保存后选择浏览器详细手扒时，start 必须保留完整硬条件 facts 和 1–4 个关键词；Runner 连接宿主 Browser CDP，复用宿主 Profile、Cookie 和登录态。页面操作、有限重试与逐级降级全部由插件 Runner 执行。登录、全局 CAPTCHA、宿主 Browser 未启动或网络恢复后，使用同一 run_id 调用 resume；终态失败后用户要求重试时使用返回的 fresh_run=true 参数创建新运行。",
+          "用户在默认手扒保存后选择浏览器详细手扒时，先使用宿主 Browser 能力打开当前平台达人广场，再用完整硬条件 facts 和 1–4 个关键词调用 start；Runner 连接宿主 Browser CDP，复用宿主 Profile、Cookie 和登录态。页面筛选、翻页、抓取、有限重试与逐级降级全部由插件 Runner 执行。若返回 YPSCAN_MANUAL_BROWSER_UNAVAILABLE，Agent 必须自助启动或聚焦宿主 Browser 后使用同一 run_id 调用 resume，不得要求用户代开；登录、全局 CAPTCHA 或网络恢复仍按工具结果请求用户处理后 resume。终态失败后用户要求重试时使用返回的 fresh_run=true 参数创建新运行。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           "手扒达人价格必须从当前 ypscan_parse_requirement.data.facts 复制客户原始 operator 和原始数值；禁止把 Provider 区间或手工计算后的 50%–120% 区间再次传入。除本轮唯一 creator_count 外，不重算价格事实。",
         );
