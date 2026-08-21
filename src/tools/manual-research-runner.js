@@ -1139,7 +1139,9 @@ export function createManualResearchRunner({
         state.phase = resumable ? "awaiting_user" : "terminal";
         state.resume_available = resumable;
         state.resume_instruction = resumable
-          ? "在宿主 Browser 完成登录、验证或网络恢复后原样调用 resume"
+          ? error?.code === "YPSCAN_MANUAL_BROWSER_UNAVAILABLE"
+            ? "由 Agent 启动宿主 Browser 后原样调用 resume"
+            : "在宿主 Browser 完成登录、验证或网络恢复后原样调用 resume"
           : null;
         artifact = await materialize(status, true).catch(() => artifact);
         return hostToolResult(

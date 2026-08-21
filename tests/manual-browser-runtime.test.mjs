@@ -175,6 +175,7 @@ test("browser runtime reports an unavailable host Browser as recoverable", async
 
   await assert.rejects(runtime.page("xingtu"), {
     code: "YPSCAN_MANUAL_BROWSER_UNAVAILABLE",
+    message: /调用方应先启动宿主 Browser/u,
   });
 });
 

@@ -588,6 +588,29 @@ test("login interruption still returns a diagnostic Excel and resume arguments",
   assert.equal((await readFile(data.artifact.excel_path)).subarray(0, 2).toString("utf8"), "PK");
 });
 
+test("an unavailable host Browser tells the Agent to start it before resume", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-browser-unavailable-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const error = Object.assign(new Error("ECONNREFUSED"), {
+    code: "YPSCAN_MANUAL_BROWSER_UNAVAILABLE",
+  });
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }, error),
+  });
+
+  const data = payload(await run(params()));
+
+  assert.equal(data.success, true);
+  assert.equal(data.status, "needs_user_action");
+  assert.equal(data.error.code, "YPSCAN_MANUAL_BROWSER_UNAVAILABLE");
+  assert.equal(data.resume_args.operation, "resume");
+  assert.equal(
+    data.artifact.run_info.resume_instruction,
+    "由 Agent 启动宿主 Browser 后原样调用 resume",
+  );
+});
+
 test("runner accepts compact creator price facts that use value", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-compact-price-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));

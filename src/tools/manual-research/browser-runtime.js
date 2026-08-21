@@ -125,7 +125,7 @@ export function createManualBrowserRuntime({
     } catch (error) {
       throw manualBrowserError(
         "YPSCAN_MANUAL_BROWSER_UNAVAILABLE",
-        "无法连接宿主 Browser，请先在 YP Action 中打开 Browser 后继续",
+        "无法连接宿主 Browser；调用方应先启动宿主 Browser，再恢复同一手扒运行",
         { cdp_url: endpointURL, reason: error?.message ?? String(error) },
       );
     }
@@ -150,7 +150,7 @@ export function createManualBrowserRuntime({
         browser = null;
         throw manualBrowserError(
           "YPSCAN_MANUAL_BROWSER_UNAVAILABLE",
-          "宿主 Browser 尚未创建可用页面上下文，请打开 Browser 后继续",
+          "宿主 Browser 尚未创建可用页面上下文；调用方应先打开宿主 Browser 页面，再恢复同一手扒运行",
         );
       }
       let page = await openMarketPage(context, platform, reopen);
