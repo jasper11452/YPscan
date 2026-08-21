@@ -9,7 +9,7 @@
 ## 当前组成
 
 - `index.js`：注册 3 个本地能力工具、远端 MCP 白名单和 Hook。
-- `src/tools/parse-requirement.js`：把紧凑原文证据 facts 编译成 Provider 参数、搜索分组和残余条件。
+- `src/tools/parse-requirement.js`：直连固定 Dify Workflow，在 `data.outputs` 中完整透传原始输出；Agent 结构性展开 Dify 负责的标签、品牌、粉丝、返点、报价、CPM 和 CPE 参数片段，其余 Provider 字段按工具卡从原文解析。
 - Provider 询价字段选择直接使用远端 MCP `select_inquiry_form_fields`，用户提交后按 requirement ID 在后端持久化；Agent 不调用已弃用的字段查询工具，也不向后续工具传 `columns`。
 - `src/tools/save-excel-artifact.js`：保存 Provider 返回的 Excel 下载结果；初始链路只保存 MCN 排名表，不保存 `search_creators` 的表格。
 - `src/tools/manual-research-runner.js`：执行有界的双平台筛选、降级、分页、原始详情 HTML 采集、Agent 分块提炼、恢复和产物刷新。

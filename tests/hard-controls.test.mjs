@@ -29,11 +29,6 @@ function argsFromDirective(text) {
   return JSON.parse(line.slice("ASK_USER_QUESTION_ARGS=".length));
 }
 
-function validateArgsFromDirective(text) {
-  const line = text.split("\n").find((item) => item.startsWith("VALIDATE_REQUIREMENT_ARGS="));
-  return JSON.parse(line.slice("VALIDATE_REQUIREMENT_ARGS=".length));
-}
-
 function saveExcelArgsFromDirective(text) {
   const line = text.split("\n").find((item) => item.startsWith("SAVE_EXCEL_ARTIFACT_ARGS="));
   return JSON.parse(line.slice("SAVE_EXCEL_ARTIFACT_ARGS=".length));
@@ -52,31 +47,26 @@ test("fixed result directives skip the search workbook and save only after rank"
     message: toolMessage({
       success: true,
       data: {
-        projections: {
-          provider: {
-            ready: true,
-            search_jobs: [
-              {
-                params: {
-                  status: "ready",
-                  platform: "douyin",
-                },
-              },
-            ],
-          },
+        outputs: {
+          dybrandName: ["测试品牌"],
+          followercount: { followercount: "[10000,50000]" },
+          rebate: { rebate: "[0.3,1]" },
+          dy_kolOfficialPrice: { kolOfficialPriceL1: "[7000,12000]" },
         },
       },
     }),
   });
   const parseText = directiveText(parse);
-  assert.match(parseText, /下一步固定调用 validate_requirement/u);
+  assert.match(parseText, /下一步由 Agent.*validate_requirement/u);
   assert.match(parseText, /不得调用 Browser/u);
-  assert.match(parseText, /整体作为顶层参数传入/u);
-  assert.match(parseText, /createdAt\/updatedAt 由 Provider 自动填写，不要补传/u);
-  assert.deepEqual(validateArgsFromDirective(parseText), {
-    status: "ready",
-    platform: "douyin",
-  });
+  assert.match(parseText, /data\.outputs 是完整、未改写的原始 Workflow 输出/u);
+  assert.match(parseText, /DIFY_OWNED_LOGICAL_FIELDS=/u);
+  assert.match(parseText, /直接使用/u);
+  assert.match(parseText, /同一次修改涉及两个及以上/u);
+  assert.match(parseText, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
+  assert.match(parseText, /禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
+  assert.match(parseText, /回查当前需求原文并自主决定/u);
+  assert.doesNotMatch(parseText, /VALIDATE_REQUIREMENT_ARGS=/u);
 
   const validate = persist({
     toolName: "ypmcn__validate_requirement",
@@ -186,8 +176,7 @@ test("rank result saves the Provider MCN workbook before the branch question", (
       success: true,
       data: {
         mcns: [{ agency_name: "机构 A", supplier_id: "supplier-a" }],
-        mcns_export_path:
-          "https://mcp.eshypdata.com/api/download?file_path=mcn-ranking.xlsx",
+        mcns_export_path: "https://mcp.eshypdata.com/api/download?file_path=mcn-ranking.xlsx",
       },
     }),
   });
@@ -730,195 +719,44 @@ test("empty rank result still outputs the Markdown table and offers manual expan
   assert.doesNotMatch(question.question, /匹配机构：/u);
 });
 
-test("not-ready parse results ask one actionable question per missing field", () => {
+test("Dify parse directives preserve field ownership and change policy", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_parse_requirement",
     message: toolMessage({
       success: true,
       data: {
-        facts: [
-          { id: "fact-1", normalized_value: 10 },
-          { id: "fact-2", normalized_value: 20 },
-        ],
-        projections: {
-          provider: {
-            ready: false,
-            search_jobs: [{ params: {} }],
-            issues: [
-              { code: "PROVIDER_REQUIRED_FACT_MISSING", message: "Provider 缺少品牌名", fact_ids: [] },
-              { code: "PROVIDER_REQUIRED_FACT_MISSING", message: "Provider 缺少项目名", fact_ids: [] },
-              {
-                code: "REQUIREMENT_FACT_CONFLICT",
-                message: "达人数量存在多个不一致的有效值",
-                fact_ids: ["fact-1", "fact-2"],
-              },
-            ],
-          },
+        outputs: {
+          contentTag: null,
+          dybrandName: ["测试品牌"],
+          dy_kolOfficialPrice: { kolOfficialPriceL1: "[7000,12000]" },
         },
       },
     }),
   });
+
   const text = directiveText(result);
-  assert.match(text, /ASK_USER_QUESTION_ARGS=/u);
+  assert.match(text, /DIFY_OWNED_LOGICAL_FIELDS=/u);
+  assert.match(text, /字段缺失、为 null、为空或与原文冲突/u);
+  assert.match(text, /回查当前需求原文并自主决定/u);
+  assert.match(text, /单次修改只涉及一个业务条件时，不再调用/u);
+  assert.match(text, /同一次修改涉及两个及以上不同业务条件时/u);
+  assert.match(text, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
+  assert.match(text, /禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
+  assert.match(text, /刷新全部 Dify 字段/u);
+  assert.match(text, /报价、CPM、CPE 参数片段已经包含 L1\/L2\/L3/u);
+  assert.match(text, /不得重算或再次路由/u);
+  assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /VALIDATE_REQUIREMENT_ARGS=/u);
-  const questions = argsFromDirective(text).questions;
-  assert.equal(questions.length, 3);
-  assert.equal(questions[0].header, "品牌名");
-  assert.deepEqual(
-    questions[0].options.map((option) => option.label),
-    ["无独立品牌（白牌）", "个人品牌/IP"],
-  );
-  assert.equal(questions[1].header, "项目名");
-  assert.deepEqual(questions[2].options.map((option) => option.label), ["10", "20"]);
-  assert.doesNotMatch(text, /稍后补充|结束本次|取消本次|我来补齐/u);
-  assert.doesNotMatch(text, /label":"其他/u);
-  assert.match(text, /自定义输入框/u);
 });
-
-test("missing content direction and expired deadline offer direct usable answers", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const result = persist({
-    toolName: "ypscan_parse_requirement",
-    message: toolMessage({
-      success: true,
-      data: {
-        facts: [],
-        projections: {
-          provider: {
-            ready: false,
-            issues: [
-              {
-                code: "PROVIDER_REQUIRED_FACT_MISSING",
-                message: "Provider 缺少内容方向",
-                fact_ids: [],
-              },
-              {
-                code: "DEADLINE_NOT_FUTURE",
-                message: "提报截止时间必须晚于当前时间",
-                fact_ids: [],
-              },
-            ],
-          },
-        },
-      },
-    }),
-  });
-
-  const questions = argsFromDirective(directiveText(result)).questions;
-  assert.equal(questions.length, 2);
-  assert.deepEqual(
-    questions[0].options.map((option) => option.label),
-    ["产品种草", "真实测评", "场景化分享"],
-  );
-  assert.equal(questions[1].header, "提报截止");
-  assert.ok(
-    questions[1].options.every((option) => /^\d{4}-\d{2}-\d{2} 18:00:00$/u.test(option.label)),
-  );
-  const text = directiveText(result);
-  assert.match(text, /不能只追加 clarifications/u);
-  assert.match(text, /旧 submission_deadline 标记 superseded/u);
-  assert.match(text, /quote 使用“明天8点”/u);
-  assert.match(text, /DEADLINE_NOT_FUTURE 是可继续澄清的业务问题/u);
-  assert.match(text, /不得声称解析器会从 clarifications 自动抽取或覆盖 facts/u);
-});
-
-test("clarification options display percentage points instead of internal ratios", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const result = persist({
-    toolName: "ypscan_parse_requirement",
-    message: toolMessage({
-      success: true,
-      data: {
-        facts: [
-          {
-            id: "fact-1",
-            operator: "between",
-            unit: "percent",
-            minimum: 0.3,
-            maximum: 0.5,
-          },
-        ],
-        projections: {
-          provider: {
-            ready: false,
-            issues: [
-              {
-                code: "REBATE_SEMANTICS_UNSUPPORTED",
-                message: "最低返点必须是单一最低值",
-                fact_ids: ["fact-1"],
-              },
-            ],
-          },
-        },
-      },
-    }),
-  });
-
-  assert.deepEqual(
-    argsFromDirective(directiveText(result)).questions[0].options.map((option) => option.label),
-    ["30%", "50%"],
-  );
-});
-
-test("a CPM lower-bound conflict asks directly for a maximum", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const result = persist({
-    toolName: "ypscan_parse_requirement",
-    message: toolMessage({
-      success: true,
-      data: {
-        facts: [],
-        projections: {
-          provider: {
-            ready: false,
-            issues: [
-              {
-                code: "CPM_MAXIMUM_REQUIRED",
-                message: "CPM 只支持最大可接受值；当前原文表达为下限，请确认 CPM 上限",
-                fact_ids: ["fact-1"],
-              },
-            ],
-          },
-        },
-      },
-    }),
-  });
-
-  const question = argsFromDirective(directiveText(result)).questions[0];
-  assert.equal(question.header, "CPM 上限");
-  assert.equal(question.question, "本次可接受的 CPM 最大值是多少？");
-  assert.deepEqual(
-    question.options.map((option) => option.label),
-    ["50 以内", "100 以内", "200 以内"],
-  );
-});
-
-test("clarification directives cap one dialog at four questions", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const issues = Array.from({ length: 6 }, (_, index) => ({
-    code: `ISSUE_${index + 1}`,
-    message: `需要澄清事项${index + 1}`,
-    fact_ids: [],
-  }));
-  const result = persist({
-    toolName: "ypscan_parse_requirement",
-    message: toolMessage({
-      success: true,
-      data: { facts: [], projections: { provider: { ready: false, issues } } },
-    }),
-  });
-
-  const questions = argsFromDirective(directiveText(result)).questions;
-  assert.equal(questions.length, 4);
-  assert.equal(questions[3].question, "需要澄清事项4");
-  assert.match(directiveText(result), /REMAINING_REQUIREMENT_CLARIFICATION_ISSUES=/u);
-  assert.match(directiveText(result), /下一组问题/u);
-});
-
 test("fixed-flow failures pause through AskUserQuestion instead of a plain-text stop", () => {
   const persist = registeredHooks().get("tool_result_persist");
-  for (const toolName of ["validate_requirement", "search_creators", "rank_mcns"]) {
+  for (const toolName of [
+    "ypscan_parse_requirement",
+    "validate_requirement",
+    "search_creators",
+    "rank_mcns",
+  ]) {
     const result = persist({
       toolName,
       message: toolMessage({ success: false, error: { code: "PROVIDER_FAILED" } }),
@@ -930,83 +768,6 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
       ["重试", "结束本次"],
     );
   }
-});
-
-test("invalid parse arguments track bounded Agent repairs by code and path", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const event = {
-    toolName: "ypscan_parse_requirement",
-    params: { original_brief: "图文合作", platform: "xiaohongshu" },
-    message: toolMessage({
-      success: false,
-      error: {
-        code: "YPSCAN_REQUIREMENT_INVALID",
-        details: {
-          violations: ["facts[2].value 不是 picture/video"],
-          violation_details: [
-            {
-              code: "CONTENT_FORMAT_INVALID",
-              path: "facts[2].value",
-              expected: "picture 或 video",
-              repair: { action: "replace", instruction: "按 quote 选择正确枚举" },
-            },
-          ],
-          repair: { retry_policy: { automatic_retries_per_code_path: 1 } },
-        },
-      },
-    }),
-  };
-  const result = persist(event);
-  const text = directiveText(result);
-
-  assert.match(text, /Agent 构造参数/u);
-  assert.match(text, /PARSE_REPAIR_DETAILS=/u);
-  assert.match(text, /每个 code\/path 组合只允许自动修复一次/u);
-  assert.match(text, /相同 code\/path 再次出现/u);
-  assert.match(text, /external_condition 的 value 必须使用 quote 原文/u);
-  assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
-
-  const repeatedText = directiveText(persist(event));
-  assert.match(repeatedText, /再次返回相同 code\/path/u);
-  assert.match(repeatedText, /立即停止解析重试/u);
-  assert.doesNotMatch(repeatedText, /PARSE_REPAIR_POLICY=/u);
-
-  const differentErrorEvent = {
-    ...event,
-    message: toolMessage({
-      success: false,
-      error: {
-        code: "YPSCAN_REQUIREMENT_INVALID",
-        details: {
-          violations: ["facts[3].source_quote 不是 source_id 对应用户原文的精确子串"],
-          violation_details: [
-            {
-              code: "SOURCE_QUOTE_NOT_EXACT",
-              path: "facts[3].quote",
-              expected: "用户原文中的连续逐字子串",
-              repair: { action: "replace", instruction: "改用用户原文逐字片段" },
-            },
-          ],
-        },
-      },
-    }),
-  };
-  const differentErrorText = directiveText(persist(differentErrorEvent));
-  assert.match(differentErrorText, /PARSE_REPAIR_POLICY=/u);
-  assert.doesNotMatch(differentErrorText, /立即停止解析重试/u);
-
-  const repeatedDifferentErrorText = directiveText(persist(differentErrorEvent));
-  assert.match(repeatedDifferentErrorText, /再次返回相同 code\/path/u);
-  assert.match(repeatedDifferentErrorText, /立即停止解析重试/u);
-
-  const nextDemandText = directiveText(
-    persist({
-      ...event,
-      params: { original_brief: "视频合作", platform: "xiaohongshu" },
-    }),
-  );
-  assert.match(nextDemandText, /PARSE_REPAIR_POLICY=/u);
-  assert.doesNotMatch(nextDemandText, /再次返回相同 code\/path/u);
 });
 
 test("startup instruction makes backend manual sourcing the default and Browser optional", () => {
@@ -1055,15 +816,16 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /不得要求用户代开/u);
   assert.match(first.prependContext, /同一 run_id 调用 resume/u);
   assert.match(first.prependContext, /才调用 AskUserQuestion/u);
-  assert.match(first.prependContext, /按 violation_details 一次性全部修正/u);
-  assert.match(first.prependContext, /每个 code\/path 组合只自动修复一次/u);
-  assert.match(first.prependContext, /多问题 AskUserQuestion 澄清/u);
-  assert.match(first.prependContext, /每个字段单独提问/u);
-  assert.match(first.prependContext, /单次超过四题时分组收集/u);
-  assert.match(first.prependContext, /旧 fact 标记 superseded/u);
-  assert.match(first.prependContext, /绝不能只追加 clarifications 后继续提交旧 fact/u);
-  assert.match(first.prependContext, /仅指 success=false 且 error\.code=YPSCAN_REQUIREMENT_INVALID/u);
-  assert.match(first.prependContext, /DEADLINE_NOT_FUTURE.*不适用该停止规则/u);
+  assert.match(first.prependContext, /首次按单平台完整需求.*直连 Dify/u);
+  assert.match(first.prependContext, /data\.outputs 完整透传原始 Workflow 输出/u);
+  assert.match(first.prependContext, /Dify 独占解析八个标签数组/u);
+  assert.match(first.prependContext, /内部值直接使用，不猜、不补、不改、不重算/u);
+  assert.match(first.prependContext, /单次修改只涉及一个条件时由 Agent 直接更新/u);
+  assert.match(first.prependContext, /同一次修改涉及两个及以上不同条件时/u);
+  assert.match(first.prependContext, /只用用户最初原文和后续改口.*重建完整单平台 demand/u);
+  assert.match(first.prependContext, /禁止回填旧 Dify 输出、已拓展价格或其他 Provider 归一化值/u);
+  assert.match(first.prependContext, /creator_price 必须引用客户原始价格表述和原始数值/u);
+  assert.match(first.prependContext, /禁止传 Dify\/Provider 区间/u);
   assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);

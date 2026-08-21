@@ -17,7 +17,9 @@ export default {
   id: "ypscan",
   register(api) {
     const testAdapterBaseUrl = resolveTestAdapterBaseUrl(api.pluginConfig ?? {});
-    const parseRequirement = createRequirementParser();
+    const parseRequirement = createRequirementParser({
+      fetchImpl: api.fetch ?? globalThis.fetch,
+    });
     const hookRuntime = registerFlowDirectiveHooks(api);
     const manualBrowserRuntime = createManualBrowserRuntime({
       browserCdpUrl: api.pluginConfig?.browserCdpUrl,
@@ -45,7 +47,7 @@ export default {
     api.registerTool({
       name: "ypscan_parse_requirement",
       description:
-        "Provider 前置格式校验与需求编译入口：按 media-assistant 解析参考中的逐 kind 契约传 facts；工具校验正整数、比例、区间、绝对时间和价档并输出 Provider 参数。Agent 构造错误返回 code/path/expected/repair，业务缺失或模糊返回批量澄清问题；ready 后才调用 validate_requirement。",
+        "将当前单个平台的完整最新需求直连固定 Dify Workflow，在 data.outputs 中完整透传原始 Workflow 输出。Dify 负责标签、品牌、粉丝、返点、报价、CPM 和 CPE；首次需求必调，后续单次修改只涉及一个条件时由 Agent 直接更新，涉及两个及以上条件时只用用户原始表述和后续改口重建完整需求再调用，禁止把 Dify 输出或 Provider 归一化值回填给 Dify。Dify 输出不得猜测或重算，其余 Provider 字段由 Agent 按 media-assistant 解析参考补齐。",
       parameters: PARSE_REQUIREMENT_PARAMETERS,
       outputSchema: PARSE_REQUIREMENT_OUTPUT_SCHEMA,
       async execute(_id, params) {

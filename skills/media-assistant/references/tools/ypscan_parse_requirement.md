@@ -1,102 +1,108 @@
 # ypscan_parse_requirement
 
-Risk tier: automatic local analysis. This tool does not create a requirement, start Browser, or send data externally.
+## 定位
 
-## Purpose
+这是固定链路的第一步。插件把当前单个平台的完整最新需求直接提交给固定 Dify Workflow；插件不再做本地 facts 校验、Provider 参数编译、搜索分组或语义补全。
 
-This is always the first business call. Extract evidence-backed facts from the complete user wording and compile only the Provider projection. The next fixed call is `validate_requirement`; even if the user says “直接手扒”, do not open Browser or skip Provider search and MCN ranking.
+首次处理一个平台需求时必须调用。成功后，`data.outputs` 是 Dify 的完整原始 `outputs` 对象；插件不挑选、不重命名、不解包、不删除未知字段。Agent 使用其中 Dify 负责的内容，并按本卡补齐其余 `validate_requirement` 参数。
 
-This tool is the local preflight validator and format compiler. Before `validate_requirement`, it must prove that each compiled Provider field has the required shape: creator quantity is an explicit positive integer, rebate and numeric filters have valid interval semantics, percentages are normalized correctly, deadlines are future absolute timestamps, and price/metric facts map to one valid content or duration tier. `validate_requirement` remains the Provider-side final required-field and service-constraint check, not the first place format errors are discovered.
+## 输入
 
-The output keeps:
-
-1. `basic_params`: requirement context;
-2. `search_jobs[].filters`: conditions with an explicit current Provider field;
-3. `residual_conditions`: conditions reserved for ranking, post-filtering, or human verification;
-4. `projections.provider`: the Provider parameters and readiness/issues.
-
-There are no platform-specific Browser projections, task parameters, or project-generated handpick Excel outputs.
-
-## Input
-
-- `original_brief`: complete initial user wording, unchanged.
-- `platform`: exactly `xiaohongshu` or `douyin`.
-- `clarifications`: later clarifications/corrections in chronological order; each item is unchanged user text.
-- `facts`: every clause affecting search, grouping, ranking, or verification. A normal item has only `kind`, exact `quote`, and normalized `value`.
-
-Do not send `id`, `source_id`, `source_quote`, `subject`, or `unit`: the tool generates them. `quote` must be an exact continuous substring of `original_brief` or a clarification. Normalize numbers without changing meaning (`2-3w` → `minimum=20000, maximum=30000`; `30%+` → `value=30`). Keep audience conditions separate from creator conditions, and keep total budget separate from unit price.
-
-Use `minimum`/`maximum` for a range. The tool derives ordinary upper/lower bounds, `不限`, 图文/视频 qualifier, and quantity role from the quote; only pass `operator`, `qualifier`, `role`, `segment`, `strength`, `status`, or `scope` when the default does not express the requirement. Keep an old corrected fact only when needed, with `status="superseded"`, so its original clause remains covered.
-
-`clarifications` only registers later user messages as evidence sources; the parser does not extract or overwrite facts from those strings. After an answer, add the unchanged user message to `clarifications` and rebuild the affected facts. For a correction, keep the old fact with `status="superseded"` and add a new present fact whose `quote` is an exact substring of the new user message. Never append a clarification while leaving the old fact as the only present fact.
-
-For example, if the original deadline has expired and the user replies `明天8点`, preserve that exact clarification, mark the old `submission_deadline` fact superseded, and add:
+只传：
 
 ```json
-{
-  "kind": "submission_deadline",
-  "quote": "明天8点",
-  "value": "2026-08-22T08:00:00+08:00"
-}
+{ "demand": "当前单个平台的完整最新需求文本" }
 ```
 
-Resolve `value` from the actual current date in Asia/Shanghai; the date above is only the result when “today” is 2026-08-21. The relative phrase remains the evidence quote. Do not rewrite the clarification to include the generated absolute time.
+- 单平台需求直接传完整原文。
+- 多平台需求按平台分别调用：保留明确共享条件和当前平台条件，删除另一平台专属条件，并明确写出当前平台；每个平台保留自己的最近一次成功结果。
+- 不得为了让 Dify 命中而添加用户没说过的条件。
+- 为每个平台维护“当前用户原始条件”：只由用户最初原文和后续改口更新。`demand` 必须从这份原始条件重建，不得从 Dify 输出、`validate_requirement` 参数或其他 Provider 归一化结果反向生成。
 
-### Kind conversion contract
+## Dify 负责字段
 
-- Required text: `brand_name`, `project_name`, `content_direction`; copy the exact business value as text. Optional text uses the same rule: `product_name`, `schedule_window`, `creator_gender`, `creator_city`, `audience_gender`, `audience_city`, `ip_dependency`, `creator_url_keyword`, `organization_name`, `route_constraint`.
-- Required numeric: `creator_count` is one explicit positive integer; `follower_count` and `creator_price` use a converted finite `value`, or `minimum`/`maximum` for a real range. `total_budget` follows the numeric rule but never substitutes for `creator_price`.
-- Required special values: `submission_deadline` is a future `YYYY-MM-DD HH:mm:ss` absolute timestamp; `rebate_min` is a minimum percentage point value such as `30`, or `operator=any`, never a range or upper bound.
-- Rate facts use raw percentage points, not decimal ratios: `audience_female_rate`, `audience_male_rate`, `audience_age_l1_rate` through `audience_age_l6_rate`, and `interaction_rate`.
-- `cpm_max` and `cpe_max` always mean the maximum acceptable metric. A non-negative scalar such as `CPM 100`, `CPM＜100`, or `CPE 20` compiles to `[0,100]` or `[0,20]`, never `[100,100]` or `[20,20]`. Full-width `＜/＞` are comparison symbols; an explicit lower-bound expression such as `CPM＞100` conflicts with the maximum-filter contract and must ask for the actual maximum instead of silently reversing the condition. Other numeric filters use converted finite numbers and the ordinary scalar/range rule: `click_median`, `view_median`, `photo_view`, `video_interact`, `photo_interact`, `user_like_count`, `like_increment`, `avg_view`, `avg_like`, `avg_comment`, `avg_collect`, `avg_interact`.
-- Enum/boolean: `content_format` is `picture` or `video`; `video_duration` is `duration_l1`, `duration_l2`, or `duration_l3`; `has_order_30day` and `has_social_30day` are booleans; `organization_affiliation` is institution/机构达人 or independent/个人达人.
-- Repeatable text or text-array kinds: `content_feature`, `content_theme`, `creator_persona`, `creator_type`, `platform_creator_type`, `growth_creator_type`, `industry_tag`, `excluded_content`, `preferred_content`, `reference_creator`. `excluded_content` defaults to `not_in`; `preferred_content` is soft/preference; `reference_creator` contains nicknames and/or HTTP(S) URLs.
-- Evidence-only kinds: `external_condition.value` must equal `quote` verbatim. Keep `route_constraint` and unsupported hard/soft conditions as residual evidence instead of inventing a Provider field.
+Dify 独占首次解析以下字段：
 
-小红书明确“图文和视频均可”时，将同一句原文分别写成 `value=picture` 和 `value=video` 的两条 `content_format`；共享单价只写一条 generic `creator_price`，工具会把同一个扩展区间写入 L1/L2。不得复制价格事实，也不得把未说明内容形式的通用单价当成“两者均可”。例如 `单价1-2万，图文和视频均可` 的 L1/L2 都是 `"[7000,24000]"`，小红书不写 L3。
+| 类别           | 字段                                                                                                                                                                         |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 标签           | `growBloggerTypeLabel`、`contentFeatureLabel`、`contentThemeLabel`、`kolPersonaLabel`、`pgyBloggerTypeLabel`、`xtTalentTypeLabel`、`industryTagLabel`、`growTalentTypeLabel` |
+| 文本和基础条件 | `contentTag`、`brandName`、`followercount`、`rebate`                                                                                                                         |
+| 商业指标       | `kolOfficialPrice`、`cpm`、`cpe`                                                                                                                                             |
 
-### Rebate example
+使用规则：
 
-For the original wording `返点30%以上`, pass:
+1. Dify 返回了明确值时直接使用；禁止 Agent 猜测、补全、重写、排序、换算、扩区间或从其他语义字段替代。
+2. 当前 Workflow 的部分输出是 Provider 参数片段对象。允许按字段名做结构性解包或展开，例如从 `{ "rebate": "[0.3,1]" }` 取同名 `rebate`；禁止改变内部值。
+3. 标签保持 Dify 返回的数组元素和顺序；不得把 `null` 或缺失值传给 Provider，按第 7 条回查原文处理。
+4. 品牌当前按平台输出为 `xhsbrandName` / `dybrandName`；只读取当前平台候选。单一候选结构性映射为 `brandName`，空、多候选或与原文冲突时按第 7 条处理。
+5. `contentTag`、`followercount`、`rebate` 当前分别返回带同名字段的对象；展开后使用内部同名值，不做二次解析。
+6. 报价、CPM、CPE 当前按平台返回 `xhs_kolOfficialPrice` / `dy_kolOfficialPrice`、`xhs_cpm` / `dy_cpm`、`xhs_cpe` / `dy_cpe` 参数片段，内部已是 L1/L2/L3 Provider 字段；只展开当前平台对象，不得再次路由、扩区间或重算。若 Workflow 以后返回未分档的逻辑值，才根据明确的小红书图文/视频或抖音时长档做字段路由，值仍不得改变。
+7. Dify 字段缺失、为 `null`、为空或与当前原文冲突时，Agent 先回查当前完整需求和用户后续修改，自主选择原文中唯一明确的值；原文仍缺失、模糊或冲突时才调用 `AskUserQuestion`，不得盲猜。
 
-```json
-{
-  "kind": "rebate_min",
-  "quote": "返点30%以上",
-  "value": 30
-}
-```
+## 后续修改与重解析
 
-The correct Provider result is `"rebate": "[0.3,1]"`. All percentage values are raw percentage points; never send decimal ratios. Rebate is a minimum-only condition: do not pass `30%–50%`, `minimum`/`maximum`, or `operator=lte`; clarify the minimum accepted rebate first.
+按用户每一次修改涉及的不同业务条件计数；同一条件的多处措辞调整只算一个变化。
 
-All numeric creator-search fields use the same no-space `"[min,max]"` output contract. Do not prebuild a Provider range inside `value`; the tool preserves the inferred or explicitly supplied original operator in its output fact.
+- 没有条件变化：复用最近成功结果。
+- 本次只变化一个条件：不再调用 Dify，由 Agent 按用户最新原文直接更新该条件；即使该条件原本属于 Dify 字段也适用。
+- 本次变化两个及以上不同条件：把用户原始表述和后续改口中的所有最新条件合并成新的完整单平台 `demand`，重新调用一次 Dify，并用新响应刷新全部 Dify 字段。
+- Dify 重跑后不得把旧 Dify 字段与新响应拼接。
+- 重跑输入禁止回填任何已归一化值。比如用户原始单价 `10000` 经 Dify 输出 `"[7000,12000]"` 后，后续重跑仍传用户的 `10000`，绝不能把 `"[7000,12000]"` 写入 `demand`，否则会造成二次拓展。返点、粉丝、CPM、CPE 同理。
 
-数值事实使用有限数值：单值填 `value`（`2w内` → `value=20000`），范围只填 `minimum`/`maximum`，不要传带单位字符串或预制 Provider 区间。`quote` 必须是原文连续、逐字子串，不得改写。
+## Agent 负责字段
 
-抖音时长档：合作形式「星图60s+」拆成两条事实——`content_format`（`value=video`）与 `video_duration`（`value=60s+`）。当整个需求只有一个明确视频时长档时，价格/CPM 事实可省略 `qualifier`，工具会映射到该档位（60s+ → L3）；有多个档位时必须各自写 `duration_l1/l2/l3`。
+除上述 Dify 字段外，所有 Provider 参数由 Agent 从当前需求原文和用户后续修改解析。只使用明确证据；缺失、模糊或冲突时澄清。
 
-「女粉偏多」「城市集中」等没有精确数值或主体不明的描述不得猜测百分比或补写“受众/粉丝”主体。前者使用 soft preference，后者按原文写入 `external_condition`；`external_condition.value` 必须是 quote 原文。工具会把明确的 `60s+` 安全归一化为视频 L3，也会把无数字的 soft 男女粉偏好保留为 residual，不写成 Provider 硬筛。
+### 必填和生成字段
 
-| Original wording      | Correct fact core                           | Provider parameter                                             |
-| --------------------- | ------------------------------------------- | -------------------------------------------------------------- |
-| 图文达人单价 2 万以内 | `creator_price`, `quote`, `value=20000`     | `kolOfficialPriceL1: "[14000,24000]"` (one 70%–120% expansion) |
-| 图文 CPM 不超过 100   | `cpm_max`, `quote`, `value=100`             | `cpmL1: "[0,100]"`                                             |
-| 图文 CPE 不超过 20    | `cpe_max`, `quote`, `value=20`              | `cpeL1: "[0,20]"`                                              |
-| 互动率 5% 以上        | `interaction_rate`, `quote`, `value=5`      | `interactionRate: "[0.05,1]"`                                  |
-| 女粉占比 70% 以上     | `audience_female_rate`, `quote`, `value=70` | `femaleRate: "[0.7,1]"`                                        |
+| 字段                     | 解析规则                                                                                             |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `platform`               | 只传 `xiaohongshu` 或 `douyin`；多平台分别创建需求。                                                 |
+| `projectName`            | 使用明确项目名；品牌名、产品名不能自动充当项目名。没有明确项目名时澄清。                             |
+| `quantityTotal`          | 明确的提报达人数量，转成正整数字符串；不能用合作数量、机构覆盖数、推荐补量或默认 `1` 代替。          |
+| `submissionDeadlineAt`   | 解析为未来绝对时间并精确到秒；只有日期没有时刻时澄清，不能默认 18:00；已过期时给出未来绝对时间选项。 |
+| `status`                 | Agent 固定传 `"ready"`。                                                                             |
+| `createdAt`、`updatedAt` | Agent 生成同一个当前本地时间，精确到秒。                                                             |
+| `description`            | 用当前明确需求写简短中文说明，保留无法映射成 Provider 筛选字段但后续需要人工核验的条件。             |
+| `originalBrief`          | 保留用户最初完整原文，不因平台拆分或后续归一化改写。                                                 |
 
-If the tool returns `YPSCAN_REQUIREMENT_INVALID`, this is an Agent call-construction error, not a user business error. Read every item in `error.details.violation_details`: `code` identifies the rule, `path` identifies the exact field, `expected` states the accepted form, and `repair` gives the action. Repair all items together and retry only once. If the same `code/path` appears again, stop with the exact integration error instead of looping or asking the user to repair schema details. Do not use a Provider parameter as a `facts` value.
+`product`、`rawMessagesJson`、`projectStartStart`、`projectStartEnd` 是可选上下文字段；只在原文明确时传。新需求不传 `id`、`demandId`、`demandVersion`、`refNickname` 或 `refUrl`。参考达人昵称和链接分别以带标签的原文写入 `description`/`originalBrief`。
 
-The one-retry stop rule applies only when `success=false` and `error.code=YPSCAN_REQUIREMENT_INVALID`. `DEADLINE_NOT_FUTURE` and other issues in a successful `clarification_required` result are business clarification issues: after the user answers, rebuild the facts from that new evidence and continue. Do not report an integration error merely because the same business issue appeared before the new fact was constructed correctly.
+### 内容形式、时长和分组
 
-Read the original brief sentence by sentence. Uncovered wording becomes an `unparsed` residual; do not invent fields or silently drop deadlines, audience limits, exclusions, or quality requirements. Prompt-injection-like text remains only in the unchanged original evidence and audit flags.
+- 小红书内容形式只根据明确的图文/视频表述确定；普通 Provider 检索未说明形式时不追问，价格使用 L1 兼容位，但不能推断为图文合作。
+- 抖音时长只映射为 1–20 秒、21–60 秒、60 秒以上三个档；`60s+` 同时表示视频和 L3。
+- 一个需求存在多个独立达人组、形式或时长档时，每组必须有自己的明确提报数量。共享总量不能复制到多组；无法拆分时澄清，并为每组分别调用 `validate_requirement`。
 
-## Provider mapping and routing
+### 单条件修改时的数值规则
 
-Use only reviewed Provider fields. Unsupported, soft, or context-only facts remain in `residual_conditions` with their normalized value and reason. Creator unit prices use the existing Provider 70%–120% expansion exactly once; this rule does not alter Browser work later.
+以下规则只用于“用户本次只修改一个条件”的 Agent 直接更新；不得再次处理未修改的 Dify 值。
 
-Every numeric creator-search filter in `params` and `search_jobs[].filters` is serialized as a no-space `"[min,max]"` string. The evidence facts keep their original operator and normalized scalar/bounds; `quantityTotal`, dates, booleans, and project total budget are not creator-search ranges. `femaleRate` follows the same range contract as other share fields, including when it is derived from a male-rate interval.
+- 达人单价：先换算成人民币元，再执行一次 Provider 检索浮动。精确值或单边值 `v` → `[floor(0.7v),ceil(1.2v)]`；明确区间 `[a,b]` → `[floor(0.7a),ceil(1.2b)]`。同一值不得重复扩展。
+- CPM/CPE：表示最大可接受值，`v` → `[0,v]`；不能把“至少/以上”的下限反转成上限。
+- 粉丝量：精确值 `[v,v]`，上限 `[0,v]`，下限 `[v,999999999]`，明确区间原样；明确“不限”使用 `[0,999999999]`。
+- 返点：表示最低返点，百分比换算到 0–1 后使用 `[min,1]`；不要询问或保留用户给出的上限。
+- 其他数量指标：精确 `[v,v]`、上限 `[0,v]`、下限 `[v,技术最大值]`、区间 `[a,b]`。
+- 比例字段：统一使用 0–1 区间；只有男性占比时，可在明确二元占比假设下换算女性占比 `[1-b,1-a]`。
 
-`outcome=ready` means local preflight and compilation succeeded and `projections.provider.ready=true`; `outcome=clarification_required` means real business information is missing, ambiguous, conflicting, or cannot produce a legal Provider value. The eight required business facts are brand name, project name, creator quantity, submission deadline, minimum rebate, follower range, content direction, and creator price. Call the returned `AskUserQuestion` with one question per unresolved field (at most four questions per call), and offer concrete business values that directly answer each question. If more than four fields are unresolved, collect the first group, reparse the answers, and then ask the next group. Do not collapse several fields into a warning with “取消本次 / 我来补齐 / 稍后补充” choices. A deadline question must offer future absolute datetimes. Keep the host's default custom input and do not add a fake “其他/自行填写” option. For one ready search job, pass `projections.provider.params` to `validate_requirement`; for multiple jobs, validate each `search_jobs[i].params` in returned order with its own count and segment.
+所有 Provider 区间最终使用无空格 JSON 字符串 `"[min,max]"`。下界不能大于上界，数值不能为负。
 
-After validation, the fixed sequence is `search_creators` and then `rank_mcns`; do not save the search workbook. Save only the workbook returned by `rank_mcns`. Clarification of missing/ambiguous/conflicting required information must use `AskUserQuestion`; do not stop after a plain-text question. A successful parse does not authorize Browser or direct delivery.
+### 可选筛选字段
+
+仅在原文明确、主体和含义唯一时解析：
+
+- 达人：`kwGender`、`kwIpDependency`、`kwUserUrl`、`organization`、`hasOrganization`。
+- 商业表现：`hasOrder30day`、`hasSocial30day`、`interactionRate`、`clickMedium`、`viewMedium`、`photoView`、`videoInteract`、`photoInteract`、`userlikecount`、`likeIncrement`、`avgview`、`avglike`、`avgcomment`、`avgcollect`、`avginteract`。
+- 受众：`femaleRate`、`age1Rate` 至 `age6Rate`。粉丝性别/地域不能误写成达人本人性别/所在地。
+- 其他文本：`talentTypeLabel`。不得拿它覆盖任何 Dify 标签字段。
+
+`hasOrganization`、`hasOrder30day`、`hasSocial30day` 使用字符串 `"true"`/`"false"`。同时接受机构达人和个人达人时省略 `hasOrganization` 和 `organization`；`organization` 只放明确机构名称。
+
+项目总预算、软偏好、平台不可见条件和无法安全映射的要求只保留在 `description`/`originalBrief`，不得伪造 Provider 字段。生产 schema 不接收 `budget_min_cents`、`budget_max_cents`、`budget_raw` 或旧截止时间字段。
+
+## 进入 validate_requirement 前
+
+1. 对 Dify 字段执行“直接使用”检查，并确认没有对值做二次转换。
+2. 从原文补齐 Agent 字段，检查必填、平台、数量、日期、价档和区间格式。
+3. 对 Dify 缺失/冲突先回查原文；只有仍无法确定的业务问题才一次性用 `AskUserQuestion` 收集。
+4. 完整参数准备好后直接调用 `validate_requirement`；不展示额外的“确认创建”弹窗，不提前调用 Browser、`search_creators` 或 `rank_mcns`。
