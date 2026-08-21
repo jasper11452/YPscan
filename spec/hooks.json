@@ -4,7 +4,7 @@
   "implementation": "src/hooks/register-flow-directives.js",
   "events": {
     "tool_result_persist": [
-      "ypscan_parse_requirement success carries the fixed validate_requirement next-step directive",
+      "ypscan_parse_requirement success preserves Dify-owned fields and directs the Agent to complete non-Dify fields before validate_requirement",
       "validate_requirement success carries the fixed search_creators next-step directive",
       "search_creators success, including zero matches, preserves creators_export_path plus exact local-save arguments and carries the fixed rank_mcns next-step directive",
       "rank_mcns success requires the complete response-order MCN table, raw creator preview download link, local Excel save, displayed file_path, and branch AskUserQuestion directive",
