@@ -56,7 +56,6 @@ export const VALIDATE_REQUIREMENT_PARAMS = Object.freeze([
   "contentFeatureLabel",
   "contentThemeLabel",
   "kolPersonaLabel",
-  "talentTypeLabel",
   "pgyBloggerTypeLabel",
   "growBloggerTypeLabel",
   "xtTalentTypeLabel",
@@ -199,13 +198,11 @@ const PLATFORM_ARRAY_FIELD_PARAMS = Object.freeze({
     "growBloggerTypeLabel",
     "kolPersonaLabel",
     "pgyBloggerTypeLabel",
-    "talentTypeLabel",
   ],
   douyin: [
     "contentThemeLabel",
     "growTalentTypeLabel",
     "industryTagLabel",
-    "talentTypeLabel",
     "xtTalentTypeLabel",
   ],
 });

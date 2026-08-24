@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-`ypscan`（悦普识星）是一个 OpenClaw 插件（id `ypscan`，`private: true`，当前版本 `0.1.24-beta77`），是「悦普达人采买」的客户端集成层：注册本地工具、通过 SSE 连远端 MCP（`https://mcp.eshypdata.com/sse`，12 个工具白名单），并在用户选择人工拓展后由 Agent 使用宿主 Browser 配合无状态 native 适配器。
+`ypscan`（悦普识星）是一个 OpenClaw 插件（id `ypscan`，`private: true`，当前版本 `0.1.24-beta78`），是「悦普达人采买」的客户端集成层：注册本地工具、通过 SSE 连远端 MCP（`https://mcp.eshypdata.com/sse`，12 个工具白名单），并在用户选择人工拓展后由 Agent 使用宿主 Browser 配合无状态 native 适配器。
 
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type":"module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。
 

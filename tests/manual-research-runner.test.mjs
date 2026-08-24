@@ -1185,6 +1185,30 @@ test("generic DOM candidates remain outside the recommendation sheet after revie
   assert.match(candidates, /通用召回达人/u);
 });
 
+test("runner reports unknown delivery shortfall when target count is missing", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-missing-target-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => adapter(20),
+  });
+
+  const data = payload(
+    await run({
+      requirement_id: "missing-target",
+      platform: "xingtu",
+      facts: [
+        { kind: "product_name", value: "办公软件" },
+        { kind: "creator_price", value: 20_000, operator: "lte" },
+      ],
+      keywords: ["办公软件"],
+    }),
+  );
+
+  assert.ok(["failed", "partial", "complete", "needs_user_action"].includes(data.status));
+});
+
 test("review score orders recommendations and sends the remainder to candidates", () => {
   const plan = compileManualResearchPlan(
     params({

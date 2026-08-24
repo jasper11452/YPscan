@@ -31,6 +31,82 @@ function params() {
   };
 }
 
+test("create_submission keeps target count and shortfall unknown when creator count was never captured", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-submission-missing-target-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const checkpointRoot = join(workspaceDir, "ypscan-manual-research", "missing-target-run");
+  await mkdir(checkpointRoot, { recursive: true });
+  await writeFile(
+    join(checkpointRoot, "checkpoint.jsonl"),
+    [
+      {
+        version: 2,
+        fingerprint: "missing-target-run",
+        type: "run",
+        requirement_id: "missing-target-submission",
+        platform: "xingtu",
+        params: { requirement_id: "missing-target-submission", platform: "xingtu" },
+        plan: {
+          target_count: null,
+          keywords: ["办公软件"],
+          review_requirements: [],
+        },
+      },
+      {
+        type: "page",
+        branch: { keyword: "办公软件" },
+        page: 1,
+        candidates: [
+          {
+            platform: "xingtu",
+            platform_id: "creator-1",
+            nickname: "办公达人1",
+            detail_url: "https://www.xingtu.cn/creator/1",
+            collection_mode: "filtered",
+          },
+        ],
+      },
+      {
+        type: "detail",
+        detail: {
+          candidate_ref: "creator-1",
+          status: "complete",
+          fields: {},
+          hard_evaluation: { status: "pass", checks: [] },
+        },
+      },
+      {
+        type: "review",
+        review: {
+          candidate_ref: "creator-1",
+          decision: "include",
+          reasons: ["内容匹配"],
+          evidence: ["详情证据"],
+        },
+      },
+    ].map((line) => JSON.stringify(line)).join("\n") + "\n",
+  );
+
+  const run = createManualResearch({
+    workspaceDir,
+    browser: fakeBrowser("https://www.xingtu.cn/ad/creator/market"),
+    adapterFactory: () => pagedAdapter([]),
+  });
+
+  const submission = payload(
+    await run({
+      operation: "create_submission",
+      requirement_id: "missing-target-submission",
+      platform: "xingtu",
+      run_id: "missing-target-run",
+    }),
+  );
+
+  assert.equal(submission.success, true, JSON.stringify(submission));
+  assert.equal(submission.target_count, null);
+  assert.equal(submission.delivery_shortfall, null);
+});
+
 test("only legacy checkpoints with price semantics are rejected", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-price-semantics-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));

@@ -94,11 +94,8 @@ Dify 独占首次解析以下字段：
 - 达人：`kwGender`、`kwIpDependency`、`kwUserUrl`、`organization`、`hasOrganization`。
 - 商业表现：`hasOrder30day`、`hasSocial30day`、`interactionRate`、`clickMedium`、`viewMedium`、`photoView`、`videoInteract`、`photoInteract`、`userlikecount`、`likeIncrement`、`avgview`、`avglike`、`avgcomment`、`avgcollect`、`avginteract`。
 - 受众：`femaleRate`、`age1Rate` 至 `age6Rate`。粉丝性别/地域不能误写成达人本人性别/所在地。
-- 其他文本：`talentTypeLabel`。不得拿它覆盖任何 Dify 标签字段。
 
 `hasOrganization`、`hasOrder30day`、`hasSocial30day` 使用字符串 `"true"`/`"false"`。同时接受机构达人和个人达人时省略 `hasOrganization` 和 `organization`；`organization` 只放明确机构名称。
-
-项目总预算、软偏好、平台不可见条件和无法安全映射的要求只保留在 `description`/`originalBrief`，不得伪造 Provider 字段。生产 schema 不接收 `budget_min_cents`、`budget_max_cents`、`budget_raw` 或旧截止时间字段。
 
 ## 进入 validate_requirement 前
 

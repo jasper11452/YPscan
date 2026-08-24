@@ -66,6 +66,8 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
   assert.match(parseText, /禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
   assert.match(parseText, /回查当前需求原文并自主决定/u);
+  assert.match(parseText, /quantityTotal 缺失时只能通过弹窗追问/u);
+  assert.match(parseText, /禁止普通文本追问或默认补值/u);
   assert.doesNotMatch(parseText, /VALIDATE_REQUIREMENT_ARGS=/u);
 
   const validate = persist({
@@ -160,6 +162,17 @@ test("fixed result directives skip the search workbook and save only after rank"
     question.questions[0].options.map((option) => option.label),
     ["询价机构", "人工拓展并提报"],
   );
+  assert.match(directiveText(rank), /“询价机构”仅选择业务分支/u);
+  assert.match(directiveText(rank), /不得按排名、覆盖达人、返点、综合分或其他字段自行选择机构/u);
+  const recipientQuestion = namedArgsFromDirective(
+    directiveText(rank),
+    "INQUIRY_RECIPIENT_SELECTION_ARGS",
+  ).questions[0];
+  assert.equal(recipientQuestion.multiSelect, true);
+  assert.deepEqual(recipientQuestion.options, [
+    { label: "机构 A", description: "选择该机构作为本次询价收件人" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(recipientQuestion), /supplier-a/u);
   assert.match(question.questions[0].question, /弹窗打开前已在对话中完整展示/u);
   assert.match(question.questions[0].question, /MCN 排名表本地文件路径/u);
   assert.doesNotMatch(question.questions[0].question, /下载链接/u);
@@ -923,7 +936,9 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /不得.*把 columns 放入 Agent 上下文/u);
   assert.match(text, /等待用户完成选择后回复“好了”/u);
   assert.match(text, /恢复发起本次字段选择的原分支/u);
-  assert.match(text, /询价机构分支.*调用 create_with_distributions/u);
+  assert.match(text, /按 create_with_distributions 工具卡的固定企微模板调用一次/u);
+  assert.match(text, /固定企微模板/u);
+  assert.match(text, /返点只作内部筛选条件，绝不写入这两个消息字段/u);
   assert.match(text, /人工拓展分支.*调用 manual_source_creators/u);
   assert.match(text, /不得再次调用 select_inquiry_form_fields/u);
   assert.match(text, /不得调用 create_submission_batch/u);
@@ -946,6 +961,8 @@ test("field-selection auto-open failure with a valid link still emits the link d
     text,
     /FIELD_SELECTION_URL=https:\/\/agenta\.eshypdata\.com\/demand-field-selector\?token=degraded/u,
   );
+  assert.match(text, /只有在用户已明确选中至少一家当前 MCN 后/u);
+  assert.match(text, /绝不传空数组、按排名\/覆盖数自行挑选机构或自动发送/u);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);
 });
 

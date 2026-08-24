@@ -24,6 +24,12 @@ function directiveText(result) {
   return result?.message?.content?.at(-1)?.text ?? "";
 }
 
+function namedArgsFromDirective(text, name) {
+  const prefix = `${name}=`;
+  const line = text.split("\n").find((item) => item.startsWith(prefix));
+  return JSON.parse(line.slice(prefix.length));
+}
+
 test("flow hooks do not register tool-call gates", () => {
   const { hooks } = registeredPlugin();
   assert.deepEqual([...hooks.keys()].sort(), ["before_prompt_build", "tool_result_persist"]);
@@ -75,6 +81,50 @@ test("Provider matching errors remain visible and forbid a full-payload retry", 
   assert.match(directive, /禁止自动重发原始完整参数/u);
   assert.match(directive, /仅把选中候选的 supplier ID 放入 supplierIds/u);
   assert.match(directive, /supplier_name 传空数组/u);
+});
+
+test("empty recipients require explicit selection instead of inferring top-ranked agencies", () => {
+  const { hooks } = registeredPlugin();
+  const result = hooks.get("tool_result_persist")({
+    toolName: "create_with_distributions",
+    params: { requirement_id: "req-empty" },
+    message: toolMessage({
+      success: false,
+      error: {
+        code: "INVALID_PAYLOAD",
+        message: "supplier_name and supplierIds cannot both be empty",
+      },
+    }),
+  });
+
+  const directive = directiveText(result);
+  assert.match(directive, /没有任何收件机构/u);
+  assert.match(directive, /只选择“询价机构”分支不构成机构提名/u);
+  assert.match(directive, /不得从 MCN 排名、覆盖人数或推荐顺序自动挑选机构/u);
+  assert.match(directive, /待用户选中机构后/u);
+  assert.doesNotMatch(directive, /GET_WORKFLOW_STATE_ARGS=/u);
+});
+
+test("non-active project failure only triggers a workflow-state diagnostic", () => {
+  const { hooks } = registeredPlugin();
+  const result = hooks.get("tool_result_persist")({
+    toolName: "create_with_distributions",
+    params: { requirement_id: "req-status" },
+    message: toolMessage({
+      success: false,
+      project: null,
+      distributions: { created: [], skipped: [] },
+      errors: [{ field: "status", message: "只有进行中的项目才能创建供应商分发" }],
+    }),
+  });
+
+  const directive = directiveText(result);
+  assert.match(directive, /关联项目不是进行中状态/u);
+  assert.match(directive, /不得自动重发或猜测状态转换/u);
+  assert.match(directive, /状态查询不授权再次发送/u);
+  assert.deepEqual(namedArgsFromDirective(directive, "GET_WORKFLOW_STATE_ARGS"), {
+    requirement_id: "req-status",
+  });
 });
 
 test("partial success defers candidate resolution instead of asking for manual expansion", () => {

@@ -46,14 +46,12 @@ test("xiaohongshu platform array fields are normalized to arrays before validate
     contentTag: "护肤,通勤",
     growBloggerTypeLabel: '["潜力达人"]',
     kolPersonaLabel: "职场女性",
-    talentTypeLabel: "图文,视频",
   });
 
   assert.deepEqual(params.contentFeatureLabel, ["真实测评", "通勤"]);
   assert.deepEqual(params.contentTag, ["护肤", "通勤"]);
   assert.deepEqual(params.growBloggerTypeLabel, ["潜力达人"]);
   assert.deepEqual(params.kolPersonaLabel, ["职场女性"]);
-  assert.deepEqual(params.talentTypeLabel, ["图文", "视频"]);
 });
 
 test("douyin platform array fields are normalized to arrays before validate_requirement", () => {
@@ -62,13 +60,11 @@ test("douyin platform array fields are normalized to arrays before validate_requ
     contentThemeLabel: "剧情,搞笑",
     growTalentTypeLabel: '["潜力达人"]',
     industryTagLabel: "美妆个护",
-    talentTypeLabel: "视频",
   });
 
   assert.deepEqual(params.contentThemeLabel, ["剧情", "搞笑"]);
   assert.deepEqual(params.growTalentTypeLabel, ["潜力达人"]);
   assert.deepEqual(params.industryTagLabel, ["美妆个护"]);
-  assert.deepEqual(params.talentTypeLabel, ["视频"]);
 });
 
 test("array normalization preserves the full enum token instead of splitting on the dash", () => {
@@ -86,9 +82,8 @@ test("invalidPlatformArrayFields reports non-array platform fields before normal
       platform: "xiaohongshu",
       contentFeatureLabel: 1,
       contentTag: ["护肤"],
-      talentTypeLabel: null,
     }),
-    ["contentFeatureLabel", "talentTypeLabel"],
+    ["contentFeatureLabel"],
   );
 });
 
