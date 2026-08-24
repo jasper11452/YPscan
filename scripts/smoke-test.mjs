@@ -90,6 +90,7 @@ try {
   const hookNames = registered.hooks.map((hook) => hook.name);
   assert.deepEqual([...new Set(hookNames)].sort(), [
     "before_prompt_build",
+    "before_tool_call",
     "gateway_start",
     "gateway_stop",
     "tool_result_persist",

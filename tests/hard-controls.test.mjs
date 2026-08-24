@@ -40,6 +40,30 @@ function namedArgsFromDirective(text, name) {
   return JSON.parse(line.slice(prefix.length));
 }
 
+function completeValidateParams() {
+  return {
+    platform: "douyin",
+    brandName: ["测试品牌"],
+    projectName: "测试项目",
+    quantityTotal: 30,
+    submissionDeadlineAt: "2099-08-25 12:00:00",
+    rebate: "25%以上",
+    followercount: [0, 999999999],
+    contentTag: ["科技", "耳机"],
+    rawMessagesJson: JSON.stringify({
+      original:
+        "抖音项目：测试项目；品牌：测试品牌；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；科技耳机方向。",
+      parse_outputs: {},
+    }),
+    contentThemeLabel: ["科技数码"],
+    growTalentTypeLabel: ["成熟达人"],
+    industryTagLabel: ["3C及电器-消费类电子产品"],
+    xtTalentTypeLabel: ["科技数码-3C数码"],
+    kolOfficialPriceL2: 50000,
+    cpmL2: 500,
+  };
+}
+
 test("fixed result directives skip the search workbook and save only after rank", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const parse = persist({
@@ -61,13 +85,16 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /不得调用 Browser/u);
   assert.match(parseText, /data\.outputs 是完整、未改写的原始 Workflow 输出/u);
   assert.match(parseText, /DIFY_OWNED_LOGICAL_FIELDS=/u);
-  assert.match(parseText, /直接使用/u);
+  assert.match(parseText, /VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
+  assert.match(parseText, /无空格 JSON 区间字符串 "\[min,max\]"/u);
+  assert.match(parseText, /返点.*固定为 "\[min,1\]"/u);
+  assert.match(parseText, /不得用 Provider 报错试探类型/u);
   assert.match(parseText, /同一次修改涉及两个及以上/u);
   assert.match(parseText, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
   assert.match(parseText, /禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
-  assert.match(parseText, /回查当前需求原文并自主决定/u);
-  assert.match(parseText, /quantityTotal 缺失时只能通过弹窗追问/u);
-  assert.match(parseText, /禁止普通文本追问或默认补值/u);
+  assert.match(parseText, /禁止自主选择、自动补标签、默认补值/u);
+  assert.match(parseText, /submissionDeadlineAt 缺失或不精确/u);
+  assert.match(parseText, /抖音报价未明确时长档/u);
   assert.doesNotMatch(parseText, /VALIDATE_REQUIREMENT_ARGS=/u);
 
   const validate = persist({
@@ -755,15 +782,16 @@ test("Dify parse directives preserve field ownership and change policy", () => {
 
   const text = directiveText(result);
   assert.match(text, /DIFY_OWNED_LOGICAL_FIELDS=/u);
-  assert.match(text, /字段缺失、为 null、为空或与原文冲突/u);
-  assert.match(text, /回查当前需求原文并自主决定/u);
+  assert.match(text, /字段缺失、为 null、为空、模糊、冲突/u);
+  assert.match(text, /必须调用 AskUserQuestion 弹窗收集/u);
+  assert.match(text, /禁止自主选择/u);
   assert.match(text, /单次修改只涉及一个业务条件时，不再调用/u);
   assert.match(text, /同一次修改涉及两个及以上不同业务条件时/u);
   assert.match(text, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
   assert.match(text, /禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
   assert.match(text, /刷新全部 Dify 字段/u);
-  assert.match(text, /报价、CPM、CPE 参数片段已经包含 L1\/L2\/L3/u);
-  assert.match(text, /不得重算或再次路由/u);
+  assert.match(text, /报价、CPM、CPE 参数片段按 L1\/L2\/L3 Provider 字段展开/u);
+  assert.match(text, /原文没有支持的档位属于冲突/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /VALIDATE_REQUIREMENT_ARGS=/u);
 });
@@ -833,11 +861,16 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /YPSCAN_MANUAL_BROWSER_UNAVAILABLE/u);
   assert.match(first.prependContext, /不得要求用户代开/u);
   assert.match(first.prependContext, /同一 run_id 调用 resume/u);
-  assert.match(first.prependContext, /才调用 AskUserQuestion/u);
+  assert.match(first.prependContext, /需求澄清硬规则/u);
+  assert.match(first.prependContext, /必须调用 AskUserQuestion/u);
+  assert.match(first.prependContext, /禁止回查后自主选择/u);
+  assert.match(first.prependContext, /validate_requirement 数值字段格式锁/u);
+  assert.match(first.prependContext, /无空格 JSON 区间字符串 "\[min,max\]"/u);
+  assert.match(first.prependContext, /禁止通过 Provider 报错逐字段、逐类型试探/u);
   assert.match(first.prependContext, /首次按单平台完整需求.*直连 Dify/u);
   assert.match(first.prependContext, /data\.outputs 完整透传原始 Workflow 输出/u);
-  assert.match(first.prependContext, /Dify 独占解析八个标签数组/u);
-  assert.match(first.prependContext, /内部值直接使用，不猜、不补、不改、不重算/u);
+  assert.match(first.prependContext, /Dify 负责八个标签数组/u);
+  assert.match(first.prependContext, /缺少原文证据、与原文冲突或存在多种合法映射/u);
   assert.match(first.prependContext, /单次修改只涉及一个条件时由 Agent 直接更新/u);
   assert.match(first.prependContext, /同一次修改涉及两个及以上不同条件时/u);
   assert.match(first.prependContext, /只用用户最初原文和后续改口.*重建完整单平台 demand/u);
@@ -850,6 +883,67 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
 
   assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
+});
+
+test("validate_requirement preflight canonicalizes all numeric fields before one Provider call", () => {
+  const before = registeredHooks().get("before_tool_call");
+  const result = before({
+    toolName: "ypmcn__validate_requirement",
+    params: completeValidateParams(),
+  });
+
+  assert.equal(result.block, undefined);
+  assert.equal(result.params.status, "ready");
+  assert.equal(result.params.brandName, "测试品牌");
+  assert.equal(result.params.quantityTotal, "30");
+  assert.equal(result.params.rebate, "[0.25,1]");
+  assert.equal(result.params.followercount, "[0,999999999]");
+  assert.equal(result.params.kolOfficialPriceL2, "[35000,60000]");
+  assert.equal(result.params.cpmL2, "[0,500]");
+  assert.deepEqual(result.params.rawMessagesJson, {
+    original:
+      "抖音项目：测试项目；品牌：测试品牌；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；科技耳机方向。",
+    parse_outputs: {},
+  });
+});
+
+test("validate_requirement preflight blocks incomplete writes before Provider execution", () => {
+  const before = registeredHooks().get("before_tool_call");
+  const params = completeValidateParams();
+  delete params.submissionDeadlineAt;
+  params.rebate = { min: 0.25, max: 1 };
+  params.projectStartStart = "8月底";
+
+  const result = before({ toolName: "validate_requirement", params });
+
+  assert.equal(result.block, true);
+  assert.match(result.blockReason, /YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED/u);
+  assert.match(result.blockReason, /Provider 没有收到本次写入/u);
+  assert.match(result.blockReason, /submissionDeadlineAt/u);
+  assert.match(result.blockReason, /rebate/u);
+  assert.match(result.blockReason, /projectStartStart/u);
+  assert.match(result.blockReason, /必须调用 AskUserQuestion/u);
+  assert.match(result.blockReason, /不得改变一种类型后继续盲试/u);
+});
+
+test("preflight block result requires grouped popup clarification instead of retry probing", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "validate_requirement",
+    message: toolMessage({
+      success: false,
+      error: {
+        code: "TOOL_CALL_BLOCKED",
+        message: "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED",
+      },
+    }),
+  });
+  const text = directiveText(result);
+
+  assert.match(text, /Provider 未执行写入/u);
+  assert.match(text, /同一次 AskUserQuestion 中成组弹窗收集/u);
+  assert.match(text, /禁止自主选择、默认补值/u);
+  assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
 test("verified range fallback returns control to Playwright without stale refs", () => {

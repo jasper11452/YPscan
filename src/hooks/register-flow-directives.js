@@ -1,5 +1,10 @@
 import { firstString, isRecord, nonemptyString } from "../util/value.js";
-import { stripHostPrefix } from "../contract/registry.js";
+import {
+  normalizeToolCallParams,
+  stripHostPrefix,
+  VALIDATE_REQUIREMENT_RANGE_PARAMS,
+  validateRequirementPreflight,
+} from "../contract/registry.js";
 import { DIFY_REQUIREMENT_FIELDS } from "../tools/parse-requirement.js";
 import { localFileMarkdownLink } from "../tools/save-excel-artifact.js";
 
@@ -9,6 +14,8 @@ const MANUAL_MARKET_URLS = Object.freeze({
   pgy: "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol",
 });
 const MANUAL_BROWSER_UNAVAILABLE = "YPSCAN_MANUAL_BROWSER_UNAVAILABLE";
+const REQUIREMENT_PREFLIGHT_BLOCKED = "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED";
+const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"';
 
 function manualMarketUrl(...values) {
   for (const value of values) {
@@ -111,9 +118,31 @@ function requirementParseSuccessDirective() {
   return [
     "YPSCAN_FLOW_DIRECTIVE=Dify 需求解析成功。data.outputs 是完整、未改写的原始 Workflow 输出。下一步由 Agent 按需求解析工具卡结构性展开当前平台参数片段、补齐非 Dify 字段，再调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
     `DIFY_OWNED_LOGICAL_FIELDS=${DIFY_REQUIREMENT_FIELDS.join(",")}`,
-    "Dify 返回内容必须直接使用。只允许按字段名展开 contentTag/followercount/rebate 等同名参数片段，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe；不得猜测、重算、扩区间、改标签、改顺序或丢弃未知 Workflow 输出。落库 validate_requirement 前，Agent 必须检查当前平台要求的数组字段形态：小红书的 contentFeatureLabel、contentTag、growBloggerTypeLabel、kolPersonaLabel、pgyBloggerTypeLabel，以及抖音的 contentThemeLabel、growTalentTypeLabel、industryTagLabel、xtTalentTypeLabel，都必须以数组传入。字段缺失、为 null、为空或与原文冲突时，Agent 必须回查当前需求原文并自主决定；其中小红书缺少 pgyBloggerTypeLabel、抖音缺少 xtTalentTypeLabel 时，必须基于当前原文与 contentTag 自动补齐合法结构化数组，不能向用户追问这两个标签；其他字段在原文仍确实缺失、模糊或冲突时，必须调用 AskUserQuestion 弹窗收集，尤其 quantityTotal 缺失时只能通过弹窗追问，禁止普通文本追问或默认补值。",
+    `VALIDATE_REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。以下字段只能使用该格式，禁止传数组、对象、单个数字、百分号文本或自然语言：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")}。返点表达最低要求，固定为 "[min,1]"；报价是 kolOfficialPriceL1/L2/L3，CPM 是 cpmL1/L2/L3，CPE 是 cpeL1/L2/L3。所有数值字段必须在第一次 validate_requirement 调用前一次性准备正确，不得用 Provider 报错试探类型。`,
+    "Dify 返回内容只允许按字段名结构性展开，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe。语义值不得猜测、改标签、改顺序或丢弃未知 Workflow 输出；数组或单值到 Provider 标准区间字符串的确定性格式归一化由本地调用边界一次完成，Agent 不得自行尝试多种表达。落库 validate_requirement 前，当前平台标签字段必须是非空字符串数组：小红书的 contentFeatureLabel、contentTag、growBloggerTypeLabel、kolPersonaLabel、pgyBloggerTypeLabel，以及抖音的 contentThemeLabel、growTalentTypeLabel、industryTagLabel、xtTalentTypeLabel。Agent 只能提取原文中唯一明确的值并做无损结构映射；字段缺失、为 null、为空、模糊、冲突、存在多候选或需要选择标签/时长/内容形式/分组时，必须调用 AskUserQuestion 弹窗收集，禁止自主选择、自动补标签、默认补值或用普通文本追问。",
+    "提交前一次性检查所有必填字段和全部区间格式。quantityTotal 缺失、共享总量无法分配到多个独立达人组、submissionDeadlineAt 缺失或不精确、抖音报价未明确时长档、品牌或标签存在多候选时，都必须先弹窗确认；用户未回答前禁止调用 validate_requirement。",
+    "rawMessagesJson 必须是 JSON 对象并保留 original 与本次完整 parse_outputs；每轮弹窗答案按字段追加到 clarifications。只有 original 与 clarifications 属于用户证据，Dify parse_outputs 的默认值不能证明用户已确认。",
     "用户后续单次修改只涉及一个业务条件时，不再调用 ypscan_parse_requirement，由 Agent 按用户最新原文直接更新该条件。同一次修改涉及两个及以上不同业务条件时，只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand，再调用一次 ypscan_parse_requirement，并以新响应刷新全部 Dify 字段。禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand。",
-    "当前 Dify 的报价、CPM、CPE 参数片段已经包含 L1/L2/L3 Provider 字段，只展开当前平台对象，内部值不得重算或再次路由。其余 Provider 字段严格按 media-assistant 的 ypscan_parse_requirement 解析参考从原文构造。",
+    "当前 Dify 的报价、CPM、CPE 参数片段按 L1/L2/L3 Provider 字段展开；只有原文已唯一明确对应内容形式或抖音时长档时才可使用。Dify 给出原文没有支持的档位属于冲突，必须弹窗确认，Agent 不得接受其默认路由。其余 Provider 字段严格按 media-assistant 的 ypscan_parse_requirement 解析参考从原文构造。",
+  ].join("\n");
+}
+
+function requirementPreflightBlockReason(issues) {
+  const details = issues.map((issue) => `${issue.field}: ${issue.reason}`).join("；");
+  return [
+    REQUIREMENT_PREFLIGHT_BLOCKED,
+    "validate_requirement 未执行，Provider 没有收到本次写入。",
+    `一次性修正项：${details}`,
+    `格式契约：rebate、followercount、kolOfficialPriceL1/L2/L3、cpmL1/L2/L3、cpeL1/L2/L3 以及其他数值筛选字段全部使用${REQUIREMENT_RANGE_FORMAT}；返点固定为 "[min,1]"。`,
+    "只允许对原文唯一明确值做确定性格式归一化。任何缺失、模糊、冲突、多候选或需要选择的业务值都必须调用 AskUserQuestion；不得自主补值，不得改变一种类型后继续盲试。收齐全部值后再提交一次完整参数。",
+  ].join("\n");
+}
+
+function requirementPreflightBlockedDirective() {
+  return [
+    "YPSCAN_FLOW_DIRECTIVE=validate_requirement 已被本地完整性预检阻断，Provider 未执行写入。必须先处理原始工具错误列出的全部字段，不得把本次阻断描述成 Provider 字段报错。",
+    `REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。禁止数组、对象、单值和百分号文本直接进入数值筛选字段。`,
+    "纯格式问题由本地边界一次性规范化；仍被阻断说明存在缺失、无效或需要用户决定的业务值。必须把所有待确认字段在同一次 AskUserQuestion 中成组弹窗收集（每次最多四题，超过后分批），禁止自主选择、默认补值、普通文本追问或再次试探 validate_requirement。",
   ].join("\n");
 }
 
@@ -183,12 +212,7 @@ function rankMcnsDirective(message, params = {}) {
   const recipientOptions = inquiryRecipientOptions(mcns);
   const recipientSelectionArgs =
     !empty && recipientOptions.length > 0
-      ? askQuestion(
-          "选择询价机构",
-          "请选择本次需要询价的机构，可多选。",
-          recipientOptions,
-          true,
-        )
+      ? askQuestion("选择询价机构", "请选择本次需要询价的机构，可多选。", recipientOptions, true)
       : null;
   const options = empty
     ? [
@@ -352,7 +376,9 @@ function distributionDirective(message, params = {}) {
       if (requirementId) {
         lines.push(`GET_WORKFLOW_STATE_ARGS=${JSON.stringify({ requirement_id: requirementId })}`);
       } else {
-        lines.push("当前响应和调用参数都缺少 requirement_id，无法安全查询项目状态；停止本轮发送处理。");
+        lines.push(
+          "当前响应和调用参数都缺少 requirement_id，无法安全查询项目状态；停止本轮发送处理。",
+        );
       }
     }
     return lines.join("\n");
@@ -539,8 +565,8 @@ function excelArtifactSaveDirective(message, params = {}) {
   if (result?.success !== true) return flowPauseDirective(stage, message);
   const filePath = firstString(result?.data?.file_path, result?.delivery?.local_path);
   if (!filePath) return flowPauseDirective(stage, message);
-  const localFileLink = firstString(result?.delivery?.local_file_link) ??
-    localFileMarkdownLink(filePath);
+  const localFileLink =
+    firstString(result?.delivery?.local_file_link) ?? localFileMarkdownLink(filePath);
   if (!localFileLink) return flowPauseDirective(stage, message);
   if (artifactKind === "manual_source") {
     return [
@@ -850,6 +876,12 @@ function flowDirective(toolName, message, params = {}) {
   const normalizedName = toolName.toLowerCase();
   const bare = stripHostPrefix(normalizedName);
   const result = parsedToolResult(message);
+  if (
+    bare === "validate_requirement" &&
+    messageText(message).includes(REQUIREMENT_PREFLIGHT_BLOCKED)
+  ) {
+    return requirementPreflightBlockedDirective();
+  }
   if (bare === "select_inquiry_form_fields") {
     return fieldSelectionDirective(message);
   }
@@ -953,14 +985,34 @@ export function registerFlowDirectiveHooks(api) {
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手扒补量、推荐理由及其他 rank_mcns 字段或汇总。",
           "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再保存 MCN 排名表，原样展示保存结果中的 delivery.local_file_link Markdown 超链接，并逐字调用工具结果给出的 AskUserQuestion，不得改写弹窗参数。用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”或选择人工拓展后，一律默认走 MCP，不得激活浏览器手扒或读取 Browser 手扒 SOP。若当前对话已有同一 requirement_id 的字段选择链接且用户已明确回复提交完成，直接调用 manual_source_creators，不得再次调用 select_inquiry_form_fields；否则先调用 select_inquiry_form_fields，用户提交字段并回复“好了”后再调用 manual_source_creators。按当前 Provider schema 传本轮 requirement_id 和用户要求的 size；若 Provider 返回 REQUIREMENT_COLUMNS_NOT_CONFIGURED，再按工具结果指令进入字段选择。后台返回 Excel 后立即用 ypscan_save_excel_artifact(manual_source) 保存。",
           "默认手扒 Excel 保存成功后才提示用户是否继续浏览器手扒，并明确该方式耗时较长、期间可能多次出现登录、验证或资质弹窗。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活 Browser Runner、读取 Browser 手扒 SOP，先使用宿主 Browser 能力打开当前平台达人广场，再调用 ypscan_manual_research(operation=start)；resume 只用于此前已获用户明确授权的同一 run。start/resume 返回 next_call 时必须原样执行 read_detail_html，读完当前达人全部 HTML 后由 Agent 提炼字段并 apply_reviews。",
-          "只有确实需要用户澄清、选择、登录/验证码、暂停或结束时才调用 AskUserQuestion。Dify 字段缺失、为 null 或与原文冲突时，先回查当前需求原文并自主决定；原文仍无法唯一确定时才澄清。普通 UI/参数问题的一次有界自动重试不调用。正常成功交付不追加完成弹窗。",
-          "需求解析分工：首次按单平台完整需求调用 ypscan_parse_requirement 直连 Dify，data.outputs 完整透传原始 Workflow 输出。Dify 独占解析八个标签数组、contentTag、品牌、followercount、rebate、报价、CPM、CPE；Agent 只按字段名和当前平台结构性展开参数片段，内部值直接使用，不猜、不补、不改、不重算。其余 Provider 字段按 media-assistant 的 ypscan_parse_requirement 解析参考从当前原文构造。后续单次修改只涉及一个条件时由 Agent 直接更新；同一次修改涉及两个及以上不同条件时，只用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand 后重新调用 Dify，禁止回填旧 Dify 输出、已拓展价格或其他 Provider 归一化值。",
+          "需求澄清硬规则：Agent 只能提取当前原文中唯一明确的值并做无损结构映射。任何字段缺失、null、空、模糊、冲突、多候选，或需要选择品牌、标签、平台内容形式、抖音时长档、独立达人组数量分配时，都必须调用 AskUserQuestion；禁止回查后自主选择、自动补标签、默认补值或普通文本追问。纯格式规范化不是业务决策，由 validate_requirement 本地调用边界一次完成。正常成功交付不追加完成弹窗。",
+          `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
+          "需求解析分工：首次按单平台完整需求调用 ypscan_parse_requirement 直连 Dify，data.outputs 完整透传原始 Workflow 输出。Dify 负责八个标签数组、contentTag、品牌、followercount、rebate、报价、CPM、CPE 的候选解析；Agent 只按字段名和当前平台结构性展开参数片段。Dify 的值若缺少原文证据、与原文冲突或存在多种合法映射，必须弹窗确认，不能把 Dify 默认值当成用户确认。其余 Provider 字段按 media-assistant 的 ypscan_parse_requirement 解析参考从当前原文构造。后续单次修改只涉及一个条件时由 Agent 直接更新；同一次修改涉及两个及以上不同条件时，只用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand 后重新调用 Dify，禁止回填旧 Dify 输出、已拓展价格或其他 Provider 归一化值。",
           "用户在默认手扒保存后选择浏览器详细手扒时，先使用宿主 Browser 能力打开当前平台达人广场，再用完整硬条件 facts 和 1–4 个关键词调用 start；Runner 连接宿主 Browser CDP，复用宿主 Profile、Cookie 和登录态。页面筛选、翻页、抓取、有限重试与逐级降级全部由插件 Runner 执行。若返回 YPSCAN_MANUAL_BROWSER_UNAVAILABLE，Agent 必须自助启动或聚焦宿主 Browser 后使用同一 run_id 调用 resume，不得要求用户代开；登录、全局 CAPTCHA 或网络恢复仍按工具结果请求用户处理后 resume。终态失败后用户要求重试时使用返回的 fresh_run=true 参数创建新运行。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           "浏览器详细手扒的 facts 由 Agent 从当前完整需求和后续修改直接构造。creator_price 必须引用客户原始价格表述和原始数值，禁止传 Dify/Provider 区间或手工计算后的 50%–120% 区间；creator_count 使用用户最新指定的本轮交付数。",
         );
       }
       return lines.length ? { prependContext: lines.join("\n") } : undefined;
+    },
+    HOOK_OPTIONS,
+  );
+
+  api.on(
+    "before_tool_call",
+    (event) => {
+      const toolName = firstString(event?.toolName, event?.name) ?? "";
+      if (stripHostPrefix(toolName) !== "validate_requirement") return undefined;
+      const params = paramsFromEvent(event);
+      const normalized = normalizeToolCallParams(toolName, params);
+      const issues = validateRequirementPreflight(normalized);
+      if (issues.length > 0) {
+        return {
+          block: true,
+          blockReason: requirementPreflightBlockReason(issues),
+        };
+      }
+      return normalized === params ? undefined : { params: normalized };
     },
     HOOK_OPTIONS,
   );

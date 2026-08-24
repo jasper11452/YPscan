@@ -30,9 +30,13 @@ function namedArgsFromDirective(text, name) {
   return JSON.parse(line.slice(prefix.length));
 }
 
-test("flow hooks do not register tool-call gates", () => {
+test("flow hooks register the validate_requirement preflight gate", () => {
   const { hooks } = registeredPlugin();
-  assert.deepEqual([...hooks.keys()].sort(), ["before_prompt_build", "tool_result_persist"]);
+  assert.deepEqual([...hooks.keys()].sort(), [
+    "before_prompt_build",
+    "before_tool_call",
+    "tool_result_persist",
+  ]);
 });
 
 test("startup makes current-rank supplier IDs the first-priority recipient identity", () => {

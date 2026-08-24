@@ -19,9 +19,9 @@
 - 不得为了让 Dify 命中而添加用户没说过的条件。
 - 为每个平台维护“当前用户原始条件”：只由用户最初原文和后续改口更新。`demand` 必须从这份原始条件重建，不得从 Dify 输出、`validate_requirement` 参数或其他 Provider 归一化结果反向生成。
 
-## Dify 负责字段
+## Dify 候选解析字段
 
-Dify 独占首次解析以下字段：
+Dify 首次为以下字段提供候选解析；最终值仍必须有当前原文或用户弹窗答案支持：
 
 | 类别           | 字段                                                                                                                                                                         |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -31,13 +31,22 @@ Dify 独占首次解析以下字段：
 
 使用规则：
 
-1. Dify 返回了明确值时直接使用；禁止 Agent 猜测、补全、重写、排序、换算、扩区间或从其他语义字段替代。
-2. 当前 Workflow 的部分输出是 Provider 参数片段对象。允许按字段名做结构性解包或展开，例如从 `{ "rebate": "[0.3,1]" }` 取同名 `rebate`；禁止改变内部值。
+1. Dify 返回值只是带原文证据约束的候选解析。只有原文存在唯一明确含义且 Dify 与其一致时才能使用；禁止 Agent 猜测、补全、改标签、排序或从其他语义字段替代。Dify 默认值、原文未支持的时长档或多候选都不是用户确认。
+2. 当前 Workflow 的部分输出是 Provider 参数片段对象。允许按字段名做结构性解包或展开，例如从 `{ "rebate": "[0.3,1]" }` 取同名 `rebate`。数组或单值到 Provider 标准区间字符串的确定性边界规范化由插件一次完成；Agent 不得自行尝试不同类型。
 3. 标签保持 Dify 返回的数组元素和顺序；不得把 `null` 或缺失值传给 Provider，按第 7 条回查原文处理。
-4. 品牌当前按平台输出为 `xhsbrandName` / `dybrandName`；只读取当前平台候选。单一候选结构性映射为 `brandName`，空、多候选或与原文冲突时按第 7 条处理。
-5. `contentTag`、`followercount`、`rebate` 当前分别返回带同名字段的对象；展开后使用内部同名值，不做二次解析。其中 `contentTag` 进入当前平台 `validate_requirement` 时保持为字符串数组。
-6. 报价、CPM、CPE 当前按平台返回 `xhs_kolOfficialPrice` / `dy_kolOfficialPrice`、`xhs_cpm` / `dy_cpm`、`xhs_cpe` / `dy_cpe` 参数片段，内部已是 L1/L2/L3 Provider 字段；只展开当前平台对象，不得再次路由、扩区间或重算。若 Workflow 以后返回未分档的逻辑值，才根据明确的小红书图文/视频或抖音时长档做字段路由，值仍不得改变。
-7. Dify 字段缺失、为 `null`、为空或与当前原文冲突时，Agent 先回查当前完整需求和用户后续修改，自主选择原文中唯一明确的值；原文仍缺失、模糊或冲突时才调用 `AskUserQuestion`，不得盲猜。
+4. 品牌当前按平台输出为 `xhsbrandName` / `dybrandName`；只读取当前平台候选。只有一个且与原文一致时才可无损映射为标量 `brandName`；空、多候选或与原文冲突时必须调用 `AskUserQuestion`，不得自行选择。
+5. `contentTag`、`followercount`、`rebate` 可能返回带同名字段的对象，也可能直接返回值；只做同名结构展开。其中 `contentTag` 必须是非空字符串数组，数值筛选值在 Provider 边界统一为下述标准区间字符串。
+6. 报价、CPM、CPE 按平台返回 `xhs_kolOfficialPrice` / `dy_kolOfficialPrice`、`xhs_cpm` / `dy_cpm`、`xhs_cpe` / `dy_cpe` 参数片段。只展开当前平台对象。对应内容形式或抖音 L1/L2/L3 时长档必须有当前原文或用户弹窗答案支持；Dify 自行给出的未获支持档位属于冲突，必须澄清，禁止接受默认路由。
+7. Dify 字段缺失、为 `null`、为空、模糊、与当前原文冲突、包含多个候选或需要选择合法映射时，必须调用 `AskUserQuestion`。Agent 不再拥有“回查后自主决定”权限；只能提取原文中已经唯一明确的字面值并执行无损结构映射。
+
+## `validate_requirement` 数值格式锁
+
+第一次调用 `validate_requirement` 前必须一次性构造完成全部字段，禁止让 Provider 报错后逐字段或逐类型试探。
+
+- `rebate`、`followercount`、`kolOfficialPriceL1/L2/L3`、`cpmL1/L2/L3`、`cpeL1/L2/L3`，以及 `interactionRate`、`clickMedium`、`viewMedium`、`photoView`、`videoInteract`、`photoInteract`、`userlikecount`、`likeIncrement`、`avgview`、`avglike`、`avgcomment`、`avgcollect`、`avginteract`、`femaleRate`、`age1Rate` 至 `age6Rate`，全部使用无空格 JSON 区间字符串 `"[min,max]"`。
+- 禁止把这些字段作为 JSON 数组、对象、单个数字、百分号文本或“以上/以下”等自然语言传给 Provider。
+- 返点表示最低要求，固定为 `"[min,1]"`；比例字段范围为 0–1；其他数值满足 `0 ≤ min ≤ max`。
+- 本地 `before_tool_call` 只做一次确定性格式规范化与完整预检；仍有缺失、非法或需要语义选择的字段时会阻断写入，Agent 必须弹窗，不得换一种表达继续试。
 
 ## 后续修改与重解析
 
@@ -55,23 +64,23 @@ Dify 独占首次解析以下字段：
 
 ### 必填和生成字段
 
-| 字段                     | 解析规则                                                                                             |
-| ------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `platform`               | 只传 `xiaohongshu` 或 `douyin`；多平台分别创建需求。                                                 |
-| `projectName`            | 使用明确项目名；品牌名、产品名不能自动充当项目名。没有明确项目名时澄清。                             |
-| `quantityTotal`          | 明确的提报达人数量，转成正整数字符串；不能用合作数量、机构覆盖数、推荐补量或默认 `1` 代替。          |
-| `submissionDeadlineAt`   | 解析为未来绝对时间并精确到秒；只有日期没有时刻时澄清，不能默认 18:00；已过期时给出未来绝对时间选项。 |
-| `status`                 | Agent 固定传 `"ready"`。                                                                             |
-| `createdAt`、`updatedAt` | Agent 生成同一个当前本地时间，精确到秒。                                                             |
-| `description`            | 用当前明确需求写简短中文说明，保留无法映射成 Provider 筛选字段但后续需要人工核验的条件。             |
-| `originalBrief`          | 保留用户最初完整原文，不因平台拆分或后续归一化改写。                                                 |
+| 字段                   | 解析规则                                                                                                                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `platform`             | 只传 `xiaohongshu` 或 `douyin`；多平台分别创建需求。                                                                                                                          |
+| `projectName`          | 使用明确项目名；品牌名、产品名不能自动充当项目名。没有明确项目名时澄清。                                                                                                      |
+| `quantityTotal`        | 明确的提报达人数量，转成正整数字符串；不能用合作数量、机构覆盖数、推荐补量或默认 `1` 代替。                                                                                   |
+| `submissionDeadlineAt` | 解析为未来绝对时间并精确到秒；只有日期没有时刻时澄清，不能默认 18:00；已过期时给出未来绝对时间选项。                                                                          |
+| `status`               | 固定传 `"ready"`，本地边界可在缺失时确定性补入；不得询问用户。                                                                                                                |
+| `rawMessagesJson`      | 必填 JSON 对象：`original` 保留当前原始需求，`parse_outputs` 保留本次完整 Dify `outputs`，每轮弹窗答案按字段写入 `clarifications`；不得用历史需求或 Dify 默认值代替用户证据。 |
+| `description`          | 用当前明确需求写简短中文说明，保留无法映射成 Provider 筛选字段但后续需要人工核验的条件。                                                                                      |
+| `originalBrief`        | 保留用户最初完整原文，不因平台拆分或后续归一化改写。                                                                                                                          |
 
-`product`、`rawMessagesJson`、`projectStartStart`、`projectStartEnd` 是可选上下文字段；只在原文明确时传。新需求不传 `id`、`demandId`、`demandVersion`、`refNickname` 或 `refUrl`。参考达人昵称和链接分别以带标签的原文写入 `description`/`originalBrief`。
+`product`、`projectStartStart`、`projectStartEnd` 是可选上下文字段；只在原文明确时传。新需求不传 `id`、`demandId`、`demandVersion`、`createdAt`、`updatedAt`、`refNickname` 或 `refUrl`。参考达人昵称和链接分别以带标签的原文写入 `description`/`originalBrief`。
 
 ### 内容形式、时长和分组
 
 - 小红书内容形式只根据明确的图文/视频表述确定；普通 Provider 检索未说明形式时不追问，价格使用 L1 兼容位，但不能推断为图文合作。
-- 抖音时长只映射为 1–20 秒、21–60 秒、60 秒以上三个档；`60s+` 同时表示视频和 L3。
+- 抖音时长只映射为 1–20 秒、21–60 秒、60 秒以上三个档；`60s+` 同时表示视频和 L3。原文只说“视频”而没有时长时必须弹窗确认，禁止由 Dify 或 Agent 默认选择 L1/L2/L3。
 - 一个需求存在多个独立达人组、形式或时长档时，每组必须有自己的明确提报数量。共享总量不能复制到多组；无法拆分时澄清，并为每组分别调用 `validate_requirement`。
 
 ### 单条件修改时的数值规则
@@ -99,7 +108,7 @@ Dify 独占首次解析以下字段：
 
 ## 进入 validate_requirement 前
 
-1. 对 Dify 字段执行“直接使用”检查，并确认没有对值做二次转换。
-2. 从原文补齐 Agent 字段，检查必填、平台、数量、日期、价档和区间格式。
-3. 对 Dify 缺失/冲突先回查原文；只有仍无法确定的业务问题才一次性用 `AskUserQuestion` 收集。
+1. 检查每个 Dify 候选是否有当前原文证据且不存在歧义；只允许无损结构展开和本地标准格式归一化。
+2. 从原文提取 Agent 字段，检查必填、平台、数量、日期、价档和全部 `"[min,max]"` 区间格式；品牌、项目名、达人数量、截止时间和可选项目日期必须与 `original` 或非空 `clarifications` 中的明确值一致。
+3. 对任何缺失、模糊、冲突、多候选或需要选择映射的字段，一次性用 `AskUserQuestion` 收集；禁止 Agent 自主决定。
 4. 完整参数准备好后直接调用 `validate_requirement`；不展示额外的“确认创建”弹窗，不提前调用 Browser、`search_creators` 或 `rank_mcns`。

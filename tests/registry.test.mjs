@@ -6,7 +6,352 @@ import {
   isFutureSubmissionDeadline,
   missingRequiredValidateParams,
   normalizeToolCallParams,
+  validateRequirementPreflight,
 } from "../src/contract/registry.js";
+
+function completeValidateParams() {
+  return {
+    status: "ready",
+    platform: "douyin",
+    brandName: "品牌A",
+    projectName: "项目A",
+    quantityTotal: "30",
+    submissionDeadlineAt: "2026-08-25 12:00:00",
+    rebate: "[0.25,1]",
+    followercount: "[0,999999999]",
+    contentTag: ["科技", "耳机"],
+    rawMessagesJson: {
+      original:
+        "抖音项目：项目A；品牌：品牌A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；科技耳机方向。",
+      parse_outputs: {},
+    },
+    contentThemeLabel: ["科技数码"],
+    growTalentTypeLabel: ["成熟达人"],
+    industryTagLabel: ["3C及电器-消费类电子产品"],
+    xtTalentTypeLabel: ["科技数码-3C数码"],
+    kolOfficialPriceL2: "[35000,60000]",
+  };
+}
+
+test("validate_requirement drops non-positive or malformed quantityTotal values", () => {
+  assert.equal(
+    Object.hasOwn(normalizeToolCallParams("validate_requirement", { quantityTotal: 0 }), "quantityTotal"),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(normalizeToolCallParams("validate_requirement", { quantityTotal: "0" }), "quantityTotal"),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(normalizeToolCallParams("validate_requirement", { quantityTotal: "  " }), "quantityTotal"),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(normalizeToolCallParams("validate_requirement", { quantityTotal: -1 }), "quantityTotal"),
+    false,
+  );
+  assert.equal(normalizeToolCallParams("validate_requirement", { quantityTotal: 1 }).quantityTotal, "1");
+  assert.equal(normalizeToolCallParams("validate_requirement", { quantityTotal: "10" }).quantityTotal, "10");
+});
+
+test("missingRequiredValidateParams still reports quantityTotal when normalization drops an invalid value", () => {
+  const normalized = normalizeToolCallParams("validate_requirement", {
+    status: "ready",
+    platform: "douyin",
+    brandName: "品牌A",
+    projectName: "项目A",
+    quantityTotal: 0,
+    submissionDeadlineAt: "2026-08-24 10:05:00",
+    rebate: "[0.2,1]",
+    followercount: "[0,999999999]",
+    contentTag: ["美妆", "测评"],
+  });
+
+  assert.equal(missingRequiredValidateParams(normalized).includes("quantityTotal"), true);
+});
+
+test("validate_requirement canonicalizes numeric fields once before the Provider call", () => {
+  const normalized = normalizeToolCallParams("ypmcn__validate_requirement", {
+    ...completeValidateParams(),
+    status: undefined,
+    brandName: ["品牌A"],
+    quantityTotal: 30,
+    rebate: "25%以上",
+    followercount: [0, 999999999],
+    kolOfficialPriceL2: 50000,
+    cpmL2: 500,
+    cpeL2: "[0,30]",
+    rawMessagesJson: JSON.stringify(completeValidateParams().rawMessagesJson),
+  });
+
+  assert.equal(normalized.status, "ready");
+  assert.equal(normalized.brandName, "品牌A");
+  assert.equal(normalized.quantityTotal, "30");
+  assert.equal(normalized.rebate, "[0.25,1]");
+  assert.equal(normalized.followercount, "[0,999999999]");
+  assert.equal(normalized.kolOfficialPriceL2, "[35000,60000]");
+  assert.equal(normalized.cpmL2, "[0,500]");
+  assert.equal(normalized.cpeL2, "[0,30]");
+  assert.deepEqual(normalized.rawMessagesJson, {
+    original:
+      "抖音项目：项目A；品牌：品牌A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；科技耳机方向。",
+    parse_outputs: {},
+  });
+});
+
+test("complete canonical validate_requirement params pass the local preflight", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  assert.deepEqual(validateRequirementPreflight(completeValidateParams(), { now }), []);
+});
+
+test("validate_requirement preflight reports all missing and malformed fields together", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const issues = validateRequirementPreflight(
+    {
+      ...completeValidateParams(),
+      submissionDeadlineAt: undefined,
+      rebate: "25%以上",
+      kolOfficialPriceL2: [50000, 50000],
+      projectStartStart: "8月底",
+    },
+    { now },
+  );
+
+  assert.deepEqual(
+    issues.map((issue) => issue.field),
+    ["submissionDeadlineAt", "rebate", "kolOfficialPriceL2", "projectStartStart"],
+  );
+});
+
+test("validate_requirement preflight requires a price tier and a current-platform tag", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = completeValidateParams();
+  delete params.kolOfficialPriceL2;
+  delete params.contentThemeLabel;
+  delete params.xtTalentTypeLabel;
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["contentThemeLabel", "xtTalentTypeLabel", "kolOfficialPriceL1/L2/L3"],
+  );
+});
+
+test("preflight rejects Dify defaults that have no user evidence", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    rawMessagesJson: {
+      original:
+        "项目：千问耳夹式AI智能体耳机；平台：抖音；形式：定制视频；档期：8月底-9月；数量：30位；单价：5w；返点：25%以上。",
+      parse_outputs: {
+        followercount: [0, 999999999],
+        dy_kolOfficialPrice: { kolOfficialPriceL2: "50000" },
+      },
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["brandName", "projectName", "followercount", "submissionDeadlineAt", "douyinDuration"],
+  );
+});
+
+test("preflight does not treat empty clarification keys as user evidence", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    rawMessagesJson: {
+      original: "抖音项目：项目A；品牌：品牌A；21-60秒定制视频；单价5万元；返点25%以上。",
+      parse_outputs: {},
+      clarifications: {
+        followercount: "",
+        quantityTotal: null,
+        submissionDeadlineAt: {},
+      },
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["quantityTotal", "followercount", "submissionDeadlineAt"],
+  );
+});
+
+test("preflight requires exact evidence for identity, quantity, and deadline values", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    brandName: "品牌B",
+    projectName: "项目B",
+    quantityTotal: "50",
+    submissionDeadlineAt: "2026-08-26 12:00:00",
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["brandName", "projectName", "quantityTotal", "submissionDeadlineAt"],
+  );
+});
+
+test("preflight does not swap a project name and brand that both appear in the brief", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    brandName: "项目A",
+    projectName: "品牌A",
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["brandName", "projectName"],
+  );
+});
+
+test("preflight accepts an unambiguous same-day deadline clock", () => {
+  const now = new Date(2026, 7, 24, 10, 30, 0);
+  const params = {
+    ...completeValidateParams(),
+    submissionDeadlineAt: "2026-08-24 12:00:00",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；今天12点前提报；科技耳机方向。",
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
+test("preflight preserves explicitly stated deadline seconds", () => {
+  const now = new Date(2026, 7, 24, 10, 30, 0);
+  const params = {
+    ...completeValidateParams(),
+    submissionDeadlineAt: "2026-08-25 12:00:30",
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["submissionDeadlineAt"],
+  );
+});
+
+test("preflight rejects invalid calendar deadlines instead of letting Date roll them over", () => {
+  const now = new Date(2026, 0, 1, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    submissionDeadlineAt: "2026-02-31 12:00:00",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      clarifications: { submissionDeadlineAt: "2026-02-31 12:00:00" },
+    },
+  };
+
+  assert.equal(isFutureSubmissionDeadline(params.submissionDeadlineAt, { now }), false);
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["submissionDeadlineAt"],
+  );
+});
+
+test("preflight rejects concrete project dates inferred from a vague schedule", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    projectStartStart: "2026-08-25",
+    projectStartEnd: "2026-09-30",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；档期8月底至9月。",
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["projectStartStart", "projectStartEnd"],
+  );
+});
+
+test("preflight accepts explicit project dates and rejects a reversed range", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    projectStartStart: "2026-08-25",
+    projectStartEnd: "2026-09-30",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；档期2026年8月25日至2026年9月30日。",
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+  assert.deepEqual(
+    validateRequirementPreflight(
+      { ...params, projectStartStart: "2026-09-30", projectStartEnd: "2026-08-25" },
+      { now },
+    ).map((issue) => issue.field),
+    ["projectStartStart/projectStartEnd"],
+  );
+});
+
+test("preflight does not add a project clock to date-only evidence", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    projectStartStart: "2026-08-25T09:00:00",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；档期2026年8月25日。",
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["projectStartStart"],
+  );
+});
+
+test("preflight verifies that Douyin numeric tiers match the stated duration", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = completeValidateParams();
+  delete params.kolOfficialPriceL2;
+  params.kolOfficialPriceL1 = "[35000,60000]";
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["douyinDuration"],
+  );
+});
+
+test("preflight rejects unsupported Xiaohongshu L3 numeric tiers", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    platform: "xiaohongshu",
+    rawMessagesJson: {
+      original:
+        "小红书项目：项目A；品牌：品牌A；30位；视频单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: {},
+    },
+    contentFeatureLabel: ["真实测评"],
+    growBloggerTypeLabel: ["成熟博主"],
+    kolPersonaLabel: ["科技爱好者"],
+    pgyBloggerTypeLabel: ["科技数码-3C数码"],
+    kolOfficialPriceL3: "[35000,60000]",
+  };
+  delete params.contentThemeLabel;
+  delete params.growTalentTypeLabel;
+  delete params.industryTagLabel;
+  delete params.xtTalentTypeLabel;
+  delete params.kolOfficialPriceL2;
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["kolOfficialPriceL3"],
+  );
+});
 
 test("validate_requirement normalizes a future deadline to fixed local seconds format", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
@@ -99,14 +444,19 @@ test("missingRequiredValidateParams reports the platform tag when it is absent",
       rebate: "[0.2,1]",
       followercount: "[0,999999999]",
       contentTag: "美妆,测评",
+      rawMessagesJson: {},
     }),
-    ["xtTalentTypeLabel"],
+    ["contentThemeLabel", "growTalentTypeLabel", "industryTagLabel", "xtTalentTypeLabel"],
   );
 });
 
 test("platform-required tag arrays are satisfied only by non-empty arrays", () => {
   assert.deepEqual(
-    missingRequiredValidateParams({ platform: "xiaohongshu", pgyBloggerTypeLabel: [] }),
+    missingRequiredValidateParams({
+      platform: "xiaohongshu",
+      pgyBloggerTypeLabel: [],
+      rawMessagesJson: {},
+    }),
     [
       "status",
       "brandName",
@@ -116,6 +466,9 @@ test("platform-required tag arrays are satisfied only by non-empty arrays", () =
       "rebate",
       "followercount",
       "contentTag",
+      "contentFeatureLabel",
+      "growBloggerTypeLabel",
+      "kolPersonaLabel",
       "pgyBloggerTypeLabel",
     ],
   );

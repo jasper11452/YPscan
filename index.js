@@ -47,7 +47,7 @@ export default {
     api.registerTool({
       name: "ypscan_parse_requirement",
       description:
-        "将当前单个平台的完整最新需求直连固定 Dify Workflow，在 data.outputs 中完整透传原始 Workflow 输出。Dify 负责标签、品牌、粉丝、返点、报价、CPM 和 CPE；首次需求必调，后续单次修改只涉及一个条件时由 Agent 直接更新，涉及两个及以上条件时只用用户原始表述和后续改口重建完整需求再调用，禁止把 Dify 输出或 Provider 归一化值回填给 Dify。Dify 输出不得猜测或重算，其余 Provider 字段由 Agent 按 media-assistant 解析参考补齐。",
+        '将当前单个平台的完整最新需求直连固定 Dify Workflow，在 data.outputs 中完整透传原始 Workflow 输出。Dify 负责标签、品牌、粉丝、返点、报价、CPM 和 CPE 候选解析；Agent 只能提取原文唯一明确值，任何缺失、模糊、冲突、多候选或需要选择映射的字段都必须调用 AskUserQuestion，禁止自主决定。进入 validate_requirement 前，rebate、followercount、kolOfficialPriceL1/L2/L3、cpmL1/L2/L3、cpeL1/L2/L3 及其他数值筛选字段全部准备为无空格 JSON 区间字符串 "[min,max]"，返点固定为 "[min,1]"，不得靠 Provider 报错试类型。首次需求必调；后续单次修改只涉及一个条件时由 Agent 直接更新，涉及两个及以上条件时只用用户原始表述和后续改口重建完整需求再调用，禁止把 Dify 输出或 Provider 归一化值回填给 Dify。',
       parameters: PARSE_REQUIREMENT_PARAMETERS,
       outputSchema: PARSE_REQUIREMENT_OUTPUT_SCHEMA,
       async execute(_id, params) {

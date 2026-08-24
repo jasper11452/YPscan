@@ -9,13 +9,13 @@
 ## 当前组成
 
 - `index.js`：注册 3 个本地能力工具、远端 MCP 白名单和 Hook。
-- `src/tools/parse-requirement.js`：直连固定 Dify Workflow，在 `data.outputs` 中完整透传原始输出；Agent 结构性展开 Dify 负责的标签、品牌、粉丝、返点、报价、CPM 和 CPE 参数片段，其余 Provider 字段按工具卡从原文解析。
+- `src/tools/parse-requirement.js`：直连固定 Dify Workflow，在 `data.outputs` 中完整透传原始输出；Agent 只能结构性展开有当前原文证据的标签、品牌、粉丝、返点、报价、CPM 和 CPE 候选，任何缺失、模糊、冲突、多候选或需要选择映射的字段必须通过 `AskUserQuestion` 收集，不能自主决定。
 - Provider 询价字段选择直接使用远端 MCP `select_inquiry_form_fields`，用户提交后按 requirement ID 在后端持久化；Agent 不调用已弃用的字段查询工具，也不向后续工具传 `columns`。
 - `src/tools/save-excel-artifact.js`：保存 Provider 返回的 Excel 下载结果；初始链路只保存 MCN 排名表，不保存 `search_creators` 的表格。
 - `src/tools/manual-research-runner.js`：执行有界的双平台筛选、降级、分页、原始详情 HTML 采集、Agent 分块提炼、恢复和产物刷新。
 - `src/tools/manual-research/browser-runtime.js`：管理插件独立的持久 Chrome Profile 和单运行互斥。
 - `src/tools/manual-research-artifact.js`：稳定身份去重、checkpoint、复核以及三 Sheet Excel 产物。
-- `src/hooks/register-flow-directives.js`：注入固定链路、Runner 恢复、Provider 询价结果与交付指令；企微发送匹配和幂等由 Provider 负责。
+- `src/hooks/register-flow-directives.js`：注入固定链路、需求澄清与数值格式锁、Runner 恢复、Provider 询价结果与交付指令；`validate_requirement` 调用前会把所有数值筛选字段一次性规范为无空格 JSON 区间字符串 `"[min,max]"` 并执行完整预检，缺失或需要语义选择时阻断 Provider 写入；企微发送匹配和幂等仍由 Provider 负责。
 
 ## 本地工具
 
@@ -39,4 +39,4 @@ npm run smoke
 npm pack --dry-run --cache /tmp/ypscan-npm-cache
 ```
 
-Smoke 断言本地工具为 3 个、字段选择由远端 MCP 直接暴露且旧字段查询工具不再暴露、自定义 Browser 状态机入口未注册、Hook 集合仅包含流程指令与 Gateway 生命周期事件，不包含企微发送前后门禁。
+Smoke 断言本地工具为 3 个、字段选择由远端 MCP 直接暴露且旧字段查询工具不再暴露、自定义 Browser 状态机入口未注册、Hook 集合包含流程指令、`validate_requirement` 调用前完整预检与 Gateway 生命周期事件，不包含企微发送前后门禁。

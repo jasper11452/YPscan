@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-`ypscan`（悦普识星）是一个 OpenClaw 插件（id `ypscan`，`private: true`，当前版本 `0.1.24-beta78`），是「悦普达人采买」的客户端集成层：注册本地工具、通过 SSE 连远端 MCP（`https://mcp.eshypdata.com/sse`，12 个工具白名单），并在用户选择人工拓展后由 Agent 使用宿主 Browser 配合无状态 native 适配器。
+`ypscan`（悦普识星）是一个 OpenClaw 插件（id `ypscan`，`private: true`，当前版本 `0.1.24-beta80`），是「悦普达人采买」的客户端集成层：注册本地工具、通过 SSE 连远端 MCP（`https://mcp.eshypdata.com/sse`，12 个工具白名单），并在用户选择人工拓展后由 Agent 使用宿主 Browser 配合无状态 native 适配器。
 
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type":"module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。
 
@@ -13,14 +13,14 @@
 - `npm test` — `node --test tests/*.test.mjs`，必须全绿。
 - `npm run lint` — ESLint（flat config，见 `eslint.config.js`）。
 - `npm run typecheck` — `tsc -p tsconfig.json`（checkJs），必须 0 错。
-- `npm run smoke` — 加载插件校验注册，期望 `tools=3, hooks=4`。
+- `npm run smoke` — 加载插件校验注册，期望 `tools=3, hooks=5`。
 - `npm run format:check` / `npm run format` — Prettier（`format` 会全量重排，慎用）。
 
 **改完代码至少跑 `npm run lint && npm run typecheck && npm test && npm run smoke`。**
 
 ## 架构地图
 
-- `index.js` — 入口：注册 4 个本地能力工具 + 3 个核心 hook + `gateway_start`/`gateway_stop`。
+- `index.js` — 入口：注册 3 个本地能力工具 + 3 个核心 hook + `gateway_start`/`gateway_stop`。
 - `openclaw.plugin.json` — 清单：MCP 白名单、测试 adapter、统一 `browserCdpUrl`、`contracts.tools`、`skills`。
 - `src/tools/` — 本地工具：
   - `parse-requirement.js` — 直连 Dify 的需求解析代理；在 `data.outputs` 完整透传原始 Workflow 输出，其余 Provider 字段由 Agent 按工具卡从原文解析。
@@ -53,5 +53,5 @@
 1. `npm run lint` → 0 错
 2. `npm run typecheck` → 0 错
 3. `npm test` → 全绿
-4. `npm run smoke` → `tools=3, hooks=4`
+4. `npm run smoke` → `tools=3, hooks=5`
 5. 若动了打包/发布，`npm pack --dry-run --cache /tmp/ypscan-npm-cache` 确认发布包不含已删除 Runner、选择器脚本和测试文件。
