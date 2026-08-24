@@ -9,7 +9,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 工具能力只按宿主完整名称中最后一个 `__` 后的实际工具名判断；前面的命名空间（包括 `test`）不区分正式、测试或旁路，不得因前缀拒绝调用或宣称工具未开放。实际工具名单一匹配时直接使用宿主展示的完整名称；多个可用工具映射到同一实际名称时才调用 `AskUserQuestion` 请用户选择；无匹配时才报告缺失。
 
-`ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 输出完整 MCN Markdown 表格 → 保存并展示 MCN 排名表本地路径 → AskUserQuestion`
+`ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 输出完整 MCN Markdown 表格 → 保存并展示 MCN 排名表本地文件超链接 → AskUserQuestion`
 
 即使用户一开始明确要求手扒，也不得跳过前四步或提前打开 Browser。
 
@@ -28,7 +28,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 2. **创建需求**：按解析结果调用 `validate_requirement`。此后“需求 ID”始终指 requirement ID：优先取响应 `data.requirement_id`，该字段缺失时兼容 `data.id`；绝不能使用 `data.demand_id`。同时保留真实 `platform`，成功后立即进入 `search_creators`。
 3. **搜索达人**：将上述 requirement ID 作为 `search_creators.id`。成功后包括 0 命中都不保存、不展示 `creators_export_path` 或响应中的其他表格链接，也不得用 Browser、shell、curl、Python 或其他方式下载；直接使用同一 requirement ID 和当前平台调用 `rank_mcns`。
 4. **机构排序并保存排名表**：保存成功后将同一个 requirement ID 作为 `rank_mcns.id`，并传当前平台。成功后先按响应顺序输出全部 MCN，不得只说“已完成”或只列部分机构；若 Hook 给出 `SAVE_EXCEL_ARTIFACT_ARGS`，立即逐字调用 `ypscan_save_excel_artifact` 保存 MCN 排名表，不得展示下载链接或使用其他下载方式。
-5. **保存后的弹窗**：MCN 排名表保存成功后，先原样展示本次排名表的真实绝对 `data.file_path`，再调用 `AskUserQuestion`。MCN 非空时选项固定为“询价机构”和“人工拓展并提报”；MCN 为空时表格使用“暂无匹配机构”空态行，选项固定为“人工拓展并提报”和“结束本次”。表格和本地路径不得放入弹窗 `question`，也不得留到 AskUserQuestion 返回后补发；排名表保存成功前禁止调用分支弹窗。若当前响应确实缺少精确保存参数，如实说明 MCN 排名表无法保存，不得编造或复用历史值。
+5. **保存后的弹窗**：MCN 排名表保存成功后，先原样展示本次保存结果中的 `delivery.local_file_link` Markdown 超链接（链接文字包含真实绝对 `data.file_path`，用户点击即可打开本地 Excel；不得只输出裸路径），再调用 `AskUserQuestion`。MCN 非空时选项固定为“询价机构”和“人工拓展并提报”；MCN 为空时表格使用“暂无匹配机构”空态行，选项固定为“人工拓展并提报”和“结束本次”。表格和本地文件链接不得放入弹窗 `question`，也不得留到 AskUserQuestion 返回后补发；排名表保存成功前禁止调用分支弹窗。若当前响应确实缺少精确保存参数，如实说明 MCN 排名表无法保存，不得编造或复用历史值。
 
 “先输出”只指已经发出的用户可见 assistant 文本块；工具结果里的表头、directive、思考过程都不算，AskUserQuestion 返回后补写的表格或本地路径也不满足。AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block。
 
@@ -44,7 +44,7 @@ rank_mcns 后的首个弹窗只问分支，不承载机构表格或本地路径�
 
 ## 人工拓展：默认后端手扒，浏览器按需补充
 
-用户在 MCN 表格和排名表本地路径后的弹窗选择“人工拓展并提报”后，先判断当前对话是否已有同一 requirement ID 的字段选择链接和用户明确回复提交完成的证据。有证据时直接复用 Provider 按 requirement ID 持久化的字段并调用 [manual_source_creators](references/tools/manual_source_creators.md)，不得再次调用 `select_inquiry_form_fields`；没有证据时才调用 `select_inquiry_form_fields`，原样展示字段选择 URL，等待用户在页面提交字段并回复“好了”后再调用 `manual_source_creators`。传当前 requirement ID 和用户要求的交付人数 `size`，由后端全自动完成手扒；若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`，再按工具结果指令进入字段选择。返回 Excel 后立即用 `ypscan_save_excel_artifact(artifact_kind=manual_source)` 保存并展示真实本地路径；保存成功前不得启动 Browser。
+用户在 MCN 表格和排名表本地文件链接后的弹窗选择“人工拓展并提报”后，先判断当前对话是否已有同一 requirement ID 的字段选择链接和用户明确回复提交完成的证据。有证据时直接复用 Provider 按 requirement ID 持久化的字段并调用 [manual_source_creators](references/tools/manual_source_creators.md)，不得再次调用 `select_inquiry_form_fields`；没有证据时才调用 `select_inquiry_form_fields`，原样展示字段选择 URL，等待用户在页面提交字段并回复“好了”后再调用 `manual_source_creators`。传当前 requirement ID 和用户要求的交付人数 `size`，由后端全自动完成手扒；若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`，再按工具结果指令进入字段选择。返回 Excel 后立即用 `ypscan_save_excel_artifact(artifact_kind=manual_source)` 保存并展示返回的 `delivery.local_file_link`；保存成功前不得启动 Browser。
 
 用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”或“手捞筛选”时同样适用上述默认 MCP 链路和同一 requirement ID 的字段复用规则；这些说法都不代表浏览器手扒，不得激活 Browser Runner，也不得读取 Browser 手扒 SOP。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活并启动 Browser Runner。
 

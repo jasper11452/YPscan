@@ -11,4 +11,4 @@ Call when the user asks for an institutional submission table and [field selecti
 
 Do not pass `columns`, `size`, `demand_id`, `demand_version`, `platform`, or local state coordinates. Do not claim that Browser hand-pick data or historical batches are automatically merged.
 
-After the Provider returns a valid batch and Excel URL, call `ypscan_save_excel_artifact` with `artifact_kind="submission_batch"`, show its absolute local path, and follow only the saver result's exact `delivery.next_args` if present. A successful local save proves file delivery, not submission to an external system.
+After the Provider returns a valid batch and Excel URL, call `ypscan_save_excel_artifact` with `artifact_kind="submission_batch"`, display its exact `delivery.local_file_link` Markdown hyperlink instead of a bare path, and follow only the saver result's exact `delivery.next_args` if present. A successful local save proves file delivery, not submission to an external system.

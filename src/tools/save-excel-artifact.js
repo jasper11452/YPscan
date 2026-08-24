@@ -10,6 +10,7 @@ import {
   unlink,
 } from "node:fs/promises";
 import { basename, extname, isAbsolute, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { hostToolResult } from "./tool-result.js";
 import { nonemptyString } from "../util/value.js";
 import { excelArtifactTestDownloadUrl } from "./test-adapter.js";
@@ -61,11 +62,13 @@ function failure(code, message, reason = code, {
 
 function success(details, artifactKind) {
   const initialSubmission = artifactKind === "submission_batch";
+  const localFileLink = localFileMarkdownLink(details.file_path);
   const delivery = {
     local_path: details.file_path,
+    local_file_link: localFileLink,
     display_required: true,
     display_before_next_action: true,
-    user_visible_message: `已完成：Excel 已保存到本地。\n本地路径：${details.file_path}`,
+    user_visible_message: `已完成：Excel 已保存到本地。\n本地文件：${localFileLink}`,
     ...(initialSubmission
       ? {
             next_tool: "AskUserQuestion",
@@ -79,6 +82,18 @@ function success(details, artifactKind) {
     { success: true, data: details, delivery },
     { details },
   );
+}
+
+/**
+ * @param {string} filePath
+ */
+export function localFileMarkdownLink(filePath) {
+  if (!nonemptyString(filePath) || !isAbsolute(filePath)) return null;
+  const label = filePath
+    .replaceAll("\\", "\\\\")
+    .replaceAll("[", "\\[")
+    .replaceAll("]", "\\]");
+  return `[${label}](<${pathToFileURL(filePath).href}>)`;
 }
 
 export function validateExcelDownloadUrl(value) {

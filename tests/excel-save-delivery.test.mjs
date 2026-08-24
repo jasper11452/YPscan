@@ -31,6 +31,11 @@ test("only Provider submission save offers enrichment", async (t) => {
     "initial-submission.xlsx",
   )).content[0].text);
   assert.equal(initial.delivery.next_tool, "AskUserQuestion");
+  assert.equal(
+    initial.delivery.local_file_link,
+    `[${initial.data.file_path}](<${new URL(`file://${initial.data.file_path}`).href}>)`,
+  );
+  assert.match(initial.delivery.user_visible_message, /本地文件：\[.*\]\(<file:\/\/\//u);
   assert.deepEqual(initial.delivery.next_args, submissionEnrichmentQuestionPayload());
   const enrichmentOption = initial.delivery.next_args.questions[0].options[0];
   assert.equal(enrichmentOption.label, "补充更新达人信息");
@@ -69,6 +74,22 @@ test("only Provider submission save offers enrichment", async (t) => {
   )).content[0].text);
   assert.equal(manualSource.success, true);
   assert.equal(manualSource.delivery.next_tool, undefined);
+});
+
+test("successful saves expose a clickable local file link with an encoded target", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan 本地链接-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+
+  const result = JSON.parse((await saveFixture(
+    workspaceDir,
+    "manual_source",
+    "达人 排名 1.xlsx",
+  )).content[0].text);
+
+  assert.equal(result.success, true);
+  assert.match(result.delivery.local_file_link, /^\[\/.*达人 排名 1\.xlsx\]\(<file:\/\/\//u);
+  assert.match(result.delivery.local_file_link, /%E8%BE%BE%E4%BA%BA%20%E6%8E%92%E5%90%8D%201\.xlsx>\)$/u);
+  assert.match(result.delivery.user_visible_message, /点击|本地文件/u);
 });
 
 test("search creator previews are no longer accepted as save artifacts", async (t) => {

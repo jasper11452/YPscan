@@ -65,7 +65,7 @@ export default {
         return {
           name: "ypscan_save_excel_artifact",
           description:
-            "将 eshypdata.com 主域下的 Excel 受控保存到当前项目；成功后必须向用户原样展示返回的绝对 file_path，临时下载故障采用有限重试。",
+            "将 eshypdata.com 主域下的 Excel 受控保存到当前项目；成功后必须向用户原样展示 delivery.local_file_link Markdown 超链接，确保点击即可打开本地 Excel，不得只输出裸 file_path；临时下载故障采用有限重试。",
           parameters: {
             type: "object",
             additionalProperties: false,

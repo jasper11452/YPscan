@@ -214,6 +214,11 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   const savedText = directiveText(saved);
   assert.match(savedText, /MCN 排名表 Excel 已保存到当前项目/u);
   assert.match(savedText, /MCN_RANKING_LOCAL_PATH=\/workspace\/mcn-ranking\.xlsx/u);
+  assert.match(
+    savedText,
+    /MCN_RANKING_LOCAL_LINK=\[\/workspace\/mcn-ranking\.xlsx\]\(<file:\/\/\/workspace\/mcn-ranking\.xlsx>\)/u,
+  );
+  assert.match(savedText, /不得只输出裸路径/u);
   assert.doesNotMatch(savedText, /CREATOR_PREVIEW_LOCAL_PATH/u);
   assert.match(savedText, /rank_mcns 结果中的 ASK_USER_QUESTION_ARGS/u);
   assert.match(savedText, /本地路径不得放进弹窗 question/u);
@@ -790,7 +795,7 @@ test("startup instruction makes backend manual sourcing the default and Browser 
 
   assert.match(
     first.prependContext,
-    /ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → ypscan_save_excel_artifact\(mcn_ranking\) → MCN 排名表本地路径/u,
+    /ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → ypscan_save_excel_artifact\(mcn_ranking\) → MCN 排名表本地文件超链接/u,
   );
   assert.match(
     first.prependContext,
@@ -801,8 +806,8 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /忽略其 creators_export_path 或其他表格链接/u);
   assert.match(first.prependContext, /不调用保存工具/u);
   assert.match(first.prependContext, /保存 MCN 排名表/u);
-  assert.match(first.prependContext, /展示该排名表的真实本地路径/u);
-  assert.match(first.prependContext, /本地路径不得放进弹窗 question/u);
+  assert.match(first.prependContext, /delivery\.local_file_link Markdown 超链接/u);
+  assert.match(first.prependContext, /本地文件链接不得放进弹窗 question/u);
   assert.match(first.prependContext, /MCN 用户可见输出格式锁/u);
   assert.match(first.prependContext, /不得根据响应 schema、原始字段、旧模板或上一轮结果/u);
   assert.match(
