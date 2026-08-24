@@ -86,9 +86,9 @@ function parsedToolResult(message) {
   return null;
 }
 
-function askQuestion(header, question, options) {
+function askQuestion(header, question, options, multiSelect = false) {
   return {
-    questions: [{ header, question, options, multiSelect: false }],
+    questions: [{ header, question, options, multiSelect }],
   };
 }
 
@@ -110,7 +110,7 @@ function requirementParseSuccessDirective() {
   return [
     "YPSCAN_FLOW_DIRECTIVE=Dify 需求解析成功。data.outputs 是完整、未改写的原始 Workflow 输出。下一步由 Agent 按需求解析工具卡结构性展开当前平台参数片段、补齐非 Dify 字段，再调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
     `DIFY_OWNED_LOGICAL_FIELDS=${DIFY_REQUIREMENT_FIELDS.join(",")}`,
-    "Dify 返回内容必须直接使用。只允许按字段名展开 contentTag/followercount/rebate 等同名参数片段，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe；不得猜测、重算、扩区间、改标签、改顺序或丢弃未知 Workflow 输出。字段缺失、为 null、为空或与原文冲突时，Agent 必须回查当前需求原文并自主决定；只有原文仍确实缺失、模糊或冲突时才调用 AskUserQuestion。",
+    "Dify 返回内容必须直接使用。只允许按字段名展开 contentTag/followercount/rebate 等同名参数片段，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe；不得猜测、重算、扩区间、改标签、改顺序或丢弃未知 Workflow 输出。落库 validate_requirement 前，Agent 必须检查当前平台要求的数组字段形态：小红书的 contentFeatureLabel、contentTag、growBloggerTypeLabel、kolPersonaLabel、pgyBloggerTypeLabel、talentTypeLabel，以及抖音的 contentThemeLabel、growTalentTypeLabel、industryTagLabel、talentTypeLabel、xtTalentTypeLabel，都必须以数组传入。字段缺失、为 null、为空或与原文冲突时，Agent 必须回查当前需求原文并自主决定；其中小红书缺少 pgyBloggerTypeLabel、抖音缺少 xtTalentTypeLabel 时，必须基于当前原文与 contentTag 自动补齐合法结构化数组，不能向用户追问这两个标签；只有其他字段在原文仍确实缺失、模糊或冲突时才调用 AskUserQuestion。",
     "用户后续单次修改只涉及一个业务条件时，不再调用 ypscan_parse_requirement，由 Agent 按用户最新原文直接更新该条件。同一次修改涉及两个及以上不同业务条件时，只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand，再调用一次 ypscan_parse_requirement，并以新响应刷新全部 Dify 字段。禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand。",
     "当前 Dify 的报价、CPM、CPE 参数片段已经包含 L1/L2/L3 Provider 字段，只展开当前平台对象，内部值不得重算或再次路由。其余 Provider 字段严格按 media-assistant 的 ypscan_parse_requirement 解析参考从原文构造。",
   ].join("\n");
@@ -124,6 +124,17 @@ const MCN_MARKDOWN_EMPTY_ROW = "| — | 暂无匹配机构 | — | — | — |";
 
 const FIELD_SELECTION_AUTO_OPEN_FAILED = "浏览器打开请求未成功";
 
+function inquiryRecipientOptions(mcns) {
+  const names = new Set();
+  return mcns.flatMap((mcn) => {
+    const name = firstString(mcn?.agency_name, mcn?.supplier_name, mcn?.mcn_name, mcn?.name);
+    const normalizedName = name?.trim();
+    if (!normalizedName || names.has(normalizedName)) return [];
+    names.add(normalizedName);
+    return [{ label: normalizedName, description: "选择该机构作为本次询价收件人" }];
+  });
+}
+
 function fieldSelectionDirective(message) {
   const result = parsedToolResult(message);
   const autoOpenFailed =
@@ -135,7 +146,7 @@ function fieldSelectionDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。先把 FIELD_SELECTION_URL 里的原始 url 原样输出为单独一行用户可见正文：禁止 Markdown 包装、重写、用 Browser 打开或替用户选择字段。",
     "用户在选择页提交后，select_inquiry_form_fields 会把所选字段按 requirement ID 持久化到 Provider 数据库；requirement ID 来自 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不是 demand_id。不得调用已弃用的 get_selected_inquiry_form_fields，不得查询、重建、转存或把 columns 放入 Agent 上下文；后续 Provider 工具只传当前 schema 要求的业务标识，由后端关联字段。",
-    "现在停止业务调用并等待用户完成选择后回复“好了”。收到后恢复发起本次字段选择的原分支：询价机构分支保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、返点、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message，并按当前 Provider schema 直接调用 create_with_distributions，不追加企微发送确认；人工拓展分支使用原 requirement_id 和用户要求的 size 调用 manual_source_creators。不得调用 create_submission_batch，不得再次调用 select_inquiry_form_fields。",
+    "现在停止业务调用并等待用户完成选择后回复“好了”。收到后恢复发起本次字段选择的原分支：询价机构分支只有在用户已明确选中至少一家当前 MCN 后，才保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message，并按 create_with_distributions 工具卡的固定企微模板调用一次；返点只作内部筛选条件，绝不写入这两个消息字段。只选择“询价机构”分支不等于选中收件人；没有收件人时先使用本轮真实 MCN 的机构选择弹窗，绝不传空数组、按排名/覆盖数自行挑选机构或自动发送。人工拓展分支使用原 requirement_id 和用户要求的 size 调用 manual_source_creators。不得调用 create_submission_batch，不得再次调用 select_inquiry_form_fields。",
     `FIELD_SELECTION_URL=${url}`,
   ].join("\n");
 }
@@ -168,13 +179,23 @@ function rankMcnsDirective(message, params = {}) {
   const excelFileUrl = rankMcnsExcelUrl(result);
   const artifactId = firstString(params?.id, result?.data?.requirement_id, result?.requirement_id);
   const empty = mcns.length === 0;
+  const recipientOptions = inquiryRecipientOptions(mcns);
+  const recipientSelectionArgs =
+    !empty && recipientOptions.length > 0
+      ? askQuestion(
+          "选择询价机构",
+          "请选择本次需要询价的机构，可多选。",
+          recipientOptions,
+          true,
+        )
+      : null;
   const options = empty
     ? [
         { label: "人工拓展并提报", description: "推荐使用后台默认手扒并直接生成 Excel" },
         { label: "结束本次", description: "保留机构表格的空结果并结束本次流程" },
       ]
     : [
-        { label: "询价机构", description: "从当前真实 MCN 表格选择机构并继续询价" },
+        { label: "询价机构", description: "先选择具体机构，再配置询价字段" },
         { label: "人工拓展并提报", description: "推荐使用后台默认手扒并直接生成 Excel" },
       ];
   const lines = [
@@ -186,6 +207,12 @@ function rankMcnsDirective(message, params = {}) {
     "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出；若有 MCN 排名表保存参数，紧接着调用 ypscan_save_excel_artifact，保存成功后再原样展示新返回的 MCN_RANKING_LOCAL_PATH，最后调用 AskUserQuestion。不要输出 MCN 排名表下载链接或任何其他 Excel 下载链接；表格禁止改成项目符号或编号列表。",
     "用户可见机构结果只显示这一张五列表格，固定列且不得增减：排名、机构、覆盖达人、返点、综合分。排名严格按当前响应顺序从 1 开始连续编号；机构读取当前机构对象自己的机构名；每行覆盖达人只读取该机构对象自己的 candidate_count 原值。禁止在表格内外另行展示 supplier_id、候选总数、匹配机构数、推荐数量、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
     "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 rank_mcns 确实未返回精确保存参数，必须如实说明 MCN 排名表无法保存，禁止编造或复用历史链接。",
+    ...(recipientSelectionArgs
+      ? [
+          "“询价机构”仅选择业务分支，不等于指定收件机构。用户在分支弹窗选择“询价机构”后，先逐字调用下方 INQUIRY_RECIPIENT_SELECTION_ARGS，等待用户选中至少一家机构；不得调用 select_inquiry_form_fields 或 create_with_distributions，不得按排名、覆盖达人、返点、综合分或其他字段自行选择机构。只有该机构选择的结果才是用户提名，随后才进入字段选择。",
+          `INQUIRY_RECIPIENT_SELECTION_ARGS=${JSON.stringify(recipientSelectionArgs)}`,
+        ]
+      : []),
     "用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”或选择“人工拓展并提报”时，一律默认走 MCP，不得激活浏览器手扒或读取 Browser 手扒 SOP。若当前对话已有同一 requirement_id 的字段选择链接且用户已明确回复提交完成，直接复用 Provider 持久化字段并调用 manual_source_creators，不得再次调用 select_inquiry_form_fields；否则先调用 select_inquiry_form_fields 并把原始 URL 单独展示，等待用户提交并回复“好了”后再调用 manual_source_creators。manual_source_creators 按当前 Provider schema 传本轮 requirement_id 和用户要求的交付人数 size；后台全自动完成手扒并返回 Excel，不先启动 Browser。若 Provider 返回 REQUIREMENT_COLUMNS_NOT_CONFIGURED，再按工具结果指令进入字段选择。",
     "manual_source_creators 的 Excel 保存到本地后，才提示用户可选择浏览器手扒；该方式耗时更长，期间可能多次出现登录、验证或资质弹窗。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活 Browser Runner、读取 Browser 手扒 SOP，先使用宿主 Browser 能力打开当前平台达人广场，再调用 ypscan_manual_research(operation=start)。resume 只用于此前已经由用户明确授权启动的同一 run。",
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
@@ -291,13 +318,43 @@ function manualSourceCreatorsDirective(message, params = {}) {
   ].join("\n");
 }
 
-function distributionDirective(message) {
+function distributionDirective(message, params = {}) {
   const result = parsedToolResult(message);
   if (result?.success !== true) {
-    return [
+    const errors = [result?.error, ...(Array.isArray(result?.errors) ? result.errors : [])].filter(
+      isRecord,
+    );
+    const hasError = (pattern) =>
+      errors.some((error) => pattern.test(String(firstString(error?.message, error?.code) ?? "")));
+    const lines = [
       "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 返回失败或部分成功。原始 Provider 结果可能同时包含已发送机构、未精确匹配机构、候选机构或幂等冲突，必须原样展示，不得用通用错误覆盖或把部分成功表述为全部失败。",
       "禁止自动重发原始完整参数：同一 requirement_id 下已经成功发送的机构不得再次加入。若 Provider 返回模糊或不唯一的候选机构，使用真实候选调用 AskUserQuestion 让用户选择；选择后仅把选中候选的 supplier ID 放入 supplierIds，supplier_name 传空数组。若 Provider 返回重复发送错误，原样告知当前需求已向该机构发送过询价消息并停止重试。",
-    ].join("\n");
+    ];
+    if (
+      hasError(
+        /supplier_name and supplierIds cannot both be empty|supplierIds.*supplier_name.*empty/iu,
+      )
+    ) {
+      lines.push(
+        "本次被 Provider 拒绝的原因是没有任何收件机构。只选择“询价机构”分支不构成机构提名；不得从 MCN 排名、覆盖人数或推荐顺序自动挑选机构，也不得重发空数组。回到本轮真实 MCN 的机构选择弹窗，待用户选中机构后才可用对应 ID 或原始名称发起一次新调用。",
+      );
+    }
+    if (hasError(/只有进行中的项目才能创建供应商分发/u)) {
+      const requirementId = firstString(
+        params?.requirement_id,
+        result?.data?.requirement_id,
+        result?.requirement_id,
+      );
+      lines.push(
+        "Provider 表明关联项目不是进行中状态。不得自动重发或猜测状态转换；先原样展示失败结果，再仅用当前 requirement_id 调用 get_workflow_state 做一次诊断。状态查询不授权再次发送。",
+      );
+      if (requirementId) {
+        lines.push(`GET_WORKFLOW_STATE_ARGS=${JSON.stringify({ requirement_id: requirementId })}`);
+      } else {
+        lines.push("当前响应和调用参数都缺少 requirement_id，无法安全查询项目状态；停止本轮发送处理。");
+      }
+    }
+    return lines.join("\n");
   }
   const status = result?.data?.send_status;
   if (
@@ -797,7 +854,7 @@ function flowDirective(toolName, message, params = {}) {
   if (/(?:^|__)ypscan_set_filter_range$/iu.test(normalizedName)) {
     return filterRangeDirective(message);
   }
-  if (bare === "create_with_distributions") return distributionDirective(message);
+  if (bare === "create_with_distributions") return distributionDirective(message, params);
   if (bare === "sync_mcn_inquiry_status") return syncInquiryDirective(message);
   if (bare === "ingest_mcn_submissions") return ingestSubmissionsDirective(message);
   if (bare === "get_ingest_job") return getIngestJobDirective(message, params);
@@ -882,7 +939,7 @@ export function registerFlowDirectiveHooks(api) {
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → ypscan_save_excel_artifact(mcn_ranking) → MCN 排名表本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID。search_creators 返回的表格链接不保存、不展示。询价分支固定为 select_inquiry_form_fields → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → 按 Provider 当前 schema 直接调用一次 create_with_distributions，不追加企微发送确认。supplierIds 和 supplier_name 始终都是数组，空侧传 []，至少一侧非空。用户提供或提名机构名时，supplier_id 是第一优先级：先在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中且有非空 supplier_id 就只放入 supplierIds，未匹配或无 ID 才把原名放入 supplier_name。不做本地模糊匹配，不跨需求、平台或 run 复用 ID；两个数组可同时非空。模糊、不唯一或重复发送结果必须原样展示，禁止把已成功机构重新加入后续调用。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
+          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → ypscan_save_excel_artifact(mcn_ranking) → MCN 排名表本地路径 → 逐字调用 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID。search_creators 返回的表格链接不保存、不展示。“询价机构”只选择分支，不指定收件人：用户选该分支后，必须逐字调用 rank_mcns 结果中的 INQUIRY_RECIPIENT_SELECTION_ARGS，等用户明确选中至少一家真实 MCN 后才调用 select_inquiry_form_fields；不得按排名、覆盖人数、返点、综合分或推荐顺序自行挑选机构。随后询价分支固定为字段选择 → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → 按 Provider 当前 schema 直接调用一次 create_with_distributions，不追加企微发送确认。supplierIds 和 supplier_name 始终都是数组，空侧传 []，至少一侧非空。用户提供、提名或在机构选择弹窗选中的机构名时，supplier_id 是第一优先级：先在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中且有非空 supplier_id 就只放入 supplierIds，未匹配或无 ID 才把原名放入 supplier_name。不做本地模糊匹配，不跨需求、平台或 run 复用 ID；两个数组可同时非空。模糊、不唯一或重复发送结果必须原样展示，禁止把已成功机构重新加入后续调用。若 Provider 返回“只有进行中的项目才能创建供应商分发”，只用同一 requirement_id 调用一次 get_workflow_state 诊断，禁止自动重发。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
           "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "search_creators 成功后忽略其 creators_export_path 或其他表格链接，不调用保存工具，直接使用同一 requirement ID 和当前平台调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再使用其精确 SAVE_EXCEL_ARTIFACT_ARGS 保存 MCN 排名表；保存成功后展示该排名表的真实本地路径，再调用分支弹窗。rank_mcns 弹窗只放整体总结，本地路径不得放进弹窗 question。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手扒补量、推荐理由及其他 rank_mcns 字段或汇总。",

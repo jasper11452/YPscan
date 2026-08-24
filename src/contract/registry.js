@@ -187,6 +187,29 @@ const MAXIMUM_METRIC_RANGE_PARAMS = new Set([
   "cpmL3",
 ]);
 
+const PLATFORM_REQUIRED_TAG_FIELD = Object.freeze({
+  xiaohongshu: "pgyBloggerTypeLabel",
+  douyin: "xtTalentTypeLabel",
+});
+
+const PLATFORM_ARRAY_FIELD_PARAMS = Object.freeze({
+  xiaohongshu: [
+    "contentFeatureLabel",
+    "contentTag",
+    "growBloggerTypeLabel",
+    "kolPersonaLabel",
+    "pgyBloggerTypeLabel",
+    "talentTypeLabel",
+  ],
+  douyin: [
+    "contentThemeLabel",
+    "growTalentTypeLabel",
+    "industryTagLabel",
+    "talentTypeLabel",
+    "xtTalentTypeLabel",
+  ],
+});
+
 const PLATFORM_ALIASES = Object.freeze({
   xiaohongshu: "xiaohongshu",
   xhs: "xiaohongshu",
@@ -327,13 +350,47 @@ function briefUnrestrictsFollowers(value) {
     /(?:无|没有|不限|不限制)(?:任何)?粉丝(?:数|量|量级)?要求/u.test(compact);
 }
 
-function normalizedDateTime(value) {
+function parseLocalDateTime(value) {
+  if (typeof value !== "string") return Number.NaN;
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/u,
+  );
+  if (!match) return Number.NaN;
+  const [
+    ,
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+  ] = match;
+  return new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+  ).getTime();
+}
+
+function normalizedDateTime(value, { now = new Date() } = {}) {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
   const match = trimmed.match(
-    /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})?$/u,
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/u,
   );
-  return match ? `${match[1]}:00${match[2] ?? ""}` : trimmed;
+  if (!match) return trimmed;
+  const normalized = `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6] ?? "00"}`;
+  const timestamp = parseLocalDateTime(normalized);
+  if (!Number.isFinite(timestamp)) return trimmed;
+  return timestamp > now.getTime() ? normalized : value;
+}
+
+export function isFutureSubmissionDeadline(value, { now = new Date() } = {}) {
+  const timestamp = parseLocalDateTime(value);
+  return Number.isFinite(timestamp) && timestamp > now.getTime();
 }
 
 export function normalizeValidateRequirementTagArrays(params) {
@@ -376,13 +433,88 @@ export function stripHostPrefix(toolName) {
   return null;
 }
 
-export function normalizeToolCallParams(toolName, params) {
+function normalizedStringArray(value) {
+  if (Array.isArray(value)) {
+    const items = value
+      .filter((item) => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return items.length > 0 ? items : null;
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) return normalizedStringArray(parsed);
+  } catch {
+    // fall through
+  }
+  const items = trimmed
+    .split(/[，,、\n]/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : null;
+}
+
+function normalizePlatformArrayFields(params) {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return params;
+  const platform = normalizedPlatformName(params.platform);
+  const fields = PLATFORM_ARRAY_FIELD_PARAMS[platform] ?? [];
+  if (fields.length === 0) return params;
+  let normalized = params;
+  for (const field of fields) {
+    const value = normalizedStringArray(params[field]);
+    if (!value) continue;
+    if (normalized === params) normalized = { ...params };
+    normalized[field] = value;
+  }
+  return normalized;
+}
+
+function normalizedPlatformName(value) {
+  if (typeof value !== "string") return null;
+  return PLATFORM_ALIASES[value.toLowerCase()] ?? PLATFORM_ALIASES[value] ?? value.trim();
+}
+
+function tagArrayValue(value) {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item.trim())
+    ? value
+    : null;
+}
+
+export function invalidPlatformArrayFields(params) {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return [];
+  const platform = normalizedPlatformName(params.platform);
+  const fields = PLATFORM_ARRAY_FIELD_PARAMS[platform] ?? [];
+  return fields.filter((field) => {
+    if (!Object.hasOwn(params, field)) return false;
+    return !tagArrayValue(params[field]);
+  });
+}
+
+export function missingRequiredValidateParams(params) {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return [];
+  const missing = [...REQUIRED_VALIDATE_PARAMS].filter((name) => {
+    const value = params[name];
+    return value === undefined || value === null || (typeof value === "string" && value.trim() === "");
+  });
+
+  const platform = normalizedPlatformName(params.platform);
+  const platformRequiredField = PLATFORM_REQUIRED_TAG_FIELD[platform];
+  if (platformRequiredField && !tagArrayValue(params[platformRequiredField])) {
+    missing.push(platformRequiredField);
+  }
+  return missing;
+}
+
+export function normalizeToolCallParams(toolName, params, { now = new Date() } = {}) {
   if (!params || typeof params !== "object" || Array.isArray(params)) return params;
   const bare = stripHostPrefix(typeof toolName === "string" ? toolName.toLowerCase() : toolName);
   if (!bare) return params;
 
   let normalized = bare === "validate_requirement"
-    ? normalizeValidateRequirementTagArrays(params)
+    ? normalizePlatformArrayFields(normalizeValidateRequirementTagArrays(params))
     : params;
   const set = (name, value) => {
     if (normalized[name] === value) return;
@@ -439,7 +571,12 @@ export function normalizeToolCallParams(toolName, params) {
           }));
     }
     for (const name of ["submissionDeadlineAt"]) {
-      if (Object.hasOwn(normalized, name)) set(name, normalizedDateTime(normalized[name]));
+      if (!Object.hasOwn(normalized, name)) continue;
+      const normalizedDeadline = normalizedDateTime(normalized[name], { now });
+      if (!isFutureSubmissionDeadline(normalizedDeadline, { now })) continue;
+      if (normalized[name] === normalizedDeadline) continue;
+      if (normalized === params) normalized = { ...params };
+      normalized[name] = normalizedDeadline;
     }
   }
 

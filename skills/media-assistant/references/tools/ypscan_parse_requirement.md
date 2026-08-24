@@ -35,7 +35,7 @@ Dify 独占首次解析以下字段：
 2. 当前 Workflow 的部分输出是 Provider 参数片段对象。允许按字段名做结构性解包或展开，例如从 `{ "rebate": "[0.3,1]" }` 取同名 `rebate`；禁止改变内部值。
 3. 标签保持 Dify 返回的数组元素和顺序；不得把 `null` 或缺失值传给 Provider，按第 7 条回查原文处理。
 4. 品牌当前按平台输出为 `xhsbrandName` / `dybrandName`；只读取当前平台候选。单一候选结构性映射为 `brandName`，空、多候选或与原文冲突时按第 7 条处理。
-5. `contentTag`、`followercount`、`rebate` 当前分别返回带同名字段的对象；展开后使用内部同名值，不做二次解析。
+5. `contentTag`、`followercount`、`rebate` 当前分别返回带同名字段的对象；展开后使用内部同名值，不做二次解析。其中 `contentTag` 进入当前平台 `validate_requirement` 时保持为字符串数组。
 6. 报价、CPM、CPE 当前按平台返回 `xhs_kolOfficialPrice` / `dy_kolOfficialPrice`、`xhs_cpm` / `dy_cpm`、`xhs_cpe` / `dy_cpe` 参数片段，内部已是 L1/L2/L3 Provider 字段；只展开当前平台对象，不得再次路由、扩区间或重算。若 Workflow 以后返回未分档的逻辑值，才根据明确的小红书图文/视频或抖音时长档做字段路由，值仍不得改变。
 7. Dify 字段缺失、为 `null`、为空或与当前原文冲突时，Agent 先回查当前完整需求和用户后续修改，自主选择原文中唯一明确的值；原文仍缺失、模糊或冲突时才调用 `AskUserQuestion`，不得盲猜。
 
