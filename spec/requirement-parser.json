@@ -1,35 +1,62 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "tool": "ypscan_parse_requirement",
-  "sideEffects": "none",
-  "inputModel": "compact-evidence-facts",
-  "factContract": {
-    "requiredMetadata": ["kind", "quote"],
-    "generatedMetadata": ["id", "source_id", "source_quote", "subject", "unit"],
-    "statuses": ["present", "missing", "ambiguous", "conflicting", "superseded"],
-    "sourcePolicy": "every non-missing fact cites an exact substring of user evidence"
+  "sideEffects": "read-only-external-inference",
+  "implementation": "direct-dify-workflow-proxy",
+  "endpoint": "https://dfi.eshypdata.com/v1/workflows/run",
+  "input": {
+    "required": ["demand"],
+    "singlePlatformOnly": true,
+    "latestCompleteRequirement": true
   },
-  "outputSchema": "requirement-search/v2",
-  "projections": {
-    "provider": {
-      "pricePolicy": "provider-price-retrieval-70-120/v1",
-      "readyIsIndependent": true,
-      "fieldVocabulary": "static-reviewed-provider-fields",
-      "outputs": ["basic_params", "search_jobs", "residual_conditions"],
-      "numericSearchFilterEncoding": "no-space [min,max] JSON strings, including femaleRate",
-      "softFactsAreResidual": true,
-      "multipleSegmentsRequireIndependentCounts": true
-    }
-  },
-  "audit": [
-    "source evidence",
-    "numeric equivalence",
-    "subject and scope",
-    "conflicts and supersession",
-    "business-clause residual coverage",
-    "prompt-injection exclusion"
+  "difyOwnedFields": [
+    "growBloggerTypeLabel",
+    "contentFeatureLabel",
+    "contentThemeLabel",
+    "kolPersonaLabel",
+    "pgyBloggerTypeLabel",
+    "xtTalentTypeLabel",
+    "industryTagLabel",
+    "growTalentTypeLabel",
+    "contentTag",
+    "brandName",
+    "followercount",
+    "rebate",
+    "kolOfficialPrice",
+    "cpm",
+    "cpe"
   ],
-  "successPolicy": "success=true means compiled; callers must also require projections.provider.ready=true",
-  "capabilityProbe": false,
-  "requirementHash": false
+  "outputPolicy": {
+    "preserveDifyValues": true,
+    "shape": "data.outputs is the complete untouched Dify outputs object",
+    "discardUnknownWorkflowFields": false,
+    "currentProviderFragments": [
+      "contentTag",
+      "followercount",
+      "rebate",
+      "xhs_kolOfficialPrice",
+      "dy_kolOfficialPrice",
+      "xhs_cpm",
+      "dy_cpm",
+      "xhs_cpe",
+      "dy_cpe"
+    ],
+    "currentPlatformBrandCandidates": ["xhsbrandName", "dybrandName"],
+    "missingOrConflict": "agent-rechecks-current-original-and-decides; clarify-only-if-still-unresolved"
+  },
+  "agentOwnedFields": "all published validate_requirement fields not listed in difyOwnedFields",
+  "changePolicy": {
+    "countScope": "one user modification round",
+    "zeroOrOneChangedConditions": "agent-updates-without-Dify",
+    "twoOrMoreChangedConditions": "rerun-Dify-with-complete-latest-single-platform-demand",
+    "rerunInputSource": "latest raw user wording only; never Dify outputs or Provider-normalized values",
+    "successfulRerun": "replace-all-Dify-owned-fields-and-reset-change-count"
+  },
+  "removed": [
+    "native compact facts validation",
+    "Provider parameter compilation",
+    "search job projection",
+    "residual condition projection",
+    "VALIDATE_REQUIREMENT_ARGS generation"
+  ]
 }

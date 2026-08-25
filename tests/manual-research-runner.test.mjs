@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -146,6 +155,421 @@ test("runner completes with candidates and a three-sheet Excel", async (t) => {
   assert.equal((workbookXml.match(/<sheet /gu) ?? []).length, 3);
 });
 
+test("runner keeps filters while changing keywords and reads every result page", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-all-pages-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const actions = [];
+  let keyword = "";
+  let pageNumber = 1;
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => ({
+      async prepare() {},
+      async reset() {
+        actions.push("reset");
+      },
+      async verifyBaseline() {
+        return { valid: true };
+      },
+      async applyFilter() {
+        actions.push("filter");
+        return { applied: true };
+      },
+      async search(value) {
+        keyword = value;
+        pageNumber = 1;
+        actions.push(`search:${value}`);
+        return { applied: true };
+      },
+      async readPage() {
+        actions.push(`read:${keyword}:${pageNumber}`);
+        return {
+          rows: [
+            {
+              platform_id: `${keyword}-${pageNumber}`,
+              nickname: `${keyword}达人${pageNumber}`,
+              detail_url: `https://www.xingtu.cn/creator/${keyword}-${pageNumber}`,
+            },
+          ],
+          source_url: "https://www.xingtu.cn/ad/creator/market",
+        };
+      },
+      async nextPage() {
+        if (pageNumber >= 3) return false;
+        pageNumber += 1;
+        return true;
+      },
+      async collectDetail(candidate) {
+        return {
+          status: "complete",
+          platform_id: candidate.platform_id,
+          nickname: candidate.nickname,
+          detail_url: candidate.detail_url,
+          fields: {},
+        };
+      },
+      async dispose() {},
+    }),
+  });
+
+  const data = payload(
+    await run(
+      params({
+        facts: [
+          fact("product", "product_name", "办公软件"),
+          fact("count", "creator_count", 1, { role: "submission" }),
+          fact("gender", "creator_gender", "female"),
+        ],
+        keywords: ["效率", "办公"],
+      }),
+    ),
+  );
+
+  assert.equal(data.candidate_count, 6);
+  assert.deepEqual(actions, [
+    "reset",
+    "filter",
+    "search:效率",
+    "read:效率:1",
+    "read:效率:2",
+    "read:效率:3",
+    "search:办公",
+    "read:办公:1",
+    "read:办公:2",
+    "read:办公:3",
+  ]);
+});
+
+test("raw HTML is checkpointed by manifest, read in chunks, and completed only after Agent extraction", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-html-evidence-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const artifactRoot = join(workspaceDir, "ypscan-manual-research");
+  await mkdir(artifactRoot, { recursive: true });
+  await writeFile(join(artifactRoot, ".gitignore"), "", "utf8");
+  const html = `<html><body>粉丝数：10万 <span>组织：精准机构</span> <a>办公软件实测</a>${"x".repeat(33_000)}</body></html>`;
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => {
+      const base = adapter(2);
+      return {
+        ...base,
+        async collectDetail(candidate, { onHtmlSnapshot }) {
+          const htmlSnapshots = [];
+          for (const group of ["summary", "recent_content"]) {
+            htmlSnapshots.push(
+              await onHtmlSnapshot({
+                group,
+                url: candidate.detail_url,
+                captured_at: "2026-08-20T00:00:00.000Z",
+                html,
+              }),
+            );
+          }
+          return {
+            status: "complete",
+            platform_id: candidate.platform_id,
+            nickname: candidate.nickname,
+            detail_url: candidate.detail_url,
+            captured_at: "2026-08-20T00:00:00.000Z",
+            fields: { followers_raw: "错误旧值" },
+            html_snapshots: htmlSnapshots,
+          };
+        },
+      };
+    },
+  });
+
+  const started = payload(
+    await run(
+      params({
+        requirement_id: "html-evidence",
+        facts: [
+          fact("product", "product_name", "办公软件"),
+          fact("count", "creator_count", 1, { role: "submission" }),
+        ],
+      }),
+    ),
+  );
+  assert.equal(started.status, "awaiting_extraction");
+  assert.equal(started.detail_progress.completed, 0);
+  assert.equal(started.detail_progress.captured, 2);
+  assert.equal(started.detail_progress.qualified, 0);
+  assert.equal(started.review_batch[0].fields.followers_raw, undefined);
+  const task = started.review_batch[0];
+  const snapshot = task.html_snapshots[0];
+  const readTaskHtml = async (reviewTask) => {
+    let args = {
+      operation: "read_detail_html",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      candidate_ref: reviewTask.candidate_ref,
+      snapshot_id: reviewTask.html_snapshots[0].snapshot_id,
+      cursor: 0,
+    };
+    let result = "";
+    for (;;) {
+      const chunk = payload(await run(args));
+      result += chunk.html_chunk;
+      if (!chunk.next_call) return result;
+      args = chunk.next_call.args;
+    }
+  };
+  const checkpoint = await readFile(started.artifact.checkpoint_path, "utf8");
+  assert.doesNotMatch(checkpoint, /办公软件实测/u);
+  assert.equal(
+    await readFile(join(workspaceDir, "ypscan-manual-research", ".gitignore"), "utf8"),
+    "*\n!.gitignore\n",
+  );
+
+  const evidenceRoot = join(workspaceDir, "ypscan-manual-research", started.run_id, "evidence");
+  const candidateDirs = await readdir(evidenceRoot);
+  const htmlFiles = await readdir(join(evidenceRoot, candidateDirs[0]));
+  const evidencePath = join(evidenceRoot, candidateDirs[0], htmlFiles[0]);
+  assert.equal((await stat(evidencePath)).mode & 0o777, 0o600);
+
+  const beforeRead = payload(
+    await run({
+      operation: "apply_reviews",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      reviews: [
+        {
+          candidate_ref: task.candidate_ref,
+          decision: "include",
+          reasons: ["内容符合"],
+          evidence: ["办公软件实测"],
+          extracted_fields: {
+            followers_raw: "10万",
+            recent_content: [{ title: "办公软件实测", url: null }],
+          },
+          field_evidence: [
+            { field: "followers_raw", snapshot_id: snapshot.snapshot_id, quote: "粉丝数：10万" },
+            { field: "recent_content", snapshot_id: snapshot.snapshot_id, quote: "办公软件实测" },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(beforeRead.success, false);
+  assert.equal(beforeRead.error.code, "YPSCAN_MANUAL_HTML_READ_INCOMPLETE");
+
+  const skippedChunk = payload(
+    await run({
+      operation: "read_detail_html",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      candidate_ref: task.candidate_ref,
+      snapshot_id: snapshot.snapshot_id,
+      cursor: 1,
+    }),
+  );
+  assert.equal(skippedChunk.success, false);
+  assert.equal(skippedChunk.error.code, "YPSCAN_MANUAL_HTML_READ_OUT_OF_SEQUENCE");
+
+  const skippedSnapshot = payload(
+    await run({
+      operation: "read_detail_html",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      candidate_ref: task.candidate_ref,
+      snapshot_id: task.html_snapshots[1].snapshot_id,
+      cursor: 0,
+    }),
+  );
+  assert.equal(skippedSnapshot.success, false);
+  assert.equal(skippedSnapshot.error.code, "YPSCAN_MANUAL_HTML_READ_OUT_OF_SEQUENCE");
+
+  assert.equal(await readTaskHtml(task), html.repeat(2));
+
+  const invalid = payload(
+    await run({
+      operation: "apply_reviews",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      reviews: [
+        {
+          candidate_ref: task.candidate_ref,
+          decision: "include",
+          reasons: ["内容符合"],
+          evidence: ["不存在的证据"],
+          extracted_fields: { followers_raw: "10万" },
+          field_evidence: [
+            { field: "followers_raw", snapshot_id: snapshot.snapshot_id, quote: "不存在" },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(invalid.success, false);
+  assert.equal(invalid.error.code, "YPSCAN_MANUAL_EXTRACTION_EVIDENCE_NOT_FOUND");
+
+  const fabricated = payload(
+    await run({
+      operation: "apply_reviews",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      reviews: [
+        {
+          candidate_ref: task.candidate_ref,
+          decision: "include",
+          reasons: ["内容符合"],
+          evidence: ["办公软件实测"],
+          extracted_fields: {
+            followers_raw: "10万",
+            recent_content: [{ title: "伪造内容", url: null }],
+          },
+          field_evidence: [
+            { field: "followers_raw", snapshot_id: snapshot.snapshot_id, quote: "粉丝数：10万" },
+            { field: "recent_content", snapshot_id: snapshot.snapshot_id, quote: "办公软件实测" },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(fabricated.success, false);
+  assert.equal(fabricated.error.code, "YPSCAN_MANUAL_EXTRACTION_VALUE_MISMATCH");
+
+  const unlabeledAgency = payload(
+    await run({
+      operation: "apply_reviews",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      reviews: [
+        {
+          candidate_ref: task.candidate_ref,
+          decision: "exclude",
+          reasons: ["机构证据标签不明确"],
+          evidence: ["精准机构"],
+          extracted_fields: { agency: "精准机构" },
+          field_evidence: [
+            { field: "agency", snapshot_id: snapshot.snapshot_id, quote: "组织：精准机构" },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(unlabeledAgency.success, false);
+  assert.equal(unlabeledAgency.error.code, "YPSCAN_MANUAL_EXTRACTION_VALUE_MISMATCH");
+
+  const excluded = payload(
+    await run({
+      operation: "apply_reviews",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      reviews: [
+        {
+          candidate_ref: task.candidate_ref,
+          decision: "exclude",
+          reasons: ["内容符合办公软件方向"],
+          evidence: ["办公软件实测"],
+          extracted_fields: {
+            followers_raw: "10万",
+            recent_content: [{ title: "办公软件实测", url: null }],
+          },
+          field_evidence: [
+            { field: "followers_raw", snapshot_id: snapshot.snapshot_id, quote: "粉丝数：10万" },
+            { field: "recent_content", snapshot_id: snapshot.snapshot_id, quote: "办公软件实测" },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(excluded.status, "reviewing");
+  assert.equal(excluded.detail_progress.completed, 1);
+  assert.equal(excluded.detail_progress.qualified, 0);
+  assert.equal(excluded.review_batch.length, 1);
+
+  const reviewingReplay = payload(
+    await run({
+      operation: "resume",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+    }),
+  );
+  assert.equal(reviewingReplay.status, "reviewing");
+  assert.equal(reviewingReplay.detail_progress.qualified, 0);
+  assert.equal(reviewingReplay.detail_progress.shortfall, 2);
+  assert.equal(
+    reviewingReplay.next_call.args.candidate_ref,
+    excluded.review_batch[0].candidate_ref,
+  );
+
+  const replacementTask = excluded.review_batch[0];
+  const replacementSnapshot = replacementTask.html_snapshots[0];
+  await readTaskHtml(replacementTask);
+  const applied = payload(
+    await run({
+      operation: "apply_reviews",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+      reviews: [
+        {
+          candidate_ref: replacementTask.candidate_ref,
+          decision: "include",
+          reasons: ["内容符合办公软件方向"],
+          evidence: ["办公软件实测"],
+          extracted_fields: {
+            followers_raw: "10万",
+            recent_content: [{ title: "办公软件实测", url: null }],
+          },
+          field_evidence: [
+            {
+              field: "followers_raw",
+              snapshot_id: replacementSnapshot.snapshot_id,
+              quote: "粉丝数：10万",
+            },
+            {
+              field: "recent_content",
+              snapshot_id: replacementSnapshot.snapshot_id,
+              quote: "办公软件实测",
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(applied.status, "partial");
+  assert.equal(applied.detail_progress.completed, 2);
+  assert.equal(applied.detail_progress.qualified, 1);
+  assert.equal(applied.detail_progress.shortfall, 1);
+  assert.equal(applied.artifact.target_row_count, 1);
+  assert.equal((await stat(started.artifact.checkpoint_path)).mode & 0o777, 0o600);
+
+  const replayed = payload(
+    await run({
+      operation: "resume",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+    }),
+  );
+  assert.equal(replayed.status, "partial");
+  assert.equal(replayed.next_call, undefined);
+
+  const submission = payload(
+    await run({
+      operation: "create_submission",
+      requirement_id: "html-evidence",
+      platform: "xingtu",
+      run_id: started.run_id,
+    }),
+  );
+  assert.equal(submission.status, "complete");
+  assert.equal(submission.row_count, 1);
+});
+
 test("login interruption still returns a diagnostic Excel and resume arguments", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-login-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
@@ -162,6 +586,54 @@ test("login interruption still returns a diagnostic Excel and resume arguments",
   assert.equal(data.error.code, "YPSCAN_MANUAL_LOGIN_REQUIRED");
   assert.equal(data.resume_args.operation, "resume");
   assert.equal((await readFile(data.artifact.excel_path)).subarray(0, 2).toString("utf8"), "PK");
+});
+
+test("an unavailable host Browser tells the Agent to start it before resume", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-browser-unavailable-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const error = Object.assign(new Error("ECONNREFUSED"), {
+    code: "YPSCAN_MANUAL_BROWSER_UNAVAILABLE",
+  });
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }, error),
+  });
+
+  const data = payload(await run(params()));
+
+  assert.equal(data.success, true);
+  assert.equal(data.status, "needs_user_action");
+  assert.equal(data.error.code, "YPSCAN_MANUAL_BROWSER_UNAVAILABLE");
+  assert.equal(data.resume_args.operation, "resume");
+  assert.equal(
+    data.artifact.run_info.resume_instruction,
+    "由 Agent 启动宿主 Browser 后原样调用 resume",
+  );
+});
+
+test("runner accepts compact creator price facts that use value", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-compact-price-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime: runtime({ count: 0 }),
+    createAdapter: () => adapter(20),
+  });
+
+  const data = payload(
+    await run(
+      params({
+        facts: [
+          { kind: "product_name", value: "办公软件" },
+          { kind: "creator_count", value: 3, role: "submission" },
+          { kind: "creator_price", value: 20_000, operator: "lte" },
+        ],
+      }),
+    ),
+  );
+
+  assert.equal(data.status, "complete");
+  assert.equal(data.error, undefined);
 });
 
 test("a CAPTCHA after complete extraction preserves one completed detail", async (t) => {
@@ -238,6 +710,48 @@ test("a successful resume clears the previous login interruption", async (t) => 
   assert.equal(pageCalls, 2);
 });
 
+test("a page-open timeout is resumable and reopens the host Browser", async (t) => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-network-resume-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  let pageCalls = 0;
+  const pageOptions = [];
+  const browserRuntime = {
+    acquire() {
+      return { acquired: true, release() {} };
+    },
+    async page(_platform, options) {
+      pageCalls += 1;
+      pageOptions.push(options);
+      if (pageCalls === 1) {
+        throw Object.assign(new Error("打开蒲公英达人广场失败"), {
+          code: "YPSCAN_MANUAL_PAGE_OPEN_FAILED",
+        });
+      }
+      return {
+        url: () => "https://www.xingtu.cn/ad/creator/market",
+        async evaluate() {
+          return [];
+        },
+      };
+    },
+  };
+  const run = createManualResearchRunner({
+    workspaceDir,
+    browserRuntime,
+    createAdapter: () => adapter(20),
+  });
+
+  const interrupted = payload(await run(params()));
+  assert.equal(interrupted.status, "needs_user_action");
+  assert.equal(interrupted.error.code, "YPSCAN_MANUAL_PAGE_OPEN_FAILED");
+  assert.equal(interrupted.resume_args.operation, "resume");
+
+  const resumed = payload(await run(interrupted.resume_args));
+  assert.equal(resumed.status, "complete");
+  assert.equal(pageCalls, 2);
+  assert.deepEqual(pageOptions, [{ reopen: false }, { reopen: true }]);
+});
+
 test("runner marks fallback collection as degraded and keeps its candidate artifact", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-fallback-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
@@ -255,19 +769,19 @@ test("runner marks fallback collection as degraded and keeps its candidate artif
   assert.equal(data.candidates[0].collection_mode, "filtered");
   assert.ok(data.artifact.excel_path);
   assert.deepEqual(data.detail_progress, {
-    target: 3,
+    target: 6,
     attempted: 1,
     completed: 1,
     partial: 0,
     failed: 0,
-    shortfall: 2,
+    shortfall: 5,
   });
 });
 
-test("runner replaces failed detail attempts until ten complete records are collected", async (t) => {
+test("runner replaces failed detail attempts until twice the requested count is collected", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-detail-refill-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
-  const fakeAdapter = adapter(16);
+  const fakeAdapter = adapter(26);
   fakeAdapter.collectDetail = async (candidate) => {
     const index = Number(candidate.platform_id.split("-").at(-1));
     if (index <= 6) {
@@ -302,9 +816,9 @@ test("runner replaces failed detail attempts until ten complete records are coll
 
   assert.equal(data.status, "complete");
   assert.deepEqual(data.detail_progress, {
-    target: 10,
-    attempted: 16,
-    completed: 10,
+    target: 20,
+    attempted: 26,
+    completed: 20,
     partial: 0,
     failed: 6,
     shortfall: 0,
@@ -314,7 +828,7 @@ test("runner replaces failed detail attempts until ten complete records are coll
   assert.match(data.detail_failures[0].message, /详情 1 超时/u);
 });
 
-test("runner reports partial when fewer than ten complete detail records exist", async (t) => {
+test("runner reports partial when fewer than twice the requested detail records exist", async (t) => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-runner-detail-shortfall-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   const run = createManualResearchRunner({
@@ -335,9 +849,9 @@ test("runner reports partial when fewer than ten complete detail records exist",
   );
 
   assert.equal(data.status, "partial");
-  assert.equal(data.detail_progress.target, 10);
+  assert.equal(data.detail_progress.target, 20);
   assert.equal(data.detail_progress.completed, 9);
-  assert.equal(data.detail_progress.shortfall, 1);
+  assert.equal(data.detail_progress.shortfall, 11);
 });
 
 test("runner recovers and retries one failed browser action", async (t) => {
@@ -493,10 +1007,11 @@ test("detail budget prioritizes candidates missing the selected exact quote", as
     }),
   );
 
-  assert.deepEqual(
-    collected,
-    Array.from({ length: 10 }, (_, index) => `creator-${index + 3}`),
-  );
+  assert.deepEqual(collected, [
+    ...Array.from({ length: 10 }, (_, index) => `creator-${index + 3}`),
+    "creator-1",
+    "creator-2",
+  ]);
 });
 
 test("PGY starting price is labeled as all-price evidence, never as a typed quote", () => {
@@ -551,6 +1066,57 @@ test("PGY exact quote uses its independent typed label in Excel", () => {
   assert.match(candidateSheet, /视频笔记/u);
   assert.match(candidateSheet, /¥29,000/u);
   assert.doesNotMatch(candidateSheet, /全部报价（起）/u);
+});
+
+test("manual workbook keeps a precise agency and omits polluted agency text", () => {
+  const plan = compileManualResearchPlan({
+    platform: "xingtu",
+    facts: [],
+    keywords: ["办公"],
+  });
+  const workbook = buildManualResearchWorkbook({
+    plan,
+    candidates: [
+      {
+        platform: "xingtu",
+        platform_id: "polluted-agency",
+        nickname: "办公达人",
+        collection_mode: "filtered",
+      },
+      {
+        platform: "xingtu",
+        platform_id: "precise-agency",
+        nickname: "效率达人",
+        collection_mode: "filtered",
+      },
+      {
+        platform: "xingtu",
+        platform_id: "non-text-agency",
+        nickname: "数码达人",
+        collection_mode: "filtered",
+      },
+    ],
+    details: [
+      {
+        candidate_ref: "polluted-agency",
+        fields: { agency: "所属机构 精准机构 账号类型 个人达人" },
+      },
+      {
+        candidate_ref: "precise-agency",
+        fields: { agency: "精准机构" },
+      },
+      {
+        candidate_ref: "non-text-agency",
+        fields: { agency: true },
+      },
+    ],
+    artifact: { generated_at: "2026-08-20T00:00:00.000Z" },
+  });
+  const candidateSheet = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
+  assert.match(candidateSheet, /供应商名称/u);
+  assert.match(candidateSheet, /精准机构/u);
+  assert.doesNotMatch(candidateSheet, /所属机构 精准机构 账号类型 个人达人/u);
+  assert.doesNotMatch(candidateSheet, />true</u);
 });
 
 test("generic DOM candidates remain outside the recommendation sheet after review", () => {
@@ -617,4 +1183,70 @@ test("generic DOM candidates remain outside the recommendation sheet after revie
   assert.doesNotMatch(recommendation, /通用召回达人/u);
   assert.match(recommendation, /已验证达人/u);
   assert.match(candidates, /通用召回达人/u);
+});
+
+test("review score orders recommendations and sends the remainder to candidates", () => {
+  const plan = compileManualResearchPlan(
+    params({
+      facts: [
+        fact("product", "product_name", "办公软件"),
+        fact("count", "creator_count", 1, { role: "submission" }),
+      ],
+    }),
+  );
+  const lowScore = {
+    platform: "xingtu",
+    platform_id: "low-score",
+    nickname: "低分达人",
+    detail_url: "https://www.xingtu.cn/creator/low-score",
+    collection_mode: "filtered",
+  };
+  const highScore = {
+    ...lowScore,
+    platform_id: "high-score",
+    nickname: "高分达人",
+    detail_url: "https://www.xingtu.cn/creator/high-score",
+  };
+  const workbook = buildManualResearchWorkbook({
+    plan,
+    candidates: [lowScore, highScore],
+    details: [lowScore, highScore].map((candidate) => ({
+      candidate_ref: candidate.platform_id,
+      status: "complete",
+      fields: {},
+      hard_evaluation: { status: "pass", checks: [] },
+    })),
+    reviews: [
+      {
+        candidate_ref: "low-score",
+        decision: "include",
+        recommendation_score: 10,
+        reasons: ["可作为候选"],
+        evidence: ["详情证据"],
+      },
+      {
+        candidate_ref: "high-score",
+        decision: "include",
+        recommendation_score: 90,
+        reasons: ["优先推荐"],
+        evidence: ["详情证据"],
+      },
+    ],
+    artifact: {
+      run_id: "score-run",
+      status: "complete",
+      generated_at: "2026-08-20T00:00:00.000Z",
+      candidate_row_count: 2,
+      target_row_count: 1,
+      delivery_shortfall: 0,
+      run_info: {},
+    },
+  });
+
+  const recommendation = storedZipEntry(workbook, "xl/worksheets/sheet1.xml");
+  const candidates = storedZipEntry(workbook, "xl/worksheets/sheet2.xml");
+  assert.match(recommendation, /高分达人/u);
+  assert.doesNotMatch(recommendation, /低分达人/u);
+  assert.match(candidates, /低分达人/u);
+  assert.doesNotMatch(candidates, /高分达人/u);
 });

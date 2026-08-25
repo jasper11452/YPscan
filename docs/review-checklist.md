@@ -8,14 +8,14 @@
 - [ ] 保留本轮 `search_creators` 返回的精确保存参数并立即调用保存工具；保存成功后再执行 `rank_mcns`，按“完整机构表格 → 真实本地 `file_path` → 后续分支弹窗”顺序输出。`creators_export_path` 只作为保存工具参数，不向用户输出下载链接，也不复用其他需求或平台的历史值；禁止用其他下载或写文件方式代替保存工具。
 - [ ] 机构询价和人工拓展可并行、重复进入，互不阻塞；供给风险只提示，不默认放宽条件。
 - [ ] `select_inquiry_form_fields` 必须用当前真实需求 ID 建立字段关联；用户提交后由 Provider 直接持久化。不得调用已弃用的 `get_selected_inquiry_form_fields`，不得轮询 callback，也不得在 Agent 上下文读取、重建或缓存 `columns`。
-- [ ] 机构回填按 `ingest_mcn_submissions → get_ingest_job` 异步取回：只复用本轮真实 `job_id` 轮询，成功返回 Excel 后才保存并继续精排；不得重跑 ingest、猜 ID 或把 pending 当完成。`create_submission_batch`、`create_with_distributions`、`get_creator_detail_export`、`get_creator_detail` 不传 `columns`，只传当前 schema 要求的业务标识并由后端关联字段；已弃用的 `manual_source_creators` 不得调用。收到 Excel URL 后立即保存并展示真实本地路径。
+- [ ] 人工拓展默认调用 `manual_source_creators`，收到 Excel URL 后立即保存并展示真实本地路径；只有保存成功且用户明确选择后才启动浏览器详细手扒。
 - [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；不得用普通聊天问句停住流程。
 - [ ] Agent 必须自主完成所有可执行步骤并持续推进；不得随意要求用户代为操作、整理信息、输入“完成”或帮助排错。仅在缺少必要授权、必要输入、登录或真实 CAPTCHA 等无法自主完成的情况下暂停。
 - [ ] 企微发送只调用 `create_with_distributions`，不经过插件预检或二次确认；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]` 且至少一侧非空。
 - [ ] 机构名匹配、合并去重和同一 requirement_id/机构幂等由 Provider 负责；模糊、不唯一、部分成功和重复发送结果原样展示，不重发已成功机构。
-- [ ] 机构表格展示机构名、返点、综合分和本机构覆盖数；缺失写“未知”，覆盖和供需指标只按当前响应的真实数据计算。
+- [ ] `rank_mcns` 机构表格严格只展示排名、机构、覆盖达人、返点、综合分；排名按响应顺序从 1 开始，缺失写“未知”，不得另行展示匹配机构数、推荐数量或其他汇总。
 - [ ] `rank_mcns` 每行覆盖人数只取当前机构自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，不得用作本机构人数，不得与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。
-- [ ] 排序机构 ID 放入 `supplierIds`，用户单独提名机构放入 `supplier_name`；提名名称不要求出现在排序结果，模糊候选选择后只使用 Provider 返回的真实 ID。
+- [ ] `supplier_id` 是企微收件机构的第一优先级：用户提供或提名机构名时，先在本轮同一 requirement ID、同一平台的 `rank_mcns` 结果中做唯一精确匹配；有非空 ID 就放入 `supplierIds` 且不再传同名 `supplier_name`，未匹配或无 ID 才把原名放入 `supplier_name`。不做本地模糊匹配，不跨需求、平台或 run 复用 ID；模糊候选选择后只使用 Provider 返回的真实 ID。
 - [ ] 所有结果、链接、文件和状态来自真实返回值，并归属于当前需求和平台；同一需求多批结果按平台稳定 ID 去重，不混入其他数据。粗召回、复核候选和最终名单须明确区分，自有 Excel 遵循客户模板。
 - [ ] Browser 人工拓展只在固定 Provider 链路和用户选择后进入；Agent 打开正确达人页并调用 `ypscan_manual_research`，不猜控件、不跨行拼接数据。
 - [ ] 页面普通提示、资质提醒、新手引导、遮罩或遗留浮层由 Agent/工具直接关闭或复位，不要求用户代操作；登录失效、真实 CAPTCHA，或详情请求出现 401、403、429 时暂停整个详情批次，风控信号不自动重试。

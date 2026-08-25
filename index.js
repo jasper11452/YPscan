@@ -17,10 +17,12 @@ export default {
   id: "ypscan",
   register(api) {
     const testAdapterBaseUrl = resolveTestAdapterBaseUrl(api.pluginConfig ?? {});
-    const parseRequirement = createRequirementParser();
+    const parseRequirement = createRequirementParser({
+      fetchImpl: api.fetch ?? globalThis.fetch,
+    });
     const hookRuntime = registerFlowDirectiveHooks(api);
     const manualBrowserRuntime = createManualBrowserRuntime({
-      profileDir: api.pluginConfig?.manualBrowserProfileDir,
+      browserCdpUrl: api.pluginConfig?.browserCdpUrl,
     });
 
     api.registerTool(
@@ -32,7 +34,7 @@ export default {
         return {
           name: "ypscan_manual_research",
           description:
-            "产物优先的双平台手扒 Runner：start/resume 由插件直接控制专用持久 Chrome，筛选失败逐级降级并始终优先生成本地 Excel；apply_reviews/create_submission 为可选后续。",
+            "仅在用户明确要求浏览器手扒后使用的双平台 Runner：Agent 先启动宿主 Browser，start/resume 通过 CDP 复用其登录态并保存原始详情 HTML；普通手扒、手动拓展、人工拓展、直接手扒和手捞筛选必须改用 MCP manual_source_creators。",
           parameters: MANUAL_RESEARCH_RUNNER_PARAMETERS,
           async execute(_id, params) {
             return manualResearch(params);
@@ -45,7 +47,7 @@ export default {
     api.registerTool({
       name: "ypscan_parse_requirement",
       description:
-        "需求解析入口：传紧凑证据 facts，工具补齐元数据并输出 Provider 参数、搜索分组和 residual_conditions。必须随后调用 validate_requirement；不启动 Browser、不创建需求。",
+        "将当前单个平台的完整最新需求直连固定 Dify Workflow，在 data.outputs 中完整透传原始 Workflow 输出。Dify 负责标签、品牌、粉丝、返点、报价、CPM 和 CPE；首次需求必调，后续单次修改只涉及一个条件时由 Agent 直接更新，涉及两个及以上条件时只用用户原始表述和后续改口重建完整需求再调用，禁止把 Dify 输出或 Provider 归一化值回填给 Dify。Dify 输出不得猜测或重算，其余 Provider 字段由 Agent 按 media-assistant 解析参考补齐。",
       parameters: PARSE_REQUIREMENT_PARAMETERS,
       outputSchema: PARSE_REQUIREMENT_OUTPUT_SCHEMA,
       async execute(_id, params) {
@@ -74,8 +76,9 @@ export default {
                 enum: [
                   "submission_batch",
                   "creator_detail_export",
-                  "creator_preview",
+                  "mcn_ranking",
                   "mcn_creator_preview",
+                  "manual_source",
                 ],
               },
               artifact_id: {

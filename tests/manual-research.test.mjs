@@ -223,6 +223,55 @@ test("manual plan preserves business summary fields for the Excel template", () 
   });
 });
 
+test("manual plan accepts parser facts that carry numeric data in value", () => {
+  const plan = compileManualResearchPlan({
+    platform: "pgy",
+    quote_type: "图文",
+    facts: [
+      fact("product", "product_name", "家居"),
+      { ...fact("count", "creator_count", undefined), value: 10, role: "submission" },
+      {
+        ...fact("followers", "follower_count", undefined),
+        value: 100_000,
+        operator: "gte",
+      },
+      { ...fact("cpm", "cpm_max", undefined), value: 500, operator: "lte" },
+      { ...fact("cpe", "cpe_max", undefined), value: 20, operator: "lte" },
+      { ...fact("price", "creator_price", undefined), value: 2_000, operator: "lte" },
+    ],
+  });
+
+  assert.equal(plan.target_count, 10);
+  assert.deepEqual(
+    Object.fromEntries(
+      plan.filters.map((filter) => [filter.control, { min: filter.min, max: filter.max }]),
+    ),
+    {
+      follower_count: { min: 100_000, max: null },
+      cpm: { min: 0, max: 500 },
+      cpe: { min: 0, max: 20 },
+      creator_price: { min: 1_000, max: 2_400 },
+    },
+  );
+  assert.equal(plan.filters.find((filter) => filter.control === "cpm").qualifier, "generic");
+  assert.equal(plan.filters.find((filter) => filter.control === "cpe").qualifier, "generic");
+});
+
+test("PGY metric range filters preserve their picture or video qualifier", () => {
+  const plan = compileManualResearchPlan({
+    platform: "pgy",
+    quote_type: "视频",
+    facts: [
+      fact("price", "creator_price", 2_000, { operator: "lte" }),
+      fact("picture-cpm", "cpm_max", 100, { operator: "lte", qualifier: "picture" }),
+      fact("video-cpe", "cpe_max", 20, { operator: "lte", qualifier: "video" }),
+    ],
+  });
+
+  assert.equal(plan.filters.find((filter) => filter.control === "cpm").qualifier, "picture");
+  assert.equal(plan.filters.find((filter) => filter.control === "cpe").qualifier, "video");
+});
+
 test("manual price expansion turns a 100k cap into 50k–120k and expands range edges", () => {
   const capped = compileManualResearchPlan({
     platform: "pgy",

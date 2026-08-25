@@ -29,14 +29,18 @@ test("flow hooks do not register tool-call gates", () => {
   assert.deepEqual([...hooks.keys()].sort(), ["before_prompt_build", "tool_result_persist"]);
 });
 
-test("startup documents all three recipient combinations without a send confirmation", () => {
+test("startup makes current-rank supplier IDs the first-priority recipient identity", () => {
   const { hooks } = registeredPlugin();
   const prompt = hooks.get("before_prompt_build")({}, { runId: "recipient-contract" });
   assert.match(prompt.prependContext, /supplierIds 和 supplier_name 始终都是数组/u);
   assert.match(prompt.prependContext, /空侧传 \[\]/u);
-  assert.match(prompt.prependContext, /排序机构使用 supplierIds/u);
-  assert.match(prompt.prependContext, /单独提名的机构使用 supplier_name/u);
-  assert.match(prompt.prependContext, /两者可同时非空/u);
+  assert.match(prompt.prependContext, /supplier_id 是第一优先级/u);
+  assert.match(prompt.prependContext, /同一 requirement ID、同一平台的 rank_mcns\.data\.mcns/u);
+  assert.match(prompt.prependContext, /命中且有非空 supplier_id 就只放入 supplierIds/u);
+  assert.match(prompt.prependContext, /未匹配或无 ID 才把原名放入 supplier_name/u);
+  assert.match(prompt.prependContext, /不跨需求、平台或 run 复用 ID/u);
+  assert.match(prompt.prependContext, /两个数组可同时非空/u);
+  assert.doesNotMatch(prompt.prependContext, /单独提名的机构使用 supplier_name/u);
   assert.match(prompt.prependContext, /不追加企微发送确认/u);
   assert.doesNotMatch(
     prompt.prependContext,

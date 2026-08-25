@@ -5,6 +5,7 @@ import {
   detailGroupsForPlan,
   detailQueueLimit,
   evaluateCandidateDetail,
+  missingRequiredDetailFields,
   parseDetailCount,
   parseDetailRatio,
   reviewEvidenceGaps,
@@ -134,6 +135,28 @@ test("review evidence gaps distinguish content, city and audience persona requir
     ),
     [],
   );
+});
+
+test("requirement completeness accepts the same alternative fields used by hard evaluation", () => {
+  const plan = {
+    platform: "xingtu",
+    filters: [
+      { control: "creator_type", mode: "options", values: ["职场"] },
+      { control: "audience_gender", mode: "options", values: ["女"] },
+      { control: "audience_city", mode: "options", values: ["上海"] },
+    ],
+    review_requirements: [{ fact_kind: "audience_city", quote: "粉丝主要在一二线" }],
+  };
+  const fields = {
+    followers_raw: "10万",
+    recent_content: [{ title: "办公实测" }],
+    account_type: "职场",
+    audience_male_rate_raw: "40%",
+    audience_city_distribution: [{ name: "上海", rate_raw: "31%" }],
+  };
+  const evaluation = evaluateCandidateDetail({}, { fields }, plan);
+  assert.equal(evaluation.status, "pass");
+  assert.deepEqual(missingRequiredDetailFields(plan, evaluation.fields), []);
 });
 
 test("detail planning is targeted, bounded to twice the target and reviews at most twenty", () => {

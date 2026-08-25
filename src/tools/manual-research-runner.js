@@ -4,9 +4,11 @@ import {
   createManualResearchSubmission,
   loadManualResearchRun,
   MANUAL_RESEARCH_PREVIEW_LIMIT,
+  readManualResearchHtml,
 } from "./manual-research-artifact.js";
 import {
   candidateReference,
+  detailQueueLimit,
   detailGroupsForPlan,
   evaluateCandidateDetail,
   mergeDetailRecords,
@@ -25,11 +27,29 @@ const RUN_BUDGET_MS = 180_000;
 const PERSIST_RESERVE_MS = 15_000;
 const ACTION_TIMEOUT_MS = 6_000;
 const DETAIL_TIMEOUT_MS = 20_000;
-const MAX_PAGES_PER_BRANCH = 5;
-const MAX_PAGES_TOTAL = 12;
-const MAX_DETAILS = 10;
+const RESUMABLE_ERROR_CODES = new Set([
+  "YPSCAN_MANUAL_LOGIN_REQUIRED",
+  "YPSCAN_MANUAL_CAPTCHA_REQUIRED",
+  "YPSCAN_MANUAL_BROWSER_UNAVAILABLE",
+  "YPSCAN_MANUAL_PAGE_OPEN_FAILED",
+  "YPSCAN_MANUAL_PAGE_NOT_READY",
+  "YPSCAN_MANUAL_WRONG_PAGE",
+  "YPSCAN_MANUAL_ACTION_TIMEOUT",
+]);
+const REOPEN_ERROR_CODES = new Set([
+  "YPSCAN_MANUAL_PAGE_OPEN_FAILED",
+  "YPSCAN_MANUAL_PAGE_NOT_READY",
+  "YPSCAN_MANUAL_WRONG_PAGE",
+  "YPSCAN_MANUAL_ACTION_TIMEOUT",
+]);
 
-const PUBLIC_OPERATIONS = Object.freeze(["start", "resume", "apply_reviews", "create_submission"]);
+const PUBLIC_OPERATIONS = Object.freeze([
+  "start",
+  "resume",
+  "read_detail_html",
+  "apply_reviews",
+  "create_submission",
+]);
 const PLATFORMS = Object.freeze(["xingtu", "pgy", "douyin", "xiaohongshu"]);
 
 export const MANUAL_RESEARCH_RUNNER_PARAMETERS = Object.freeze({
@@ -41,6 +61,9 @@ export const MANUAL_RESEARCH_RUNNER_PARAMETERS = Object.freeze({
     requirement_id: { type: "string", minLength: 1 },
     platform: { type: "string", enum: [...PLATFORMS] },
     run_id: { type: "string", minLength: 1 },
+    candidate_ref: { type: "string", minLength: 1 },
+    snapshot_id: { type: "string", minLength: 1 },
+    cursor: { type: "integer", minimum: 0 },
     facts: { type: "array", items: { type: "object" } },
     quote_type: {
       type: "string",
@@ -67,6 +90,22 @@ export const MANUAL_RESEARCH_RUNNER_PARAMETERS = Object.freeze({
           decision: { type: "string", enum: ["include", "exclude"] },
           reasons: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
           evidence: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+          recommendation_score: { type: "integer", minimum: 0, maximum: 100 },
+          extracted_fields: { type: "object" },
+          field_evidence: {
+            type: "array",
+            maxItems: 128,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["field", "snapshot_id", "quote"],
+              properties: {
+                field: { type: "string", minLength: 1 },
+                snapshot_id: { type: "string", minLength: 1 },
+                quote: { type: "string", minLength: 1, maxLength: 4000 },
+              },
+            },
+          },
         },
       },
     },
@@ -126,6 +165,14 @@ function validateParams(input = {}) {
       throw argumentError("apply_reviews 必须提供 1–20 条 reviews");
     }
     params.reviews = input.reviews;
+  }
+  if (operation === "read_detail_html") {
+    params.candidate_ref = required(input.candidate_ref, "candidate_ref");
+    params.snapshot_id = required(input.snapshot_id, "snapshot_id");
+    params.cursor = input.cursor ?? 0;
+    if (!Number.isInteger(params.cursor) || params.cursor < 0) {
+      throw argumentError("cursor 必须是非负整数");
+    }
   }
   return params;
 }
@@ -223,7 +270,7 @@ async function retryBrowserAction(label, action, adapter, timeoutMs = ACTION_TIM
   try {
     return await bounded(label, Promise.resolve().then(action), timeoutMs);
   } catch (firstError) {
-    if (needsUser(firstError) || typeof adapter?.recover !== "function") throw firstError;
+    if (isResumableError(firstError) || typeof adapter?.recover !== "function") throw firstError;
     await bounded(
       `${label}恢复页面`,
       Promise.resolve().then(() => adapter.recover()),
@@ -233,11 +280,11 @@ async function retryBrowserAction(label, action, adapter, timeoutMs = ACTION_TIM
   }
 }
 
-function needsUser(error) {
-  return ["YPSCAN_MANUAL_LOGIN_REQUIRED", "YPSCAN_MANUAL_CAPTCHA_REQUIRED"].includes(error?.code);
+function isResumableError(error) {
+  return RESUMABLE_ERROR_CODES.has(error?.code);
 }
 
-function persistenceFailure(error) {
+function isPersistenceFailure(error) {
   return ["YPSCAN_MANUAL_CHECKPOINT_FAILED", "YPSCAN_MANUAL_ARTIFACT_FAILED"].includes(error?.code);
 }
 
@@ -263,7 +310,24 @@ function cleanDiagnosticMessage(error) {
 }
 
 function detailTarget(plan) {
-  return Math.min(MAX_DETAILS, plan.target_count ?? MAX_DETAILS);
+  return detailQueueLimit(plan);
+}
+
+function qualifiedDetailCount(details, reviews) {
+  const detailMap = new Map(details.map((item) => [item.candidate_ref, item]));
+  return reviews.filter((review) => {
+    const detail = detailMap.get(review.candidate_ref);
+    return (
+      review.decision === "include" &&
+      detail?.status === "complete" &&
+      detail?.hard_evaluation?.status === "pass"
+    );
+  }).length;
+}
+
+function capturedOrCompletedDetailCount(details) {
+  return details.filter((detail) => detail.html_snapshots?.length || detail.status === "complete")
+    .length;
 }
 
 function createRunInfo(params, plan, state, now, candidateCount = 0) {
@@ -285,6 +349,7 @@ function createRunInfo(params, plan, state, now, candidateCount = 0) {
     applied_filters: [...state.applied_filters],
     unapplied_filters: [...state.unapplied_filters],
     detail_attempted: state.detail_attempted,
+    detail_captured: state.detail_captured,
     detail_completed: state.detail_completed,
     detail_target: detailTarget(plan),
     detail_shortfall: Math.max(detailTarget(plan) - state.detail_completed, 0),
@@ -335,11 +400,31 @@ function createState(restored = {}) {
     unapplied_filters: new Set(latest.unapplied_filters ?? []),
     quality_level: latest.quality_level ?? "unverified",
     detail_attempted: latest.detail_cursor ?? restored.details?.length ?? 0,
+    detail_captured:
+      restored.details?.filter((item) => item.html_snapshots?.length > 0).length ?? 0,
     detail_completed: restored.details?.filter((item) => item.status === "complete").length ?? 0,
     error_code: null,
     error_message: null,
     resume_available: false,
     resume_instruction: null,
+  };
+}
+
+function htmlReadCall(params, runId, task, snapshotId = null, cursor = 0) {
+  const firstSnapshotId = snapshotId ?? task?.html_snapshots?.[0]?.snapshot_id;
+  if (!task?.candidate_ref || !firstSnapshotId) return null;
+  return {
+    tool: "ypscan_manual_research",
+    args: {
+      operation: "read_detail_html",
+      requirement_id: params.requirement_id,
+      platform: params.platform,
+      run_id: runId,
+      candidate_ref: task.candidate_ref,
+      snapshot_id: firstSnapshotId,
+      cursor,
+    },
+    reason: "读取当前达人全部原始 HTML 快照后由 Agent 提炼字段",
   };
 }
 
@@ -355,10 +440,14 @@ function publicPayload({
   artifact,
 }) {
   const pending = reviewBatch(candidates, details, reviews, {
+    plan,
     requirements: plan.review_requirements,
   });
   const target = detailTarget(plan);
   const partialCount = details.filter((item) => item.status === "partial").length;
+  const capturedCount = details.filter((item) => item.html_snapshots?.length > 0).length;
+  const htmlWorkflow = capturedCount > 0;
+  const awaitingExtraction = details.filter((item) => item.status === "awaiting_extraction").length;
   const failedDetails = details.filter((item) => item.status === "failed");
   return {
     success: status !== "failed",
@@ -372,16 +461,27 @@ function publicPayload({
     candidates: candidates.slice(0, MANUAL_RESEARCH_PREVIEW_LIMIT),
     review_batch: pending.tasks,
     review_remaining: pending.remaining,
+    ...(["awaiting_extraction", "reviewing"].includes(status) &&
+    pending.tasks[0]?.html_snapshots?.length
+      ? { next_call: htmlReadCall(params, store.run_id, pending.tasks[0]) }
+      : {}),
     delivery_shortfall: plan.target_count ? Math.max(plan.target_count - candidates.length, 0) : 0,
     detail_progress: {
       target,
       attempted: state.detail_attempted,
+      ...(htmlWorkflow || awaitingExtraction
+        ? { captured: capturedCount, awaiting_extraction: awaitingExtraction }
+        : {}),
       completed: state.detail_completed,
+      ...(htmlWorkflow || awaitingExtraction ? { qualified: artifact?.target_row_count ?? 0 } : {}),
       partial: partialCount,
       failed: failedDetails.length,
-      shortfall: Math.max(target - state.detail_completed, 0),
+      shortfall: Math.max(
+        target - (htmlWorkflow ? (artifact?.target_row_count ?? 0) : state.detail_completed),
+        0,
+      ),
     },
-    detail_failures: failedDetails.slice(-MAX_DETAILS).map((item) => ({
+    detail_failures: failedDetails.slice(-MANUAL_RESEARCH_PREVIEW_LIMIT).map((item) => ({
       candidate_ref: item.candidate_ref,
       nickname: item.nickname ?? null,
       stage: item.failure?.stage ?? "collect_detail",
@@ -433,6 +533,44 @@ export function createManualResearchRunner({
     let params;
     try {
       params = validateParams(rawParams);
+      if (params.operation === "read_detail_html") {
+        const result = await readManualResearchHtml({
+          workspaceDir,
+          runId: params.run_id,
+          requirementId: params.requirement_id,
+          platform: params.platform,
+          candidateRef: params.candidate_ref,
+          snapshotId: params.snapshot_id,
+          cursor: params.cursor,
+        });
+        const nextSnapshotId = result.eof ? result.next_snapshot_id : result.snapshot.snapshot_id;
+        const nextCursor = result.eof ? 0 : result.next_cursor;
+        const nextCall = nextSnapshotId
+          ? {
+              tool: "ypscan_manual_research",
+              args: {
+                operation: "read_detail_html",
+                requirement_id: params.requirement_id,
+                platform: params.platform,
+                run_id: params.run_id,
+                candidate_ref: params.candidate_ref,
+                snapshot_id: nextSnapshotId,
+                cursor: nextCursor,
+              },
+              reason: "继续读取当前达人原始 HTML；未读完前不得提炼或回写",
+            }
+          : null;
+        return hostToolResult({
+          success: true,
+          status: result.eof ? "html_snapshot_complete" : "html_chunk",
+          operation: params.operation,
+          requirement_id: params.requirement_id,
+          platform: params.platform,
+          run_id: params.run_id,
+          ...result,
+          ...(nextCall ? { next_call: nextCall } : {}),
+        });
+      }
       if (params.operation === "apply_reviews") {
         const result = await applyManualResearchReviews({
           workspaceDir,
@@ -451,7 +589,15 @@ export function createManualResearchRunner({
           run_id: params.run_id,
           review_batch: result.review_batch,
           review_remaining: result.review_remaining,
+          detail_progress: result.detail_progress,
           artifact: result.artifact,
+          ...(result.review_batch[0]?.html_snapshots?.length
+            ? {
+                next_call: htmlReadCall(params, params.run_id, result.review_batch[0]),
+              }
+            : result.next_call && typeof result.next_call === "object"
+              ? { next_call: result.next_call }
+              : {}),
         });
       }
       if (params.operation === "create_submission") {
@@ -487,6 +633,19 @@ export function createManualResearchRunner({
           requirementId: params.requirement_id,
           platform: params.platform,
         });
+        if (restored.checkpoint_version < 3 && !restored.final_events?.length) {
+          throw Object.assign(new Error("旧运行没有原始 HTML 证据，请使用 fresh_run 重新采集"), {
+            code: "YPSCAN_MANUAL_HTML_EVIDENCE_REQUIRED",
+            details: {
+              fresh_run_args: {
+                operation: "start",
+                requirement_id: params.requirement_id,
+                platform: params.platform,
+                fresh_run: true,
+              },
+            },
+          });
+        }
         plan = restored.plan;
       }
       const store = await createStore({
@@ -503,7 +662,6 @@ export function createManualResearchRunner({
       const reviews = mergeReviewRecords(saved.reviews ?? []);
       const branches = [...(saved.branches ?? [])];
       const state = createState(saved);
-      const poolTarget = Math.min(200, Math.max(plan.target_count ?? 20, 20));
       const deadline = now() + RUN_BUDGET_MS - PERSIST_RESERVE_MS;
 
       const materialize = async (status, final = false) => {
@@ -522,9 +680,15 @@ export function createManualResearchRunner({
       };
 
       const latestRunnerState = saved.runner_states?.at(-1);
-      if (latestRunnerState?.phase === "terminal" && params.fresh_run !== true) {
+      const latestTerminalStatus =
+        saved.final_events?.at(-1)?.status ?? latestRunnerState?.execution_status;
+      if (
+        latestRunnerState?.phase === "terminal" &&
+        params.fresh_run !== true &&
+        latestTerminalStatus !== "partial"
+      ) {
         state.phase = "terminal";
-        const terminalStatus = latestRunnerState.execution_status ?? "complete";
+        const terminalStatus = latestTerminalStatus ?? "complete";
         const diagnosticRunnerState = [...(saved.runner_states ?? [])]
           .reverse()
           .find(
@@ -611,9 +775,11 @@ export function createManualResearchRunner({
       try {
         state.phase = "opening_browser";
         await store.saveRunnerState(runnerState(params, state, "running", now));
+        const reopen =
+          params.operation === "resume" && REOPEN_ERROR_CODES.has(latestRunnerState?.error_code);
         const page = await bounded(
           "启动浏览器",
-          browserRuntime.page(params.platform, workspaceDir),
+          browserRuntime.page(params.platform, { reopen }),
           20_000,
         );
         adapter = createAdapter(params.platform, page, { workspaceDir, now });
@@ -622,20 +788,16 @@ export function createManualResearchRunner({
           state.quality_level = "exact";
         }
 
-        const collect = async (branch, mode, applyFilters) => {
-          if (
-            now() >= deadline ||
-            candidates.length >= poolTarget ||
-            state.completed_pages >= MAX_PAGES_TOTAL
-          )
-            return;
+        const collect = async (branch, mode, applyFilters, preserveFilters = false) => {
           state.phase = "filtering";
           state.branch_index = branch.branch_index;
           state.keyword = branch.keyword;
           state.collection_mode = mode;
           if (mode !== "filtered") state.fallback_modes.add(mode);
-          await retryBrowserAction("重置筛选", () => adapter.reset(), adapter);
-          if (typeof adapter.verifyBaseline === "function") {
+          if (!preserveFilters) {
+            await retryBrowserAction("重置筛选", () => adapter.reset(), adapter);
+          }
+          if (!preserveFilters && typeof adapter.verifyBaseline === "function") {
             const baseline = await retryBrowserAction(
               "验证筛选复位",
               () => adapter.verifyBaseline(),
@@ -647,7 +809,7 @@ export function createManualResearchRunner({
             }
           }
           let allApplied = true;
-          if (applyFilters) {
+          if (applyFilters && !preserveFilters) {
             if (plan.price_view) {
               try {
                 const result = await retryBrowserAction(
@@ -661,13 +823,12 @@ export function createManualResearchRunner({
                   state.unapplied_filters.add(`报价类型=${plan.price_view}`);
                 }
               } catch (error) {
-                if (needsUser(error) || persistenceFailure(error)) throw error;
+                if (isResumableError(error) || isPersistenceFailure(error)) throw error;
                 allApplied = false;
                 state.unapplied_filters.add(`报价类型=${plan.price_view}`);
               }
             }
             for (const filter of plan.filters) {
-              if (now() >= deadline) break;
               const label = `${filter.control}:${filter.values?.join("/") ?? `${filter.min ?? ""}-${filter.max ?? ""}`}`;
               try {
                 const result = await retryBrowserAction(
@@ -701,21 +862,13 @@ export function createManualResearchRunner({
               );
               if (!searched?.applied) state.unapplied_filters.add(`关键词=${branch.keyword}`);
             } catch (error) {
-              if (needsUser(error) || persistenceFailure(error)) throw error;
+              if (isResumableError(error) || isPersistenceFailure(error)) throw error;
               lowerQuality(state, "degraded");
               state.unapplied_filters.add(`关键词=${branch.keyword}`);
             }
           }
           state.phase = "collecting_list";
-          for (let pageNumber = 1; pageNumber <= MAX_PAGES_PER_BRANCH; pageNumber += 1) {
-            if (
-              now() >= deadline ||
-              candidates.length >= poolTarget ||
-              state.completed_pages >= MAX_PAGES_TOTAL
-            ) {
-              timedOut ||= now() >= deadline;
-              break;
-            }
+          for (let pageNumber = 1; ; pageNumber += 1) {
             state.page_number = pageNumber;
             let usedGenericDom = false;
             let pageData;
@@ -727,7 +880,7 @@ export function createManualResearchRunner({
                 10_000,
               );
             } catch (error) {
-              if (needsUser(error) || persistenceFailure(error)) throw error;
+              if (isResumableError(error) || isPersistenceFailure(error)) throw error;
               state.error_code = error?.code ?? "YPSCAN_MANUAL_LIST_UNAVAILABLE";
               state.error_message = error?.message ?? String(error);
               lowerQuality(state, "unverified");
@@ -774,18 +927,18 @@ export function createManualResearchRunner({
             try {
               next = await retryBrowserAction("进入下一页", () => adapter.nextPage(), adapter);
             } catch (error) {
-              if (needsUser(error) || persistenceFailure(error)) throw error;
+              if (isResumableError(error) || isPersistenceFailure(error)) throw error;
               state.unapplied_filters.add(`分页:${pageNumber + 1}`);
             }
             if (!(next === true || next?.advanced === true)) break;
           }
         };
 
-        const collectSafely = async (branch, mode, applyFilters) => {
+        const collectSafely = async (branch, mode, applyFilters, preserveFilters = false) => {
           try {
-            await collect(branch, mode, applyFilters);
+            await collect(branch, mode, applyFilters, preserveFilters);
           } catch (error) {
-            if (needsUser(error) || persistenceFailure(error)) throw error;
+            if (isResumableError(error) || isPersistenceFailure(error)) throw error;
             state.error_code = error?.code ?? "YPSCAN_MANUAL_PAGE_UNAVAILABLE";
             state.error_message = error?.message ?? String(error);
             lowerQuality(state, "unverified");
@@ -793,21 +946,19 @@ export function createManualResearchRunner({
           }
         };
 
+        let filteredBranchCount = 0;
         for (const branch of plan.branches) {
           if (state.completed_branch_indexes.has(branch.branch_index)) continue;
-          await collectSafely(branch, "filtered", true);
-          if (candidates.length < poolTarget && now() < deadline) {
-            await collectSafely(branch, "keyword_only", false);
-          }
+          await collectSafely(branch, "filtered", true, filteredBranchCount > 0);
+          filteredBranchCount += 1;
           state.completed_branch_indexes.add(branch.branch_index);
           state.completed_keywords.add(branch.keyword);
           const completed = { ...branch, collection: { status: "complete" } };
           branches.push(completed);
           await store.saveBranch(completed);
-          if (candidates.length >= poolTarget || now() >= deadline) break;
         }
 
-        if (candidates.length < poolTarget && now() < deadline) {
+        if (candidates.length < detailTarget(plan) && now() < deadline) {
           await collectSafely(
             { branch_index: plan.branches.length, branch_id: "market-unfiltered", keyword: "" },
             "market_unfiltered",
@@ -827,8 +978,14 @@ export function createManualResearchRunner({
             (left, right) =>
               Number(needsExactPrice(right, plan)) - Number(needsExactPrice(left, plan)),
           );
+        const qualifiedCount = qualifiedDetailCount(details, reviews);
+        const htmlCaptureTarget =
+          capturedOrCompletedDetailCount(details) +
+          Math.max(detailTarget(plan) - qualifiedCount, 0);
         for (const candidate of detailCandidates) {
-          if (state.detail_completed >= detailTarget(plan)) break;
+          if (capturedOrCompletedDetailCount(details) >= htmlCaptureTarget) {
+            break;
+          }
           if (now() >= deadline) {
             timedOut = true;
             break;
@@ -839,19 +996,32 @@ export function createManualResearchRunner({
             const collected = await bounded(
               "采集达人详情",
               Promise.resolve().then(() =>
-                adapter.collectDetail(candidate, { groups: detailGroupsForPlan(plan) }),
+                adapter.collectDetail(candidate, {
+                  groups: detailGroupsForPlan(plan),
+                  onHtmlSnapshot: (snapshot) =>
+                    store.saveDetailHtmlSnapshot({
+                      candidateRef: candidateReference(candidate),
+                      ...snapshot,
+                    }),
+                }),
               ),
               DETAIL_TIMEOUT_MS,
             );
             const evaluation = evaluateCandidateDetail(candidate, collected, plan);
+            const awaitingExtraction = Boolean(collected.html_snapshots?.length);
             const detail = {
               ...collected,
               candidate_ref: candidateReference(candidate),
-              fields: evaluation.fields,
+              status: awaitingExtraction ? "awaiting_extraction" : collected.status,
+              reason: awaitingExtraction ? "agent_extraction_required" : collected.reason,
+              fields: awaitingExtraction ? {} : evaluation.fields,
               hard_evaluation:
-                collected.status === "blocked" ? { ...evaluation, status: "unknown" } : evaluation,
+                collected.status === "blocked" || awaitingExtraction
+                  ? { ...evaluation, status: "unknown", fields: {} }
+                  : evaluation,
             };
             details = mergeDetailRecords([...details, detail]);
+            if (awaitingExtraction) state.detail_captured += 1;
             if (detail.status === "complete") state.detail_completed += 1;
             artifact = await store.saveDetail({
               detail,
@@ -867,16 +1037,20 @@ export function createManualResearchRunner({
             const captured = error?.details?.captured_detail;
             if (captured) {
               const evaluation = evaluateCandidateDetail(candidate, captured, plan);
+              const awaitingExtraction = Boolean(captured.html_snapshots?.length);
               const detail = {
                 ...captured,
                 candidate_ref: candidateReference(candidate),
-                fields: evaluation.fields,
+                status: awaitingExtraction ? "awaiting_extraction" : captured.status,
+                reason: awaitingExtraction ? "agent_extraction_required" : captured.reason,
+                fields: awaitingExtraction ? {} : evaluation.fields,
                 hard_evaluation:
-                  captured.status === "complete"
+                  captured.status === "complete" && !awaitingExtraction
                     ? evaluation
-                    : { ...evaluation, status: "unknown" },
+                    : { ...evaluation, status: "unknown", fields: {} },
               };
               details = mergeDetailRecords([...details, detail]);
+              if (awaitingExtraction) state.detail_captured += 1;
               if (detail.status === "complete") state.detail_completed += 1;
               artifact = await store.saveDetail({
                 detail,
@@ -889,7 +1063,7 @@ export function createManualResearchRunner({
                 runInfo: createRunInfo(params, plan, state, now, candidates.length),
               });
             }
-            if (needsUser(error)) throw error;
+            if (isResumableError(error)) throw error;
             const failure = {
               candidate_ref: candidateReference(candidate),
               platform_id: candidate.platform_id ?? null,
@@ -922,14 +1096,22 @@ export function createManualResearchRunner({
 
         timedOut ||= now() >= deadline;
         state.phase = "terminal";
-        const detailShortfall = state.detail_completed < detailTarget(plan);
-        const status = candidates.length
-          ? timedOut || state.error_code || detailShortfall
-            ? "partial"
-            : "complete"
-          : state.error_code
-            ? "failed_with_artifact"
-            : "empty";
+        const hasPendingExtraction = details.some(
+          (detail) => detail.status === "awaiting_extraction",
+        );
+        const detailCompleteCount = details.some((detail) => detail.html_snapshots?.length)
+          ? qualifiedDetailCount(details, reviews)
+          : state.detail_completed;
+        const detailShortfall = detailCompleteCount < detailTarget(plan);
+        const status = hasPendingExtraction
+          ? "awaiting_extraction"
+          : candidates.length
+            ? timedOut || state.error_code || detailShortfall
+              ? "partial"
+              : "complete"
+            : state.error_code
+              ? "failed_with_artifact"
+              : "empty";
         artifact = await materialize(status, true);
         return hostToolResult(
           publicPayload({
@@ -948,15 +1130,18 @@ export function createManualResearchRunner({
         state.error_code = error?.code ?? "YPSCAN_MANUAL_RESEARCH_FAILED";
         state.error_message = error?.message ?? String(error);
         lowerQuality(state, candidates.length ? "degraded" : "unverified");
-        const status = needsUser(error)
+        const resumable = isResumableError(error);
+        const status = resumable
           ? "needs_user_action"
           : candidates.length
             ? "partial"
             : "failed_with_artifact";
-        state.phase = needsUser(error) ? "awaiting_user" : "terminal";
-        state.resume_available = needsUser(error);
-        state.resume_instruction = needsUser(error)
-          ? "在专用浏览器完成登录或验证后原样调用 resume"
+        state.phase = resumable ? "awaiting_user" : "terminal";
+        state.resume_available = resumable;
+        state.resume_instruction = resumable
+          ? error?.code === "YPSCAN_MANUAL_BROWSER_UNAVAILABLE"
+            ? "由 Agent 启动宿主 Browser 后原样调用 resume"
+            : "在宿主 Browser 完成登录、验证或网络恢复后原样调用 resume"
           : null;
         artifact = await materialize(status, true).catch(() => artifact);
         return hostToolResult(
@@ -996,8 +1181,6 @@ export function createManualResearchRunner({
 export const MANUAL_RESEARCH_RUNNER_LIMITS = Object.freeze({
   run_budget_ms: RUN_BUDGET_MS,
   persist_reserve_ms: PERSIST_RESERVE_MS,
-  max_pages_per_branch: MAX_PAGES_PER_BRANCH,
-  max_pages_total: MAX_PAGES_TOTAL,
-  max_details: MAX_DETAILS,
+  detail_target_multiplier: 2,
   detail_timeout_ms: DETAIL_TIMEOUT_MS,
 });

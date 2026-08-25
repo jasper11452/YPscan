@@ -6,20 +6,21 @@ This is the institutional inquiry creation entry point.
 
 ## When to call
 
-Call once after the user has chosen the inquiry branch, field selection has been submitted for the requirement, and the recipient IDs and/or user-nominated institution names plus the complete message are available. Do not make a preview call or ask for another send confirmation.
+Call once after the user has chosen the inquiry branch, field selection has been submitted for the requirement, and the recipient IDs plus any unmatched user-nominated institution names and the complete message are available. Do not make a preview call or ask for another send confirmation.
 
 ## Recipient and field preparation
 
 - Always pass both recipient arrays. Use `[]` for an empty side, and require at least one array to be non-empty.
-- Ranked institutions use their real IDs in `supplierIds`; institutions explicitly nominated by the user use their stated names in `supplier_name`. Both arrays may be non-empty in the same call.
-- Do not require a nominated name to appear in `rank_mcns`, rerun ranking to resolve it, or map it locally. The Provider owns name matching against the supplier library.
+- `supplier_id` is the first-priority recipient identity. For every institution name supplied or nominated by the user, first inspect only the current requirement and platform's real `rank_mcns.data.mcns` response. When the name has one exact match and that object has a non-empty `supplier_id`, put that ID in `supplierIds` and do not also put the same institution in `supplier_name`.
+- Put the user's original institution name in `supplier_name` only when no current rank object matches it exactly or the matching object has no `supplier_id`. Do not fuzzy-match locally, choose among multiple matching objects, rerun ranking, or read an ID from another requirement, platform, or run. The Provider owns matching for names that remain in `supplier_name`.
+- Both arrays may be non-empty in the same call when some requested institutions resolve to current rank IDs and others remain names.
 - Run [field selection](select_inquiry_form_fields.md) for the exact current requirement when needed. Submission persists the fields in the Provider database; do not retrieve them or carry them through Agent context.
 
 ## Recipient cases
 
-1. Ranked institutions only: `supplierIds: ["..."]`, `supplier_name: []`.
-2. User-nominated institutions only: `supplierIds: []`, `supplier_name: ["..."]`.
-3. Both sources: both arrays are non-empty; the Provider resolves the union and ensures each requirement/institution pair is sent at most once.
+1. Every requested institution resolves to a current rank ID: `supplierIds: ["..."]`, `supplier_name: []`.
+2. No requested institution resolves to a current rank ID: `supplierIds: []`, `supplier_name: ["..."]`.
+3. Mixed resolution: resolved IDs go in `supplierIds`, only unresolved original names go in `supplier_name`; the Provider resolves the union and ensures each requirement/institution pair is sent at most once.
 
 One complete invocation is the real Provider attempt. `MCP_INVALID_PARAMS` proves the business tool did not run. Any ordinary business error, timeout, incomplete response, or unknown result may have partially sent and must not be described as definitely unsent. A Provider operation or distribution reference proves task creation; only explicit per-supplier `sent` evidence proves delivery.
 
@@ -33,7 +34,7 @@ One complete invocation is the real Provider attempt. `MCP_INVALID_PARAMS` prove
 
 - `requirement_id` equals the bound value; `supplierIds` and `supplier_name` contain only the current inquiry's recipients and are not both empty.
 - In a multi-platform case, use only the current child workflow's bound requirement ID, suppliers, and body. The Provider must resolve that requirement's persisted field configuration; never consume another platform's evidence.
-- The plugin does not preview, block, confirm, match, deduplicate, or keep transient send state. The Provider is the sole authority for institution-name matching and `(requirement_id, supplier)` idempotency.
+- The Agent performs only the exact current-rank name-to-`supplier_id` reuse described above. The plugin does not query the supplier library, fuzzy-match, preview, block, confirm, deduplicate, or keep transient send state. The Provider remains the sole authority for unresolved institution-name matching and `(requirement_id, supplier)` idempotency.
 - Both `description` and `wechat_notification_message` are required. Never pass `null`, a blank string, or placeholders such as `询价` or `请报价` that do not explain the requirement.
 - Both fields use the same confirmed customer requirements and remain semantically consistent. Include every applicable confirmed project, brand/product, platform/content, creator quantity, price, creator filter, submission deadline, project schedule, and special requirement. Omit absent optional facts; never invent them. Never include the rebate requirement in either field; it stays internal.
 - When the requirement manifest derives a reference creator from labeled `originalBrief`/`description` text, the WeCom body must include the exact `参考达人：...` and/or `参考达人链接：...` lines immediately after `合作内容`. Omit an absent value and never infer one reference value from the other.

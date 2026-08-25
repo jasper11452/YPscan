@@ -1,4 +1,9 @@
-import { assertNoManualChallenge, cleanText, manualBrowserError } from "./common.js";
+import {
+  assertNoManualChallenge,
+  cleanText,
+  dismissOrdinaryPopups,
+  manualBrowserError,
+} from "./common.js";
 import { captureDetailResponsesDuring } from "./detail-response-capture.js";
 import { candidateReference } from "../manual-research-detail.js";
 
@@ -67,6 +72,7 @@ const DETAIL_CONTROL_SELECTOR = [
 ].join(",");
 const DANGEROUS_DETAIL_ACTION = /提交|确认合作|立即合作|发送|支付|删除|下单|投放|邀约/u;
 const DETAIL_ACTION_BUDGET = 6;
+const DETAIL_SCROLL_STEPS = 12;
 
 function clean(value) {
   return String(value ?? "")
@@ -85,6 +91,35 @@ function mergeFields(target, source) {
       target[key] = value;
     }
   }
+}
+
+async function captureRawHtml(page, group, capturedAt, onHtmlSnapshot) {
+  if (typeof onHtmlSnapshot !== "function" || typeof page.content !== "function") return null;
+  const height = await page
+    .evaluate(() => Math.max(globalThis.document?.documentElement?.scrollHeight ?? 0, 0))
+    .catch(() => 0);
+  if (height > 0) {
+    const step = Math.max(Math.ceil(height / DETAIL_SCROLL_STEPS), 1);
+    for (let offset = 0; offset < height; offset += step) {
+      await page.evaluate((top) => globalThis.scrollTo?.(0, top), offset).catch(() => {});
+      await page.waitForTimeout(50).catch(() => {});
+    }
+    await page.evaluate(() => globalThis.scrollTo?.(0, 0)).catch(() => {});
+  }
+  let html = await page.content();
+  let stablePolls = 0;
+  for (let attempt = 0; attempt < 5 && stablePolls < 2; attempt += 1) {
+    await page.waitForTimeout(100).catch(() => {});
+    const current = await page.content();
+    stablePolls = current === html ? stablePolls + 1 : 0;
+    html = current;
+  }
+  return onHtmlSnapshot({
+    group,
+    url: page.url?.() ?? null,
+    captured_at: capturedAt,
+    html,
+  });
 }
 
 function firstMatch(text, patterns) {
@@ -148,19 +183,20 @@ async function resolveXingtuDetailRedirect(page, candidate) {
 
 /** @param {import("playwright-core").Page} page */
 async function readDetailDom(page, candidate, platform) {
-  const body = cleanText(
-    await page
-      .locator("body")
-      .innerText()
-      .catch(() => ""),
-  );
+  const rawBody = await page
+    .locator("body")
+    .innerText()
+    .catch(() => "");
+  const body = cleanText(rawBody);
   const fields = {
     followers_raw: firstMatch(body, [
       /粉丝(?:数|量)?\s*[:：]?\s*([\d.,]+\s*[万wWkK亿]?)/u,
       /([\d.,]+\s*[万wWkK亿]?)\s*粉丝/u,
     ]),
     city: firstMatch(body, [/(?:所在地|所在地域|城市|地区)\s*[:：]?\s*([^\s|｜]{2,16})/u]),
-    agency: firstMatch(body, [/(?:所属机构|MCN机构|机构)\s*[:：]?\s*([^\n|｜]{2,40})/u]),
+    agency: firstMatch(rawBody, [
+      /(?:所属机构|MCN机构)\s*(?::|：|\r?\n)\s*([^\r\n|｜]{2,40})/u,
+    ]),
     account_type: firstMatch(body, [/(?:账号类型|达人类型)\s*[:：]?\s*([^\n|｜]{2,40})/u]),
     cpm_raw: firstMatch(body, [/(?:预期\s*)?CPM\s*[:：¥￥]?\s*([\d.]+)/iu]),
     cpe_raw: firstMatch(body, [/(?:预期\s*)?CPE\s*[:：¥￥]?\s*([\d.]+)/iu]),
@@ -609,13 +645,13 @@ async function closeDetail(listPage, detailPage, temporary) {
  * @param {import("playwright-core").Page} listPage
  * @param {"xingtu"|"pgy"} platform
  * @param {any} candidate
- * @param {{groups: string[], learnedPaths?: Set<string>, capturedAt: string}} options
+ * @param {{groups: string[], learnedPaths?: Set<string>, capturedAt: string, onHtmlSnapshot?: (snapshot: any) => Promise<any>, challengeRetry?: boolean}} options
  */
 export async function collectCreatorDetail(
   listPage,
   platform,
   candidate,
-  { groups, learnedPaths = new Set(), capturedAt },
+  { groups, learnedPaths = new Set(), capturedAt, onHtmlSnapshot, challengeRetry = true },
 ) {
   const base = {
     candidate_ref: candidateReference(candidate),
@@ -634,6 +670,7 @@ export async function collectCreatorDetail(
   const sourceTypes = [];
   const completedGroups = new Set();
   const navigation = [];
+  const htmlSnapshots = [];
   if (opened.capture) {
     mergeFields(fields, opened.capture.fields);
     endpoints.push(...opened.capture.endpoints);
@@ -654,6 +691,13 @@ export async function collectCreatorDetail(
       return { ...base, status: "blocked", reason: "detail_not_accessible", fields: {} };
     }
     mergeFields(fields, await waitForInitialDetailFields(detailPage, candidate, platform, groups));
+    const summarySnapshot = await captureRawHtml(
+      detailPage,
+      "summary",
+      capturedAt,
+      onHtmlSnapshot,
+    );
+    if (summarySnapshot) htmlSnapshots.push(summarySnapshot);
     try {
       await assertNoManualChallenge(detailPage);
     } catch (error) {
@@ -671,13 +715,14 @@ export async function collectCreatorDetail(
             missing_groups: missing,
             response_endpoints: [...new Set(endpoints)],
             source_type: [...new Set(sourceTypes)].join("+") || "dom",
+            html_snapshots: htmlSnapshots,
           },
         };
       }
       throw error;
     }
     for (const group of groups.filter((item) => item !== "summary")) {
-      if (groupHasEvidence(group, fields)) {
+      if (!onHtmlSnapshot && groupHasEvidence(group, fields)) {
         completedGroups.add(group);
         continue;
       }
@@ -715,6 +760,13 @@ export async function collectCreatorDetail(
           observed_controls: explored.observed_controls,
         });
       }
+      const groupSnapshot = await captureRawHtml(
+        detailPage,
+        group,
+        capturedAt,
+        onHtmlSnapshot,
+      );
+      if (groupSnapshot) htmlSnapshots.push(groupSnapshot);
       if (groupHasEvidence(group, fields)) completedGroups.add(group);
     }
     const domFields = await readDetailDom(detailPage, candidate, platform);
@@ -753,9 +805,43 @@ export async function collectCreatorDetail(
       navigation,
       response_endpoints: [...new Set(endpoints)],
       source_type: [...new Set(sourceTypes)].join("+") || "dom",
+      html_snapshots: htmlSnapshots,
     };
   } catch (error) {
-    if (/CAPTCHA|DETAIL_RISK/u.test(error?.code ?? "")) throw error;
+    if (/CAPTCHA|DETAIL_RISK/u.test(error?.code ?? "")) {
+      if (platform === "xingtu") {
+        await dismissOrdinaryPopups(detailPage, platform).catch(() => []);
+        const recoveredSnapshot = await captureRawHtml(
+          detailPage,
+          "challenge_recovery",
+          capturedAt,
+          onHtmlSnapshot,
+        ).catch(() => null);
+        if (recoveredSnapshot) htmlSnapshots.push(recoveredSnapshot);
+        const challengeCleared = await assertNoManualChallenge(detailPage)
+          .then(() => true)
+          .catch(() => false);
+        if (challengeCleared && htmlSnapshots.length) {
+          return {
+            ...base,
+            status: "partial",
+            reason: "challenge_dismissed_after_capture",
+            fields,
+            html_snapshots: htmlSnapshots,
+          };
+        }
+        if (challengeRetry && candidate.detail_url) {
+          return collectCreatorDetail(listPage, platform, candidate, {
+            groups,
+            learnedPaths,
+            capturedAt,
+            onHtmlSnapshot,
+            challengeRetry: false,
+          });
+        }
+      }
+      throw error;
+    }
     throw manualBrowserError("YPSCAN_MANUAL_DETAIL_FAILED", error?.message ?? "详情页采集失败", {
       candidate_ref: base.candidate_ref,
     });
