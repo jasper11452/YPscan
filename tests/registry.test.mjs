@@ -156,6 +156,220 @@ test("preflight rejects Dify defaults that have no user evidence", () => {
   );
 });
 
+test("preflight accepts one current-platform brand parsed by Dify without asking again", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    brandName: "品牌A",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: { dybrandName: ["品牌A"] },
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
+test("preflight still rejects multiple Dify brand candidates without user confirmation", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: { dybrandName: ["品牌A", "品牌B"] },
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["brandName"],
+  );
+});
+
+test("preflight does not let a Dify brand override an explicit conflicting brand", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    brandName: "品牌A",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌B；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: { dybrandName: ["品牌A"] },
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["brandName"],
+  );
+});
+
+test("preflight does not scan past a comma to turn another product name into brand evidence", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    brandName: "品牌A",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌B，产品别名品牌A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: { dybrandName: ["品牌A"] },
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["brandName"],
+  );
+});
+
+test("preflight rejects placeholder strings as Dify brand candidates", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  for (const placeholder of ["null", "未知", "未明确"]) {
+    const params = {
+      ...completeValidateParams(),
+      brandName: placeholder,
+      rawMessagesJson: {
+        ...completeValidateParams().rawMessagesJson,
+        original:
+          "抖音项目：项目A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+        parse_outputs: { dybrandName: [placeholder] },
+      },
+    };
+
+    assert.deepEqual(
+      validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+      ["brandName"],
+      placeholder,
+    );
+  }
+});
+
+test("an explicit current brand wins over a conflicting Dify candidate", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    brandName: "品牌B",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌B；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: { dybrandName: ["品牌A"] },
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
+test("preflight reuses non-empty clarification answers instead of asking again", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    quantityTotal: "50",
+    submissionDeadlineAt: "2026-08-26 12:00:00",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌A；21-60秒定制视频；单价5万元；返点25%以上；粉丝不限；科技耳机方向。",
+      clarifications: {
+        quantityTotal: "达人数量：50位",
+        submissionDeadlineAt: "提报截止：2026-08-26 12:00:00",
+      },
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
+test("preflight uses only the latest scalar clarification for an overridden field", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const rawMessagesJson = {
+    ...completeValidateParams().rawMessagesJson,
+    clarifications: {
+      quantityTotal: ["达人数量：30位", "达人数量改为：50位"],
+      submissionDeadlineAt: [
+        "提报截止：2026-08-25 12:00:00",
+        "提报截止改为：2026-08-26 12:00:00",
+      ],
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(
+      { ...completeValidateParams(), rawMessagesJson },
+      { now },
+    ).map((issue) => issue.field),
+    ["quantityTotal", "submissionDeadlineAt"],
+  );
+  assert.deepEqual(
+    validateRequirementPreflight(
+      {
+        ...completeValidateParams(),
+        quantityTotal: "50",
+        submissionDeadlineAt: "2026-08-26 12:00:00",
+        rawMessagesJson,
+      },
+      { now },
+    ),
+    [],
+  );
+});
+
+test("latest identity clarifications override the original brand and project name", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const rawMessagesJson = {
+    ...completeValidateParams().rawMessagesJson,
+    parse_outputs: { dybrandName: ["品牌A"] },
+    clarifications: {
+      brandName: ["品牌：品牌A", "品牌：品牌B"],
+      projectName: ["项目名称：项目A", "项目名称：项目B"],
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(
+      { ...completeValidateParams(), rawMessagesJson },
+      { now },
+    ).map((issue) => issue.field),
+    ["brandName", "projectName"],
+  );
+  assert.deepEqual(
+    validateRequirementPreflight(
+      {
+        ...completeValidateParams(),
+        brandName: "品牌B",
+        projectName: "项目B",
+        rawMessagesJson,
+      },
+      { now },
+    ),
+    [],
+  );
+});
+
+test("latest Chinese project-date clarifications are accepted as current evidence", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    projectStartStart: "2026-09-01",
+    projectStartEnd: "2026-09-30",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      clarifications: {
+        项目开始: "2026-09-01",
+        项目结束: "2026-09-30",
+      },
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
 test("preflight does not treat empty clarification keys as user evidence", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {

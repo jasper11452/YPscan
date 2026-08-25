@@ -39,7 +39,7 @@ test("flow hooks register the validate_requirement preflight gate", () => {
   ]);
 });
 
-test("startup makes current-rank supplier IDs the first-priority recipient identity", () => {
+test("startup requires a visible recipient and WeCom preview before sending", () => {
   const { hooks } = registeredPlugin();
   const prompt = hooks.get("before_prompt_build")({}, { runId: "recipient-contract" });
   assert.match(prompt.prependContext, /supplierIds 和 supplier_name 始终都是数组/u);
@@ -51,11 +51,11 @@ test("startup makes current-rank supplier IDs the first-priority recipient ident
   assert.match(prompt.prependContext, /不跨需求、平台或 run 复用 ID/u);
   assert.match(prompt.prependContext, /两个数组可同时非空/u);
   assert.doesNotMatch(prompt.prependContext, /单独提名的机构使用 supplier_name/u);
-  assert.match(prompt.prependContext, /不追加企微发送确认/u);
-  assert.doesNotMatch(
-    prompt.prependContext,
-    /HITL_REQUIRED|确认发送|CREATE_WITH_DISTRIBUTIONS_ARGS/u,
-  );
+  assert.match(prompt.prependContext, /发送前确认/u);
+  assert.match(prompt.prependContext, /完整企微消息/u);
+  assert.match(prompt.prependContext, /确认发送/u);
+  assert.match(prompt.prependContext, /返回修改/u);
+  assert.doesNotMatch(prompt.prependContext, /不追加企微发送确认/u);
 });
 
 test("Provider matching errors remain visible and forbid a full-payload retry", () => {

@@ -1,12 +1,12 @@
 # create_with_distributions
 
-Risk tier: Provider-enforced idempotent side effect. Provider write plus WeCom distribution; no plugin-side send confirmation.
+Risk tier: user-confirmed, Provider-enforced idempotent side effect. Provider write plus WeCom distribution.
 
 This is the institutional inquiry creation entry point.
 
 ## When to call
 
-Call once after the user has chosen the inquiry branch, field selection has been submitted for the requirement, and the recipient IDs plus any unmatched user-nominated institution names and the complete message are available. Do not make a preview call or ask for another send confirmation.
+Call once after the user has chosen the inquiry branch, field selection has been submitted, recipients and the complete message are available, and the user has approved the final preview. Immediately before the call, use `AskUserQuestion`: its `question` must show the final institution-name list and the complete `wechat_notification_message`, with options `确认发送` and `返回修改`. Only `确认发送` authorizes this one call; closing, cancelling, missing an answer, or choosing `返回修改` does not.
 
 ## Recipient and field preparation
 
@@ -34,7 +34,7 @@ One complete invocation is the real Provider attempt. `MCP_INVALID_PARAMS` prove
 
 - `requirement_id` equals the bound value; `supplierIds` and `supplier_name` contain only the current inquiry's recipients and are not both empty.
 - In a multi-platform case, use only the current child workflow's bound requirement ID, suppliers, and body. The Provider must resolve that requirement's persisted field configuration; never consume another platform's evidence.
-- The Agent performs only the exact current-rank name-to-`supplier_id` reuse described above. The plugin does not query the supplier library, fuzzy-match, preview, block, confirm, deduplicate, or keep transient send state. The Provider remains the sole authority for unresolved institution-name matching and `(requirement_id, supplier)` idempotency.
+- The Agent performs only the exact current-rank name-to-`supplier_id` reuse described above. The final recipient-name list and complete WeCom message are previewed in the user confirmation dialog, but the plugin keeps no transient send ledger. The Provider remains the sole authority for unresolved institution-name matching and `(requirement_id, supplier)` idempotency.
 - Both `description` and `wechat_notification_message` are required. Never pass `null`, a blank string, or placeholders such as `询价` or `请报价` that do not explain the requirement.
 - Both fields use the same confirmed customer requirements and remain semantically consistent. Include every applicable confirmed project, brand/product, platform/content, creator quantity, price, creator filter, submission deadline, project schedule, and special requirement. Omit absent optional facts; never invent them. Never include the rebate requirement in either field; it stays internal.
 - When the requirement manifest derives a reference creator from labeled `originalBrief`/`description` text, the WeCom body must include the exact `参考达人：...` and/or `参考达人链接：...` lines immediately after `合作内容`. Omit an absent value and never infer one reference value from the other.

@@ -634,6 +634,92 @@ function rawRequirementEvidence(value) {
   return [...collect(record.original), ...collect(record.clarifications)].join(" ");
 }
 
+function latestScalarClarification(value, keys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const rawMessages = /** @type {Record<string, unknown>} */ (value);
+  const clarifications = rawMessages.clarifications;
+  if (!clarifications || typeof clarifications !== "object" || Array.isArray(clarifications)) {
+    return null;
+  }
+  const acceptedKeys = new Set(keys.map((key) => key.toLowerCase()));
+  let current = null;
+  for (const [key, item] of Object.entries(clarifications)) {
+    if (!acceptedKeys.has(key.toLowerCase())) continue;
+    const candidates = Array.isArray(item) ? item : [item];
+    for (const candidate of candidates) {
+      if (!["string", "number", "boolean"].includes(typeof candidate)) continue;
+      const text = String(candidate).trim();
+      if (text) current = { key, text };
+    }
+  }
+  return current;
+}
+
+function latestFieldEvidence(value, keys) {
+  const latest = latestScalarClarification(value, keys);
+  return latest ? `${latest.key} ${latest.text}` : null;
+}
+
+const INVALID_BRAND_CANDIDATE =
+  /^(?:null|undefined|unknown|n\/?a|none|未知|未明确|未提及|未提供|暂无|无|不详|待确认|待定)$/iu;
+
+function normalizedBrandCandidate(value) {
+  if (typeof value !== "string") return null;
+  const candidate = value
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/gu, "")
+    .trim();
+  return candidate && !INVALID_BRAND_CANDIDATE.test(candidate) ? candidate : null;
+}
+
+function uniqueDifyBrand(value, platform) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const rawMessages = /** @type {Record<string, unknown>} */ (value);
+  const outputs = rawMessages.parse_outputs;
+  if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) return null;
+  const outputRecord = /** @type {Record<string, unknown>} */ (outputs);
+  const field =
+    platform === "xiaohongshu" ? "xhsbrandName" : platform === "douyin" ? "dybrandName" : null;
+  if (!field) return null;
+  const rawCandidates = outputRecord[field];
+  const values = Array.isArray(rawCandidates) ? rawCandidates : [rawCandidates];
+  const candidates = [
+    ...new Set(
+      values
+        .map(normalizedBrandCandidate)
+        .filter(Boolean),
+    ),
+  ];
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function explicitBrandEvidence(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { present: false, candidates: [] };
+  }
+  const rawMessages = /** @type {Record<string, unknown>} */ (value);
+  const clarification = latestScalarClarification(value, ["brandName", "品牌", "品牌名称"]);
+  if (clarification) {
+    const labeled = clarification.text.match(
+      /^(?:品牌(?:名称)?|brandName)\s*[:：=]\s*([^；;，,。\n]+)/iu,
+    );
+    const candidate = normalizedBrandCandidate(labeled?.[1] ?? clarification.text);
+    return { present: true, candidates: candidate ? [candidate] : [] };
+  }
+  const values = [];
+  let present = false;
+  if (typeof rawMessages.original === "string") {
+    for (const match of rawMessages.original.matchAll(
+      /(?:品牌(?:名称)?|brandName)\s*[:：=]\s*([^；;，,。\n]+)/giu,
+    )) {
+      present = true;
+      const candidate = normalizedBrandCandidate(match[1]);
+      if (candidate) values.push(candidate);
+    }
+  }
+  return { present, candidates: [...new Set(values)] };
+}
+
 function projectDateTimestamp(value) {
   if (typeof value !== "string") return Number.NaN;
   const match = value.match(LOCAL_DATE_OR_DATETIME);
@@ -722,7 +808,7 @@ function hasProjectDateEvidence(evidence, value) {
         regexLiteral(`${year}年${month}月${day}日`),
       ];
   const context =
-    "(?:档期|投放(?:时间|周期)?|执行(?:时间|周期|开始|结束)?|发布(?:时间)?|上线(?:时间)?|projectStartStart|projectStartEnd)";
+    "(?:项目(?:开始|结束)(?:时间)?|档期|投放(?:时间|周期)?|执行(?:时间|周期|开始|结束)?|发布(?:时间)?|上线(?:时间)?|projectStartStart|projectStartEnd)";
   return datePatterns.some((datePattern) =>
     new RegExp(`${context}[^。；;\\n]{0,80}${datePattern}`, "iu").test(evidence),
   );
@@ -854,13 +940,36 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   }
 
   const evidence = rawRequirementEvidence(rawMessages);
-  if (!hasLabeledLiteralEvidence(evidence, payload.brandName, "品牌|brandName")) {
-    add("brandName", "原始需求或弹窗澄清记录中没有与提交值一致的品牌证据");
+  const difyBrand = uniqueDifyBrand(rawMessages, payload.platform);
+  const submittedBrand = normalizedBrandCandidate(payload.brandName);
+  const explicitBrand = explicitBrandEvidence(rawMessages);
+  const explicitBrandMatches = Boolean(
+    submittedBrand &&
+    explicitBrand.present &&
+    explicitBrand.candidates.length === 1 &&
+    explicitBrand.candidates[0] === submittedBrand,
+  );
+  const difyBrandMatches = Boolean(
+    submittedBrand && !explicitBrand.present && submittedBrand === difyBrand,
+  );
+  if (!explicitBrandMatches && !difyBrandMatches) {
+    add("brandName", "原始需求、弹窗澄清或当前平台 Dify 唯一候选中没有与提交值一致的品牌证据");
   }
-  if (!hasLabeledLiteralEvidence(evidence, payload.projectName, "项目(?:名称)?|projectName")) {
+  const projectNameEvidence =
+    latestFieldEvidence(rawMessages, ["projectName", "项目", "项目名称"]) ?? evidence;
+  if (!hasLabeledLiteralEvidence(projectNameEvidence, payload.projectName, "项目(?:名称)?|projectName")) {
     add("projectName", "原始需求或弹窗澄清记录中没有与提交值一致的项目名称证据");
   }
-  if (!hasQuantityEvidence(evidence, payload.quantityTotal)) {
+  const quantityEvidence =
+    latestFieldEvidence(rawMessages, [
+      "quantityTotal",
+      "数量",
+      "达人数量",
+      "达人人数",
+      "提报数量",
+      "提报人数",
+    ]) ?? evidence;
+  if (!hasQuantityEvidence(quantityEvidence, payload.quantityTotal)) {
     add("quantityTotal", "原始需求或弹窗澄清记录中没有与提交值一致的达人数量证据");
   }
   if (!/(?:粉丝|万粉|w粉|followercount)/iu.test(evidence)) {
@@ -872,7 +981,14 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   if (!/(?:单价|报价|预算|费用|价格|kolOfficialPrice)/iu.test(evidence)) {
     add("kolOfficialPriceL1/L2/L3", "原始需求或弹窗澄清记录中没有报价证据");
   }
-  if (!hasSubmissionDeadlineEvidence(evidence, payload.submissionDeadlineAt, now)) {
+  const deadlineEvidence =
+    latestFieldEvidence(rawMessages, [
+      "submissionDeadlineAt",
+      "提报截止",
+      "提报截止时间",
+      "截止时间",
+    ]) ?? evidence;
+  if (!hasSubmissionDeadlineEvidence(deadlineEvidence, payload.submissionDeadlineAt, now)) {
     add("submissionDeadlineAt", "原始需求或弹窗澄清记录中没有与提交值一致的明确截止时间证据");
   }
   if (
@@ -899,9 +1015,16 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
 
   for (const field of ["projectStartStart", "projectStartEnd"]) {
     if (!Object.hasOwn(payload, field)) continue;
+    const fieldEvidence =
+      latestFieldEvidence(
+        rawMessages,
+        field === "projectStartStart"
+          ? [field, "项目开始", "项目开始时间", "档期开始"]
+          : [field, "项目结束", "项目结束时间", "档期结束"],
+      ) ?? evidence;
     if (!isCanonicalProjectDate(payload[field])) {
       add(field, "只能传明确的 YYYY-MM-DD 或 ISO 本地日期时间；模糊档期必须弹窗确认或省略");
-    } else if (!hasProjectDateEvidence(evidence, payload[field])) {
+    } else if (!hasProjectDateEvidence(fieldEvidence, payload[field])) {
       add(field, "原始需求或弹窗澄清记录中没有对应的明确项目日期证据");
     }
   }

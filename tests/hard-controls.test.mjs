@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { registerFlowDirectiveHooks } from "../src/hooks/register-flow-directives.js";
+import { mcnRankingBranchQuestionPayload } from "../src/tools/post-save-questions.js";
 
 function registeredHooks() {
   const hooks = new Map();
@@ -92,7 +93,10 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /同一次修改涉及两个及以上/u);
   assert.match(parseText, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
   assert.match(parseText, /禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
-  assert.match(parseText, /禁止自主选择、自动补标签、默认补值/u);
+  assert.match(parseText, /先合并 original 与各字段最新非空 clarification/u);
+  assert.match(parseText, /同一字段新答案覆盖旧答案/u);
+  assert.match(parseText, /用户明确品牌优先/u);
+  assert.match(parseText, /品牌候选只有一个非空且不是 null.*占位值/u);
   assert.match(parseText, /submissionDeadlineAt 缺失或不精确/u);
   assert.match(parseText, /抖音报价未明确时长档/u);
   assert.doesNotMatch(parseText, /VALIDATE_REQUIREMENT_ARGS=/u);
@@ -227,7 +231,9 @@ test("rank result saves the Provider MCN workbook before the branch question", (
     artifact_kind: "mcn_ranking",
     artifact_id: "req-1",
     excel_file_url: "https://mcp.eshypdata.com/api/download?file_path=mcn-ranking.xlsx",
+    mcn_count: 1,
   });
+  assert.doesNotMatch(rankText, /ASK_USER_QUESTION_ARGS=/u);
 
   const saved = persist({
     toolName: "ypscan_save_excel_artifact",
@@ -235,7 +241,10 @@ test("rank result saves the Provider MCN workbook before the branch question", (
     message: toolMessage({
       success: true,
       data: { file_path: "/workspace/mcn-ranking.xlsx" },
-      delivery: { local_path: "/workspace/mcn-ranking.xlsx" },
+      delivery: {
+        local_path: "/workspace/mcn-ranking.xlsx",
+        next_args: mcnRankingBranchQuestionPayload(false),
+      },
     }),
   });
   const savedText = directiveText(saved);
@@ -247,7 +256,11 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   );
   assert.match(savedText, /不得只输出裸路径/u);
   assert.doesNotMatch(savedText, /CREATOR_PREVIEW_LOCAL_PATH/u);
-  assert.match(savedText, /rank_mcns 结果中的 ASK_USER_QUESTION_ARGS/u);
+  assert.match(savedText, /下面的 ASK_USER_QUESTION_ARGS/u);
+  assert.deepEqual(
+    argsFromDirective(savedText).questions[0].options.map((option) => option.label),
+    ["询价机构", "人工拓展并提报"],
+  );
   assert.match(savedText, /本地路径不得放进弹窗 question/u);
 
   const failed = persist({
@@ -782,16 +795,19 @@ test("Dify parse directives preserve field ownership and change policy", () => {
 
   const text = directiveText(result);
   assert.match(text, /DIFY_OWNED_LOGICAL_FIELDS=/u);
-  assert.match(text, /字段缺失、为 null、为空、模糊、冲突/u);
-  assert.match(text, /必须调用 AskUserQuestion 弹窗收集/u);
-  assert.match(text, /禁止自主选择/u);
+  assert.match(text, /先合并 original 与各字段最新非空 clarification/u);
+  assert.match(text, /只有合并后仍缺失、模糊、冲突、多候选/u);
+  assert.match(text, /同一字段新答案覆盖旧答案/u);
+  assert.match(text, /用户明确品牌优先/u);
+  assert.match(text, /品牌候选只有一个非空且不是 null.*才无损映射/u);
   assert.match(text, /单次修改只涉及一个业务条件时，不再调用/u);
   assert.match(text, /同一次修改涉及两个及以上不同业务条件时/u);
   assert.match(text, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
   assert.match(text, /禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
   assert.match(text, /刷新全部 Dify 字段/u);
   assert.match(text, /报价、CPM、CPE 参数片段按 L1\/L2\/L3 Provider 字段展开/u);
-  assert.match(text, /原文没有支持的档位属于冲突/u);
+  assert.match(text, /original 或该字段最新 clarification/u);
+  assert.match(text, /已有确认答案时直接复用/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /VALIDATE_REQUIREMENT_ARGS=/u);
 });
@@ -861,16 +877,19 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /YPSCAN_MANUAL_BROWSER_UNAVAILABLE/u);
   assert.match(first.prependContext, /不得要求用户代开/u);
   assert.match(first.prependContext, /同一 run_id 调用 resume/u);
-  assert.match(first.prependContext, /需求澄清硬规则/u);
-  assert.match(first.prependContext, /必须调用 AskUserQuestion/u);
-  assert.match(first.prependContext, /禁止回查后自主选择/u);
+  assert.match(first.prependContext, /需求澄清规则/u);
+  assert.match(first.prependContext, /同一字段新答案覆盖旧答案/u);
+  assert.match(first.prependContext, /只有合并后仍缺失.*才调用 AskUserQuestion/u);
+  assert.match(first.prependContext, /用户明确品牌优先/u);
+  assert.match(first.prependContext, /Dify 品牌候选唯一、非空且不是 null.*才直接作为 brandName/u);
   assert.match(first.prependContext, /validate_requirement 数值字段格式锁/u);
   assert.match(first.prependContext, /无空格 JSON 区间字符串 "\[min,max\]"/u);
   assert.match(first.prependContext, /禁止通过 Provider 报错逐字段、逐类型试探/u);
   assert.match(first.prependContext, /首次按单平台完整需求.*直连 Dify/u);
   assert.match(first.prependContext, /data\.outputs 完整透传原始 Workflow 输出/u);
   assert.match(first.prependContext, /Dify 负责八个标签数组/u);
-  assert.match(first.prependContext, /缺少原文证据、与原文冲突或存在多种合法映射/u);
+  assert.match(first.prependContext, /Dify 品牌候选唯一且为合法非占位值时直接采用/u);
+  assert.match(first.prependContext, /缺少 original 或字段最新 clarification 证据/u);
   assert.match(first.prependContext, /单次修改只涉及一个条件时由 Agent 直接更新/u);
   assert.match(first.prependContext, /同一次修改涉及两个及以上不同条件时/u);
   assert.match(first.prependContext, /只用用户最初原文和后续改口.*重建完整单平台 demand/u);
@@ -922,8 +941,21 @@ test("validate_requirement preflight blocks incomplete writes before Provider ex
   assert.match(result.blockReason, /submissionDeadlineAt/u);
   assert.match(result.blockReason, /rebate/u);
   assert.match(result.blockReason, /projectStartStart/u);
-  assert.match(result.blockReason, /必须调用 AskUserQuestion/u);
-  assert.match(result.blockReason, /不得改变一种类型后继续盲试/u);
+  assert.match(result.blockReason, /只有仍缺失.*才调用 AskUserQuestion/u);
+  assert.match(result.blockReason, /已有该字段的有效弹窗答案.*不得再次询问/u);
+  assert.match(result.blockReason, /不得自主补值或改变一种类型后继续盲试/u);
+});
+
+test("WeCom send confirmation remains advisory instead of a local before-call gate", () => {
+  const before = registeredHooks().get("before_tool_call");
+
+  assert.equal(
+    before({
+      toolName: "ypmcn__create_with_distributions",
+      params: {},
+    }),
+    undefined,
+  );
 });
 
 test("preflight block result requires grouped popup clarification instead of retry probing", () => {
@@ -941,7 +973,8 @@ test("preflight block result requires grouped popup clarification instead of ret
   const text = directiveText(result);
 
   assert.match(text, /Provider 未执行写入/u);
-  assert.match(text, /同一次 AskUserQuestion 中成组弹窗收集/u);
+  assert.match(text, /已经回答但漏传的字段补回 rawMessagesJson.clarifications/u);
+  assert.match(text, /同一次 AskUserQuestion 中成组收集/u);
   assert.match(text, /禁止自主选择、默认补值/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
@@ -1035,8 +1068,11 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /不得.*把 columns 放入 Agent 上下文/u);
   assert.match(text, /等待用户完成选择后回复“好了”/u);
   assert.match(text, /恢复发起本次字段选择的原分支/u);
-  assert.match(text, /按 create_with_distributions 工具卡的固定企微模板调用一次/u);
-  assert.match(text, /固定企微模板/u);
+  assert.match(text, /撰写 description 与 wechat_notification_message/u);
+  assert.match(text, /发送前确认/u);
+  assert.match(text, /完整展示最终机构名称列表和完整企微消息/u);
+  assert.match(text, /“确认发送”和“返回修改”/u);
+  assert.match(text, /只有用户选择“确认发送”后才.*调用一次/u);
   assert.match(text, /返点只作内部筛选条件，绝不写入这两个消息字段/u);
   assert.match(text, /人工拓展分支.*调用 manual_source_creators/u);
   assert.match(text, /不得再次调用 select_inquiry_form_fields/u);

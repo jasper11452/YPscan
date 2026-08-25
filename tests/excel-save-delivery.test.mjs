@@ -5,13 +5,17 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { saveExcelArtifact } from "../src/tools/save-excel-artifact.js";
-import { submissionEnrichmentQuestionPayload } from "../src/tools/post-save-questions.js";
+import {
+  mcnRankingBranchQuestionPayload,
+  submissionEnrichmentQuestionPayload,
+} from "../src/tools/post-save-questions.js";
 
-function saveFixture(workspaceDir, artifactKind, fileName) {
+function saveFixture(workspaceDir, artifactKind, fileName, extraParams = {}) {
   return saveExcelArtifact({
     artifact_kind: artifactKind,
     artifact_id: "artifact-1",
     excel_file_url: `https://mcp.eshypdata.com/api/download?file_path=${fileName}`,
+    ...extraParams,
   }, {
     workspaceDir,
     fetchImpl: async () => new Response(Buffer.from(`xlsx-${fileName}`), {
@@ -54,10 +58,19 @@ test("only Provider submission save offers enrichment", async (t) => {
     workspaceDir,
     "mcn_ranking",
     "mcn-ranking.xlsx",
+    { mcn_count: 2 },
   )).content[0].text);
   assert.equal(mcnRanking.success, true);
-  assert.equal(mcnRanking.delivery.next_tool, undefined);
-  assert.equal(mcnRanking.delivery.next_args, undefined);
+  assert.equal(mcnRanking.delivery.next_tool, "AskUserQuestion");
+  assert.deepEqual(mcnRanking.delivery.next_args, mcnRankingBranchQuestionPayload(false));
+
+  const emptyMcnRanking = JSON.parse((await saveFixture(
+    workspaceDir,
+    "mcn_ranking",
+    "empty-mcn-ranking.xlsx",
+    { mcn_count: 0 },
+  )).content[0].text);
+  assert.deepEqual(emptyMcnRanking.delivery.next_args, mcnRankingBranchQuestionPayload(true));
 
   const mcnPreview = JSON.parse((await saveFixture(
     workspaceDir,
