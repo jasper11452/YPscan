@@ -4,7 +4,7 @@ Risk tier: internal preparation. This Provider MCP tool creates a field-selectio
 
 ## When to call
 
-Call when the current institutional inquiry or submission request needs a persisted field configuration. Resolve recipients before asking the user to select fields. These Provider fields apply to the institutional inquiry/export path; the native Browser path reads the platform's own visible/exported fields and does not accept or generate a project-side column template.
+Call when the current institutional inquiry or submission request needs a persisted field configuration. Resolve recipients before asking the user to select fields: choosing the “询价机构” branch alone does not nominate a recipient, so first ask the user to select one or more real current MCNs. Never infer recipients from rank, coverage, rebate, score, or recommendation order. These Provider fields apply to the institutional inquiry/export path; the native Browser path reads the platform's own visible/exported fields and does not accept or generate a project-side column template.
 
 ## Call
 

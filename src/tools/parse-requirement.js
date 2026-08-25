@@ -34,7 +34,7 @@ export const PARSE_REQUIREMENT_PARAMETERS = Object.freeze({
       type: "string",
       minLength: 1,
       description:
-        "当前单个平台的完整最新用户需求原文；首次解析必传，用户一次修改涉及两个及以上条件时只合并用户原始表述和后续改口后重传，禁止回填 Dify 输出或 Provider 归一化值",
+        "当前单个平台的完整最新用户需求原文；首次解析必传，用户一次修改涉及两个及以上条件时只合并用户原始表述和后续改口后重传，禁止回填历史解析输出或 Provider 归一化值",
     },
   },
 });
@@ -90,8 +90,8 @@ function failure(code, message) {
 }
 
 /**
- * Create the Dify-backed requirement parser. The proxy deliberately preserves
- * the complete Workflow output; semantic reconciliation belongs to the Agent.
+ * Create the requirement parser. The proxy deliberately preserves the complete
+ * Workflow output; semantic reconciliation belongs to the Agent.
  *
  * @param {{ apiKey?: string, fetchImpl?: typeof fetch, timeoutMs?: number }} [options]
  */
@@ -105,7 +105,7 @@ export function createRequirementParser({
     const demand = typeof params.demand === "string" ? params.demand.trim() : "";
     if (!demand) return failure("INVALID_INPUT", "demand 必须是非空的单平台需求文本");
     if (!nonemptyString(apiKey)) {
-      return failure("DIFY_API_KEY_MISSING", "Dify Workflow 凭据不可用");
+      return failure("DIFY_API_KEY_MISSING", "需求解析 Workflow 凭据不可用");
     }
     if (typeof fetchImpl !== "function") {
       return failure("DIFY_CLIENT_UNAVAILABLE", "当前运行环境不支持 HTTP 调用");
@@ -130,7 +130,7 @@ export function createRequirementParser({
     } catch (error) {
       return failure(
         error?.name === "TimeoutError" ? "DIFY_TIMEOUT" : "DIFY_REQUEST_FAILED",
-        "Dify 需求解析请求失败",
+        "需求解析请求失败",
       );
     }
 
@@ -138,16 +138,16 @@ export function createRequirementParser({
     try {
       envelope = await response.json();
     } catch {
-      return failure("DIFY_INVALID_RESPONSE", "Dify 未返回有效 JSON");
+      return failure("DIFY_INVALID_RESPONSE", "需求解析未返回有效 JSON");
     }
     if (!response.ok) {
-      return failure("DIFY_HTTP_ERROR", `Dify 需求解析返回 HTTP ${response.status}`);
+      return failure("DIFY_HTTP_ERROR", `需求解析返回 HTTP ${response.status}`);
     }
     if (!isRecord(envelope?.data) || envelope.data.status !== "succeeded") {
-      return failure("DIFY_WORKFLOW_FAILED", "Dify Workflow 未成功完成");
+      return failure("DIFY_WORKFLOW_FAILED", "需求解析 Workflow 未成功完成");
     }
     if (!isRecord(envelope.data.outputs)) {
-      return failure("DIFY_OUTPUT_INVALID", "Dify Workflow 缺少 outputs 对象");
+      return failure("DIFY_OUTPUT_INVALID", "需求解析 Workflow 缺少 outputs 对象");
     }
 
     const data = {

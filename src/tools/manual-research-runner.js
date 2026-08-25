@@ -342,7 +342,8 @@ function createRunInfo(params, plan, state, now, candidateCount = 0) {
     price_view_source: plan.price_view_source ?? "none",
     price_semantics_version: plan.price_semantics_version ?? null,
     candidate_count: candidateCount,
-    candidate_shortfall: plan.target_count ? Math.max(plan.target_count - candidateCount, 0) : 0,
+    candidate_shortfall:
+      plan.target_count == null ? null : Math.max(plan.target_count - candidateCount, 0),
     completed_keywords: [...state.completed_keywords],
     completed_pages: state.completed_pages,
     fallback_modes_used: [...state.fallback_modes],
@@ -465,7 +466,8 @@ function publicPayload({
     pending.tasks[0]?.html_snapshots?.length
       ? { next_call: htmlReadCall(params, store.run_id, pending.tasks[0]) }
       : {}),
-    delivery_shortfall: plan.target_count ? Math.max(plan.target_count - candidates.length, 0) : 0,
+    delivery_shortfall:
+      plan.target_count == null ? null : Math.max(plan.target_count - candidates.length, 0),
     detail_progress: {
       target,
       attempted: state.detail_attempted,

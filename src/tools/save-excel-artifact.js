@@ -10,10 +10,14 @@ import {
   unlink,
 } from "node:fs/promises";
 import { basename, extname, isAbsolute, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { hostToolResult } from "./tool-result.js";
 import { nonemptyString } from "../util/value.js";
 import { excelArtifactTestDownloadUrl } from "./test-adapter.js";
-import { submissionEnrichmentQuestionPayload } from "./post-save-questions.js";
+import {
+  mcnRankingBranchQuestionPayload,
+  submissionEnrichmentQuestionPayload,
+} from "./post-save-questions.js";
 
 export const EXCEL_ARTIFACT_KINDS = Object.freeze([
   "submission_batch",
@@ -59,26 +63,51 @@ function failure(code, message, reason = code, {
   return hostToolResult(payload, { details: payload.error.details });
 }
 
-function success(details, artifactKind) {
-  const initialSubmission = artifactKind === "submission_batch";
+function followUpDelivery(artifactKind, mcnCount) {
+  if (artifactKind === "mcn_ranking" && Number.isSafeInteger(mcnCount) && mcnCount >= 0) {
+    return {
+      next_tool: "AskUserQuestion",
+      next_args: mcnRankingBranchQuestionPayload(mcnCount === 0),
+      next_action:
+        "MCN 排名表已保存；展示本地文件链接后立即按 next_args 询问询价、人工拓展或结束",
+    };
+  }
+  if (artifactKind === "submission_batch") {
+    return {
+      next_tool: "AskUserQuestion",
+      next_args: submissionEnrichmentQuestionPayload(),
+      next_action: "提报表已生成；展示本地绝对路径后立即按 next_args 询问是否补充更新达人信息",
+    };
+  }
+  return {};
+}
+
+function success(details, artifactKind, mcnCount) {
+  const localFileLink = localFileMarkdownLink(details.file_path);
   const delivery = {
     local_path: details.file_path,
+    local_file_link: localFileLink,
     display_required: true,
     display_before_next_action: true,
-    user_visible_message: `已完成：Excel 已保存到本地。\n本地路径：${details.file_path}`,
-    ...(initialSubmission
-      ? {
-            next_tool: "AskUserQuestion",
-            next_args: submissionEnrichmentQuestionPayload(),
-            next_action:
-              "提报表已生成；展示本地绝对路径后立即按 next_args 询问是否补充更新达人信息",
-          }
-      : {}),
+    user_visible_message: `已完成：Excel 已保存到本地。\n本地文件：${localFileLink}`,
+    ...followUpDelivery(artifactKind, mcnCount),
   };
   return hostToolResult(
     { success: true, data: details, delivery },
     { details },
   );
+}
+
+/**
+ * @param {string} filePath
+ */
+export function localFileMarkdownLink(filePath) {
+  if (!nonemptyString(filePath) || !isAbsolute(filePath)) return null;
+  const label = filePath
+    .replaceAll("\\", "\\\\")
+    .replaceAll("[", "\\[")
+    .replaceAll("]", "\\]");
+  return `[${label}](<${pathToFileURL(filePath).href}>)`;
 }
 
 export function validateExcelDownloadUrl(value) {
@@ -464,7 +493,7 @@ export async function saveExcelArtifact(params, {
       idempotent: published.idempotent,
       download_attempts: downloaded.attempts,
     };
-    return success(details, artifactKind);
+    return success(details, artifactKind, params?.mcn_count);
   } catch {
     return failure(
       "YPSCAN_EXCEL_SAVE_FAILED",

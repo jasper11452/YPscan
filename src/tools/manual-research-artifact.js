@@ -756,12 +756,13 @@ export function buildManualResearchWorkbook({
   artifact,
 }) {
   const timestamp = artifact.generated_at;
-  const targetCount = plan.target_count ?? candidates.length;
+  const targetCount = plan.target_count;
   const checkedCandidates = candidatesWithPriceCheck(candidates, plan);
   const qualifiedRows = qualifiedCandidates(checkedCandidates, details, reviews);
-  const finalRows = qualifiedRows.slice(0, targetCount);
-  const remainingQualifiedRows = qualifiedRows.slice(targetCount);
-  const candidateRows = qualifiedRows.length >= targetCount ? remainingQualifiedRows : checkedCandidates;
+  const finalRows = qualifiedRows.slice(0, targetCount ?? qualifiedRows.length);
+  const remainingQualifiedRows = qualifiedRows.slice(targetCount ?? qualifiedRows.length);
+  const candidateRows =
+    targetCount != null && qualifiedRows.length >= targetCount ? remainingQualifiedRows : checkedCandidates;
   const selectedRows = talentRows(plan, finalRows, details, reviews, finalRows, timestamp);
   const candidateSheetRows = talentRows(
     plan,
@@ -1110,9 +1111,9 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
       (candidate) => candidate.list_hard_evaluation.status === "unknown",
     ).length;
     const selectedCandidates = finalCandidates(candidates, details, reviews, plan.target_count);
-    const deliveryShortfall = plan.target_count
-      ? Math.max(plan.target_count - selectedCandidates.length, 0)
-      : 0;
+    const deliveryShortfall = plan.target_count == null
+      ? null
+      : Math.max(plan.target_count - selectedCandidates.length, 0);
     const artifact = createArtifactMetadata({
       runId: runName,
       checkpointPath,
@@ -1191,7 +1192,7 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
         finalEvent.review_completed_count ??
         recorded.review_completed_count ??
         restored.reviews.length,
-      delivery_shortfall: finalEvent.delivery_shortfall ?? recorded.delivery_shortfall ?? 0,
+      delivery_shortfall: finalEvent.delivery_shortfall ?? recorded.delivery_shortfall ?? null,
       checkpoint_event_count: restored.event_count,
       generated_at: recorded.generated_at ?? finalEvent.captured_at ?? runInfo.updated_at,
       run_info: recorded.run_info ?? runInfo,
@@ -1532,7 +1533,7 @@ export async function createManualResearchSubmission({
     requirementId,
     platform,
   });
-  const target = loaded.plan.target_count ?? 1;
+  const target = loaded.plan.target_count;
   const usesHtmlExtraction = loaded.details.some((detail) => detail.html_snapshots?.length);
   const checkedCandidates = candidatesWithPriceCheck(loaded.candidates, loaded.plan);
   const selected = finalCandidates(
@@ -1543,7 +1544,7 @@ export async function createManualResearchSubmission({
   );
   const qualified = qualifiedCandidates(checkedCandidates, loaded.details, loaded.reviews);
   const pending =
-    usesHtmlExtraction && qualified.length >= target
+    usesHtmlExtraction && target != null && qualified.length >= target
       ? { tasks: [], remaining: 0 }
       : reviewBatch(loaded.candidates, loaded.details, loaded.reviews, {
           plan: loaded.plan,
@@ -1578,10 +1579,10 @@ export async function createManualResearchSubmission({
   return {
     submission_path: submissionPath,
     row_count: selected.length,
-    target_count: loaded.plan.target_count ?? selected.length,
-    delivery_shortfall: loaded.plan.target_count
-      ? Math.max(loaded.plan.target_count - selected.length, 0)
-      : 0,
+    target_count: loaded.plan.target_count ?? null,
+    delivery_shortfall: loaded.plan.target_count == null
+      ? null
+      : Math.max(loaded.plan.target_count - selected.length, 0),
     byte_count: workbook.length,
     sha256: createHash("sha256").update(workbook).digest("hex"),
     generated_at: generatedAt,
@@ -1911,7 +1912,9 @@ export async function applyManualResearchReviews({
     reviews: mergedReviews,
     detailPlannedCount: detailQueueLimit(plan),
     targetRowCount: selected.length,
-    deliveryShortfall: plan.target_count ? Math.max(plan.target_count - selected.length, 0) : 0,
+    deliveryShortfall: plan.target_count == null
+      ? null
+      : Math.max(plan.target_count - selected.length, 0),
     checkpointEventCount: events.length + updatedDetails.length + reviews.length + 1,
     generatedAt: capturedAt,
     deliveryMessage: "复核结果已写回同一 Excel；请向用户展示 excel_path。",

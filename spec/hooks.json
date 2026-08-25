@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "profile": "fixed-provider-flow-native-browser-and-provider-idempotency-v1",
   "implementation": "src/hooks/register-flow-directives.js",
   "events": {
@@ -14,6 +14,11 @@
     "before_prompt_build": [
       "inject the fixed Provider sequence, recipient contract, and AskUserQuestion waiting rule"
     ],
+    "before_tool_call": [
+      "normalize every validate_requirement numeric filter to one canonical no-space JSON range string",
+      "block incomplete or malformed validate_requirement writes before the Provider is called",
+      "require AskUserQuestion for every missing, ambiguous, conflicting, multi-candidate, or mapping-dependent business value"
+    ],
     "gateway_start": ["clear per-gateway startup instruction state"],
     "gateway_stop": ["clear per-gateway startup instruction state"]
   },
@@ -22,7 +27,6 @@
     "stage gates",
     "evidence gates",
     "SQLite ledger",
-    "runtime readiness gate",
     "field callback capture gate",
     "WeCom send confirmation gate",
     "ranked supplier name cache"

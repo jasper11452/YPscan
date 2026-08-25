@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "tool": "ypscan_parse_requirement",
   "sideEffects": "read-only-external-inference",
   "implementation": "direct-dify-workflow-proxy",
@@ -42,7 +42,10 @@
       "dy_cpe"
     ],
     "currentPlatformBrandCandidates": ["xhsbrandName", "dybrandName"],
-    "missingOrConflict": "agent-rechecks-current-original-and-decides; clarify-only-if-still-unresolved"
+    "missingOrConflict": "AskUserQuestion-required; agent-never-autonomously-selects",
+    "numericProviderFormat": "all numeric filters are no-space JSON range strings [min,max]; rebate is [min,1]",
+    "userEvidence": "submitted identity, quantity, deadline, and optional project dates must match non-empty original or clarification evidence",
+    "runtimeBoundary": "before_tool_call normalizes deterministic shapes once and blocks incomplete or invalid Provider writes"
   },
   "agentOwnedFields": "all published validate_requirement fields not listed in difyOwnedFields",
   "changePolicy": {
