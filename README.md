@@ -4,12 +4,12 @@
 
 `ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → 保存并展示 MCN 排名表本地文件超链接 → AskUserQuestion`
 
-用户选择“人工拓展并提报”后，若当前对话已经确认同一 requirement ID 的字段选择已提交，则直接复用 Provider 持久化字段并调用 `manual_source_creators`；否则先通过 `select_inquiry_form_fields` 选择字段。Provider 返回字段未配置时再回退到字段选择。“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”都默认走这个 MCP 链路；只有用户明确说要用浏览器手扒或选择“浏览器详细手扒”后，才先由 Agent 使用宿主 Browser 能力打开当前平台达人广场，再激活 Runner 并调用 `ypscan_manual_research(operation=start)` 创建运行。Runner 复用宿主 Browser 的 Profile、Cookie 和登录态，依次尝试完整硬筛、仅关键词、无筛选广场和通用可见 DOM。星图登录态首页会自动进入达人工作区；详情页优先读取真实网络响应和弹窗下 DOM，普通资质提示不阻断采集，真实验证码则保存当前证据并暂停。每页结果增量写入 checkpoint 并刷新 Excel；若 Browser 未启动，Agent 自助打开后用同一 `run_id` 调用 `resume`，登录、验证或网络恢复则按工具结果让用户处理后恢复；终态失败后用 `fresh_run=true` 新建运行。除启动或聚焦宿主 Browser 外，Agent 不直接接管页面、shell 或页面快照。
+用户选择“人工拓展并提报”后，若当前对话已经确认同一 requirement ID 的字段选择已提交，则直接复用 Provider 持久化字段并调用 `manual_source_creators`；否则先通过 `select_inquiry_form_fields` 选择字段。调用默认手扒前优先查看其实际 input schema：若有明确的需求原文可选字段，传当前完整、未改写的原始需求文本；schema 不支持或仅因未知参数拒绝时，去掉该字段，仅用同一 requirement ID 和 `size` 重试一次。不得猜字段名、传解析输出或 `rawMessagesJson`。Provider 返回字段未配置时再回退到字段选择。“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”都默认走这个 MCP 链路；只有用户明确说要用浏览器手扒或选择“浏览器详细手扒”后，才先由 Agent 使用宿主 Browser 能力打开当前平台达人广场，再激活 Runner 并调用 `ypscan_manual_research(operation=start)` 创建运行。Runner 复用宿主 Browser 的 Profile、Cookie 和登录态，依次尝试完整硬筛、仅关键词、无筛选广场和通用可见 DOM。星图登录态首页会自动进入达人工作区；详情页优先读取真实网络响应和弹窗下 DOM，普通资质提示不阻断采集，真实验证码则保存当前证据并暂停。每页结果增量写入 checkpoint 并刷新 Excel；若 Browser 未启动，Agent 自助打开后用同一 `run_id` 调用 `resume`，登录、验证或网络恢复则按工具结果让用户处理后恢复；终态失败后用 `fresh_run=true` 新建运行。除启动或聚焦宿主 Browser 外，Agent 不直接接管页面、shell 或页面快照。
 
 ## 当前组成
 
 - `index.js`：注册 3 个本地能力工具、远端 MCP 白名单和 Hook。
-- `src/tools/parse-requirement.js`：直连固定 Dify Workflow，在 `data.outputs` 中完整透传原始输出；用户明确品牌优先，否则采用当前平台唯一且非占位的品牌候选。其他字段先合并原文与各字段最新有效弹窗答案，同一字段的新答案覆盖旧答案；已确认且未修改的值不得重复询问。
+- `src/tools/parse-requirement.js`：调用固定需求解析 Workflow，在 `data.outputs` 中完整透传原始输出；解析返回的标签数组合法非空时直接采用，不向用户确认，可选标签缺失时省略。用户明确品牌优先，否则采用当前平台唯一且非占位的品牌候选。数值字段先合并原文与最新有效弹窗答案，只有仍缺失、模糊或冲突时才询问；已确认且未修改的值不得重复询问。抖音报价、CPM、CPE 固定映射为 L2=植入视频、L3=定制视频，不使用 L1；解析片段仍带旧档位名但视频类型明确时，保持数值不变并确定性路由，不重复询问。同平台多个达人类型只有总量时按类型平均拆分，余数优先给用户重点类型；无明确重点时小红书 `pgyBloggerTypeLabel`、抖音 `xtTalentTypeLabel` 对应类型优先。
 - Provider 询价字段选择直接使用远端 MCP `select_inquiry_form_fields`，用户提交后按 requirement ID 在后端持久化；Agent 不调用已弃用的字段查询工具，也不向后续工具传 `columns`。
 - `src/tools/save-excel-artifact.js`：保存 Provider 返回的 Excel 下载结果；初始链路只保存 MCN 排名表，不保存 `search_creators` 的表格。
 - `src/tools/manual-research-runner.js`：执行有界的双平台筛选、降级、分页、原始详情 HTML 采集、Agent 分块提炼、恢复和产物刷新。

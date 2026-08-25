@@ -17,6 +17,8 @@ const MANUAL_MARKET_URLS = Object.freeze({
 const MANUAL_BROWSER_UNAVAILABLE = "YPSCAN_MANUAL_BROWSER_UNAVAILABLE";
 const REQUIREMENT_PREFLIGHT_BLOCKED = "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED";
 const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"，且 min < max';
+const MANUAL_SOURCE_ORIGINAL_TEXT_RULE =
+  "调用默认 manual_source_creators 前先读取实际 input schema：若明确提供需求原文的可选字段，优先在该字段传当前完整、未改写的用户原始需求文本；只传原文，不传解析输出或 rawMessagesJson。schema 不支持该字段时只传 requirement_id 和 size；若仅因未知可选字段拒绝，则去掉原文字段、保留同一 requirement_id 和 size 重试一次，不得猜字段名或用该回退掩盖其他业务错误。";
 
 function manualMarketUrl(...values) {
   for (const value of values) {
@@ -32,6 +34,11 @@ function paramsFromEvent(event) {
   if (isRecord(event?.arguments)) return event.arguments;
   if (isRecord(event?.input)) return event.input;
   return {};
+}
+
+function serializeProviderRawMessages(params) {
+  if (!isRecord(params.rawMessagesJson)) return params;
+  return { ...params, rawMessagesJson: JSON.stringify(params.rawMessagesJson) };
 }
 
 function messageText(message) {
@@ -117,14 +124,14 @@ function flowPauseDirective(stage, message) {
 
 function requirementParseSuccessDirective() {
   return [
-    "YPSCAN_FLOW_DIRECTIVE=Dify 需求解析成功。data.outputs 是完整、未改写的原始 Workflow 输出。下一步由 Agent 按需求解析工具卡结构性展开当前平台参数片段、补齐非 Dify 字段，再调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
-    `DIFY_OWNED_LOGICAL_FIELDS=${DIFY_REQUIREMENT_FIELDS.join(",")}`,
-    `VALIDATE_REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。以下字段只能使用该格式，禁止传数组、对象、单个数字、百分号文本或自然语言：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")}。返点表达最低要求，固定为 "[min,1]"；报价是 kolOfficialPriceL1/L2/L3，CPM 是 cpmL1/L2/L3，CPE 是 cpeL1/L2/L3。所有数值字段必须在第一次 validate_requirement 调用前一次性准备正确，不得用 Provider 报错试探类型。`,
-    "Dify 返回内容只允许按字段名结构性展开，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe。Dify 值是候选，本地 validate_requirement 边界必须依用户证据和区间规则二次校验；候选合法且不冲突时只能原样使用，不得收窄或扩大，候选非法或冲突时必须阻断，不得静默改写。用户明确品牌优先；没有明确品牌时，当前平台品牌候选只有一个非空且不是 null、未知、未明确等占位值才无损映射为 brandName。为空、多候选、占位值或与用户明确品牌冲突时才弹窗。其他语义值不得猜测、改标签、改顺序或丢弃未知 Workflow 输出；数组或单值到 Provider 标准区间字符串的确定性格式归一化由本地调用边界一次完成。落库 validate_requirement 前，先合并 original 与各字段最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的字段继续复用。只有合并后仍缺失、模糊、冲突、多候选或需要选择标签/时长/内容形式/分组的字段才调用 AskUserQuestion。",
-    "提交前一次性检查所有必填字段和全部区间格式。quantityTotal 缺失、共享总量无法分配到多个独立达人组、submissionDeadlineAt 缺失或不精确、抖音报价未明确时长档、品牌或标签存在多候选时，都必须先弹窗确认；用户未回答前禁止调用 validate_requirement。",
-    "rawMessagesJson 必须是 JSON 对象并保留 original、本次完整 parse_outputs 和每个字段最新有效 clarification；同一字段的新答案覆盖旧答案，重建参数时保留其他字段答案。除当前平台唯一合法品牌候选可直接作为 brandName 证据外，只有 original 与当前 clarifications 属于用户证据；Dify 其他默认值不能证明用户已确认。",
-    "用户后续单次修改只涉及一个业务条件时，不再调用 ypscan_parse_requirement，由 Agent 按用户最新原文直接更新该条件。同一次修改涉及两个及以上不同业务条件时，只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand，再调用一次 ypscan_parse_requirement，并以新响应刷新全部 Dify 字段。禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand。",
-    "当前 Dify 的报价、CPM、CPE 参数片段按 L1/L2/L3 Provider 字段展开；只有 original 或该字段最新 clarification 已唯一明确对应内容形式或抖音时长档时才可使用。Dify 给出两者都没有支持的档位属于冲突，必须弹窗确认；已有确认答案时直接复用，不得重复询问。其余 Provider 字段严格按 media-assistant 的 ypscan_parse_requirement 解析参考从当前有效用户证据构造。",
+    "YPSCAN_FLOW_DIRECTIVE=需求解析成功。data.outputs 是完整、未改写的原始 Workflow 输出。下一步由 Agent 按需求解析工具卡结构性展开当前平台参数片段、补齐其余字段，再调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
+    `PARSER_OWNED_LOGICAL_FIELDS=${DIFY_REQUIREMENT_FIELDS.join(",")}`,
+    `VALIDATE_REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。以下字段只能使用该格式，禁止传数组、对象、单个数字、百分号文本或自然语言：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")}。返点表达最低要求，固定为 "[min,1]"。抖音报价、CPM、CPE 统一按视频类型映射：L2=植入视频，L3=定制视频，L1 禁止使用。所有数值字段必须在第一次 validate_requirement 调用前一次性准备正确，不得用 Provider 报错试探类型。`,
+    "解析结果只允许按字段名结构性展开，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe。八个 Label 字段和 contentTag 的非 null 合法数组是可直接使用的解析结果：原样保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认；缺失或 null 的可选 Label 字段直接省略。兼容解析历史字段 xtTalentTypeLable，并确定性映射为 xtTalentTypeLabel，不询问用户。数值候选仍必须依用户证据和区间规则二次校验；合法且不冲突时原样使用，不得收窄或扩大，缺失、模糊、非法或冲突时才弹窗。用户明确品牌优先；没有明确品牌时，当前平台品牌候选只有一个非空且不是 null、未知、未明确等占位值才无损映射为 brandName。为空、多候选、占位值或与用户明确品牌冲突时才弹窗。不得改写、重排或丢弃未知 Workflow 输出；数组或单值到 Provider 标准区间字符串的确定性格式归一化由本地调用边界一次完成。落库 validate_requirement 前，先合并 original 与各数值字段最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的字段继续复用。同平台多个达人类型只有总量时属于确定性分配，不得追问每类人数。",
+    "提交前一次性检查所有必填字段和全部区间格式。quantityTotal 缺失、submissionDeadlineAt 缺失或不精确、抖音数值字段无法确定视频类型、品牌存在多候选或其他必填数值缺失/模糊/冲突时，必须先弹窗确认；解析标签不得触发确认。用户未回答前禁止调用 validate_requirement。同平台 N 个达人类型共享总量 Q 且 Q≥N 时，每类先分 floor(Q/N)，余数按优先级逐类加 1；用户明确重点优先，否则小红书 pgyBloggerTypeLabel、抖音 xtTalentTypeLabel 对应类型优先，同字段内按原文首次出现顺序。每个子需求分别调用 validate_requirement，并在 clarifications.quantityTotal 记录“当前类型数量：x位；原总量Q位按N类平均分配”；先完成全部子需求落库，再逐个搜索和排名；仅 Q<N 时弹窗。",
+    "rawMessagesJson 在 Agent 入参中必须是 JSON 对象并保留 original、本次完整 parse_outputs 和每个数值字段最新有效 clarification；本地边界完成预检后只序列化一次再提交 Provider，Agent 禁止自行切换对象和字符串形态。同一数值字段的新答案覆盖旧答案，重建参数时保留其他字段答案。解析标签数组可直接采用，当前平台唯一合法品牌候选可作为 brandName 证据；其他非标签解析默认值不能证明用户已确认。",
+    "用户后续单次修改只涉及一个业务条件时，不再调用 ypscan_parse_requirement，由 Agent 按用户最新原文直接更新该条件。同一次修改涉及两个及以上不同业务条件时，只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand，再调用一次 ypscan_parse_requirement，并以新响应刷新全部解析字段。禁止把旧解析输出、已拓展价格或其他 Provider 归一化值写回 demand。",
+    "报价参数片段按 Provider 字段展开：抖音 kolOfficialPriceL2/cpmL2/cpeL2 仅表示植入视频，kolOfficialPriceL3/cpmL3/cpeL3 仅表示定制视频，kolOfficialPriceL1/cpmL1/cpeL1 禁止使用。解析片段中的旧档位名不作为视频类型证据；original 或该字段最新 clarification 已唯一明确植入/定制时，保留合法数值区间并确定性路由到当前 L2/L3，不得因此询问用户。只有视频类型仍缺失或模糊时才弹窗确认。已有确认答案时直接复用，不得重复询问。其余 Provider 字段严格按 media-assistant 的 ypscan_parse_requirement 解析参考从当前有效用户证据构造。",
   ].join("\n");
 }
 
@@ -178,6 +185,7 @@ function fieldSelectionDirective(message) {
     "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。先把 FIELD_SELECTION_URL 里的原始 url 原样输出为单独一行用户可见正文：禁止 Markdown 包装、重写、用 Browser 打开或替用户选择字段。",
     "用户在选择页提交后，select_inquiry_form_fields 会把所选字段按 requirement ID 持久化到 Provider 数据库；requirement ID 来自 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不是 demand_id。不得调用已弃用的 get_selected_inquiry_form_fields，不得查询、重建、转存或把 columns 放入 Agent 上下文；后续 Provider 工具只传当前 schema 要求的业务标识，由后端关联字段。",
     "现在停止业务调用并等待用户完成选择后回复“好了”。收到后恢复发起本次字段选择的原分支：询价机构分支只有在用户已明确选中至少一家当前 MCN 后，才保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message；返点只作内部筛选条件，绝不写入这两个消息字段。随后必须调用一次 AskUserQuestion 做发送前确认：question 完整展示最终机构名称列表和完整企微消息，选项固定为“确认发送”和“返回修改”。只有用户选择“确认发送”后才按 create_with_distributions 工具卡调用一次；选择返回修改、关闭、取消或无答案都不得发送。只选择“询价机构”分支不等于选中收件人或授权发送；没有收件人时先使用本轮真实 MCN 的机构选择弹窗，绝不传空数组、按排名/覆盖数自行挑选机构或自动发送。人工拓展分支使用原 requirement_id 和用户要求的 size 调用 manual_source_creators。不得调用 create_submission_batch，不得再次调用 select_inquiry_form_fields。",
+    MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
     `FIELD_SELECTION_URL=${url}`,
   ].join("\n");
 }
@@ -232,6 +240,7 @@ function rankMcnsDirective(message, params = {}) {
         ]
       : []),
     "用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”或选择“人工拓展并提报”时，一律默认走 MCP，不得激活浏览器手扒或读取 Browser 手扒 SOP。若当前对话已有同一 requirement_id 的字段选择链接且用户已明确回复提交完成，直接复用 Provider 持久化字段并调用 manual_source_creators，不得再次调用 select_inquiry_form_fields；否则先调用 select_inquiry_form_fields 并把原始 URL 单独展示，等待用户提交并回复“好了”后再调用 manual_source_creators。manual_source_creators 按当前 Provider schema 传本轮 requirement_id 和用户要求的交付人数 size；后台全自动完成手扒并返回 Excel，不先启动 Browser。若 Provider 返回 REQUIREMENT_COLUMNS_NOT_CONFIGURED，再按工具结果指令进入字段选择。",
+    MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
     "manual_source_creators 的 Excel 保存到本地后，才提示用户可选择浏览器手扒；该方式耗时更长，期间可能多次出现登录、验证或资质弹窗。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活 Browser Runner、读取 Browser 手扒 SOP，先使用宿主 Browser 能力打开当前平台达人广场，再调用 ypscan_manual_research(operation=start)。resume 只用于此前已经由用户明确授权启动的同一 run。",
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
   ];
@@ -914,7 +923,7 @@ function flowDirective(toolName, message, params = {}) {
     const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
     if (!requirementId) return flowPauseDirective("validate_requirement", message);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。下一步立即逐字使用 SEARCH_CREATORS_ARGS 调用 search_creators，不调用 Browser 或直接结束。",
+      "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。若当前调用属于已确定的同平台多达人类型平均分配，且仍有未落库的子需求，下一步先按预计算顺序完成其余 validate_requirement，并逐一保存真实 requirement ID，不得提前调用 search_creators。全部子需求落库后，再按类型顺序对每个 requirement ID 分别执行 search_creators → rank_mcns。若没有剩余子需求，则立即逐字使用 SEARCH_CREATORS_ARGS 调用 search_creators；不得调用 Browser 或直接结束。",
       "需求 ID 始终指 requirement ID：优先使用本次落库返回的 data.requirement_id，该字段缺失时兼容 data.id；search_creators.id 严禁使用 data.demand_id。",
       `SEARCH_CREATORS_ARGS=${JSON.stringify({ id: requirementId })}`,
     ].join("\n");
@@ -967,19 +976,20 @@ export function registerFlowDirectiveHooks(api) {
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → ypscan_save_excel_artifact(mcn_ranking) → MCN 排名表本地文件超链接 → 逐字调用保存结果中的 ASK_USER_QUESTION_ARGS；需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID。search_creators 返回的表格链接不保存、不展示。“询价机构”只选择分支，不指定收件人：用户选该分支后，必须逐字调用 rank_mcns 结果中的 INQUIRY_RECIPIENT_SELECTION_ARGS，等用户明确选中至少一家真实 MCN 后才调用 select_inquiry_form_fields；不得按排名、覆盖人数、返点、综合分或推荐顺序自行挑选机构。随后询价分支固定为字段选择 → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → 发送前确认 → create_with_distributions。发送前确认必须用 AskUserQuestion 在 question 中完整展示最终机构名称列表和完整企微消息，选项固定为“确认发送”和“返回修改”；只有用户选择“确认发送”才调用一次发送工具，关闭、取消、无答案或返回修改均不得发送。supplierIds 和 supplier_name 始终都是数组，空侧传 []，至少一侧非空。用户提供、提名或在机构选择弹窗选中的机构名时，supplier_id 是第一优先级：先在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中且有非空 supplier_id 就只放入 supplierIds，未匹配或无 ID 才把原名放入 supplier_name。不做本地模糊匹配，不跨需求、平台或 run 复用 ID；两个数组可同时非空。模糊、不唯一或重复发送结果必须原样展示，禁止把已成功机构重新加入后续调用。若 Provider 返回“只有进行中的项目才能创建供应商分发”，只用同一 requirement_id 调用一次 get_workflow_state 诊断，禁止自动重发。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
+          "固定业务顺序：ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → ypscan_save_excel_artifact(mcn_ranking) → MCN 排名表本地文件超链接 → 逐字调用保存结果中的 ASK_USER_QUESTION_ARGS；唯一批量例外是已确定的同平台多达人类型平均分配：先完成全部子需求的 validate_requirement 并保存各自真实 requirement ID，再按分配顺序逐个进入 search_creators → rank_mcns，禁止首个子需求落库后遗漏其他类型。需求 ID 始终指 requirement ID，优先取 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id；search_creators.id 和 rank_mcns.id 都使用这个 requirement ID。search_creators 返回的表格链接不保存、不展示。“询价机构”只选择分支，不指定收件人：用户选该分支后，必须逐字调用 rank_mcns 结果中的 INQUIRY_RECIPIENT_SELECTION_ARGS，等用户明确选中至少一家真实 MCN 后才调用 select_inquiry_form_fields；不得按排名、覆盖人数、返点、综合分或推荐顺序自行挑选机构。随后询价分支固定为字段选择 → 用户提交并回复“好了” → 保留原需求全部信息撰写询价消息 → 发送前确认 → create_with_distributions。发送前确认必须用 AskUserQuestion 在 question 中完整展示最终机构名称列表和完整企微消息，选项固定为“确认发送”和“返回修改”；只有用户选择“确认发送”才调用一次发送工具，关闭、取消、无答案或返回修改均不得发送。supplierIds 和 supplier_name 始终都是数组，空侧传 []，至少一侧非空。用户提供、提名或在机构选择弹窗选中的机构名时，supplier_id 是第一优先级：先在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中且有非空 supplier_id 就只放入 supplierIds，未匹配或无 ID 才把原名放入 supplier_name。不做本地模糊匹配，不跨需求、平台或 run 复用 ID；两个数组可同时非空。模糊、不唯一或重复发送结果必须原样展示，禁止把已成功机构重新加入后续调用。若 Provider 返回“只有进行中的项目才能创建供应商分发”，只用同一 requirement_id 调用一次 get_workflow_state 诊断，禁止自动重发。用户后续说“填好了/已回收/生成表格”时固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（同一 job_id 可重复查询）→ ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)，中间不得停。create_with_distributions 是唯一企微发送工具；create_submission_batch 只生成提报表，绝不用于发送企微。get_workflow_state 仅用于诊断，其 allowed_actions 不替代本固定链路。",
           "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "search_creators 成功后忽略其 creators_export_path 或其他表格链接，不调用保存工具，直接使用同一 requirement ID 和当前平台调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再使用其精确 SAVE_EXCEL_ARTIFACT_ARGS 保存 MCN 排名表；保存成功后原样展示保存结果中的 delivery.local_file_link Markdown 超链接，不得只输出裸路径，再调用分支弹窗。rank_mcns 弹窗只放整体总结，本地文件链接不得放进弹窗 question。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手扒补量、推荐理由及其他 rank_mcns 字段或汇总。",
           "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再用包含真实 mcn_count 的参数保存 MCN 排名表，原样展示保存结果中的 delivery.local_file_link Markdown 超链接，并逐字调用同一保存结果 delivery.next_args 给出的 AskUserQuestion，不得改写弹窗参数。用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”或选择人工拓展后，一律默认走 MCP，不得激活浏览器手扒或读取 Browser 手扒 SOP。若当前对话已有同一 requirement_id 的字段选择链接且用户已明确回复提交完成，直接调用 manual_source_creators，不得再次调用 select_inquiry_form_fields；否则先调用 select_inquiry_form_fields，用户提交字段并回复“好了”后再调用 manual_source_creators。按当前 Provider schema 传本轮 requirement_id 和用户要求的 size；若 Provider 返回 REQUIREMENT_COLUMNS_NOT_CONFIGURED，再按工具结果指令进入字段选择。后台返回 Excel 后立即用 ypscan_save_excel_artifact(manual_source) 保存。",
+          MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
           "默认手扒 Excel 保存成功后才提示用户是否继续浏览器手扒，并明确该方式耗时较长、期间可能多次出现登录、验证或资质弹窗。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活 Browser Runner、读取 Browser 手扒 SOP，先使用宿主 Browser 能力打开当前平台达人广场，再调用 ypscan_manual_research(operation=start)；resume 只用于此前已获用户明确授权的同一 run。start/resume 返回 next_call 时必须原样执行 read_detail_html，读完当前达人全部 HTML 后由 Agent 提炼字段并 apply_reviews。",
-          "需求澄清规则：先合并用户原始需求和每个字段最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的字段继续复用，不得重复询问。只有合并后仍缺失、无效、模糊、冲突、多候选或需要选择标签、平台内容形式、抖音时长档、独立达人组数量分配的字段才调用 AskUserQuestion。用户明确品牌优先；没有明确品牌时，当前平台 Dify 品牌候选唯一、非空且不是 null、未知等占位值才直接作为 brandName。禁止自动补标签、默认补值或普通文本追问。纯格式规范化不是业务决策，由 validate_requirement 本地调用边界一次完成。正常成功交付不追加完成弹窗。",
+          "需求澄清规则：解析返回的八个 Label 数组和 contentTag 合法非 null 时直接原样使用，不要求原文逐项举证，不调用 AskUserQuestion 确认；缺失或 null 的可选 Label 直接省略，历史字段 xtTalentTypeLable 确定性映射为 xtTalentTypeLabel。数值字段先合并用户原始需求和最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。只有必填数值仍缺失、无效、模糊或冲突时才调用 AskUserQuestion。用户明确品牌优先；没有明确品牌时，当前平台品牌候选唯一、非空且不是 null、未知等占位值才直接作为 brandName。禁止编造标签、默认补数值或普通文本追问。纯格式规范化和已授权的同平台多达人类型平均分配不是业务决策：总量不少于类型数时不得追问每类人数；只有总量少于类型数、无法保证每类至少 1 人时才弹窗。正常成功交付不追加完成弹窗。",
           `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
-          "Dify 数值是候选，必须经本地用户证据和区间规则二次校验；合法且不冲突的候选原样使用，不得收窄或扩大，非法或冲突时阻断而不是静默改写。",
-          "需求解析分工：首次按单平台完整需求调用 ypscan_parse_requirement 直连 Dify，data.outputs 完整透传原始 Workflow 输出。Dify 负责八个标签数组、contentTag、品牌、followercount、rebate、报价、CPM、CPE 的候选解析；Agent 只按字段名和当前平台结构性展开参数片段。用户明确品牌优先；否则当前平台 Dify 品牌候选唯一且为合法非占位值时直接采用。其他 Dify 值若缺少 original 或字段最新 clarification 证据、与用户证据冲突或存在多种合法映射，必须弹窗确认。其余 Provider 字段按解析参考从当前有效用户证据构造。后续单次修改只涉及一个条件时由 Agent 直接更新；同一次修改涉及两个及以上不同条件时，只用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand 后重新调用 Dify，禁止回填旧 Dify 输出、已拓展价格或其他 Provider 归一化值。",
+          "解析数值是候选，必须经本地用户证据和区间规则二次校验；合法且不冲突的候选原样使用，不得收窄或扩大，非法或冲突时阻断而不是静默改写。",
+          "需求解析分工：首次按单平台完整需求调用 ypscan_parse_requirement，data.outputs 完整透传原始 Workflow 输出。解析结果负责八个标签数组、contentTag、品牌、followercount、rebate、报价、CPM、CPE 的候选值；Agent 只按字段名和当前平台结构性展开参数片段。八个 Label 数组和 contentTag 合法非 null 时直接采用，不向用户确认；可选 Label 缺失或 null 时省略，xtTalentTypeLable 兼容映射为 xtTalentTypeLabel。用户明确品牌优先；否则当前平台品牌候选唯一且为合法非占位值时直接采用。解析数值若缺少 original 或字段最新 clarification 证据、与用户证据冲突或存在多种合法映射，必须弹窗确认。抖音报价、CPM、CPE 按视频类型映射：kolOfficialPriceL2/cpmL2/cpeL2=植入视频，kolOfficialPriceL3/cpmL3/cpeL3=定制视频，不使用任何 L1。解析片段中的旧档位名不作为类型证据；当前用户证据已唯一明确视频类型时，保留合法区间并确定性路由到新档位，不得询问用户。其余 Provider 字段按解析参考从当前有效用户证据构造。同平台多个达人类型只有总量 Q 时拆成子需求平均分配：每类 floor(Q/N)，余数优先给用户明确重点；无明确重点时小红书 pgyBloggerTypeLabel、抖音 xtTalentTypeLabel 对应类型优先，同字段内按原文首次出现顺序。用户只明确一个达人类型时也优先映射到上述平台主达人类型字段，其他标签字段作为辅助。后续单次修改只涉及一个条件时由 Agent 直接更新；同一次修改涉及两个及以上不同条件时，只用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand 后重新解析，禁止回填旧解析输出、已拓展价格或其他 Provider 归一化值。",
           "用户在默认手扒保存后选择浏览器详细手扒时，先使用宿主 Browser 能力打开当前平台达人广场，再用完整硬条件 facts 和 1–4 个关键词调用 start；Runner 连接宿主 Browser CDP，复用宿主 Profile、Cookie 和登录态。页面筛选、翻页、抓取、有限重试与逐级降级全部由插件 Runner 执行。若返回 YPSCAN_MANUAL_BROWSER_UNAVAILABLE，Agent 必须自助启动或聚焦宿主 Browser 后使用同一 run_id 调用 resume，不得要求用户代开；登录、全局 CAPTCHA 或网络恢复仍按工具结果请求用户处理后 resume。终态失败后用户要求重试时使用返回的 fresh_run=true 参数创建新运行。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
-          "浏览器详细手扒的 facts 由 Agent 从当前完整需求和后续修改直接构造。creator_price 必须引用客户原始价格表述和原始数值，禁止传 Dify/Provider 区间或手工计算后的 50%–120% 区间；creator_count 使用用户最新指定的本轮交付数。",
+          "浏览器详细手扒的 facts 由 Agent 从当前完整需求和后续修改直接构造。creator_price 必须引用客户原始价格表述和原始数值，禁止传解析结果/Provider 区间或手工计算后的 50%–120% 区间；creator_count 使用用户最新指定的本轮交付数。",
         );
       }
       return lines.length ? { prependContext: lines.join("\n") } : undefined;
@@ -1001,7 +1011,8 @@ export function registerFlowDirectiveHooks(api) {
           blockReason: requirementPreflightBlockReason(issues),
         };
       }
-      return normalized === params ? undefined : { params: normalized };
+      const providerParams = serializeProviderRawMessages(normalized);
+      return providerParams === params ? undefined : { params: providerParams };
     },
     HOOK_OPTIONS,
   );

@@ -47,7 +47,7 @@ export default {
     api.registerTool({
       name: "ypscan_parse_requirement",
       description:
-        '将当前单个平台的完整最新需求直连固定 Dify Workflow，在 data.outputs 中完整透传原始 Workflow 输出。用户明确品牌优先；没有明确品牌时，当前平台品牌候选唯一、非空且不是 null/未知等占位值才直接采用。其他 Dify 字段先合并用户原文和各字段最新有效 clarification，同一字段的新答案覆盖旧答案；只有仍缺失、模糊、冲突、多候选或需要选择映射时才调用 AskUserQuestion。进入 validate_requirement 前，rebate、followercount、kolOfficialPriceL1/L2/L3、cpmL1/L2/L3、cpeL1/L2/L3 及其他数值筛选字段全部准备为无空格 JSON 区间字符串 "[min,max]"，返点固定为 "[min,1]"，不得靠 Provider 报错试类型。首次需求必调；后续单次修改只涉及一个条件时由 Agent 直接更新，涉及两个及以上条件时只用用户原始表述和后续改口重建完整需求再调用，禁止把 Dify 输出或 Provider 归一化值回填给 Dify。',
+        '将当前单个平台的完整最新需求交给固定解析 Workflow，并在 data.outputs 中完整透传原始输出。解析返回的八个 Label 数组和 contentTag 合法非 null 时直接原样采用，不向用户确认；可选 Label 缺失或 null 时省略，历史字段 xtTalentTypeLable 确定性映射为 xtTalentTypeLabel。用户明确品牌优先；没有明确品牌时，当前平台品牌候选唯一、非空且不是 null/未知等占位值才直接采用。数值字段先合并用户原文和最新有效 clarification，只有仍缺失、模糊或冲突时才调用 AskUserQuestion。抖音报价、CPM、CPE 按视频类型映射：L2=植入视频，L3=定制视频，不使用 L1；解析片段带旧档位名但视频类型明确时保持数值不变并确定性路由，不重复询问。同平台多个达人类型只有总量时按类型平均拆分子需求，余数优先给用户重点类型；无明确重点时小红书 pgyBloggerTypeLabel、抖音 xtTalentTypeLabel 对应类型优先。进入 validate_requirement 前，所有数值筛选字段全部准备为无空格 JSON 区间字符串 "[min,max]"，返点固定为 "[min,1]"，不得靠 Provider 报错试类型。首次需求必调；后续单次修改只涉及一个条件时由 Agent 直接更新，涉及两个及以上条件时只用用户原始表述和后续改口重建完整需求再调用，禁止把旧解析输出或 Provider 归一化值回填。',
       parameters: PARSE_REQUIREMENT_PARAMETERS,
       outputSchema: PARSE_REQUIREMENT_OUTPUT_SCHEMA,
       async execute(_id, params) {

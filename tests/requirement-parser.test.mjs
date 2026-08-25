@@ -21,12 +21,12 @@ function response(envelope, { ok = true, status = 200 } = {}) {
   };
 }
 
-test("parser publishes only the single-platform Dify input", () => {
+test("parser publishes only the single-platform workflow input", () => {
   assert.deepEqual(PARSE_REQUIREMENT_PARAMETERS.required, ["demand"]);
   assert.deepEqual(Object.keys(PARSE_REQUIREMENT_PARAMETERS.properties), ["demand"]);
   assert.equal(PARSE_REQUIREMENT_PARAMETERS.additionalProperties, false);
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /用户原始表述/u);
-  assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /禁止回填 Dify 输出/u);
+  assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /禁止回填历史解析输出/u);
 
   assert.deepEqual(PARSE_REQUIREMENT_OUTPUT_SCHEMA.properties.data.required, [
     "outputs",
@@ -52,7 +52,7 @@ test("parser publishes only the single-platform Dify input", () => {
   ]);
 });
 
-test("parser calls Dify in blocking mode and preserves the complete raw outputs", async () => {
+test("parser calls the workflow in blocking mode and preserves the complete raw outputs", async () => {
   const outputs = {
     growBloggerTypeLabel: ["护肤", "通勤"],
     contentFeatureLabel: null,
@@ -106,7 +106,7 @@ test("parser calls Dify in blocking mode and preserves the complete raw outputs"
   assert.equal(result.content[0].text.includes("\n"), false);
 });
 
-test("missing Dify-owned fields remain missing inside the untouched outputs object", async () => {
+test("missing parser-owned fields remain missing inside the untouched outputs object", async () => {
   const parser = createRequirementParser({
     apiKey: "test-key",
     fetchImpl: async () =>
@@ -118,7 +118,7 @@ test("missing Dify-owned fields remain missing inside the untouched outputs obje
   assert.equal(parsed.data.workflowRunId, "data-run-1");
 });
 
-test("invalid demand fails without calling Dify", async () => {
+test("invalid demand fails without calling the workflow", async () => {
   let called = false;
   const parser = createRequirementParser({
     apiKey: "test-key",
@@ -134,7 +134,7 @@ test("invalid demand fails without calling Dify", async () => {
   assert.equal(payload(result).error.code, "INVALID_INPUT");
 });
 
-test("Dify transport and response failures keep distinct error codes", async (t) => {
+test("workflow transport and response failures keep distinct error codes", async (t) => {
   const cases = [
     {
       name: "request",

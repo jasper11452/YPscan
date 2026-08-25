@@ -4,7 +4,9 @@
  * completeness and canonical-format gate; it does not retain workflow state.
  */
 
-export const UNRESTRICTED_FOLLOWERCOUNT_RANGE = "[0,999999999]";
+const MAX_FOLLOWER_COUNT = 999_999_999;
+
+export const UNRESTRICTED_FOLLOWERCOUNT_RANGE = `[0,${MAX_FOLLOWER_COUNT}]`;
 
 export const HOST_PREFIX = "mcp__ypscan__";
 export const HOST_PREFIXES = Object.freeze([
@@ -190,7 +192,7 @@ const MAXIMUM_METRIC_RANGE_PARAMS = new Set([
   "cpmL3",
 ]);
 
-const PLATFORM_REQUIRED_TAG_FIELDS = Object.freeze({
+const PLATFORM_TAG_FIELDS = Object.freeze({
   xiaohongshu: [
     "contentFeatureLabel",
     "growBloggerTypeLabel",
@@ -206,11 +208,19 @@ const PLATFORM_REQUIRED_TAG_FIELDS = Object.freeze({
 });
 
 const PLATFORM_ARRAY_FIELD_PARAMS = Object.freeze({
-  xiaohongshu: ["contentTag", ...PLATFORM_REQUIRED_TAG_FIELDS.xiaohongshu],
-  douyin: ["contentTag", ...PLATFORM_REQUIRED_TAG_FIELDS.douyin],
+  xiaohongshu: ["contentTag", ...PLATFORM_TAG_FIELDS.xiaohongshu],
+  douyin: ["contentTag", ...PLATFORM_TAG_FIELDS.douyin],
 });
 
-const NUMERIC_TIER_FIELDS = Object.freeze([
+const PARSED_TAG_FIELDS = Object.freeze([...TAG_ARRAY_PARAMS, "contentTag"]);
+
+const PRICE_FIELDS = Object.freeze([
+  "kolOfficialPriceL1",
+  "kolOfficialPriceL2",
+  "kolOfficialPriceL3",
+]);
+
+const DOUYIN_VIDEO_TYPE_METRIC_FIELDS = Object.freeze([
   "kolOfficialPriceL1",
   "kolOfficialPriceL2",
   "kolOfficialPriceL3",
@@ -220,12 +230,6 @@ const NUMERIC_TIER_FIELDS = Object.freeze([
   "cpeL1",
   "cpeL2",
   "cpeL3",
-]);
-
-const PRICE_FIELDS = Object.freeze([
-  "kolOfficialPriceL1",
-  "kolOfficialPriceL2",
-  "kolOfficialPriceL3",
 ]);
 
 const PLATFORM_ALIASES = Object.freeze({
@@ -573,6 +577,44 @@ function tagArrayValue(value) {
     : null;
 }
 
+/**
+ * Parsed tag arrays are authoritative workflow output. Keep the raw outputs
+ * untouched, while accepting the known historical Xingtu field spelling at
+ * the Provider boundary.
+ *
+ * @param {unknown} rawMessages
+ */
+function parsedTagArrays(rawMessages) {
+  if (!rawMessages || typeof rawMessages !== "object" || Array.isArray(rawMessages)) {
+    return {};
+  }
+
+  const rawRecord = /** @type {Record<string, unknown>} */ (rawMessages);
+  const outputs = rawRecord.parse_outputs;
+  if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) return {};
+
+  const outputRecord = /** @type {Record<string, unknown>} */ (outputs);
+  /** @type {Record<string, string[]>} */
+  const tags = {};
+  for (const field of PARSED_TAG_FIELDS) {
+    const candidates =
+      field === "xtTalentTypeLabel"
+        ? [outputRecord[field], outputRecord.xtTalentTypeLable]
+        : [outputRecord[field]];
+    for (const candidate of candidates) {
+      const nested =
+        candidate && typeof candidate === "object" && !Array.isArray(candidate)
+          ? /** @type {Record<string, unknown>} */ (candidate)[field]
+          : candidate;
+      const value = tagArrayValue(nested);
+      if (!value) continue;
+      tags[field] = value;
+      break;
+    }
+  }
+  return tags;
+}
+
 export function invalidPlatformArrayFields(params) {
   if (!params || typeof params !== "object" || Array.isArray(params)) return [];
   const platform = normalizedPlatformName(params.platform);
@@ -590,10 +632,6 @@ export function missingRequiredValidateParams(params) {
     return value === undefined || value === null || (typeof value === "string" && value.trim() === "");
   });
 
-  const platform = normalizedPlatformName(params.platform);
-  for (const field of PLATFORM_REQUIRED_TAG_FIELDS[platform] ?? []) {
-    if (!tagArrayValue(params[field])) missing.push(field);
-  }
   return missing;
 }
 
@@ -676,7 +714,7 @@ function normalizedBrandCandidate(value) {
   return candidate && !INVALID_BRAND_CANDIDATE.test(candidate) ? candidate : null;
 }
 
-function uniqueDifyBrand(value, platform) {
+function uniqueParsedBrand(value, platform) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const rawMessages = /** @type {Record<string, unknown>} */ (value);
   const outputs = rawMessages.parse_outputs;
@@ -766,15 +804,22 @@ function hasSubmissionDeadlineEvidence(evidence, value, now) {
   );
   if (!match) return false;
   const [, year, month, day, hour, minute, second] = match;
-  if (evidence.includes(value)) return true;
+  if (new RegExp(`(?<!\\d)${regexLiteral(value)}(?!\\d)`, "u").test(evidence)) return true;
   const minutePrecision = `${year}-${month}-${day} ${hour}:${minute}`;
-  if (Number(second) === 0 && new RegExp(`${regexLiteral(minutePrecision)}(?!:)`, "u").test(evidence)) {
+  if (Number(second) === 0 && new RegExp(`${regexLiteral(minutePrecision)}(?![:\\d])`, "u").test(evidence)) {
     return true;
   }
-  const chineseDateTime = `${Number(year)}年${Number(month)}月${Number(day)}日${Number(hour)}点${Number(minute) ? `${Number(minute)}分` : ""}`;
-  const chinesePattern = Number(second) === 0
-    ? `${regexLiteral(chineseDateTime)}(?:0秒)?`
-    : `${regexLiteral(chineseDateTime)}${Number(second)}秒`;
+  const numericHour = Number(hour);
+  const numericMinute = Number(minute);
+  const numericSecond = Number(second);
+  const chineseDateTime = `${Number(year)}年\\s*${Number(month)}月\\s*${Number(day)}日\\s*${numericHour}\\s*点`;
+  const chineseMinute = numericMinute === 0
+    ? "(?:\\s*0+\\s*分)?"
+    : `\\s*0?${numericMinute}\\s*分`;
+  const chineseSecond = numericSecond === 0
+    ? "(?:\\s*0+\\s*秒)?"
+    : `\\s*0?${numericSecond}\\s*秒`;
+  const chinesePattern = `${chineseDateTime}${chineseMinute}${chineseSecond}(?![\\d分秒])`;
   if (new RegExp(chinesePattern, "u").test(evidence)) return true;
 
   const sameDay =
@@ -782,10 +827,19 @@ function hasSubmissionDeadlineEvidence(evidence, value, now) {
     Number(month) === now.getMonth() + 1 &&
     Number(day) === now.getDate();
   if (!sameDay || Number(second) !== 0) return false;
-  const clock = `${Number(hour)}\\s*(?:点|时)${Number(minute) ? `\\s*${Number(minute)}\\s*分` : ""}`;
+  const hourPattern = numericHour < 10 ? `0?${numericHour}` : String(numericHour);
+  const minutePattern = numericMinute < 10 ? `0?${numericMinute}` : String(numericMinute);
+  const clockHour = `(?<!\\d)${hourPattern}`;
+  const sameDayChineseMinute = numericMinute
+    ? `\\s*${minutePattern}\\s*分`
+    : "(?:\\s*0+\\s*分)?";
+  const sameDayChineseClock = `${clockHour}\\s*(?:点|时)${sameDayChineseMinute}(?:\\s*0+\\s*秒)?(?![\\d分秒])`;
+  const colonClock = `${clockHour}\\s*[:：]\\s*${String(numericMinute).padStart(2, "0")}(?:\\s*[:：]\\s*00)?(?!\\d|\\s*[:：]\\s*\\d)`;
+  const dayClock = `(?:今天|今日)[^。；;\\n]{0,20}(?:${sameDayChineseClock}|${colonClock})`;
+  const deadlineMarker = "(?:submissionDeadlineAt|提报|提交|反馈|截止)";
   return new RegExp(
-    `(?:今天|今日)[^。；;\\n]{0,20}${clock}[^。；;\\n]{0,20}(?:提报|提交|反馈|截止)`,
-    "u",
+    `(?:${deadlineMarker}[^。；;\\n]{0,20}${dayClock}|${dayClock}[^。；;\\n]{0,20}${deadlineMarker})`,
+    "iu",
   ).test(evidence);
 }
 
@@ -818,38 +872,14 @@ function hasProjectDateEvidence(evidence, value) {
   );
 }
 
-function durationTier(seconds) {
-  if (seconds <= 0) return null;
-  if (seconds <= 20) return "L1";
-  if (seconds <= 60) return "L2";
-  return "L3";
-}
-
-function supportedDouyinDurationTiers(evidence) {
+function supportedDouyinVideoTypeTiers(evidence) {
   const tiers = new Set();
-  let remaining = evidence.replace(
-    /(\d+(?:\.\d+)?)\s*(?:秒|s)?\s*(?:-|–|—|~|～|至|到)\s*(\d+(?:\.\d+)?)\s*(?:秒|s)/giu,
-    (_match, lowerText, upperText) => {
-      const lowerTier = durationTier(Number(lowerText));
-      const upperTier = durationTier(Number(upperText));
-      if (lowerTier && lowerTier === upperTier) tiers.add(lowerTier);
-      return " ";
-    },
+  const current = evidence.replace(
+    /(?:不要|不做|不选|不接受|排除|不考虑|不需要|不是|非)\s*(?:(?:植入视频|植入|定制视频|定制)\s*(?:、|和|或|以及|与)\s*)*(?:植入视频|植入|定制视频|定制)/gu,
+    " ",
   );
-  remaining = remaining.replace(
-    /(\d+(?:\.\d+)?)\s*(?:秒|s)\s*(?:以上|及以上|\+)/giu,
-    (_match, lowerText) => {
-      if (Number(lowerText) >= 60) tiers.add("L3");
-      return " ";
-    },
-  );
-  for (const match of remaining.matchAll(/(\d+(?:\.\d+)?)\s*(?:秒|s)/giu)) {
-    const tier = durationTier(Number(match[1]));
-    if (tier) tiers.add(tier);
-  }
-  for (const match of evidence.matchAll(/douyinDuration[^。；;\n]{0,20}\b(L[123])\b/giu)) {
-    tiers.add(match[1].toUpperCase());
-  }
+  if (/植入视频|植入报价|植入/u.test(current)) tiers.add("L2");
+  if (/定制视频|定制报价|定制/u.test(current)) tiers.add("L3");
   return tiers;
 }
 
@@ -926,7 +956,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   }
 
   if (!PRICE_FIELDS.some((field) => Object.hasOwn(payload, field))) {
-    add("kolOfficialPriceL1/L2/L3", "至少提供一个与平台内容形式或时长对应的报价区间");
+    add("kolOfficialPriceL1/L2/L3", "至少提供一个与平台内容形式对应的报价区间");
   }
   for (const field of RANGE_PARAMS) {
     if (!Object.hasOwn(payload, field)) continue;
@@ -934,6 +964,9 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     if (!range) {
       add(field, '必须是无空格 JSON 区间字符串 "[min,max]"，且 0 ≤ min < max');
       continue;
+    }
+    if (field === "followercount" && range[1] > MAX_FOLLOWER_COUNT) {
+      add(field, `上限不得超过粉丝技术最大值 ${MAX_FOLLOWER_COUNT}`);
     }
     if (field === "rebate" && range[1] !== 1) {
       add(field, '返点表示最低要求，必须使用 "[min,1]"');
@@ -947,7 +980,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   }
 
   const evidence = rawRequirementEvidence(rawMessages);
-  const difyBrand = uniqueDifyBrand(rawMessages, payload.platform);
+  const parsedBrand = uniqueParsedBrand(rawMessages, payload.platform);
   const submittedBrand = normalizedBrandCandidate(payload.brandName);
   const explicitBrand = explicitBrandEvidence(rawMessages);
   const explicitBrandMatches = Boolean(
@@ -956,11 +989,11 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     explicitBrand.candidates.length === 1 &&
     explicitBrand.candidates[0] === submittedBrand,
   );
-  const difyBrandMatches = Boolean(
-    submittedBrand && !explicitBrand.present && submittedBrand === difyBrand,
+  const parsedBrandMatches = Boolean(
+    submittedBrand && !explicitBrand.present && submittedBrand === parsedBrand,
   );
-  if (!explicitBrandMatches && !difyBrandMatches) {
-    add("brandName", "原始需求、弹窗澄清或当前平台 Dify 唯一候选中没有与提交值一致的品牌证据");
+  if (!explicitBrandMatches && !parsedBrandMatches) {
+    add("brandName", "原始需求、弹窗澄清或当前平台唯一解析候选中没有与提交值一致的品牌证据");
   }
   const projectNameEvidence =
     latestFieldEvidence(rawMessages, ["projectName", "项目", "项目名称"]) ?? evidence;
@@ -980,10 +1013,10 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     add("quantityTotal", "原始需求或弹窗澄清记录中没有与提交值一致的达人数量证据");
   }
   if (!/(?:粉丝|万粉|w粉|followercount)/iu.test(evidence)) {
-    add("followercount", "原始需求或弹窗澄清记录中没有粉丝量证据，禁止接受 Dify 默认值");
+    add("followercount", "原始需求或弹窗澄清记录中没有粉丝量证据，禁止接受解析默认值");
   }
   if (!/(?:返点|返佣|佣金|rebate)/iu.test(evidence)) {
-    add("rebate", "原始需求或弹窗澄清记录中没有返点证据，禁止接受 Dify 默认值");
+    add("rebate", "原始需求或弹窗澄清记录中没有返点证据，禁止接受解析默认值");
   }
   if (!/(?:单价|报价|预算|费用|价格|kolOfficialPrice)/iu.test(evidence)) {
     add("kolOfficialPriceL1/L2/L3", "原始需求或弹窗澄清记录中没有报价证据");
@@ -1000,17 +1033,33 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   }
   if (
     payload.platform === "douyin" &&
-    NUMERIC_TIER_FIELDS.some((field) => Object.hasOwn(payload, field))
+    DOUYIN_VIDEO_TYPE_METRIC_FIELDS.some((field) => Object.hasOwn(payload, field))
   ) {
-    const supportedTiers = supportedDouyinDurationTiers(evidence);
-    const mismatchedFields = NUMERIC_TIER_FIELDS.filter((field) => {
-      if (!Object.hasOwn(payload, field)) return false;
-      return !supportedTiers.has(field.slice(-2));
-    });
+    for (const field of ["kolOfficialPriceL1", "cpmL1", "cpeL1"]) {
+      if (Object.hasOwn(payload, field)) {
+        add(field, "抖音报价、CPM 和 CPE 不再使用 L1；L2 表示植入视频，L3 表示定制视频");
+      }
+    }
+    const videoTypeEvidence =
+      latestFieldEvidence(rawMessages, [
+        "douyinVideoType",
+        "videoType",
+        "contentType",
+        "视频类型",
+        "内容形式",
+        "形式",
+      ]) ?? evidence;
+    const supportedTiers = supportedDouyinVideoTypeTiers(videoTypeEvidence);
+    const mismatchedFields = DOUYIN_VIDEO_TYPE_METRIC_FIELDS.filter(
+      (field) =>
+        !field.endsWith("L1") &&
+        Object.hasOwn(payload, field) &&
+        !supportedTiers.has(field.slice(-2)),
+    );
     if (mismatchedFields.length > 0) {
       add(
-        "douyinDuration",
-        `抖音报价、CPM 或 CPE 档位与明确时长不匹配（${mismatchedFields.join(",")}），必须弹窗确认`,
+        "douyinVideoType",
+        `抖音报价、CPM 或 CPE 字段与明确视频类型不匹配（${mismatchedFields.join(",")}）；L2 仅表示植入视频，L3 仅表示定制视频`,
       );
     }
   }
@@ -1090,7 +1139,11 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
       set("brandName", normalizedBrandName(normalized.brandName));
     }
     if (Object.hasOwn(normalized, "rawMessagesJson")) {
-      set("rawMessagesJson", normalizedRawMessages(normalized.rawMessagesJson));
+      const rawMessages = normalizedRawMessages(normalized.rawMessagesJson);
+      set("rawMessagesJson", rawMessages);
+      for (const [field, value] of Object.entries(parsedTagArrays(rawMessages))) {
+        if (!Object.hasOwn(normalized, field)) set(field, value);
+      }
     }
     if (
       (normalized.followercount === undefined || normalized.followercount === null || normalized.followercount === "") &&
