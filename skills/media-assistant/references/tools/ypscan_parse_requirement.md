@@ -39,6 +39,8 @@
 6. 报价、CPM、CPE 按平台返回 `xhs_kolOfficialPrice` / `dy_kolOfficialPrice`、`xhs_cpm` / `dy_cpm`、`xhs_cpe` / `dy_cpe` 参数片段。只展开当前平台对象。抖音三类指标统一按视频类型映射：`kolOfficialPriceL2` / `cpmL2` / `cpeL2` 表示植入视频，`kolOfficialPriceL3` / `cpmL3` / `cpeL3` 表示定制视频，不使用 `kolOfficialPriceL1` / `cpmL1` / `cpeL1`；对应视频类型必须有当前原文或用户弹窗答案支持。解析片段中的旧档位名不作为类型证据；用户证据已唯一明确植入/定制且只有一个合法数值候选时，保持区间不变并路由到当前 L2/L3，不询问用户；多个候选仍需澄清。只有视频类型仍缺失或模糊时才澄清。
 7. 解析标签不得触发 `AskUserQuestion`。解析数值在合并 `original` 与字段最新有效 `clarification` 后仍缺失、为空、模糊、冲突或需要选择合法数值映射时，才调用 `AskUserQuestion`。已有有效数值必须复用，禁止重复询问；同一字段历史旧答案不得覆盖最新答案。
 
+解析 Workflow 已给出的唯一且合法报价、CPM 或 CPE 候选直接复用；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此再次弹出报价区间选择。
+
 ## `validate_requirement` 数值格式锁
 
 第一次调用 `validate_requirement` 前必须一次性构造完成全部字段，禁止让 Provider 报错后逐字段或逐类型试探。
@@ -71,7 +73,7 @@
 | `quantityTotal`        | 明确的提报达人数量，转成正整数字符串；不能用合作数量、机构覆盖数、推荐补量或默认 `1` 代替。                                                                                                                                                          |
 | `submissionDeadlineAt` | 解析为未来绝对时间并精确到秒；只有日期没有时刻时澄清，不能默认 18:00；已过期时给出未来绝对时间选项。                                                                                                                                                 |
 | `status`               | 固定传 `"ready"`，本地边界可在缺失时确定性补入；不得询问用户。                                                                                                                                                                                       |
-| `rawMessagesJson`      | 必填 JSON 对象：`original` 保留当前原始需求，`parse_outputs` 保留本次完整原始 `outputs`，`clarifications` 按字段保存最新有效答案；同一字段新答案覆盖旧答案，重建参数时保留其他字段答案。同平台多类型自动分配时，当前子需求把确定性结果写入 `clarifications.quantityTotal`。除当前平台唯一合法品牌候选外，不得用解析默认值代替用户证据。 |
+| `rawMessagesJson`      | 必填 JSON 对象：`original` 保留当前原始需求，`parse_outputs` 保留本次完整原始 `outputs`，`clarifications` 按字段保存最新有效答案；同一字段新答案覆盖旧答案，重建参数时保留其他字段答案。同平台多个类型只保留一个需求和原始总量，合并全部类型标签与条件。除当前平台唯一合法品牌候选外，不得用解析默认值代替用户证据。 |
 | `description`          | 用当前明确需求写简短中文说明，保留无法映射成 Provider 筛选字段但后续需要人工核验的条件。                                                                                                                                                             |
 | `originalBrief`        | 保留用户最初完整原文，不因平台拆分或后续归一化改写。                                                                                                                                                                                                 |
 
@@ -81,7 +83,7 @@
 
 - 小红书内容形式只根据明确的图文/视频表述确定；普通 Provider 检索未说明形式时不追问，价格使用 L1 兼容位，但不能推断为图文合作。
 - 抖音报价、CPM、CPE 只按视频类型映射：植入视频使用 L2，定制视频使用 L3，不使用任何 L1。原文只说“视频”而没有明确类型时必须弹窗确认。
-- 同一平台明确要求 `N` 个达人类型、只给总量 `Q` 且 `Q ≥ N` 时，按类型拆成 `N` 个子需求：每类先分 `floor(Q/N)`，再把 `Q mod N` 个余数按优先级逐类加 1，确保总和为 `Q` 且每类至少 1 人。用户写明“重点/优先/为主”时按其顺序；否则小红书优先 `pgyBloggerTypeLabel`、抖音优先 `xtTalentTypeLabel` 对应类型，同字段多个值按原文首次出现顺序。当前子需求在 `clarifications.quantityTotal` 写入 `当前类型数量：x位；原总量Q位按N类平均分配`，再分别调用 `validate_requirement`。先完成全部子需求落库并保留各自真实 requirement ID，再按分配顺序逐个搜索和排名；不得在首个子需求落库后跳过其余类型，也不得询问每类人数。只有 `Q < N` 时才澄清增加总量或减少类型。
+- 同一平台明确要求多个达人类型但只给总量时，保留一个 requirement，传入原始总量并合并所有类型标签和条件；不得拆分子需求、重复落库或重复搜索，也不得询问每类人数。
 - 用户只明确一个达人类型时，Agent 必须判断其最匹配的主达人类型标签；小红书默认优先映射到 `pgyBloggerTypeLabel`，抖音默认优先映射到 `xtTalentTypeLabel`，其他标签字段只补充主题、内容和成长阶段，不得反客为主。
 
 ### 单条件修改时的数值规则

@@ -100,6 +100,50 @@ test("validate_requirement canonicalizes numeric fields once before the Provider
   });
 });
 
+test("normalizeRequirement routes a unique legacy Douyin metric to the current video tier", () => {
+  const params = {
+    ...completeValidateParams(),
+    brandName: "品牌A",
+    kolOfficialPriceL2: [35000, 50000],
+    cpmL2: [0, 100],
+    cpeL2: [0, 20],
+    rawMessagesJson: {
+      original:
+        "抖音项目：项目A；形式：定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: {
+        dy_kolOfficialPrice: { kolOfficialPriceL2: [35000, 50000] },
+        dy_cpm: JSON.stringify({ cpmL2: [0, 100] }),
+        dy_cpe: JSON.stringify({ cpeL2: [0, 20] }),
+      },
+    },
+  };
+  delete params.kolOfficialPriceL3;
+
+  const normalized = normalizeToolCallParams("validate_requirement", params);
+
+  assert.equal(normalized.kolOfficialPriceL3, "[35000,50000]");
+  assert.equal(normalized.cpmL3, "[0,100]");
+  assert.equal(normalized.cpeL3, "[0,20]");
+  assert.equal(Object.hasOwn(normalized, "kolOfficialPriceL2"), false);
+  assert.equal(Object.hasOwn(normalized, "cpmL2"), false);
+  assert.equal(Object.hasOwn(normalized, "cpeL2"), false);
+});
+
+test("normalizeRequirement reuses a unique parsed brand when the original has no explicit brand", () => {
+  const params = {
+    ...completeValidateParams(),
+    brandName: "千问",
+    rawMessagesJson: {
+      original: "抖音项目：千问耳夹式AI智能体耳机；形式：定制视频；30位。",
+      parse_outputs: { dybrandName: ["阿里（千问）"] },
+    },
+  };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params);
+
+  assert.equal(normalized.brandName, "阿里（千问）");
+});
+
 test("validate_requirement rejects degenerate ranges instead of silently repairing them", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
 
@@ -392,17 +436,11 @@ test("preflight reuses non-empty clarification answers instead of asking again",
   assert.deepEqual(validateRequirementPreflight(params, { now }), []);
 });
 
-test("preflight accepts an auditable same-platform type allocation", () => {
+test("preflight keeps a same-platform multi-type total in one requirement", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
     ...completeValidateParams(),
-    quantityTotal: "10",
-    rawMessagesJson: {
-      ...completeValidateParams().rawMessagesJson,
-      clarifications: {
-        quantityTotal: "当前类型数量：10位；原总量30位按3类平均分配",
-      },
-    },
+    quantityTotal: "30",
   };
 
   assert.deepEqual(validateRequirementPreflight(params, { now }), []);

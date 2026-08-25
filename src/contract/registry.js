@@ -883,6 +883,75 @@ function supportedDouyinVideoTypeTiers(evidence) {
   return tiers;
 }
 
+function metricOutputRecord(rawMessages, field) {
+  if (!rawMessages || typeof rawMessages !== "object" || Array.isArray(rawMessages)) return null;
+  const outputs = rawMessages.parse_outputs;
+  if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) return null;
+  let value = outputs[field];
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function usableMetricValue(value) {
+  return value !== null && value !== undefined &&
+    !(typeof value === "string" && (!value.trim() || value.trim().toLowerCase() === "null"));
+}
+
+function equivalentMetricValues(left, right) {
+  const key = (value) => {
+    if (typeof value === "string") {
+      try {
+        return JSON.stringify(JSON.parse(value));
+      } catch {
+        return value.trim();
+      }
+    }
+    return JSON.stringify(value);
+  };
+  return key(left) === key(right);
+}
+
+function normalizeParsedDouyinMetrics(params, rawMessages) {
+  if (normalizedPlatformName(params.platform) !== "douyin") return params;
+  const evidence =
+    latestFieldEvidence(rawMessages, [
+      "douyinVideoType",
+      "videoType",
+      "contentType",
+      "视频类型",
+      "内容形式",
+      "形式",
+    ]) ?? rawRequirementEvidence(rawMessages);
+  const tiers = supportedDouyinVideoTypeTiers(evidence);
+  if (tiers.size !== 1) return params;
+  const targetTier = [...tiers][0];
+  let normalized = params;
+  for (const metric of ["kolOfficialPrice", "cpm", "cpe"]) {
+    const record = metricOutputRecord(rawMessages, `dy_${metric}`);
+    if (!record) continue;
+    const candidates = ["L1", "L2", "L3"]
+      .map((tier) => ({ tier, value: record[`${metric}${tier}`] }))
+      .filter(({ value }) => usableMetricValue(value));
+    if (candidates.length !== 1) continue;
+    const targetField = `${metric}${targetTier}`;
+    if (Object.hasOwn(normalized, targetField)) continue;
+    const source = candidates.find(({ tier, value }) =>
+      Object.hasOwn(normalized, `${metric}${tier}`) &&
+      equivalentMetricValues(normalized[`${metric}${tier}`], value),
+    );
+    if (normalized === params) normalized = { ...params };
+    if (source && source.tier !== targetTier) delete normalized[`${metric}${source.tier}`];
+    normalized[targetField] = candidates[0].value;
+  }
+  return normalized;
+}
+
 /**
  * Validate the complete Provider payload after deterministic, lossless boundary
  * normalization. Semantic choices remain the user's responsibility and must be
@@ -1143,6 +1212,13 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
       set("rawMessagesJson", rawMessages);
       for (const [field, value] of Object.entries(parsedTagArrays(rawMessages))) {
         if (!Object.hasOwn(normalized, field)) set(field, value);
+      }
+      if (rawMessages && typeof rawMessages === "object" && !Array.isArray(rawMessages)) {
+        if (!explicitBrandEvidence(rawMessages).present) {
+          const parsedBrand = uniqueParsedBrand(rawMessages, normalizedPlatformName(normalized.platform));
+          if (parsedBrand) set("brandName", parsedBrand);
+        }
+        normalized = normalizeParsedDouyinMetrics(normalized, rawMessages);
       }
     }
     if (

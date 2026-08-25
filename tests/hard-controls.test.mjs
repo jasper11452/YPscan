@@ -110,10 +110,9 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /kolOfficialPriceL1\/cpmL1\/cpeL1 禁止使用/u);
   assert.match(parseText, /旧档位名不作为视频类型证据/u);
   assert.match(parseText, /确定性路由到当前 L2\/L3，不得因此询问用户/u);
-  assert.match(parseText, /每类先分 floor\(Q\/N\)/u);
-  assert.match(parseText, /clarifications\.quantityTotal/u);
-  assert.match(parseText, /小红书 pgyBloggerTypeLabel、抖音 xtTalentTypeLabel/u);
-  assert.match(parseText, /仅 Q<N 时弹窗/u);
+  assert.match(parseText, /唯一且合法报价、CPM 或 CPE 候选属于已解析数值，直接复用/u);
+  assert.match(parseText, /只创建一个 requirement/u);
+  assert.match(parseText, /不询问每类人数、不创建子需求/u);
   assert.match(parseText, /本地边界完成预检后只序列化一次/u);
   assert.doesNotMatch(parseText, /VALIDATE_REQUIREMENT_ARGS=/u);
 
@@ -124,9 +123,9 @@ test("fixed result directives skip the search workbook and save only after rank"
       data: { id: "a".repeat(32), demand_id: "1787034545923844" },
     }),
   });
-  assert.match(directiveText(validate), /仍有未落库的子需求.*完成其余 validate_requirement/u);
-  assert.match(directiveText(validate), /全部子需求落库后.*search_creators → rank_mcns/u);
-  assert.match(directiveText(validate), /没有剩余子需求.*SEARCH_CREATORS_ARGS/u);
+  assert.match(directiveText(validate), /当前需求只保留一个 requirement/u);
+  assert.match(directiveText(validate), /不创建子需求、不重复落库/u);
+  assert.match(directiveText(validate), /立即逐字使用 SEARCH_CREATORS_ARGS/u);
   assert.match(directiveText(validate), /严禁使用 data\.demand_id/u);
   assert.deepEqual(namedArgsFromDirective(directiveText(validate), "SEARCH_CREATORS_ARGS"), {
     id: "a".repeat(32),
@@ -828,9 +827,8 @@ test("parse directives preserve field ownership and change policy", () => {
   assert.match(text, /kolOfficialPriceL3\/cpmL3\/cpeL3 仅表示定制视频/u);
   assert.match(text, /kolOfficialPriceL1\/cpmL1\/cpeL1 禁止使用/u);
   assert.match(text, /旧档位名不作为视频类型证据/u);
-  assert.match(text, /每类先分 floor\(Q\/N\)/u);
-  assert.match(text, /clarifications\.quantityTotal/u);
-  assert.match(text, /仅 Q<N 时弹窗/u);
+  assert.match(text, /只创建一个 requirement/u);
+  assert.match(text, /不询问每类人数、不创建子需求/u);
   assert.match(text, /original 或该字段最新 clarification/u);
   assert.match(text, /已有确认答案时直接复用/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
@@ -894,8 +892,8 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /默认手扒 Excel 保存成功后才提示/u);
   assert.match(first.prependContext, /“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”/u);
   assert.match(first.prependContext, /一律默认走 MCP/u);
-  assert.match(first.prependContext, /唯一批量例外是已确定的同平台多达人类型平均分配/u);
-  assert.match(first.prependContext, /先完成全部子需求的 validate_requirement/u);
+  assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
+  assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);
   assert.match(first.prependContext, /不得激活浏览器手扒/u);
   assert.match(first.prependContext, /明确说要用“浏览器手扒”“浏览器详细手扒”/u);
   assert.match(first.prependContext, /ypscan_manual_research\(operation=start\)/u);
@@ -923,8 +921,8 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /不使用任何 L1/u);
   assert.match(first.prependContext, /旧档位名不作为类型证据/u);
   assert.match(first.prependContext, /确定性路由到新档位，不得询问用户/u);
-  assert.match(first.prependContext, /每类 floor\(Q\/N\)/u);
-  assert.match(first.prependContext, /小红书 pgyBloggerTypeLabel、抖音 xtTalentTypeLabel/u);
+  assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
+  assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);
   assert.match(first.prependContext, /用户只明确一个达人类型时也优先映射/u);
   assert.match(first.prependContext, /缺少 original 或字段最新 clarification 证据/u);
   assert.match(first.prependContext, /单次修改只涉及一个条件时由 Agent 直接更新/u);
