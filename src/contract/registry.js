@@ -278,7 +278,7 @@ function normalizedRawMessages(value) {
 function normalizedNumericRange(value, { rate = false, price = false, maximum = false } = {}) {
   let parsed = value;
   let percentNotation = false;
-  let rawNumericInput = false;
+  let inputKind = "structured";
   if (typeof value === "string") {
     const trimmed = value.trim();
     const singlePercent = trimmed.match(/^(\d+(?:\.\d+)?)%$/u);
@@ -288,14 +288,14 @@ function normalizedNumericRange(value, { rate = false, price = false, maximum = 
     if (singlePercent) {
       parsed = [Number(singlePercent[1]), Number(singlePercent[1])];
       percentNotation = true;
-      rawNumericInput = true;
+      inputKind = "scalar";
     } else if (range) {
       parsed = [Number(range[1]), Number(range[3])];
       percentNotation = Boolean(range[2] || range[4]);
-      rawNumericInput = true;
+      inputKind = "range";
     } else if (/^\d+(?:\.\d+)?$/u.test(trimmed)) {
       parsed = [Number(trimmed), Number(trimmed)];
-      rawNumericInput = true;
+      inputKind = "scalar";
     } else {
       try {
         parsed = JSON.parse(trimmed);
@@ -305,7 +305,7 @@ function normalizedNumericRange(value, { rate = false, price = false, maximum = 
     }
   } else if (typeof value === "number" && Number.isFinite(value)) {
     parsed = [value, value];
-    rawNumericInput = true;
+    inputKind = "scalar";
   }
   if (
     !Array.isArray(parsed) ||
@@ -314,12 +314,16 @@ function normalizedNumericRange(value, { rate = false, price = false, maximum = 
   ) {
     return value;
   }
-  if (parsed[0] > parsed[1]) return value;
+  if (parsed[0] > parsed[1] || (inputKind !== "scalar" && parsed[0] === parsed[1])) {
+    return value;
+  }
   const normalized = rate
     ? parsed.map((item) => (percentNotation || item > 1 ? item / 100 : item))
     : parsed;
-  if (maximum) return normalized[1] >= 0 ? JSON.stringify([0, normalized[1]]) : value;
-  if (price && rawNumericInput) {
+  if (maximum && inputKind === "scalar") {
+    return normalized[1] >= 0 ? JSON.stringify([0, normalized[1]]) : value;
+  }
+  if (price && inputKind !== "structured") {
     return JSON.stringify([
       Math.floor(normalized[0] * 0.7),
       Math.ceil(normalized[1] * 1.2),
@@ -601,7 +605,7 @@ function parsedCanonicalRange(value) {
       !Array.isArray(parsed) ||
       parsed.length !== 2 ||
       !parsed.every((item) => typeof item === "number" && Number.isFinite(item)) ||
-      parsed[0] > parsed[1] ||
+      parsed[0] >= parsed[1] ||
       parsed.some((item) => item < 0) ||
       JSON.stringify(parsed) !== value
     ) {
@@ -928,11 +932,14 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     if (!Object.hasOwn(payload, field)) continue;
     const range = parsedCanonicalRange(payload[field]);
     if (!range) {
-      add(field, '必须是无空格 JSON 区间字符串 "[min,max]"，且 0 ≤ min ≤ max');
+      add(field, '必须是无空格 JSON 区间字符串 "[min,max]"，且 0 ≤ min < max');
       continue;
     }
     if (field === "rebate" && range[1] !== 1) {
       add(field, '返点表示最低要求，必须使用 "[min,1]"');
+    }
+    if (MAXIMUM_METRIC_RANGE_PARAMS.has(field) && range[0] !== 0) {
+      add(field, 'CPM/CPE 表示最大可接受值，必须使用 "[0,max]"');
     }
     if (RATE_RANGE_PARAMS.has(field) && range[1] > 1) {
       add(field, "比例区间必须位于 0–1");

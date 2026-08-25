@@ -1,7 +1,7 @@
 # 用户要求 Review Checklist
 
 - [ ] 只有用户改变业务需求时才创建新版本；解析修正不算需求变更。任何业务字段缺失、模糊、冲突、多候选或需要选择映射时都调用 `AskUserQuestion`，Agent 不自主决定、不默认、不从历史数据推断，也不要求确认整份 Brief。
-- [ ] `rebate`、`followercount`、报价、CPM、CPE 及其他数值筛选字段在第一次 `validate_requirement` 调用前全部规范成无空格 JSON 区间字符串 `"[min,max]"`，返点固定为 `"[min,1]"`；禁止向 Provider 传数组、对象、单值、百分号文本或自然语言并来回试类型。
+- [ ] `rebate`、`followercount`、报价、CPM、CPE 及其他数值筛选字段在第一次 `validate_requirement` 调用前全部规范成无空格 JSON 区间字符串 `"[min,max]"` 且 `min < max`，返点固定为 `"[min,1]"`；禁止 `[v,v]`，也禁止向 Provider 传数组、对象、单值、百分号文本或自然语言并来回试类型。
 - [ ] 品牌、项目名、达人数量、截止时间和可选项目日期与 `rawMessagesJson.original` 或非空 `clarifications` 中的明确值一致；空澄清键、Dify 默认值和 Agent 推断不算用户证据。
 - [ ] 抖音报价/CPM/CPE 的每个 L1/L2/L3 字段都与明确时长档一致；小红书不传任何 L3 字段，模糊档期不转换成具体日期。
 - [ ] 金额、数量、比例、范围、平台、合作形式和指标档位按当前契约正确解析；纯格式差异由本地边界一次性规范化，未知或不支持的字段省略或保留在 Brief 中。

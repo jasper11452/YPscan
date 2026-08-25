@@ -16,7 +16,7 @@ const MANUAL_MARKET_URLS = Object.freeze({
 });
 const MANUAL_BROWSER_UNAVAILABLE = "YPSCAN_MANUAL_BROWSER_UNAVAILABLE";
 const REQUIREMENT_PREFLIGHT_BLOCKED = "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED";
-const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"';
+const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"，且 min < max';
 
 function manualMarketUrl(...values) {
   for (const value of values) {
@@ -120,7 +120,7 @@ function requirementParseSuccessDirective() {
     "YPSCAN_FLOW_DIRECTIVE=Dify 需求解析成功。data.outputs 是完整、未改写的原始 Workflow 输出。下一步由 Agent 按需求解析工具卡结构性展开当前平台参数片段、补齐非 Dify 字段，再调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
     `DIFY_OWNED_LOGICAL_FIELDS=${DIFY_REQUIREMENT_FIELDS.join(",")}`,
     `VALIDATE_REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。以下字段只能使用该格式，禁止传数组、对象、单个数字、百分号文本或自然语言：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")}。返点表达最低要求，固定为 "[min,1]"；报价是 kolOfficialPriceL1/L2/L3，CPM 是 cpmL1/L2/L3，CPE 是 cpeL1/L2/L3。所有数值字段必须在第一次 validate_requirement 调用前一次性准备正确，不得用 Provider 报错试探类型。`,
-    "Dify 返回内容只允许按字段名结构性展开，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe。用户明确品牌优先；没有明确品牌时，当前平台品牌候选只有一个非空且不是 null、未知、未明确等占位值才无损映射为 brandName。为空、多候选、占位值或与用户明确品牌冲突时才弹窗。其他语义值不得猜测、改标签、改顺序或丢弃未知 Workflow 输出；数组或单值到 Provider 标准区间字符串的确定性格式归一化由本地调用边界一次完成。落库 validate_requirement 前，先合并 original 与各字段最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的字段继续复用。只有合并后仍缺失、模糊、冲突、多候选或需要选择标签/时长/内容形式/分组的字段才调用 AskUserQuestion。",
+    "Dify 返回内容只允许按字段名结构性展开，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe。Dify 值是候选，本地 validate_requirement 边界必须依用户证据和区间规则二次校验；候选合法且不冲突时只能原样使用，不得收窄或扩大，候选非法或冲突时必须阻断，不得静默改写。用户明确品牌优先；没有明确品牌时，当前平台品牌候选只有一个非空且不是 null、未知、未明确等占位值才无损映射为 brandName。为空、多候选、占位值或与用户明确品牌冲突时才弹窗。其他语义值不得猜测、改标签、改顺序或丢弃未知 Workflow 输出；数组或单值到 Provider 标准区间字符串的确定性格式归一化由本地调用边界一次完成。落库 validate_requirement 前，先合并 original 与各字段最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的字段继续复用。只有合并后仍缺失、模糊、冲突、多候选或需要选择标签/时长/内容形式/分组的字段才调用 AskUserQuestion。",
     "提交前一次性检查所有必填字段和全部区间格式。quantityTotal 缺失、共享总量无法分配到多个独立达人组、submissionDeadlineAt 缺失或不精确、抖音报价未明确时长档、品牌或标签存在多候选时，都必须先弹窗确认；用户未回答前禁止调用 validate_requirement。",
     "rawMessagesJson 必须是 JSON 对象并保留 original、本次完整 parse_outputs 和每个字段最新有效 clarification；同一字段的新答案覆盖旧答案，重建参数时保留其他字段答案。除当前平台唯一合法品牌候选可直接作为 brandName 证据外，只有 original 与当前 clarifications 属于用户证据；Dify 其他默认值不能证明用户已确认。",
     "用户后续单次修改只涉及一个业务条件时，不再调用 ypscan_parse_requirement，由 Agent 按用户最新原文直接更新该条件。同一次修改涉及两个及以上不同业务条件时，只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand，再调用一次 ypscan_parse_requirement，并以新响应刷新全部 Dify 字段。禁止把旧 Dify 输出、已拓展价格或其他 Provider 归一化值写回 demand。",
@@ -975,6 +975,7 @@ export function registerFlowDirectiveHooks(api) {
           "默认手扒 Excel 保存成功后才提示用户是否继续浏览器手扒，并明确该方式耗时较长、期间可能多次出现登录、验证或资质弹窗。只有用户明确说要用“浏览器手扒”“浏览器详细手扒”，或明确选择同名选项后，才允许激活 Browser Runner、读取 Browser 手扒 SOP，先使用宿主 Browser 能力打开当前平台达人广场，再调用 ypscan_manual_research(operation=start)；resume 只用于此前已获用户明确授权的同一 run。start/resume 返回 next_call 时必须原样执行 read_detail_html，读完当前达人全部 HTML 后由 Agent 提炼字段并 apply_reviews。",
           "需求澄清规则：先合并用户原始需求和每个字段最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的字段继续复用，不得重复询问。只有合并后仍缺失、无效、模糊、冲突、多候选或需要选择标签、平台内容形式、抖音时长档、独立达人组数量分配的字段才调用 AskUserQuestion。用户明确品牌优先；没有明确品牌时，当前平台 Dify 品牌候选唯一、非空且不是 null、未知等占位值才直接作为 brandName。禁止自动补标签、默认补值或普通文本追问。纯格式规范化不是业务决策，由 validate_requirement 本地调用边界一次完成。正常成功交付不追加完成弹窗。",
           `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
+          "Dify 数值是候选，必须经本地用户证据和区间规则二次校验；合法且不冲突的候选原样使用，不得收窄或扩大，非法或冲突时阻断而不是静默改写。",
           "需求解析分工：首次按单平台完整需求调用 ypscan_parse_requirement 直连 Dify，data.outputs 完整透传原始 Workflow 输出。Dify 负责八个标签数组、contentTag、品牌、followercount、rebate、报价、CPM、CPE 的候选解析；Agent 只按字段名和当前平台结构性展开参数片段。用户明确品牌优先；否则当前平台 Dify 品牌候选唯一且为合法非占位值时直接采用。其他 Dify 值若缺少 original 或字段最新 clarification 证据、与用户证据冲突或存在多种合法映射，必须弹窗确认。其余 Provider 字段按解析参考从当前有效用户证据构造。后续单次修改只涉及一个条件时由 Agent 直接更新；同一次修改涉及两个及以上不同条件时，只用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand 后重新调用 Dify，禁止回填旧 Dify 输出、已拓展价格或其他 Provider 归一化值。",
           "用户在默认手扒保存后选择浏览器详细手扒时，先使用宿主 Browser 能力打开当前平台达人广场，再用完整硬条件 facts 和 1–4 个关键词调用 start；Runner 连接宿主 Browser CDP，复用宿主 Profile、Cookie 和登录态。页面筛选、翻页、抓取、有限重试与逐级降级全部由插件 Runner 执行。若返回 YPSCAN_MANUAL_BROWSER_UNAVAILABLE，Agent 必须自助启动或聚焦宿主 Browser 后使用同一 run_id 调用 resume，不得要求用户代开；登录、全局 CAPTCHA 或网络恢复仍按工具结果请求用户处理后 resume。终态失败后用户要求重试时使用返回的 fresh_run=true 参数创建新运行。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",

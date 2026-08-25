@@ -6,6 +6,7 @@ import {
   isFutureSubmissionDeadline,
   missingRequiredValidateParams,
   normalizeToolCallParams,
+  VALIDATE_REQUIREMENT_RANGE_PARAMS,
   validateRequirementPreflight,
 } from "../src/contract/registry.js";
 
@@ -97,6 +98,64 @@ test("validate_requirement canonicalizes numeric fields once before the Provider
       "抖音项目：项目A；品牌：品牌A；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；科技耳机方向。",
     parse_outputs: {},
   });
+});
+
+test("validate_requirement rejects degenerate ranges instead of silently repairing them", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+
+  for (const field of VALIDATE_REQUIREMENT_RANGE_PARAMS) {
+    const normalized = normalizeToolCallParams(
+      "validate_requirement",
+      { ...completeValidateParams(), [field]: "[1,1]" },
+      { now },
+    );
+
+    assert.equal(normalized[field], "[1,1]", field);
+    assert.equal(
+      validateRequirementPreflight(normalized, { now }).some((issue) => issue.field === field),
+      true,
+      field,
+    );
+  }
+});
+
+test("validate_requirement does not expand an explicit degenerate price range", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const normalized = normalizeToolCallParams(
+    "validate_requirement",
+    {
+      ...completeValidateParams(),
+      kolOfficialPriceL2: "50000-50000",
+    },
+    { now },
+  );
+
+  assert.equal(normalized.kolOfficialPriceL2, "50000-50000");
+  assert.equal(
+    validateRequirementPreflight(normalized, { now }).some(
+      (issue) => issue.field === "kolOfficialPriceL2",
+    ),
+    true,
+  );
+});
+
+test("validate_requirement rejects prebuilt CPM and CPE ranges with a nonzero lower bound", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+
+  for (const field of ["cpmL2", "cpeL2"]) {
+    const normalized = normalizeToolCallParams(
+      "validate_requirement",
+      { ...completeValidateParams(), [field]: "[1,500]" },
+      { now },
+    );
+
+    assert.equal(normalized[field], "[1,500]", field);
+    assert.equal(
+      validateRequirementPreflight(normalized, { now }).some((issue) => issue.field === field),
+      true,
+      field,
+    );
+  }
 });
 
 test("complete canonical validate_requirement params pass the local preflight", () => {

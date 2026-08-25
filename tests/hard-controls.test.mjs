@@ -88,6 +88,9 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /DIFY_OWNED_LOGICAL_FIELDS=/u);
   assert.match(parseText, /VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
   assert.match(parseText, /无空格 JSON 区间字符串 "\[min,max\]"/u);
+  assert.match(parseText, /min < max/u);
+  assert.match(parseText, /二次校验/u);
+  assert.match(parseText, /不得收窄或扩大/u);
   assert.match(parseText, /返点.*固定为 "\[min,1\]"/u);
   assert.match(parseText, /不得用 Provider 报错试探类型/u);
   assert.match(parseText, /同一次修改涉及两个及以上/u);
@@ -924,6 +927,58 @@ test("validate_requirement preflight canonicalizes all numeric fields before one
       "抖音项目：测试项目；品牌：测试品牌；21-60秒定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；科技耳机方向。",
     parse_outputs: {},
   });
+});
+
+test("validate_requirement before-call gate blocks equal range bounds", () => {
+  const before = registeredHooks().get("before_tool_call");
+  const cases = {
+    kolOfficialPriceL2: "[50000,50000]",
+    cpmL2: "[500,500]",
+    cpeL2: "[30,30]",
+    rebate: "[1,1]",
+    followercount: "[10000,10000]",
+  };
+
+  for (const [field, value] of Object.entries(cases)) {
+    const result = before({
+      toolName: "validate_requirement",
+      params: { ...completeValidateParams(), [field]: value },
+    });
+
+    assert.equal(result.block, true, field);
+    assert.match(result.blockReason, new RegExp(`${field}.*min < max`, "u"), field);
+  }
+});
+
+test("validate_requirement preserves a valid Dify price candidate", () => {
+  const before = registeredHooks().get("before_tool_call");
+  const params = completeValidateParams();
+  const rawMessagesJson = JSON.parse(params.rawMessagesJson);
+  rawMessagesJson.parse_outputs = {
+    dy_kolOfficialPrice: { kolOfficialPriceL2: "[35000,50000]" },
+  };
+  params.rawMessagesJson = JSON.stringify(rawMessagesJson);
+  params.kolOfficialPriceL2 = "[35000,50000]";
+
+  const result = before({ toolName: "validate_requirement", params });
+  const forwardedParams = result?.params ?? params;
+
+  assert.equal(result?.block, undefined);
+  assert.equal(forwardedParams.kolOfficialPriceL2, "[35000,50000]");
+});
+
+test("validate_requirement blocks prebuilt CPM and CPE ranges that are not maximum filters", () => {
+  const before = registeredHooks().get("before_tool_call");
+
+  for (const field of ["cpmL2", "cpeL2"]) {
+    const result = before({
+      toolName: "validate_requirement",
+      params: { ...completeValidateParams(), [field]: "[1,500]" },
+    });
+
+    assert.equal(result.block, true, field);
+    assert.match(result.blockReason, new RegExp(`${field}.*\\[0,max\\]`, "u"), field);
+  }
 });
 
 test("validate_requirement preflight blocks incomplete writes before Provider execution", () => {
