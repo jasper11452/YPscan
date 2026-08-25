@@ -98,8 +98,9 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /禁止把旧解析输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
   assert.match(parseText, /先合并 original 与各数值字段最新非空 clarification/u);
   assert.match(parseText, /Label 字段和 contentTag.*不调用 AskUserQuestion 确认/u);
-  assert.match(parseText, /xtTalentTypeLable.*xtTalentTypeLabel.*不询问用户/u);
-  assert.match(parseText, /解析标签不得触发确认/u);
+  assert.match(parseText, /xtTalentTypeLabel/u);
+  assert.match(parseText, /当前平台主达人类型字段.*解析为 null.*AskUserQuestion 确认/u);
+  assert.match(parseText, /其他解析标签不得触发确认/u);
   assert.match(parseText, /同一字段新答案覆盖旧答案/u);
   assert.match(parseText, /用户明确品牌优先/u);
   assert.match(parseText, /品牌候选只有一个非空且不是 null.*占位值/u);
@@ -905,7 +906,7 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /需求澄清规则/u);
   assert.match(first.prependContext, /同一字段新答案覆盖旧答案/u);
   assert.match(first.prependContext, /Label 数组和 contentTag.*不调用 AskUserQuestion 确认/u);
-  assert.match(first.prependContext, /xtTalentTypeLable.*xtTalentTypeLabel/u);
+  assert.match(first.prependContext, /xtTalentTypeLabel/u);
   assert.match(first.prependContext, /只有必填数值仍缺失.*才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /用户明确品牌优先/u);
   assert.match(first.prependContext, /品牌候选唯一、非空且不是 null.*才直接作为 brandName/u);
@@ -982,7 +983,7 @@ test("validate_requirement forwards parsed labels without user clarification", (
   const rawMessagesJson = JSON.parse(params.rawMessagesJson);
   rawMessagesJson.parse_outputs = {
     contentThemeLabel: ["科技数码"],
-    xtTalentTypeLable: ["科技数码-3C数码"],
+    xtTalentTypeLabel: ["科技数码-3C数码"],
   };
   params.rawMessagesJson = rawMessagesJson;
 
@@ -992,6 +993,30 @@ test("validate_requirement forwards parsed labels without user clarification", (
   assert.deepEqual(result.params.contentThemeLabel, ["科技数码"]);
   assert.deepEqual(result.params.xtTalentTypeLabel, ["科技数码-3C数码"]);
   assert.deepEqual(JSON.parse(result.params.rawMessagesJson).parse_outputs, rawMessagesJson.parse_outputs);
+});
+
+test("validate_requirement blocks a null current-platform primary parsed label", () => {
+  const before = registeredHooks().get("before_tool_call");
+  for (const [platform, field] of [
+    ["xiaohongshu", "pgyBloggerTypeLabel"],
+    ["douyin", "xtTalentTypeLabel"],
+  ]) {
+    const params = completeValidateParams();
+    params.platform = platform;
+    const rawMessagesJson = JSON.parse(params.rawMessagesJson);
+    rawMessagesJson.parse_outputs = { [field]: null };
+    params.rawMessagesJson = rawMessagesJson;
+    delete params[field];
+    if (platform === "xiaohongshu") {
+      delete params.kolOfficialPriceL3;
+      delete params.cpmL3;
+      params.kolOfficialPriceL1 = 50000;
+    }
+
+    const result = before({ toolName: "validate_requirement", params });
+    assert.equal(result.block, true, platform);
+    assert.match(result.blockReason, new RegExp(`${field}.*解析结果为 null.*AskUserQuestion`, "u"), platform);
+  }
 });
 
 test("validate_requirement before-call gate blocks equal range bounds", () => {

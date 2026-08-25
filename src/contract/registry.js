@@ -212,6 +212,11 @@ const PLATFORM_ARRAY_FIELD_PARAMS = Object.freeze({
   douyin: ["contentTag", ...PLATFORM_TAG_FIELDS.douyin],
 });
 
+const PRIMARY_PLATFORM_TAG_FIELDS = Object.freeze({
+  xiaohongshu: "pgyBloggerTypeLabel",
+  douyin: "xtTalentTypeLabel",
+});
+
 const PARSED_TAG_FIELDS = Object.freeze([...TAG_ARRAY_PARAMS, "contentTag"]);
 
 const PRICE_FIELDS = Object.freeze([
@@ -579,8 +584,7 @@ function tagArrayValue(value) {
 
 /**
  * Parsed tag arrays are authoritative workflow output. Keep the raw outputs
- * untouched, while accepting the known historical Xingtu field spelling at
- * the Provider boundary.
+ * untouched while expanding the canonical fields at the Provider boundary.
  *
  * @param {unknown} rawMessages
  */
@@ -597,22 +601,33 @@ function parsedTagArrays(rawMessages) {
   /** @type {Record<string, string[]>} */
   const tags = {};
   for (const field of PARSED_TAG_FIELDS) {
-    const candidates =
-      field === "xtTalentTypeLabel"
-        ? [outputRecord[field], outputRecord.xtTalentTypeLable]
-        : [outputRecord[field]];
-    for (const candidate of candidates) {
-      const nested =
-        candidate && typeof candidate === "object" && !Array.isArray(candidate)
-          ? /** @type {Record<string, unknown>} */ (candidate)[field]
-          : candidate;
-      const value = tagArrayValue(nested);
-      if (!value) continue;
-      tags[field] = value;
-      break;
-    }
+    const candidate = outputRecord[field];
+    const nested =
+      candidate && typeof candidate === "object" && !Array.isArray(candidate)
+        ? /** @type {Record<string, unknown>} */ (candidate)[field]
+        : candidate;
+    const value = tagArrayValue(nested);
+    if (value) tags[field] = value;
   }
   return tags;
+}
+
+function nullParsedPrimaryPlatformTag(rawMessages, platform) {
+  const field = PRIMARY_PLATFORM_TAG_FIELDS[platform];
+  if (!field || !rawMessages || typeof rawMessages !== "object" || Array.isArray(rawMessages)) return null;
+
+  const outputs = /** @type {Record<string, unknown>} */ (rawMessages).parse_outputs;
+  if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) return null;
+  const outputRecord = /** @type {Record<string, unknown>} */ (outputs);
+  if (!Object.hasOwn(outputRecord, field)) return null;
+  const candidate = outputRecord[field];
+  const value =
+    candidate && typeof candidate === "object" && !Array.isArray(candidate)
+      ? /** @type {Record<string, unknown>} */ (candidate)[field]
+      : candidate;
+  return value === null || (typeof value === "string" && value.trim().toLowerCase() === "null")
+    ? field
+    : null;
 }
 
 export function invalidPlatformArrayFields(params) {
@@ -1013,6 +1028,14 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     ) {
       add("rawMessagesJson", "必须包含非空 original 和完整 parse_outputs 对象");
     }
+  }
+
+  const nullParsedPrimaryTag = nullParsedPrimaryPlatformTag(
+    rawMessages,
+    normalizedPlatformName(payload.platform),
+  );
+  if (nullParsedPrimaryTag && !tagArrayValue(payload[nullParsedPrimaryTag])) {
+    add(nullParsedPrimaryTag, "解析结果为 null，必须先调用 AskUserQuestion 确认当前平台主达人类型");
   }
 
   for (const field of invalidPlatformArrayFields(payload)) {

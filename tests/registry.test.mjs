@@ -220,7 +220,7 @@ test("preflight rejects followercount above the technical maximum", () => {
   );
 });
 
-test("normalization accepts parsed tag arrays and the historical xtTalentTypeLable alias", () => {
+test("normalization accepts parsed tag arrays", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = completeValidateParams();
   delete params.contentThemeLabel;
@@ -229,7 +229,7 @@ test("normalization accepts parsed tag arrays and the historical xtTalentTypeLab
     ...params.rawMessagesJson,
     parse_outputs: {
       contentThemeLabel: ["科技数码"],
-      xtTalentTypeLable: ["科技数码-3C数码"],
+      xtTalentTypeLabel: ["科技数码-3C数码"],
     },
   };
 
@@ -238,20 +238,6 @@ test("normalization accepts parsed tag arrays and the historical xtTalentTypeLab
   assert.deepEqual(normalized.contentThemeLabel, ["科技数码"]);
   assert.deepEqual(normalized.xtTalentTypeLabel, ["科技数码-3C数码"]);
   assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
-});
-
-test("an explicit top-level tag remains authoritative over a parsed compatibility alias", () => {
-  const params = completeValidateParams();
-  params.rawMessagesJson = {
-    ...params.rawMessagesJson,
-    parse_outputs: {
-      xtTalentTypeLable: ["剧情搞笑-剧情"],
-    },
-  };
-
-  const normalized = normalizeToolCallParams("validate_requirement", params);
-
-  assert.deepEqual(normalized.xtTalentTypeLabel, params.xtTalentTypeLabel);
 });
 
 test("validate_requirement preflight reports all missing and malformed fields together", () => {
@@ -284,6 +270,40 @@ test("validate_requirement preflight requires a price tier but not optional pars
     validateRequirementPreflight(params, { now }).map((issue) => issue.field),
     ["kolOfficialPriceL1/L2/L3"],
   );
+});
+
+test("current platform primary parsed labels require confirmation when Workflow returns null", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  for (const [platform, field] of [
+    ["xiaohongshu", "pgyBloggerTypeLabel"],
+    ["douyin", "xtTalentTypeLabel"],
+  ]) {
+    const params = completeValidateParams();
+    params.platform = platform;
+    params.rawMessagesJson = {
+      ...params.rawMessagesJson,
+      parse_outputs: { [field]: null },
+    };
+    delete params[field];
+    if (platform === "xiaohongshu") {
+      delete params.kolOfficialPriceL3;
+      delete params.cpmL3;
+      params.kolOfficialPriceL1 = "[35000,60000]";
+    }
+
+    const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+    assert.match(
+      validateRequirementPreflight(normalized, { now }).find((issue) => issue.field === field)?.reason ?? "",
+      /解析结果为 null.*AskUserQuestion/u,
+    );
+
+    params[field] = ["用户确认"];
+    const resolved = normalizeToolCallParams("validate_requirement", params, { now });
+    assert.equal(
+      validateRequirementPreflight(resolved, { now }).some((issue) => issue.field === field),
+      false,
+    );
+  }
 });
 
 test("preflight rejects parser defaults that have no user evidence", () => {
