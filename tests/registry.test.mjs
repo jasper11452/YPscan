@@ -239,14 +239,14 @@ test("normalization accepts parsed tag arrays", () => {
   assert.deepEqual(normalized.xtTalentTypeLabel, ["科技数码-3C数码"]);
   assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
 });
-test("normalizeRequirement infers a unique Douyin primary tag from the requirement text", () => {
+test("normalizeRequirement only infers a Douyin home-appliance primary tag from explicit appliance wording", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = completeValidateParams();
   delete params.xtTalentTypeLabel;
   params.rawMessagesJson = {
     ...params.rawMessagesJson,
     original:
-      "抖音项目：项目A；品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；账号类型：家居垂类下，发布内容中需要有孩子或宠物相关内容。",
+      "抖音项目：项目A；品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；账号类型：家电垂类，发布内容中需要有孩子或宠物相关内容。",
     parse_outputs: {
       ...params.rawMessagesJson.parse_outputs,
       xtTalentTypeLabel: null,
@@ -261,7 +261,6 @@ test("normalizeRequirement infers a unique Douyin primary tag from the requireme
     false,
   );
 });
-
 test("normalizeRequirement reuses the latest primary-type clarification instead of asking again", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = completeValidateParams();

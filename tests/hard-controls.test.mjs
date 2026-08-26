@@ -995,12 +995,12 @@ test("validate_requirement forwards parsed labels without user clarification", (
   assert.deepEqual(JSON.parse(result.params.rawMessagesJson).parse_outputs, rawMessagesJson.parse_outputs);
 });
 
-test("validate_requirement infers a null Douyin primary parsed label before asking again", () => {
+test("validate_requirement only infers a null Douyin primary parsed label from explicit appliance wording", () => {
   const before = registeredHooks().get("before_tool_call");
   const params = completeValidateParams();
   const rawMessagesJson = JSON.parse(params.rawMessagesJson);
   rawMessagesJson.original =
-    "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；账号类型：家居垂类下，发布内容中需要有孩子或宠物相关内容。";
+    "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；账号类型：家电垂类，发布内容中需要有孩子或宠物相关内容。";
   rawMessagesJson.parse_outputs = { xtTalentTypeLabel: null };
   params.rawMessagesJson = rawMessagesJson;
   delete params.xtTalentTypeLabel;

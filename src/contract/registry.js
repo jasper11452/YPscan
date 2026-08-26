@@ -821,12 +821,6 @@ function heuristicDouyinPrimaryTag(value) {
   const text = normalizedEvidenceText(value);
   if (!text) return null;
   if (/(?:家居电器|家电)/u.test(text)) return "科技数码-家居电器";
-  if (
-    /家居(?:垂类|类目|赛道|方向|达人|博主|账号)/u.test(text) &&
-    !/(?:硬装|软装|家居氛围|生活技巧|装修|家装|室内设计|家具|家居装饰)/u.test(text)
-  ) {
-    return "科技数码-家居电器";
-  }
   return null;
 }
 
