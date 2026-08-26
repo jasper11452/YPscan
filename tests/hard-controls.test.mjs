@@ -97,10 +97,10 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
   assert.match(parseText, /禁止把旧解析输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
   assert.match(parseText, /先合并 original 与各数值字段最新非空 clarification/u);
-  assert.match(parseText, /Label 字段和 contentTag.*不调用 AskUserQuestion 确认/u);
+  assert.match(parseText, /八个 Label 字段.*和 contentTag 是纯解析结果/u);
   assert.match(parseText, /xtTalentTypeLabel/u);
-  assert.match(parseText, /当前平台主达人类型字段.*先按当前原文、已回答内容和当前平台枚举做唯一映射/u);
-  assert.match(parseText, /其他解析标签不得触发确认/u);
+  assert.match(parseText, /有什么就原样落库什么/u);
+  assert.match(parseText, /不做映射、不推断、不弹窗/u);
   assert.match(parseText, /同一字段新答案覆盖旧答案/u);
   assert.match(parseText, /Dify 品牌候选只有一个合法非空非占位值/u);
   assert.match(parseText, /不得询问、改写或被原文与 clarification 覆盖/u);
@@ -201,7 +201,8 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(directiveText(rank), /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
   assert.match(directiveText(rank), /“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”/u);
   assert.match(directiveText(rank), /一律默认走 MCP/u);
-  assert.match(directiveText(rank), /后台返回默认手扒 Excel 后立即用 ypscan_save_excel_artifact\(manual_source\) 保存/u);
+  assert.match(directiveText(rank), /manual_source_creators_status 轮询，间隔 30 秒、单轮最多 10 次/u);
+  assert.match(directiveText(rank), /轮询成功返回 Excel 后立即用 ypscan_save_excel_artifact\(manual_source\) 保存/u);
   assert.match(directiveText(rank), /不得激活额外的浏览器手扒分支/u);
   assert.doesNotMatch(directiveText(rank), /ypscan_manual_research|宿主 Browser/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
@@ -288,33 +289,72 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   assert.match(directiveText(failed), /MCN 排名表保存 已暂停/u);
 });
 
-test("default manual sourcing saves its Excel and delivers the local link", () => {
+test("default manual sourcing polls its status before saving the Excel", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const sourced = persist({
     toolName: "ypmcn__manual_source_creators",
     params: { requirement_id: "req-manual", size: "10" },
     message: toolMessage({
       success: true,
+      requirement_id: "req-manual",
+      batch_id: 42,
+    }),
+  });
+  const sourceText = directiveText(sourced);
+  assert.deepEqual(
+    namedArgsFromDirective(sourceText, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
+    { requirement_id: "req-manual", batch_id: 42 },
+  );
+  assert.match(sourceText, /不含 Excel/u);
+  assert.match(sourceText, /轮询间隔 30 秒，单轮最多查询 10 次/u);
+  assert.match(sourceText, /不得猜测或更换 requirement_id 或 batch_id/u);
+  assert.doesNotMatch(sourceText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.doesNotMatch(sourceText, /ASK_USER_QUESTION_ARGS=/u);
+
+  const pending = persist({
+    toolName: "ypmcn__manual_source_creators_status",
+    params: { requirement_id: "req-manual", batch_id: 42 },
+    message: toolMessage({
+      success: false,
+      error: { code: "BATCH_NOT_READY", message: "手扒任务处理中" },
+    }),
+  });
+  const pendingText = directiveText(pending);
+  assert.deepEqual(
+    namedArgsFromDirective(pendingText, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
+    { requirement_id: "req-manual", batch_id: 42 },
+  );
+  assert.match(pendingText, /BATCH_NOT_READY/u);
+  assert.match(pendingText, /轮询间隔 30 秒，单轮最多查询 10 次/u);
+  assert.match(pendingText, /第 10 次仍为 BATCH_NOT_READY 时停止/u);
+  assert.doesNotMatch(pendingText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.doesNotMatch(pendingText, /ASK_USER_QUESTION_ARGS=/u);
+
+  const completed = persist({
+    toolName: "ypmcn__manual_source_creators_status",
+    params: { requirement_id: "req-manual", batch_id: 42 },
+    message: toolMessage({
+      success: true,
       data: {
-        batch_id: "manual-batch-1",
+        batch_id: 42,
         excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
       },
     }),
   });
-  const sourceText = directiveText(sourced);
-  assert.match(sourceText, /不向用户展示下载 URL/u);
-  assert.deepEqual(saveExcelArgsFromDirective(sourceText), {
+  const completedText = directiveText(completed);
+  assert.deepEqual(saveExcelArgsFromDirective(completedText), {
     artifact_kind: "manual_source",
-    artifact_id: "manual-batch-1",
+    artifact_id: "42",
     excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
   });
-  assert.doesNotMatch(sourceText, /ASK_USER_QUESTION_ARGS=/u);
+  assert.match(completedText, /不向用户展示下载 URL/u);
+  assert.doesNotMatch(completedText, /ASK_USER_QUESTION_ARGS=/u);
 
   const saved = persist({
     toolName: "ypscan_save_excel_artifact",
     params: {
       artifact_kind: "manual_source",
-      artifact_id: "manual-batch-1",
+      artifact_id: "42",
       excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
     },
     message: toolMessage({
@@ -350,11 +390,37 @@ test("default manual sourcing repairs missing field selection before retrying", 
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
+test("default manual sourcing pauses without a task batch and falls back to params", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const sourced = persist({
+    toolName: "ypmcn__manual_source_creators",
+    params: { requirement_id: "req-nobatch", size: "10" },
+    message: toolMessage({ success: true, requirement_id: "req-nobatch" }),
+  });
+  const sourceText = directiveText(sourced);
+  assert.match(sourceText, /默认手扒 已暂停/u);
+  assert.doesNotMatch(sourceText, /MANUAL_SOURCE_CREATORS_STATUS_ARGS=/u);
+
+  const completed = persist({
+    toolName: "ypmcn__manual_source_creators_status",
+    params: { requirement_id: "req-nobatch", batch_id: 42 },
+    message: toolMessage({
+      success: true,
+      data: { excel_file_url: "https://files.eshypdata.com/exports/fallback.xlsx" },
+    }),
+  });
+  assert.deepEqual(saveExcelArgsFromDirective(directiveText(completed)), {
+    artifact_kind: "manual_source",
+    artifact_id: "42",
+    excel_file_url: "https://files.eshypdata.com/exports/fallback.xlsx",
+  });
+});
+
 test("tool-result parsing finds JSON in a separate text block", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
-    toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-multipart", size: 10 },
+    toolName: "ypmcn__manual_source_creators_status",
+    params: { requirement_id: "req-multipart", batch_id: 7 },
     message: {
       role: "toolResult",
       content: [
@@ -363,10 +429,8 @@ test("tool-result parsing finds JSON in a separate text block", () => {
           type: "text",
           text: JSON.stringify({
             success: true,
-            data: {
-              batch_id: "batch-multipart",
-              excel_file_url: "https://files.eshypdata.com/exports/multipart.xlsx",
-            },
+            batch_id: 7,
+            excel_file_url: "https://files.eshypdata.com/exports/multipart.xlsx",
           }),
         },
         { type: "text", text: "End of provider result." },
@@ -376,7 +440,7 @@ test("tool-result parsing finds JSON in a separate text block", () => {
 
   assert.deepEqual(saveExcelArgsFromDirective(directiveText(result)), {
     artifact_kind: "manual_source",
-    artifact_id: "batch-multipart",
+    artifact_id: "7",
     excel_file_url: "https://files.eshypdata.com/exports/multipart.xlsx",
   });
 });
@@ -571,7 +635,7 @@ test("parse directives preserve field ownership and change policy", () => {
   const text = directiveText(result);
   assert.match(text, /PARSER_OWNED_LOGICAL_FIELDS=/u);
   assert.match(text, /先合并 original 与各数值字段最新非空 clarification/u);
-  assert.match(text, /Label 字段和 contentTag.*不调用 AskUserQuestion 确认/u);
+  assert.match(text, /八个 Label 字段.*和 contentTag 是纯解析结果/u);
   assert.match(text, /数值候选.*缺失、模糊、非法或冲突时才弹窗/u);
   assert.match(text, /同一字段新答案覆盖旧答案/u);
   assert.match(text, /Dify 品牌候选只有一个合法非空非占位值/u);
@@ -590,6 +654,8 @@ test("parse directives preserve field ownership and change policy", () => {
   assert.match(text, /不询问每类人数、不创建子需求/u);
   assert.match(text, /original 或该字段最新 clarification/u);
   assert.match(text, /已有确认答案时直接复用/u);
+  assert.match(text, /项目名 projectName 由 Agent 根据当前需求自行总结生成/u);
+  assert.match(text, /用一句用户可见正文告知本次取的项目名/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /VALIDATE_REQUIREMENT_ARGS=/u);
 });
@@ -663,6 +729,8 @@ test("startup instruction makes backend manual sourcing the only manual path", (
   assert.match(first.prependContext, /Dify 品牌候选唯一、合法且非空时必须原样作为 brandName/u);
   assert.match(first.prependContext, /不得询问、改写或被原文与 clarification 覆盖/u);
   assert.match(first.prependContext, /解析品牌缺失、多候选或为 null、未知等占位值时才询问/u);
+  assert.match(first.prependContext, /项目名由 Agent 根据当前需求自行总结生成，不弹窗确认/u);
+  assert.match(first.prependContext, /调用 validate_requirement 前用一句可见正文告知用户取的项目名/u);
   assert.match(first.prependContext, /validate_requirement 数值字段格式锁/u);
   assert.match(first.prependContext, /无空格 JSON 区间字符串 "\[min,max\]"/u);
   assert.match(first.prependContext, /禁止通过 Provider 报错逐字段、逐类型试探/u);
@@ -677,7 +745,7 @@ test("startup instruction makes backend manual sourcing the only manual path", (
   assert.match(first.prependContext, /确定性路由到新档位，不得询问用户/u);
   assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
   assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);
-  assert.match(first.prependContext, /用户只明确一个达人类型时也优先映射/u);
+  assert.match(first.prependContext, /主达人类型字段 pgyBloggerTypeLabel\/xtTalentTypeLabel 为 null 或缺失时同样省略/u);
   assert.match(first.prependContext, /缺少 original 或字段最新 clarification 证据/u);
   assert.match(first.prependContext, /单次修改只涉及一个条件时由 Agent 直接更新/u);
   assert.match(first.prependContext, /同一次修改涉及两个及以上不同业务条件时/u);
@@ -747,7 +815,7 @@ test("validate_requirement forwards parsed labels without user clarification", (
   assert.deepEqual(JSON.parse(result.params.rawMessagesJson).parse_outputs, rawMessagesJson.parse_outputs);
 });
 
-test("validate_requirement only infers a null Douyin primary parsed label from explicit appliance wording", () => {
+test("validate_requirement silently omits a null Douyin primary parsed label", () => {
   const before = registeredHooks().get("before_tool_call");
   const params = completeValidateParams();
   const rawMessagesJson = JSON.parse(params.rawMessagesJson);
@@ -763,10 +831,10 @@ test("validate_requirement only infers a null Douyin primary parsed label from e
   const result = before({ toolName: "validate_requirement", params });
 
   assert.equal(result.block, undefined);
-  assert.deepEqual(result.params.xtTalentTypeLabel, ["科技数码-家居电器"]);
+  assert.equal(Object.hasOwn(result.params, "xtTalentTypeLabel"), false);
 });
 
-test("validate_requirement blocks a null current-platform primary parsed label only when unique mapping still fails", () => {
+test("validate_requirement never blocks a null current-platform primary parsed label", () => {
   const before = registeredHooks().get("before_tool_call");
   for (const [platform, field] of [
     ["xiaohongshu", "pgyBloggerTypeLabel"],
@@ -775,7 +843,10 @@ test("validate_requirement blocks a null current-platform primary parsed label o
     const params = completeValidateParams();
     params.platform = platform;
     const rawMessagesJson = JSON.parse(params.rawMessagesJson);
-    rawMessagesJson.parse_outputs = { [field]: null };
+    rawMessagesJson.parse_outputs = {
+      [platform === "douyin" ? "dybrandName" : "xhsbrandName"]: ["测试品牌"],
+      [field]: null,
+    };
     if (platform === "douyin") {
       rawMessagesJson.original =
         "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；账号类型：家居。";
@@ -785,14 +856,15 @@ test("validate_requirement blocks a null current-platform primary parsed label o
     if (platform === "xiaohongshu") {
       delete params.kolOfficialPriceL3;
       delete params.cpmL3;
-      params.kolOfficialPriceL1 = 50000;
+      params.kolOfficialPriceL1 = "[35000,60000]";
     }
 
     const result = before({ toolName: "validate_requirement", params });
-    assert.equal(result.block, true, platform);
-    assert.match(result.blockReason, new RegExp(`${field}.*解析结果为 null.*AskUserQuestion`, "u"), platform);
+    assert.equal(result.block, undefined, platform);
+    assert.equal(Object.hasOwn(result.params, field), false, platform);
   }
 });
+
 
 test("validate_requirement before-call gate blocks equal range bounds", () => {
   const before = registeredHooks().get("before_tool_call");
@@ -897,6 +969,7 @@ test("preflight block result requires grouped popup clarification instead of ret
   assert.match(text, /已经回答但漏传的字段补回 rawMessagesJson.clarifications/u);
   assert.match(text, /同一次 AskUserQuestion 中成组收集/u);
   assert.match(text, /禁止自主选择、默认补值/u);
+  assert.match(text, /projectName 由 Agent 根据当前需求自行总结生成/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
@@ -1012,7 +1085,8 @@ test("rank and startup directives reuse submitted fields for the same requiremen
   assert.match(directiveText(rank), /不得再次调用 select_inquiry_form_fields/u);
   assert.match(directiveText(rank), /否则先调用 select_inquiry_form_fields/u);
   assert.match(directiveText(rank), /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
-  assert.match(directiveText(rank), /后台返回默认手扒 Excel 后立即用 ypscan_save_excel_artifact\(manual_source\) 保存/u);
+  assert.match(directiveText(rank), /manual_source_creators_status 轮询，间隔 30 秒、单轮最多 10 次/u);
+  assert.match(directiveText(rank), /轮询成功返回 Excel 后立即用 ypscan_save_excel_artifact\(manual_source\) 保存/u);
   assert.match(directiveText(rank), /读取.*input schema/u);
   assert.match(directiveText(rank), /需求原文.*可选字段/u);
   assert.match(directiveText(rank), /去掉原文字段.*同一 requirement_id 和 size.*重试一次/u);

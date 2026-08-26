@@ -26,6 +26,11 @@ assert.equal(
   "default backend manual sourcing must be exposed by this plugin",
 );
 assert.equal(
+  manifest.mcpServers.ypscan.toolFilter.include.includes("manual_source_creators_status"),
+  true,
+  "manual sourcing status polling must be exposed from the Provider MCP",
+);
+assert.equal(
   manifest.mcpServers.ypscan.toolFilter.include.includes("select_inquiry_form_fields"),
   true,
   "field selection must be exposed directly by the Provider MCP",

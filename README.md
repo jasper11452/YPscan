@@ -1,10 +1,10 @@
 # YPscan Client Integration Layer
 
-悦普识星是一个 OpenClaw 客户端集成层：通过 SSE 调用 Provider；人工拓展默认由后端 `manual_source_creators` 完成并返回 Excel。所有达人筛选固定执行：
+悦普识星是一个 OpenClaw 客户端集成层：通过 SSE 调用 Provider；人工拓展默认由后端 `manual_source_creators` 提交任务，再用 `manual_source_creators_status` 轮询拿回 Excel。所有达人筛选固定执行：
 
 `ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → 保存并展示 MCN 排名表本地文件超链接 → AskUserQuestion`
 
-用户选择“人工拓展并提报”后，若当前对话已经确认同一 requirement ID 的字段选择已提交，则直接复用 Provider 持久化字段并调用 `manual_source_creators`；否则先通过 `select_inquiry_form_fields` 选择字段。调用默认手扒前优先查看其实际 input schema：若有明确的需求原文可选字段，传当前完整、未改写的原始需求文本；schema 不支持或仅因未知参数拒绝时，去掉该字段，仅用同一 requirement ID 和 `size` 重试一次。不得猜字段名、传解析输出或 `rawMessagesJson`。Provider 返回字段未配置时再回退到字段选择。“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”都默认走这个 MCP 链路。后台返回 Excel 后立即使用 `ypscan_save_excel_artifact(artifact_kind=manual_source)` 保存，并原样展示本地文件 Markdown 超链接作为交付。
+用户选择“人工拓展并提报”后，若当前对话已经确认同一 requirement ID 的字段选择已提交，则直接复用 Provider 持久化字段并调用 `manual_source_creators`；否则先通过 `select_inquiry_form_fields` 选择字段。调用默认手扒前优先查看其实际 input schema：若有明确的需求原文可选字段，传当前完整、未改写的原始需求文本；schema 不支持或仅因未知参数拒绝时，去掉该字段，仅用同一 requirement ID 和 `size` 重试一次。不得猜字段名、传解析输出或 `rawMessagesJson`。Provider 返回字段未配置时再回退到字段选择。“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”都默认走这个 MCP 链路。提交成功只返回任务 batch ID：立即用同一 requirement ID 和 batch ID 调用 `manual_source_creators_status` 轮询，间隔 30 秒、单轮最多 10 次；轮询成功返回 Excel 后立即使用 `ypscan_save_excel_artifact(artifact_kind=manual_source)` 保存，并原样展示本地文件 Markdown 超链接作为交付。
 
 ## 当前组成
 

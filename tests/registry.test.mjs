@@ -240,7 +240,7 @@ test("normalization accepts parsed tag arrays", () => {
   assert.deepEqual(normalized.xtTalentTypeLabel, ["科技数码-3C数码"]);
   assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
 });
-test("normalizeRequirement only infers a Douyin home-appliance primary tag from explicit appliance wording", () => {
+test("normalizeRequirement silently omits a null Douyin primary parsed label", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = completeValidateParams();
   delete params.xtTalentTypeLabel;
@@ -256,13 +256,10 @@ test("normalizeRequirement only infers a Douyin home-appliance primary tag from 
 
   const normalized = normalizeToolCallParams("validate_requirement", params, { now });
 
-  assert.deepEqual(normalized.xtTalentTypeLabel, ["科技数码-家居电器"]);
-  assert.equal(
-    validateRequirementPreflight(normalized, { now }).some((issue) => issue.field === "xtTalentTypeLabel"),
-    false,
-  );
+  assert.equal(Object.hasOwn(normalized, "xtTalentTypeLabel"), false);
+  assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
 });
-test("normalizeRequirement reuses the latest primary-type clarification instead of asking again", () => {
+test("normalizeRequirement never fills a null parsed primary label from clarifications", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = completeValidateParams();
   delete params.xtTalentTypeLabel;
@@ -279,11 +276,10 @@ test("normalizeRequirement reuses the latest primary-type clarification instead 
 
   const normalized = normalizeToolCallParams("validate_requirement", params, { now });
 
-  assert.deepEqual(normalized.xtTalentTypeLabel, ["科技数码-家居电器"]);
+  assert.equal(Object.hasOwn(normalized, "xtTalentTypeLabel"), false);
   assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
 });
-
-test("preflight still blocks when a null Douyin primary tag remains ambiguous", () => {
+test("preflight no longer blocks a null Douyin primary tag", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = completeValidateParams();
   delete params.xtTalentTypeLabel;
@@ -295,9 +291,11 @@ test("preflight still blocks when a null Douyin primary tag remains ambiguous", 
   };
 
   const normalized = normalizeToolCallParams("validate_requirement", params, { now });
-  const reason = validateRequirementPreflight(normalized, { now }).find((issue) => issue.field === "xtTalentTypeLabel")?.reason ?? "";
 
-  assert.match(reason, /无法根据当前原文或已回答内容唯一确定/u);
+  assert.equal(
+    validateRequirementPreflight(normalized, { now }).some((issue) => issue.field === "xtTalentTypeLabel"),
+    false,
+  );
 });
 
 test("validate_requirement preflight reports all missing and malformed fields together", () => {
@@ -332,7 +330,7 @@ test("validate_requirement preflight requires a price tier but not optional pars
   );
 });
 
-test("current platform primary parsed labels require confirmation when Workflow returns null", () => {
+test("null current-platform primary parsed labels are silently omitted", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   for (const [platform, field] of [
     ["xiaohongshu", "pgyBloggerTypeLabel"],
@@ -342,7 +340,10 @@ test("current platform primary parsed labels require confirmation when Workflow 
     params.platform = platform;
     params.rawMessagesJson = {
       ...params.rawMessagesJson,
-      parse_outputs: { [field]: null },
+      parse_outputs: {
+        [platform === "douyin" ? "dybrandName" : "xhsbrandName"]: ["品牌A"],
+        [field]: null,
+      },
     };
     delete params[field];
     if (platform === "xiaohongshu") {
@@ -352,17 +353,8 @@ test("current platform primary parsed labels require confirmation when Workflow 
     }
 
     const normalized = normalizeToolCallParams("validate_requirement", params, { now });
-    assert.match(
-      validateRequirementPreflight(normalized, { now }).find((issue) => issue.field === field)?.reason ?? "",
-      /解析结果为 null.*AskUserQuestion/u,
-    );
-
-    params[field] = ["用户确认"];
-    const resolved = normalizeToolCallParams("validate_requirement", params, { now });
-    assert.equal(
-      validateRequirementPreflight(resolved, { now }).some((issue) => issue.field === field),
-      false,
-    );
+    assert.equal(Object.hasOwn(normalized, field), false, platform);
+    assert.deepEqual(validateRequirementPreflight(normalized, { now }), [], platform);
   }
 });
 
@@ -382,7 +374,7 @@ test("preflight rejects parser defaults that have no user evidence", () => {
 
   assert.deepEqual(
     validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["brandName", "projectName", "followercount", "submissionDeadlineAt"],
+    ["brandName", "followercount", "submissionDeadlineAt"],
   );
 });
 
@@ -472,6 +464,36 @@ test("preflight rejects placeholder strings as parsed brand candidates", () => {
       placeholder,
     );
   }
+});
+
+test("preflight accepts an Agent-summarized project name without any evidence", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    projectName: "品牌A抖音定制视频投放",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音：品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
+test("preflight accepts a plain parsed brandName key when the platform key is absent", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: { brandName: ["品牌A"] },
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
 });
 
 test("a Dify parsed brand rejects a conflicting Agent-supplied brand", () => {
@@ -604,7 +626,7 @@ test("preflight uses only the latest scalar clarification for an overridden fiel
   );
 });
 
-test("Dify brand stays authoritative while the latest project clarification applies", () => {
+test("Dify brand stays authoritative while the Agent-summarized project name needs no evidence", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const rawMessagesJson = {
     ...completeValidateParams().rawMessagesJson,
@@ -620,7 +642,7 @@ test("Dify brand stays authoritative while the latest project clarification appl
       { ...completeValidateParams(), rawMessagesJson },
       { now },
     ).map((issue) => issue.field),
-    ["projectName"],
+    [],
   );
   assert.deepEqual(
     validateRequirementPreflight(
@@ -675,7 +697,7 @@ test("preflight does not treat empty clarification keys as user evidence", () =>
   );
 });
 
-test("preflight requires exact evidence for identity, quantity, and deadline values", () => {
+test("preflight requires exact evidence for brand, quantity, and deadline values", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
     ...completeValidateParams(),
@@ -687,11 +709,11 @@ test("preflight requires exact evidence for identity, quantity, and deadline val
 
   assert.deepEqual(
     validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["brandName", "projectName", "quantityTotal", "submissionDeadlineAt"],
+    ["brandName", "quantityTotal", "submissionDeadlineAt"],
   );
 });
 
-test("preflight does not swap a project name and brand that both appear in the brief", () => {
+test("preflight rejects a swapped brand while a swapped project name stays acceptable", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
     ...completeValidateParams(),
@@ -701,7 +723,7 @@ test("preflight does not swap a project name and brand that both appear in the b
 
   assert.deepEqual(
     validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["brandName", "projectName"],
+    ["brandName"],
   );
 });
 
@@ -1145,15 +1167,3 @@ test("optional platform labels do not enter the required-field list", () => {
   );
 });
 
-test("platform tag enum reference file exists separately from registry implementation", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const text = await readFile(
-    new URL("../skills/media-assistant/references/tools/platform_tag_enums.md", import.meta.url),
-    "utf8",
-  );
-
-  assert.match(text, /## 小红书 `pgyBloggerTypeLabel`/u);
-  assert.match(text, /护肤-面部保养/u);
-  assert.match(text, /## 抖音 `xtTalentTypeLabel`/u);
-  assert.match(text, /美妆-美妆教程/u);
-});
