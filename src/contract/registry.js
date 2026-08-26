@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 /**
  * Small argument-normalization boundary shared by Provider-facing flows.
  * validate_requirement also uses this module for a stateless, pre-write
@@ -249,6 +252,37 @@ const PLATFORM_ALIASES = Object.freeze({
 const POSITIVE_INTEGER_STRING = /^([1-9]\d*)$/u;
 const LOCAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const LOCAL_DATE_OR_DATETIME = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/u;
+const CASCADE_ROUTE_REGISTRY_PATH = fileURLToPath(
+  new URL("../tools/manual-research/platform-cascade-routes.json", import.meta.url),
+);
+
+const DOUYIN_PRIMARY_TAG_ROUTES = Object.freeze(
+  ((JSON.parse(readFileSync(CASCADE_ROUTE_REGISTRY_PATH, "utf8"))?.platforms?.xingtu?.creator_type?.routes) ?? [])
+    .flatMap((route) => {
+      if (!route || typeof route !== "object" || Array.isArray(route)) return [];
+      const path = Array.isArray(route.path)
+        ? route.path
+            .filter((part) => typeof part === "string" && part.trim())
+            .map((part) => part.trim())
+        : [];
+      if (path.length < 2) return [];
+      const leaf = path[path.length - 1];
+      const full = `${path[0]}-${leaf}`;
+      const tokens = [...new Set(
+        [
+          full,
+          route.value,
+          leaf,
+          ...(Array.isArray(route.aliases) ? route.aliases : []),
+        ]
+          .filter((token) => typeof token === "string")
+          .map((token) => token.trim())
+          .filter(Boolean),
+      )];
+      return tokens.length > 0 ? [{ full, tokens }] : [];
+    }),
+);
+
 
 function normalizedQuantityTotal(value) {
   if (Number.isSafeInteger(value)) {
@@ -716,6 +750,145 @@ function latestFieldEvidence(value, keys) {
   const latest = latestScalarClarification(value, keys);
   return latest ? `${latest.key} ${latest.text}` : null;
 }
+function normalizedEvidenceText(value) {
+  return String(value ?? "").normalize("NFKC").replace(/\s+/gu, " ").trim();
+}
+
+function primaryTypeClarificationKeys(platform) {
+  return platform === "douyin"
+    ? ["xtTalentTypeLabel", "talentTypeLabel", "达人类型", "账号类型", "博主类型", "主达人类型", "账号垂类", "达人垂类"]
+    : platform === "xiaohongshu"
+      ? ["pgyBloggerTypeLabel", "talentTypeLabel", "博主类型", "账号类型", "达人类型", "主达人类型", "博主类目", "账号垂类"]
+      : [];
+}
+
+function primaryTypeEvidenceSnippets(rawMessages, platform) {
+  const snippets = [];
+  const push = (value) => {
+    const text = normalizedEvidenceText(value);
+    if (text) snippets.push(text);
+  };
+  if (!rawMessages || typeof rawMessages !== "object" || Array.isArray(rawMessages)) {
+    return snippets;
+  }
+  const clarification = latestScalarClarification(rawMessages, primaryTypeClarificationKeys(platform));
+  if (clarification) push(clarification.text);
+  const original = rawMessages.original;
+  if (typeof original === "string") {
+    for (const match of original.matchAll(
+      /(?:账号类型|达人类型|博主类型|主达人类型|账号垂类|达人垂类|博主类目|达人类目|垂类)\s*[:：=]?\s*([^\n。；;]+)/gu,
+    )) {
+      push(match[1]);
+    }
+  }
+  return snippets;
+}
+
+function splitPrimaryTypeEvidence(value) {
+  const text = normalizedEvidenceText(value);
+  if (!text) return [];
+  const stripped = text.replace(
+    /^(?:账号类型|达人类型|博主类型|主达人类型|账号垂类|达人垂类|博主类目|达人类目|垂类)\s*[:：=]?\s*/u,
+    "",
+  );
+  const lead = stripped
+    .split(/(?:发布内容|内容(?:需要|要求)|视频(?:内容)?|笔记(?:内容)?|并且|而且|同时|以及|，|,|；|;|。|\n)/u)[0]
+    ?.trim();
+  return [...new Set([text, stripped, lead].map((item) => normalizedEvidenceText(item)).filter(Boolean))];
+}
+
+function routeTokenLooksSpecific(token) {
+  const text = normalizedEvidenceText(token);
+  return text.length >= 4 || /[0-9a-z-]/iu.test(text);
+}
+
+function exactDouyinPrimaryTagMatches(value, { allowShort = false } = {}) {
+  const text = normalizedEvidenceText(value).toLocaleLowerCase("zh-CN");
+  if (!text) return [];
+  const matches = [];
+  for (const route of DOUYIN_PRIMARY_TAG_ROUTES) {
+    if (route.tokens.some((token) => {
+      const candidate = normalizedEvidenceText(token).toLocaleLowerCase("zh-CN");
+      return candidate && (allowShort || routeTokenLooksSpecific(token)) && text.includes(candidate);
+    })) {
+      matches.push(route.full);
+    }
+  }
+  return [...new Set(matches)];
+}
+
+function heuristicDouyinPrimaryTag(value) {
+  const text = normalizedEvidenceText(value);
+  if (!text) return null;
+  if (/(?:家居电器|家电)/u.test(text)) return "科技数码-家居电器";
+  if (
+    /家居(?:垂类|类目|赛道|方向|达人|博主|账号)/u.test(text) &&
+    !/(?:硬装|软装|家居氛围|生活技巧|装修|家装|室内设计|家具|家居装饰)/u.test(text)
+  ) {
+    return "科技数码-家居电器";
+  }
+  return null;
+}
+
+function resolveDouyinPrimaryTag(value) {
+  const direct = heuristicDouyinPrimaryTag(value);
+  if (direct) return direct;
+  for (const snippet of splitPrimaryTypeEvidence(value)) {
+    const matches = exactDouyinPrimaryTagMatches(snippet, { allowShort: true });
+    if (matches.length === 1) return matches[0];
+    const heuristic = heuristicDouyinPrimaryTag(snippet);
+    if (heuristic) return heuristic;
+  }
+  const exact = exactDouyinPrimaryTagMatches(value);
+  return exact.length === 1 ? exact[0] : null;
+}
+
+function explicitPrimaryTagArray(value) {
+  const items = normalizedStringArray(value);
+  if (!items) return null;
+  const tags = items
+    .map((item) => normalizedEvidenceText(item))
+    .filter((item) => item && item.includes("-"));
+  return tags.length === items.length ? [...new Set(tags)] : null;
+}
+
+function inferredPrimaryPlatformTagArray(params, rawMessages) {
+  const platform = normalizedPlatformName(params.platform);
+  const field = PRIMARY_PLATFORM_TAG_FIELDS[platform];
+  if (!field) return null;
+
+  const candidates = [];
+  if (Object.hasOwn(params, field)) candidates.push(params[field]);
+  if (Object.hasOwn(params, "talentTypeLabel")) candidates.push(params.talentTypeLabel);
+  candidates.push(...primaryTypeEvidenceSnippets(rawMessages, platform));
+
+  if (platform === "douyin") {
+    for (const candidate of candidates) {
+      const direct = resolveDouyinPrimaryTag(candidate);
+      if (direct) return [direct];
+      const items = normalizedStringArray(candidate);
+      if (!items) continue;
+      const resolved = [];
+      let failed = false;
+      for (const item of items) {
+        const tag = resolveDouyinPrimaryTag(item);
+        if (!tag) {
+          failed = true;
+          break;
+        }
+        if (!resolved.includes(tag)) resolved.push(tag);
+      }
+      if (!failed && resolved.length > 0) return resolved;
+    }
+    const exact = exactDouyinPrimaryTagMatches(rawRequirementEvidence(rawMessages));
+    return exact.length === 1 ? exact : null;
+  }
+
+  return candidates
+    .map(explicitPrimaryTagArray)
+    .find((value) => Array.isArray(value) && value.length > 0) ?? null;
+}
+
 
 const INVALID_BRAND_CANDIDATE =
   /^(?:null|undefined|unknown|n\/?a|none|未知|未明确|未提及|未提供|暂无|无|不详|待确认|待定)$/iu;
@@ -1035,7 +1208,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     normalizedPlatformName(payload.platform),
   );
   if (nullParsedPrimaryTag && !tagArrayValue(payload[nullParsedPrimaryTag])) {
-    add(nullParsedPrimaryTag, "解析结果为 null，必须先调用 AskUserQuestion 确认当前平台主达人类型");
+    add(nullParsedPrimaryTag, "解析结果为 null，且无法根据当前原文或已回答内容唯一确定当前平台主达人类型，必须先调用 AskUserQuestion 确认");
   }
 
   for (const field of invalidPlatformArrayFields(payload)) {
@@ -1235,6 +1408,11 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
       set("rawMessagesJson", rawMessages);
       for (const [field, value] of Object.entries(parsedTagArrays(rawMessages))) {
         if (!Object.hasOwn(normalized, field)) set(field, value);
+      }
+      const primaryField = PRIMARY_PLATFORM_TAG_FIELDS[normalizedPlatformName(normalized.platform)];
+      if (primaryField && !tagArrayValue(normalized[primaryField])) {
+        const inferredPrimaryTag = inferredPrimaryPlatformTagArray(normalized, rawMessages);
+        if (inferredPrimaryTag) set(primaryField, inferredPrimaryTag);
       }
       if (rawMessages && typeof rawMessages === "object" && !Array.isArray(rawMessages)) {
         if (!explicitBrandEvidence(rawMessages).present) {

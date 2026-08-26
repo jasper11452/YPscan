@@ -1,6 +1,6 @@
 # 用户要求 Review Checklist
 
-- [ ] 只有用户改变业务需求时才创建新版本；解析修正不算需求变更。解析返回的合法标签数组直接采用，不向用户确认；可选标签缺失时省略，但小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel` 解析为 `null` 时必须调用 `AskUserQuestion`。数值字段缺失、模糊、冲突或需要选择映射时才调用 `AskUserQuestion`，不从历史数据推断，也不要求确认整份 Brief；同平台多达人类型保留一个 requirement、原始总量和合并标签，不拆分或重复落库。
+- [ ] 只有用户改变业务需求时才创建新版本；解析修正不算需求变更。解析返回的合法标签数组直接采用，不向用户确认；可选标签缺失时省略，但小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel` 解析为 `null` 时先按当前原文、已回答内容和平台枚举做唯一映射，只有仍无法唯一确定时才调用 `AskUserQuestion`，且问题只能问主达人类型，不得把内容约束或孩子/宠物等附加要求反问成主类型。数值字段缺失、模糊、冲突或需要选择映射时才调用 `AskUserQuestion`，不从历史数据推断，也不要求确认整份 Brief；同平台多达人类型保留一个 requirement、原始总量和合并标签，不拆分或重复落库。
 - [ ] `rebate`、`followercount`、报价、CPM、CPE 及其他数值筛选字段在第一次 `validate_requirement` 调用前全部规范成无空格 JSON 区间字符串 `"[min,max]"` 且 `min < max`，返点固定为 `"[min,1]"`；禁止 `[v,v]`，也禁止向 Provider 传数组、对象、单值、百分号文本或自然语言并来回试类型。
 - [ ] 品牌、项目名、达人数量、截止时间和可选项目日期与 `rawMessagesJson.original` 或非空 `clarifications` 中的明确值一致；空澄清键、解析数值默认值和 Agent 推断不算用户证据。解析标签不适用这条证据门禁。
 - [ ] 抖音报价、CPM、CPE 固定使用 L2=植入视频、L3=定制视频，不传 `kolOfficialPriceL1`、`cpmL1`、`cpeL1`；小红书不传任何 L3 字段，模糊档期不转换成具体日期。

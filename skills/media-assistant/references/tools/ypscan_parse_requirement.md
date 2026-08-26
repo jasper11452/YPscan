@@ -33,11 +33,11 @@
 
 1. 八个 Label 数组和 `contentTag` 是可直接采用的解析结果；数值返回值是带用户证据约束的候选。数值字段先合并当前原文与最新非空 `clarification`；同一字段的新答案覆盖旧答案，其他已经确认且未修改的数值直接复用。用户明确品牌优先；否则当前平台品牌候选只有一个合法非空值时直接采用。
 2. 当前 Workflow 的部分输出是 Provider 参数片段对象。允许按字段名做结构性解包或展开，例如从 `{ "rebate": "[0.3,1]" }` 取同名 `rebate`。数组或单值到 Provider 标准区间字符串的确定性边界规范化由插件一次完成；Agent 不得自行尝试不同类型。
-3. 标签保持解析返回的数组元素和顺序，不需要原文逐项举证，不调用 `AskUserQuestion` 确认。可选 Label 为 `null` 或缺失时直接省略，不生成补充值；但小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel` 解析为 `null` 时必须调用 `AskUserQuestion` 确认，并把答案写入对应顶层标签数组，用户未回答前不得调用 `validate_requirement`。
+3. 标签保持解析返回的数组元素和顺序，不需要原文逐项举证，不调用 `AskUserQuestion` 确认。可选 Label 为 `null` 或缺失时直接省略，不生成补充值；但小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel` 解析为 `null` 时，先按当前原文、已回答内容和当前平台枚举做唯一映射；只有仍无法唯一确定时才调用 `AskUserQuestion` 确认，并把答案写入对应顶层标签数组，用户未回答前不得调用 `validate_requirement`。问题只问主达人类型，不得把内容约束、补充标签或孩子/宠物等附加要求反问成主类型。
 4. 品牌当前按平台输出为 `xhsbrandName` / `dybrandName`；只读取当前平台候选。用户明确品牌或该字段最新弹窗答案优先；没有明确值时，只有一个非空且不是 `null`、`undefined`、`未知`、`未明确`、`未提及`、`未提供`、`暂无`、`无`、`不详`、`待确认`、`待定` 等占位值的候选才映射为 `brandName`。多候选、占位值或明确冲突必须弹窗。
 5. `contentTag`、`followercount`、`rebate` 可能返回带同名字段的对象，也可能直接返回值；只做同名结构展开。其中 `contentTag` 必须是非空字符串数组，数值筛选值在 Provider 边界统一为下述标准区间字符串。
 6. 报价、CPM、CPE 按平台返回 `xhs_kolOfficialPrice` / `dy_kolOfficialPrice`、`xhs_cpm` / `dy_cpm`、`xhs_cpe` / `dy_cpe` 参数片段。只展开当前平台对象。抖音三类指标统一按视频类型映射：`kolOfficialPriceL2` / `cpmL2` / `cpeL2` 表示植入视频，`kolOfficialPriceL3` / `cpmL3` / `cpeL3` 表示定制视频，不使用 `kolOfficialPriceL1` / `cpmL1` / `cpeL1`；对应视频类型必须有当前原文或用户弹窗答案支持。解析片段中的旧档位名不作为类型证据；用户证据已唯一明确植入/定制且只有一个合法数值候选时，保持区间不变并路由到当前 L2/L3，不询问用户；多个候选仍需澄清。只有视频类型仍缺失或模糊时才澄清。
-7. 除当前平台主达人类型字段解析为 `null` 外，解析标签不得触发 `AskUserQuestion`。小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel` 解析为 `null` 时必须先确认；解析数值在合并 `original` 与字段最新有效 `clarification` 后仍缺失、为空、模糊、冲突或需要选择合法数值映射时，才调用 `AskUserQuestion`。已有有效数值必须复用，禁止重复询问；同一字段历史旧答案不得覆盖最新答案。
+7. 除当前平台主达人类型字段在唯一映射后仍无法确定外，解析标签不得触发 `AskUserQuestion`。解析数值在合并 `original` 与字段最新有效 `clarification` 后仍缺失、为空、模糊、冲突或需要选择合法数值映射时，才调用 `AskUserQuestion`。已有有效数值必须复用，禁止重复询问；同一字段历史旧答案不得覆盖最新答案。
 
 解析 Workflow 已给出的唯一且合法报价、CPM 或 CPE 候选直接复用；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此再次弹出报价区间选择。
 
@@ -111,7 +111,7 @@
 
 ## 进入 validate_requirement 前
 
-1. 解析标签数组直接采用；但当前平台主达人类型字段解析为 `null` 时必须读取用户确认后再提交，不读取其他标签的 `clarification`。数值字段先合并 `original` 与最新非空 `clarification`。用户明确品牌优先，否则采用当前平台唯一合法品牌候选。
+1. 解析标签数组直接采用；但当前平台主达人类型字段解析为 `null` 时先做唯一映射，只有仍无法唯一确定时才读取用户确认后再提交，不读取其他标签的 `clarification`。数值字段先合并 `original` 与最新非空 `clarification`。用户明确品牌优先，否则采用当前平台唯一合法品牌候选。
 2. 检查必填、平台、数量、日期、价档和全部 `"[min,max]"` 区间格式；项目名、达人数量、截止时间和可选项目日期必须与当前有效用户证据一致，同一字段旧答案不得重新生效。
-3. 解析结果中对当前平台主达人类型字段为 `null` 的情况，以及仍缺失、模糊、冲突或需要选择数值映射的数值字段，一次性调用 `AskUserQuestion`；标签答案写入对应顶层标签数组，其他标签不得触发弹窗，已确认数值不得重复询问。
+3. 解析结果中对当前平台主达人类型字段在唯一映射后仍无法确定的情况，以及仍缺失、模糊、冲突或需要选择数值映射的数值字段，一次性调用 `AskUserQuestion`；标签答案写入对应顶层标签数组，其他标签不得触发弹窗，已确认数值不得重复询问。
 4. 完整参数准备好后直接调用 `validate_requirement`；不展示额外的“确认创建”弹窗，不提前调用 Browser、`search_creators` 或 `rank_mcns`。

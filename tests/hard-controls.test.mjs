@@ -99,7 +99,7 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /先合并 original 与各数值字段最新非空 clarification/u);
   assert.match(parseText, /Label 字段和 contentTag.*不调用 AskUserQuestion 确认/u);
   assert.match(parseText, /xtTalentTypeLabel/u);
-  assert.match(parseText, /当前平台主达人类型字段.*解析为 null.*AskUserQuestion 确认/u);
+  assert.match(parseText, /当前平台主达人类型字段.*先按当前原文、已回答内容和当前平台枚举做唯一映射/u);
   assert.match(parseText, /其他解析标签不得触发确认/u);
   assert.match(parseText, /同一字段新答案覆盖旧答案/u);
   assert.match(parseText, /用户明确品牌优先/u);
@@ -928,7 +928,7 @@ test("startup instruction makes backend manual sourcing the default and Browser 
   assert.match(first.prependContext, /缺少 original 或字段最新 clarification 证据/u);
   assert.match(first.prependContext, /单次修改只涉及一个条件时由 Agent 直接更新/u);
   assert.match(first.prependContext, /同一次修改涉及两个及以上不同条件时/u);
-  assert.match(first.prependContext, /只用用户最初原文和后续改口.*重建完整单平台 demand/u);
+  assert.match(first.prependContext, /只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand/u);
   assert.match(first.prependContext, /禁止回填旧解析输出、已拓展价格或其他 Provider 归一化值/u);
   assert.match(first.prependContext, /creator_price 必须引用客户原始价格表述和原始数值/u);
   assert.match(first.prependContext, /禁止传解析结果\/Provider 区间/u);
@@ -995,7 +995,23 @@ test("validate_requirement forwards parsed labels without user clarification", (
   assert.deepEqual(JSON.parse(result.params.rawMessagesJson).parse_outputs, rawMessagesJson.parse_outputs);
 });
 
-test("validate_requirement blocks a null current-platform primary parsed label", () => {
+test("validate_requirement infers a null Douyin primary parsed label before asking again", () => {
+  const before = registeredHooks().get("before_tool_call");
+  const params = completeValidateParams();
+  const rawMessagesJson = JSON.parse(params.rawMessagesJson);
+  rawMessagesJson.original =
+    "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；账号类型：家居垂类下，发布内容中需要有孩子或宠物相关内容。";
+  rawMessagesJson.parse_outputs = { xtTalentTypeLabel: null };
+  params.rawMessagesJson = rawMessagesJson;
+  delete params.xtTalentTypeLabel;
+
+  const result = before({ toolName: "validate_requirement", params });
+
+  assert.equal(result.block, undefined);
+  assert.deepEqual(result.params.xtTalentTypeLabel, ["科技数码-家居电器"]);
+});
+
+test("validate_requirement blocks a null current-platform primary parsed label only when unique mapping still fails", () => {
   const before = registeredHooks().get("before_tool_call");
   for (const [platform, field] of [
     ["xiaohongshu", "pgyBloggerTypeLabel"],
@@ -1005,6 +1021,10 @@ test("validate_requirement blocks a null current-platform primary parsed label",
     params.platform = platform;
     const rawMessagesJson = JSON.parse(params.rawMessagesJson);
     rawMessagesJson.parse_outputs = { [field]: null };
+    if (platform === "douyin") {
+      rawMessagesJson.original =
+        "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；账号类型：家居。";
+    }
     params.rawMessagesJson = rawMessagesJson;
     delete params[field];
     if (platform === "xiaohongshu") {

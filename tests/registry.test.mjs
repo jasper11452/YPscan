@@ -239,6 +239,63 @@ test("normalization accepts parsed tag arrays", () => {
   assert.deepEqual(normalized.xtTalentTypeLabel, ["科技数码-3C数码"]);
   assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
 });
+test("normalizeRequirement infers a unique Douyin primary tag from the requirement text", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = completeValidateParams();
+  delete params.xtTalentTypeLabel;
+  params.rawMessagesJson = {
+    ...params.rawMessagesJson,
+    original:
+      "抖音项目：项目A；品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；账号类型：家居垂类下，发布内容中需要有孩子或宠物相关内容。",
+    parse_outputs: {
+      ...params.rawMessagesJson.parse_outputs,
+      xtTalentTypeLabel: null,
+    },
+  };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+
+  assert.deepEqual(normalized.xtTalentTypeLabel, ["科技数码-家居电器"]);
+  assert.equal(
+    validateRequirementPreflight(normalized, { now }).some((issue) => issue.field === "xtTalentTypeLabel"),
+    false,
+  );
+});
+
+test("normalizeRequirement reuses the latest primary-type clarification instead of asking again", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = completeValidateParams();
+  delete params.xtTalentTypeLabel;
+  params.rawMessagesJson = {
+    ...params.rawMessagesJson,
+    parse_outputs: { xtTalentTypeLabel: null },
+    clarifications: {
+      "达人类型": "家居电器",
+    },
+  };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+
+  assert.deepEqual(normalized.xtTalentTypeLabel, ["科技数码-家居电器"]);
+  assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
+});
+
+test("preflight still blocks when a null Douyin primary tag remains ambiguous", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = completeValidateParams();
+  delete params.xtTalentTypeLabel;
+  params.rawMessagesJson = {
+    ...params.rawMessagesJson,
+    original:
+      "抖音项目：项目A；品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；账号类型：家居。",
+    parse_outputs: { xtTalentTypeLabel: null },
+  };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+  const reason = validateRequirementPreflight(normalized, { now }).find((issue) => issue.field === "xtTalentTypeLabel")?.reason ?? "";
+
+  assert.match(reason, /无法根据当前原文或已回答内容唯一确定/u);
+});
 
 test("validate_requirement preflight reports all missing and malformed fields together", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
