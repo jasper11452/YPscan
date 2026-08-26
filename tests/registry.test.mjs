@@ -24,7 +24,7 @@ function completeValidateParams() {
     rawMessagesJson: {
       original:
         "抖音项目：项目A；品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；科技耳机方向。",
-      parse_outputs: {},
+      parse_outputs: { dybrandName: ["品牌A"] },
     },
     contentThemeLabel: ["科技数码"],
     growTalentTypeLabel: ["成熟达人"],
@@ -96,7 +96,7 @@ test("validate_requirement canonicalizes numeric fields once before the Provider
   assert.deepEqual(normalized.rawMessagesJson, {
     original:
       "抖音项目：项目A；品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；科技耳机方向。",
-    parse_outputs: {},
+    parse_outputs: { dybrandName: ["品牌A"] },
   });
 });
 
@@ -228,6 +228,7 @@ test("normalization accepts parsed tag arrays", () => {
   params.rawMessagesJson = {
     ...params.rawMessagesJson,
     parse_outputs: {
+      ...params.rawMessagesJson.parse_outputs,
       contentThemeLabel: ["科技数码"],
       xtTalentTypeLabel: ["科技数码-3C数码"],
     },
@@ -267,7 +268,10 @@ test("normalizeRequirement reuses the latest primary-type clarification instead 
   delete params.xtTalentTypeLabel;
   params.rawMessagesJson = {
     ...params.rawMessagesJson,
-    parse_outputs: { xtTalentTypeLabel: null },
+    parse_outputs: {
+      ...params.rawMessagesJson.parse_outputs,
+      xtTalentTypeLabel: null,
+    },
     clarifications: {
       "达人类型": "家居电器",
     },
@@ -416,7 +420,7 @@ test("preflight still rejects multiple parsed brand candidates without user conf
   );
 });
 
-test("preflight does not let a parsed brand override an explicit conflicting brand", () => {
+test("preflight trusts a parsed brand despite conflicting original text", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
     ...completeValidateParams(),
@@ -429,13 +433,10 @@ test("preflight does not let a parsed brand override an explicit conflicting bra
     },
   };
 
-  assert.deepEqual(
-    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["brandName"],
-  );
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
 });
 
-test("preflight does not scan past a comma to turn another product name into brand evidence", () => {
+test("preflight does not reinterpret a Dify brand from conflicting original text", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
     ...completeValidateParams(),
@@ -448,10 +449,7 @@ test("preflight does not scan past a comma to turn another product name into bra
     },
   };
 
-  assert.deepEqual(
-    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["brandName"],
-  );
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
 });
 
 test("preflight rejects placeholder strings as parsed brand candidates", () => {
@@ -476,7 +474,7 @@ test("preflight rejects placeholder strings as parsed brand candidates", () => {
   }
 });
 
-test("an explicit current brand wins over a conflicting parsed candidate", () => {
+test("a Dify parsed brand rejects a conflicting Agent-supplied brand", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
     ...completeValidateParams(),
@@ -486,6 +484,56 @@ test("an explicit current brand wins over a conflicting parsed candidate", () =>
       original:
         "抖音项目：项目A；品牌：品牌B；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
       parse_outputs: { dybrandName: ["品牌A"] },
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["brandName"],
+  );
+});
+
+test("normalization replaces a conflicting Agent-supplied brand with the Dify brand", () => {
+  const params = {
+    ...completeValidateParams(),
+    brandName: "品牌B",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌B；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: { dybrandName: ["品牌A"] },
+    },
+  };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params);
+
+  assert.equal(normalized.brandName, "品牌A");
+});
+
+test("preflight asks when Dify has no brand even if the original text names one", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      parse_outputs: {},
+    },
+  };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["brandName"],
+  );
+});
+
+test("preflight accepts the latest brand clarification when Dify has no brand", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      parse_outputs: {},
+      clarifications: { brandName: "品牌：品牌A" },
     },
   };
 
@@ -556,7 +604,7 @@ test("preflight uses only the latest scalar clarification for an overridden fiel
   );
 });
 
-test("latest identity clarifications override the original brand and project name", () => {
+test("Dify brand stays authoritative while the latest project clarification applies", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const rawMessagesJson = {
     ...completeValidateParams().rawMessagesJson,
@@ -572,7 +620,7 @@ test("latest identity clarifications override the original brand and project nam
       { ...completeValidateParams(), rawMessagesJson },
       { now },
     ).map((issue) => issue.field),
-    ["brandName", "projectName"],
+    ["projectName"],
   );
   assert.deepEqual(
     validateRequirementPreflight(
@@ -583,8 +631,8 @@ test("latest identity clarifications override the original brand and project nam
         rawMessagesJson,
       },
       { now },
-    ),
-    [],
+    ).map((issue) => issue.field),
+    ["brandName"],
   );
 });
 
@@ -623,7 +671,7 @@ test("preflight does not treat empty clarification keys as user evidence", () =>
 
   assert.deepEqual(
     validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["quantityTotal", "followercount", "submissionDeadlineAt"],
+    ["brandName", "quantityTotal", "followercount", "submissionDeadlineAt"],
   );
 });
 
@@ -957,7 +1005,7 @@ test("preflight rejects unsupported Xiaohongshu L3 numeric tiers", () => {
     rawMessagesJson: {
       original:
         "小红书项目：项目A；品牌：品牌A；30位；视频单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
-      parse_outputs: {},
+      parse_outputs: { xhsbrandName: ["品牌A"] },
     },
     contentFeatureLabel: ["真实测评"],
     growBloggerTypeLabel: ["成熟博主"],

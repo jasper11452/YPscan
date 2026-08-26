@@ -54,7 +54,7 @@ function completeValidateParams() {
     rawMessagesJson: JSON.stringify({
       original:
         "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；科技耳机方向。",
-      parse_outputs: {},
+      parse_outputs: { dybrandName: ["测试品牌"] },
     }),
     contentThemeLabel: ["科技数码"],
     growTalentTypeLabel: ["成熟达人"],
@@ -102,8 +102,9 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /当前平台主达人类型字段.*先按当前原文、已回答内容和当前平台枚举做唯一映射/u);
   assert.match(parseText, /其他解析标签不得触发确认/u);
   assert.match(parseText, /同一字段新答案覆盖旧答案/u);
-  assert.match(parseText, /用户明确品牌优先/u);
-  assert.match(parseText, /品牌候选只有一个非空且不是 null.*占位值/u);
+  assert.match(parseText, /Dify 品牌候选只有一个合法非空非占位值/u);
+  assert.match(parseText, /不得询问、改写或被原文与 clarification 覆盖/u);
+  assert.match(parseText, /解析品牌为空、多候选或占位值时才弹窗/u);
   assert.match(parseText, /submissionDeadlineAt 缺失或不精确/u);
   assert.match(parseText, /抖音报价、CPM、CPE 统一按视频类型映射/u);
   assert.match(parseText, /kolOfficialPriceL2\/cpmL2\/cpeL2 仅表示植入视频/u);
@@ -573,8 +574,9 @@ test("parse directives preserve field ownership and change policy", () => {
   assert.match(text, /Label 字段和 contentTag.*不调用 AskUserQuestion 确认/u);
   assert.match(text, /数值候选.*缺失、模糊、非法或冲突时才弹窗/u);
   assert.match(text, /同一字段新答案覆盖旧答案/u);
-  assert.match(text, /用户明确品牌优先/u);
-  assert.match(text, /品牌候选只有一个非空且不是 null.*才无损映射/u);
+  assert.match(text, /Dify 品牌候选只有一个合法非空非占位值/u);
+  assert.match(text, /不得询问、改写或被原文与 clarification 覆盖/u);
+  assert.match(text, /解析品牌为空、多候选或占位值时才弹窗/u);
   assert.match(text, /单次修改只涉及一个业务条件时，不再调用/u);
   assert.match(text, /同一次修改涉及两个及以上不同业务条件时/u);
   assert.match(text, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
@@ -658,15 +660,16 @@ test("startup instruction makes backend manual sourcing the only manual path", (
   assert.match(first.prependContext, /Label 数组和 contentTag.*不调用 AskUserQuestion 确认/u);
   assert.match(first.prependContext, /xtTalentTypeLabel/u);
   assert.match(first.prependContext, /只有必填数值仍缺失.*才调用 AskUserQuestion/u);
-  assert.match(first.prependContext, /用户明确品牌优先/u);
-  assert.match(first.prependContext, /品牌候选唯一、非空且不是 null.*才直接作为 brandName/u);
+  assert.match(first.prependContext, /Dify 品牌候选唯一、合法且非空时必须原样作为 brandName/u);
+  assert.match(first.prependContext, /不得询问、改写或被原文与 clarification 覆盖/u);
+  assert.match(first.prependContext, /解析品牌缺失、多候选或为 null、未知等占位值时才询问/u);
   assert.match(first.prependContext, /validate_requirement 数值字段格式锁/u);
   assert.match(first.prependContext, /无空格 JSON 区间字符串 "\[min,max\]"/u);
   assert.match(first.prependContext, /禁止通过 Provider 报错逐字段、逐类型试探/u);
   assert.match(first.prependContext, /首次按单平台完整需求.*ypscan_parse_requirement/u);
   assert.match(first.prependContext, /data\.outputs 完整透传原始 Workflow 输出/u);
   assert.match(first.prependContext, /解析结果负责八个标签数组/u);
-  assert.match(first.prependContext, /品牌候选唯一且为合法非占位值时直接采用/u);
+  assert.match(first.prependContext, /Dify 品牌候选唯一且为合法非占位值时必须原样采用/u);
   assert.match(first.prependContext, /kolOfficialPriceL2\/cpmL2\/cpeL2=植入视频/u);
   assert.match(first.prependContext, /kolOfficialPriceL3\/cpmL3\/cpeL3=定制视频/u);
   assert.match(first.prependContext, /不使用任何 L1/u);
@@ -677,7 +680,7 @@ test("startup instruction makes backend manual sourcing the only manual path", (
   assert.match(first.prependContext, /用户只明确一个达人类型时也优先映射/u);
   assert.match(first.prependContext, /缺少 original 或字段最新 clarification 证据/u);
   assert.match(first.prependContext, /单次修改只涉及一个条件时由 Agent 直接更新/u);
-  assert.match(first.prependContext, /同一次修改涉及两个及以上不同条件时/u);
+  assert.match(first.prependContext, /同一次修改涉及两个及以上不同业务条件时/u);
   assert.match(first.prependContext, /只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand/u);
   assert.match(first.prependContext, /禁止回填旧解析输出、已拓展价格或其他 Provider 归一化值/u);
   assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
@@ -707,7 +710,7 @@ test("validate_requirement preflight canonicalizes all numeric fields before one
   assert.deepEqual(JSON.parse(result.params.rawMessagesJson), {
     original:
       "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；科技耳机方向。",
-    parse_outputs: {},
+    parse_outputs: { dybrandName: ["测试品牌"] },
   });
 });
 
@@ -730,6 +733,7 @@ test("validate_requirement forwards parsed labels without user clarification", (
   delete params.xtTalentTypeLabel;
   const rawMessagesJson = JSON.parse(params.rawMessagesJson);
   rawMessagesJson.parse_outputs = {
+    dybrandName: ["测试品牌"],
     contentThemeLabel: ["科技数码"],
     xtTalentTypeLabel: ["科技数码-3C数码"],
   };
@@ -749,7 +753,10 @@ test("validate_requirement only infers a null Douyin primary parsed label from e
   const rawMessagesJson = JSON.parse(params.rawMessagesJson);
   rawMessagesJson.original =
     "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；账号类型：家电垂类，发布内容中需要有孩子或宠物相关内容。";
-  rawMessagesJson.parse_outputs = { xtTalentTypeLabel: null };
+  rawMessagesJson.parse_outputs = {
+    dybrandName: ["测试品牌"],
+    xtTalentTypeLabel: null,
+  };
   params.rawMessagesJson = rawMessagesJson;
   delete params.xtTalentTypeLabel;
 
@@ -813,6 +820,7 @@ test("validate_requirement preserves a valid parsed price candidate", () => {
   const params = completeValidateParams();
   const rawMessagesJson = JSON.parse(params.rawMessagesJson);
   rawMessagesJson.parse_outputs = {
+    dybrandName: ["测试品牌"],
     dy_kolOfficialPrice: { kolOfficialPriceL3: "[35000,50000]" },
   };
   params.rawMessagesJson = JSON.stringify(rawMessagesJson);

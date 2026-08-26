@@ -917,11 +917,10 @@ function uniqueParsedBrand(value, platform) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function explicitBrandEvidence(value) {
+function clarifiedBrandEvidence(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { present: false, candidates: [] };
   }
-  const rawMessages = /** @type {Record<string, unknown>} */ (value);
   const clarification = latestScalarClarification(value, ["brandName", "品牌", "品牌名称"]);
   if (clarification) {
     const labeled = clarification.text.match(
@@ -930,18 +929,7 @@ function explicitBrandEvidence(value) {
     const candidate = normalizedBrandCandidate(labeled?.[1] ?? clarification.text);
     return { present: true, candidates: candidate ? [candidate] : [] };
   }
-  const values = [];
-  let present = false;
-  if (typeof rawMessages.original === "string") {
-    for (const match of rawMessages.original.matchAll(
-      /(?:品牌(?:名称)?|brandName)\s*[:：=]\s*([^；;，,。\n]+)/giu,
-    )) {
-      present = true;
-      const candidate = normalizedBrandCandidate(match[1]);
-      if (candidate) values.push(candidate);
-    }
-  }
-  return { present, candidates: [...new Set(values)] };
+  return { present: false, candidates: [] };
 }
 
 function projectDateTimestamp(value) {
@@ -1164,7 +1152,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     add("platform", '只允许字符串 "xiaohongshu" 或 "douyin"');
   }
   if (typeof payload.brandName !== "string" || !payload.brandName.trim()) {
-    add("brandName", "必须是唯一明确的非空品牌字符串；多候选必须弹窗确认");
+    add("brandName", "必须直接使用当前平台 Dify 解析品牌；解析缺失或多候选时必须弹窗确认");
   }
   if (typeof payload.projectName !== "string" || !payload.projectName.trim()) {
     add("projectName", "必须是非空项目名称字符串");
@@ -1241,18 +1229,17 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   const evidence = rawRequirementEvidence(rawMessages);
   const parsedBrand = uniqueParsedBrand(rawMessages, payload.platform);
   const submittedBrand = normalizedBrandCandidate(payload.brandName);
-  const explicitBrand = explicitBrandEvidence(rawMessages);
-  const explicitBrandMatches = Boolean(
+  const clarifiedBrand = clarifiedBrandEvidence(rawMessages);
+  const clarifiedBrandMatches = Boolean(
     submittedBrand &&
-    explicitBrand.present &&
-    explicitBrand.candidates.length === 1 &&
-    explicitBrand.candidates[0] === submittedBrand,
+    !parsedBrand &&
+    clarifiedBrand.present &&
+    clarifiedBrand.candidates.length === 1 &&
+    clarifiedBrand.candidates[0] === submittedBrand,
   );
-  const parsedBrandMatches = Boolean(
-    submittedBrand && !explicitBrand.present && submittedBrand === parsedBrand,
-  );
-  if (!explicitBrandMatches && !parsedBrandMatches) {
-    add("brandName", "原始需求、弹窗澄清或当前平台唯一解析候选中没有与提交值一致的品牌证据");
+  const parsedBrandMatches = Boolean(submittedBrand && submittedBrand === parsedBrand);
+  if (!parsedBrandMatches && !clarifiedBrandMatches) {
+    add("brandName", "必须原样使用当前平台唯一 Dify 解析品牌；仅在解析缺失或多候选时使用最新弹窗答案");
   }
   const projectNameEvidence =
     latestFieldEvidence(rawMessages, ["projectName", "项目", "项目名称"]) ?? evidence;
@@ -1409,10 +1396,8 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
         if (inferredPrimaryTag) set(primaryField, inferredPrimaryTag);
       }
       if (rawMessages && typeof rawMessages === "object" && !Array.isArray(rawMessages)) {
-        if (!explicitBrandEvidence(rawMessages).present) {
-          const parsedBrand = uniqueParsedBrand(rawMessages, normalizedPlatformName(normalized.platform));
-          if (parsedBrand) set("brandName", parsedBrand);
-        }
+        const parsedBrand = uniqueParsedBrand(rawMessages, normalizedPlatformName(normalized.platform));
+        if (parsedBrand) set("brandName", parsedBrand);
         normalized = normalizeParsedDouyinMetrics(normalized, rawMessages);
       }
     }
