@@ -196,19 +196,25 @@ function requiredString(value, name) {
   return value.trim();
 }
 
-function normalizeManualSelectionFact(fact) {
-  if (
-    !fact ||
-    typeof fact !== "object" ||
-    Array.isArray(fact) ||
-    Object.hasOwn(fact, "normalized_value") ||
-    !Object.hasOwn(fact, "value")
-  ) {
+export function normalizeManualSelectionFact(fact) {
+  if (!fact || typeof fact !== "object" || Array.isArray(fact)) {
     return fact;
   }
-  return { ...fact, normalized_value: fact.value };
+  const normalizedKind =
+    !Object.hasOwn(fact, "kind") && typeof fact.field === "string" && fact.field.trim()
+      ? fact.field.trim()
+      : null;
+  const needsNormalizedValue =
+    !Object.hasOwn(fact, "normalized_value") && Object.hasOwn(fact, "value");
+  if (!normalizedKind && !needsNormalizedValue) {
+    return fact;
+  }
+  return {
+    ...fact,
+    ...(normalizedKind ? { kind: normalizedKind } : {}),
+    ...(needsNormalizedValue ? { normalized_value: fact.value } : {}),
+  };
 }
-
 export function validateCreatorPriceFact(fact) {
   if (!fact || fact.kind !== "creator_price") return;
   const value = fact.normalized_value ?? fact.value;

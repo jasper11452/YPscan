@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-`ypscan`（悦普识星）是一个 OpenClaw 插件（id `ypscan`，`private: true`，当前版本 `0.1.24-beta80`），是「悦普达人采买」的客户端集成层：注册本地工具、通过 SSE 连远端 MCP（`https://mcp.eshypdata.com/sse`，12 个工具白名单），并在用户选择人工拓展后由 Agent 使用宿主 Browser 配合无状态 native 适配器。
+`ypscan`（悦普识星）是一个 OpenClaw 插件（id `ypscan`，`private: true`），是「悦普达人采买」的客户端集成层：注册 2 个本地工具、通过 SSE 连远端 MCP（`https://mcp.eshypdata.com/sse`，12 个工具白名单），人工拓展默认由后端 `manual_source_creators` 完成并返回 Excel。
 
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type":"module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。
 
@@ -13,26 +13,25 @@
 - `npm test` — `node --test tests/*.test.mjs`，必须全绿。
 - `npm run lint` — ESLint（flat config，见 `eslint.config.js`）。
 - `npm run typecheck` — `tsc -p tsconfig.json`（checkJs），必须 0 错。
-- `npm run smoke` — 加载插件校验注册，期望 `tools=3, hooks=5`。
+- `npm run smoke` — 加载插件校验注册，期望 `tools=2, hooks=5`。
 - `npm run format:check` / `npm run format` — Prettier（`format` 会全量重排，慎用）。
 
 **改完代码至少跑 `npm run lint && npm run typecheck && npm test && npm run smoke`。**
 
 ## 架构地图
 
-- `index.js` — 入口：注册 3 个本地能力工具 + 3 个核心 hook + `gateway_start`/`gateway_stop`。
-- `openclaw.plugin.json` — 清单：MCP 白名单、测试 adapter、统一 `browserCdpUrl`、`contracts.tools`、`skills`。
+- `index.js` — 入口：注册 2 个本地能力工具 + 3 个核心 hook + `gateway_start`/`gateway_stop`。
+- `openclaw.plugin.json` — 清单：MCP 白名单、测试 adapter、`contracts.tools`、`skills`。
 - `src/tools/` — 本地工具：
   - `parse-requirement.js` — 直连 Dify 的需求解析代理；在 `data.outputs` 完整透传原始 Workflow 输出，其余 Provider 字段由 Agent 按工具卡从原文解析。
   - Provider 询价字段选择由远端 MCP `select_inquiry_form_fields` 直接提供并按需求 ID 在后端持久化；插件不注册同名代理，也不暴露已弃用的查询工具。
   - `save-excel-artifact.js` — 保存 Provider 返回的 Excel。
-  - `manual-research.js`、`manual-research/` — 通过 Playwright Core 连接共享 Browser CDP，执行星图/蒲公英多关键词硬筛、报价视图、分页、原生导出和稳定身份去重；无状态，不做语义筛选。
   - `test-adapter.js`、`tool-result.js`、`post-save-questions.js` — 测试下载与结果适配。
 - `src/contract/registry.js` — 参数归一化和平台别名。
-- `src/hooks/register-flow-directives.js` — 注入固定 Provider 链路、询价结果、Runner 恢复与交付指令；不拦截 `create_with_distributions`。
-- `skills/media-assistant/` — 强制 agent 行为规范：`SKILL.md`（固定链路、native Browser 四动作、价格浮动 70%/120%、Provider 幂等规则）+ `references/`（Provider 工具和双平台 SOP）。
+- `src/hooks/register-flow-directives.js` — 注入固定 Provider 链路、询价结果与交付指令；默认手扒保存后直接交付本地 Excel；不拦截 `create_with_distributions`。
+- `skills/media-assistant/` — 强制 agent 行为规范：`SKILL.md`（固定链路、默认后端手扒、Provider 幂等规则）+ `references/`（Provider 工具说明）。
 - `spec/`、`docs/mcp-developer-tool-by-tool-tickets.md` — 声明式规范与 MCP 侧工单，**只读参考，不是本仓库运行时代码**。
-- `skills/media-assistant/references/` — Provider 工具说明和 Browser + native 最小 SOP。
+- `skills/media-assistant/references/` — Provider 工具说明。
 
 ## 关键不变量（改代码必须遵守）
 
@@ -53,5 +52,5 @@
 1. `npm run lint` → 0 错
 2. `npm run typecheck` → 0 错
 3. `npm test` → 全绿
-4. `npm run smoke` → `tools=3, hooks=5`
+4. `npm run smoke` → `tools=2, hooks=5`
 5. 若动了打包/发布，`npm pack --dry-run --cache /tmp/ypscan-npm-cache` 确认发布包不含已删除 Runner、选择器脚本和测试文件。

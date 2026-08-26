@@ -2,7 +2,7 @@
   "id": "ypscan",
   "name": "悦普识星",
   "version": "0.1.24-beta87",
-  "description": "悦普识星客户端集成层：固定 Provider 首发链路，默认手扒由后端自动完成，浏览器详细手扒按需执行。",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，默认手扒由后端自动完成并直接交付。",
   "author": {
     "name": "Jasper"
   },
@@ -49,20 +49,11 @@
       "testAdapterBaseUrl": {
         "type": "string",
         "description": "仅在 testMode=true 时使用；必须是无凭据的 loopback HTTP origin。"
-      },
-      "browserCdpUrl": {
-        "type": "string",
-        "default": "http://127.0.0.1:18800",
-        "description": "宿主 Browser 的 CDP 地址；Agent 先启动宿主 Browser，Runner 再通过它复用宿主 Profile、Cookie 和登录态。"
-      },
-      "manualBrowserProfileDir": {
-        "type": "string",
-        "description": "已弃用并忽略，仅保留一个版本的旧配置兼容。"
       }
     }
   },
   "contracts": {
-    "tools": ["ypscan_parse_requirement", "ypscan_manual_research", "ypscan_save_excel_artifact"]
+    "tools": ["ypscan_parse_requirement", "ypscan_save_excel_artifact"]
   },
   "hooks": "./index.js"
 }

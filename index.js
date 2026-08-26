@@ -5,11 +5,6 @@ import {
   PARSE_REQUIREMENT_PARAMETERS,
 } from "./src/tools/parse-requirement.js";
 import { createExcelArtifactSaver } from "./src/tools/save-excel-artifact.js";
-import {
-  createManualResearchRunner,
-  MANUAL_RESEARCH_RUNNER_PARAMETERS,
-} from "./src/tools/manual-research-runner.js";
-import { createManualBrowserRuntime } from "./src/tools/manual-research/browser-runtime.js";
 import { resolveTestAdapterBaseUrl } from "./src/tools/test-adapter.js";
 
 /** Entry point for the YPscan client integration layer. */
@@ -21,28 +16,6 @@ export default {
       fetchImpl: api.fetch ?? globalThis.fetch,
     });
     const hookRuntime = registerFlowDirectiveHooks(api);
-    const manualBrowserRuntime = createManualBrowserRuntime({
-      browserCdpUrl: api.pluginConfig?.browserCdpUrl,
-    });
-
-    api.registerTool(
-      (context) => {
-        const manualResearch = createManualResearchRunner({
-          workspaceDir: context?.workspaceDir,
-          browserRuntime: manualBrowserRuntime,
-        });
-        return {
-          name: "ypscan_manual_research",
-          description:
-            "仅在用户明确要求浏览器手扒后使用的双平台 Runner：Agent 先启动宿主 Browser，start/resume 通过 CDP 复用其登录态并保存原始详情 HTML；普通手扒、手动拓展、人工拓展、直接手扒和手捞筛选必须改用 MCP manual_source_creators。",
-          parameters: MANUAL_RESEARCH_RUNNER_PARAMETERS,
-          async execute(_id, params) {
-            return manualResearch(params);
-          },
-        };
-      },
-      { name: "ypscan_manual_research" },
-    );
 
     api.registerTool({
       name: "ypscan_parse_requirement",
@@ -112,7 +85,6 @@ export default {
     });
     api.on("gateway_stop", async () => {
       hookRuntime.resetTransientState();
-      await manualBrowserRuntime.close();
     });
   },
 };

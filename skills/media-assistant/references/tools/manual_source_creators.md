@@ -6,8 +6,8 @@
 
 若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`，不得原参数重试；重新进入字段选择步骤。
 
-“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”都默认指向本 MCP 工具，不得激活 Browser Runner 或读取 Browser 手扒 SOP。只有默认 Excel 保存成功，且用户明确说要用“浏览器手扒”“浏览器详细手扒”或选择同名选项后，才调用 `ypscan_manual_research`。
+“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”都默认指向本 MCP 工具。
 
 成功后立即把返回的 Excel URL 作为 `ypscan_save_excel_artifact` 的内部参数，使用 `artifact_kind="manual_source"` 和返回的 `batch_id` 保存到当前项目。Provider 下载链接不作为最终交付；必须原样展示保存结果中的 `delivery.local_file_link` Markdown 超链接，不得只输出裸 `file_path`。
 
-只有本地保存成功后才提示用户：默认推荐直接使用该结果，也可以选择耗时更长的浏览器详细手扒；浏览器方式期间可能多次出现登录、验证或资质弹窗。用户没有明确选择浏览器方式时，不调用 `ypscan_manual_research`。
+本地保存成功后，直接把该本地 Excel 作为人工拓展交付，不再提供浏览器详细手扒分支。

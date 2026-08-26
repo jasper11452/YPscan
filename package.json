@@ -1,7 +1,7 @@
 {
   "name": "ypscan",
   "version": "0.1.24-beta87",
-  "description": "悦普识星客户端集成层：固定 Provider 首发链路，浏览器详细手扒复用宿主 Browser 登录态。",
+  "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展默认由后端完成并交付本地 Excel。",
   "type": "module",
   "private": true,
   "files": [
@@ -9,11 +9,15 @@
     "openclaw.plugin.json",
     "README.md",
     "skills",
-    "src",
-    "!src/tools/manual-browser-action.js",
-    "!src/tools/manual-browser-inspect.js",
-    "!src/tools/manual-browser-plan.js",
-    "!src/tools/manual-filter-selection.js"
+    "src/contract/registry.js",
+    "src/hooks/register-flow-directives.js",
+    "src/tools/manual-research/platform-cascade-routes.json",
+    "src/tools/parse-requirement.js",
+    "src/tools/post-save-questions.js",
+    "src/tools/save-excel-artifact.js",
+    "src/tools/test-adapter.js",
+    "src/tools/tool-result.js",
+    "src/util/value.js"
   ],
   "openclaw": {
     "extensions": [
