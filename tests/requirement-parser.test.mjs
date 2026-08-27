@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   createRequirementParser,
   DIFY_REQUIREMENT_FIELDS,
+  DIFY_REQUIREMENT_OUTPUT_FIELDS,
   DIFY_WORKFLOW_URL,
   PARSE_REQUIREMENT_OUTPUT_SCHEMA,
   PARSE_REQUIREMENT_PARAMETERS,
@@ -21,6 +23,28 @@ function response(envelope, { ok = true, status = 200 } = {}) {
   };
 }
 
+function projectFile(path) {
+  return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+}
+
+test("declared parser spec matches the compact output contract", () => {
+  const spec = JSON.parse(projectFile("spec/requirement-parser.json"));
+
+  assert.equal(spec.schemaVersion, 6);
+  assert.equal(spec.outputPolicy.preserveDifyValues, true);
+  assert.equal(spec.outputPolicy.discardUnknownWorkflowFields, true);
+  assert.deepEqual(spec.outputPolicy.exposedWorkflowFields, DIFY_REQUIREMENT_OUTPUT_FIELDS);
+  assert.match(spec.outputPolicy.shape, /only the contracted Dify output fields/u);
+});
+
+test("validate_requirement card forbids same-platform child allocation", () => {
+  const card = projectFile("skills/media-assistant/references/tools/validate_requirement.md");
+
+  assert.doesNotMatch(card, /same-platform multi-type allocation/iu);
+  assert.doesNotMatch(card, /remaining child calls.*same-platform type allocation/iu);
+  assert.match(card, /keep one requirement with the original total/u);
+});
+
 test("parser publishes only the single-platform workflow input", () => {
   assert.deepEqual(PARSE_REQUIREMENT_PARAMETERS.required, ["demand"]);
   assert.deepEqual(Object.keys(PARSE_REQUIREMENT_PARAMETERS.properties), ["demand"]);
@@ -28,11 +52,15 @@ test("parser publishes only the single-platform workflow input", () => {
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /用户原始表述/u);
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /禁止回填历史解析输出/u);
 
-  assert.deepEqual(PARSE_REQUIREMENT_OUTPUT_SCHEMA.properties.data.required, [
-    "outputs",
-    "demandFingerprint",
-    "workflowRunId",
-  ]);
+  assert.deepEqual(PARSE_REQUIREMENT_OUTPUT_SCHEMA.properties.data.required, ["outputs"]);
+  assert.equal(
+    PARSE_REQUIREMENT_OUTPUT_SCHEMA.properties.data.properties.outputs.additionalProperties,
+    false,
+  );
+  assert.deepEqual(
+    Object.keys(PARSE_REQUIREMENT_OUTPUT_SCHEMA.properties.data.properties.outputs.properties),
+    DIFY_REQUIREMENT_OUTPUT_FIELDS,
+  );
   assert.deepEqual(DIFY_REQUIREMENT_FIELDS, [
     "growBloggerTypeLabel",
     "contentFeatureLabel",
@@ -52,7 +80,7 @@ test("parser publishes only the single-platform workflow input", () => {
   ]);
 });
 
-test("parser calls the workflow in blocking mode and preserves the complete raw outputs", async () => {
+test("parser calls the workflow in blocking mode and returns only contracted outputs", async () => {
   const outputs = {
     growBloggerTypeLabel: ["护肤", "通勤"],
     contentFeatureLabel: null,
@@ -73,8 +101,10 @@ test("parser calls the workflow in blocking mode and preserves the complete raw 
     dy_cpm: { cpmL1: "[0,100]" },
     xhs_cpe: null,
     dy_cpe: { cpeL1: "[0,20]" },
-    futureWorkflowField: "preserve without local interpretation",
+    workflowInternalTrace: "must not leak into the tool result",
   };
+  const expectedOutputs = { ...outputs };
+  delete expectedOutputs.workflowInternalTrace;
   let captured;
   const parser = createRequirementParser({
     apiKey: "test-key",
@@ -93,20 +123,45 @@ test("parser calls the workflow in blocking mode and preserves the complete raw 
   assert.equal(captured.url, DIFY_WORKFLOW_URL);
   assert.equal(captured.options.method, "POST");
   assert.equal(captured.options.headers.Authorization, "Bearer test-key");
-  assert.deepEqual(JSON.parse(captured.options.body), {
-    inputs: { demand: "小红书护肤需求" },
-    response_mode: "blocking",
-    user: `ypscan-${parsed.data.demandFingerprint.slice(0, 24)}`,
-  });
+  const requestBody = JSON.parse(captured.options.body);
+  assert.deepEqual(
+    { inputs: requestBody.inputs, response_mode: requestBody.response_mode },
+    {
+      inputs: { demand: "小红书护肤需求" },
+      response_mode: "blocking",
+    },
+  );
+  assert.match(requestBody.user, /^ypscan-[a-f0-9]{24}$/u);
   assert.equal(parsed.success, true);
-  assert.deepEqual(parsed.data.outputs, outputs);
-  assert.equal(parsed.data.workflowRunId, "workflow-run-1");
-  assert.deepEqual(result.details, parsed.data);
+  assert.deepEqual(parsed.data.outputs, expectedOutputs);
+  assert.equal(Object.hasOwn(parsed.data, "demandFingerprint"), false);
+  assert.equal(Object.hasOwn(parsed.data, "workflowRunId"), false);
+  assert.equal(result.details, undefined);
   assert.equal(result.isError, undefined);
   assert.equal(result.content[0].text.includes("\n"), false);
 });
 
-test("missing parser-owned fields remain missing inside the untouched outputs object", async () => {
+test("parser preserves every output field declared by the independent spec", async () => {
+  const spec = JSON.parse(projectFile("spec/requirement-parser.json"));
+  const expected = Object.fromEntries(
+    spec.outputPolicy.exposedWorkflowFields.map((field) => [field, { marker: field }]),
+  );
+  const parser = createRequirementParser({
+    apiKey: "test-key",
+    fetchImpl: async () =>
+      response({
+        data: {
+          status: "succeeded",
+          outputs: { ...expected, workflowInternalTrace: "discard" },
+        },
+      }),
+  });
+
+  const parsed = payload(await parser({ demand: "抖音需求" }));
+  assert.deepEqual(parsed.data.outputs, expected);
+});
+
+test("missing parser-owned fields remain missing inside the compact outputs object", async () => {
   const parser = createRequirementParser({
     apiKey: "test-key",
     fetchImpl: async () =>
@@ -115,7 +170,6 @@ test("missing parser-owned fields remain missing inside the untouched outputs ob
 
   const parsed = payload(await parser({ demand: "抖音需求" }));
   assert.deepEqual(parsed.data.outputs, { brandName: null });
-  assert.equal(parsed.data.workflowRunId, "data-run-1");
 });
 
 test("invalid demand fails without calling the workflow", async () => {

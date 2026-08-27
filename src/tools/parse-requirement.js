@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { firstString, isRecord, nonemptyString } from "../util/value.js";
+import { isRecord, nonemptyString } from "../util/value.js";
 import { hostToolResult } from "./tool-result.js";
 
 export const DIFY_WORKFLOW_URL = "https://dfi.eshypdata.com/v1/workflows/run";
@@ -23,6 +23,41 @@ export const DIFY_REQUIREMENT_FIELDS = Object.freeze([
   "kolOfficialPrice",
   "cpm",
   "cpe",
+]);
+
+export const DIFY_REQUIREMENT_OUTPUT_FIELDS = Object.freeze([
+  "growBloggerTypeLabel",
+  "contentFeatureLabel",
+  "contentThemeLabel",
+  "kolPersonaLabel",
+  "pgyBloggerTypeLabel",
+  "xtTalentTypeLabel",
+  "industryTagLabel",
+  "growTalentTypeLabel",
+  "contentTag",
+  "brandName",
+  "xhsbrandName",
+  "dybrandName",
+  "followercount",
+  "rebate",
+  "kolOfficialPrice",
+  "kolOfficialPriceL1",
+  "kolOfficialPriceL2",
+  "kolOfficialPriceL3",
+  "xhs_kolOfficialPrice",
+  "dy_kolOfficialPrice",
+  "cpm",
+  "cpmL1",
+  "cpmL2",
+  "cpmL3",
+  "xhs_cpm",
+  "dy_cpm",
+  "cpe",
+  "cpeL1",
+  "cpeL2",
+  "cpeL3",
+  "xhs_cpe",
+  "dy_cpe",
 ]);
 
 export const PARSE_REQUIREMENT_PARAMETERS = Object.freeze({
@@ -59,14 +94,15 @@ export const PARSE_REQUIREMENT_OUTPUT_SCHEMA = Object.freeze({
     data: {
       type: "object",
       additionalProperties: false,
-      required: ["outputs", "demandFingerprint", "workflowRunId"],
+      required: ["outputs"],
       properties: {
         outputs: {
           type: "object",
-          additionalProperties: DIFY_VALUE_SCHEMA,
+          additionalProperties: false,
+          properties: Object.fromEntries(
+            DIFY_REQUIREMENT_OUTPUT_FIELDS.map((field) => [field, DIFY_VALUE_SCHEMA]),
+          ),
         },
-        demandFingerprint: { type: "string" },
-        workflowRunId: { anyOf: [{ type: "string" }, { type: "null" }] },
       },
     },
   },
@@ -74,6 +110,15 @@ export const PARSE_REQUIREMENT_OUTPUT_SCHEMA = Object.freeze({
 
 function demandFingerprint(demand) {
   return createHash("sha256").update(demand).digest("hex");
+}
+
+function contractedOutputs(outputs) {
+  return Object.fromEntries(
+    DIFY_REQUIREMENT_OUTPUT_FIELDS.filter((field) => Object.hasOwn(outputs, field)).map((field) => [
+      field,
+      outputs[field],
+    ]),
+  );
 }
 
 function failure(code, message) {
@@ -90,8 +135,8 @@ function failure(code, message) {
 }
 
 /**
- * Create the requirement parser. The proxy deliberately preserves the complete
- * Workflow output; semantic reconciliation belongs to the Agent.
+ * Create the requirement parser. Only fields consumed by the current Provider
+ * contract are exposed to the Agent.
  *
  * @param {{ apiKey?: string, fetchImpl?: typeof fetch, timeoutMs?: number }} [options]
  */
@@ -150,12 +195,8 @@ export function createRequirementParser({
       return failure("DIFY_OUTPUT_INVALID", "需求解析 Workflow 缺少 outputs 对象");
     }
 
-    const data = {
-      outputs: envelope.data.outputs,
-      demandFingerprint: fingerprint,
-      workflowRunId: firstString(envelope.workflow_run_id, envelope.data.id) ?? null,
-    };
+    const data = { outputs: contractedOutputs(envelope.data.outputs) };
     const payload = { success: true, data };
-    return hostToolResult(payload, { details: data, compact: true });
+    return hostToolResult(payload, { compact: true });
   };
 }

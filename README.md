@@ -9,7 +9,7 @@
 ## 当前组成
 
 - `index.js`：注册 2 个本地能力工具、远端 MCP 白名单和 Hook。
-- `src/tools/parse-requirement.js`：调用固定需求解析 Workflow，在 `data.outputs` 中完整透传原始输出；解析返回的标签数组合法非空时直接采用，不向用户确认，可选标签缺失时省略；但小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel` 解析为 `null` 时必须先询问用户。用户明确品牌优先，否则采用当前平台唯一且非占位的品牌候选。数值字段先合并原文与最新有效弹窗答案，只有仍缺失、模糊或冲突时才询问；已确认且未修改的值不得重复询问。抖音报价、CPM、CPE 固定映射为 L2=植入视频、L3=定制视频，不使用 L1；解析片段仍带旧档位名但视频类型明确时，保持数值不变并确定性路由，不重复询问。同平台多个达人类型只有总量时保留一个 requirement，合并全部类型标签和条件，不拆分子需求。
+- `src/tools/parse-requirement.js`：调用固定需求解析 Workflow，`data.outputs` 只返回当前 Provider 契约消费的字段；解析返回的标签数组合法非空时直接采用，不向用户确认，任何标签（包括 `pgyBloggerTypeLabel` / `xtTalentTypeLabel`）缺失或为 `null` 时直接省略。当前平台唯一且非占位的品牌候选直接采用。数值字段先合并原文与最新有效弹窗答案，只有仍缺失、模糊或冲突时才询问；已确认且未修改的值不得重复询问。抖音报价、CPM、CPE 固定映射为 L2=植入视频、L3=定制视频，不使用 L1。同平台多个达人类型只有总量时保留一个 requirement，合并全部类型标签和条件，不拆分子需求。
 - Provider 询价字段选择直接使用远端 MCP `select_inquiry_form_fields`，用户提交后按 requirement ID 在后端持久化；Agent 不调用已弃用的字段查询工具，也不向后续工具传 `columns`。
 - `src/tools/save-excel-artifact.js`：保存 Provider 返回的 Excel 下载结果；初始链路只保存 MCN 排名表和默认手扒结果，不保存 `search_creators` 的表格。
 - `src/hooks/register-flow-directives.js`：注入固定链路、需求澄清与数值格式锁、Provider 询价结果与交付指令；`validate_requirement` 调用前执行规范化和完整预检，优先复用已有澄清答案。MCN 排名表与默认手扒结果都会先保存为本地 Excel，再展示可点击的本地文件链接。

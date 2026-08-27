@@ -23,7 +23,7 @@
 - `index.js` — 入口：注册 2 个本地能力工具 + 3 个核心 hook + `gateway_start`/`gateway_stop`。
 - `openclaw.plugin.json` — 清单：MCP 白名单、测试 adapter、`contracts.tools`、`skills`。
 - `src/tools/` — 本地工具：
-  - `parse-requirement.js` — 直连 Dify 的需求解析代理；在 `data.outputs` 完整透传原始 Workflow 输出，其余 Provider 字段由 Agent 按工具卡从原文解析。
+  - `parse-requirement.js` — 直连 Dify 的需求解析代理；`data.outputs` 只返回当前 Provider 契约消费的 Workflow 字段，其余 Provider 字段由 Agent 按工具卡从原文解析。
   - Provider 询价字段选择由远端 MCP `select_inquiry_form_fields` 直接提供并按需求 ID 在后端持久化；插件不注册同名代理，也不暴露已弃用的查询工具。
   - `save-excel-artifact.js` — 保存 Provider 返回的 Excel。
   - `test-adapter.js`、`tool-result.js`、`post-save-questions.js` — 测试下载与结果适配。

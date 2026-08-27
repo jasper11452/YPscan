@@ -20,7 +20,7 @@ export default {
     api.registerTool({
       name: "ypscan_parse_requirement",
       description:
-        '将当前单个平台的完整最新需求交给固定解析 Workflow，并在 data.outputs 中完整透传原始输出。解析返回的八个 Label 数组和 contentTag 合法非 null 时直接原样采用，不向用户确认；缺失或 null 的可选 Label 直接省略，但当前平台主达人类型字段例外：小红书 pgyBloggerTypeLabel 或抖音 xtTalentTypeLabel 解析为 null 时必须调用 AskUserQuestion 确认，并把答案写入对应顶层标签数组，用户未回答前禁止调用 validate_requirement。当前平台 Dify 品牌候选唯一、非空且不是 null/未知等占位值时，必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为占位值时才调用 AskUserQuestion。数值字段先合并用户原文和最新有效 clarification，只有仍缺失、模糊或冲突时才调用 AskUserQuestion。抖音报价、CPM、CPE 按视频类型映射：L2=植入视频，L3=定制视频，不使用 L1；解析片段带旧档位名但视频类型明确时保持数值不变并确定性路由，不重复询问。同平台多个达人类型只有总量时只创建一个 requirement，保留原始总量并合并全部类型标签和条件，不拆分子需求、不重复落库或重复搜索；无明确重点时仍保留各类型标签，不询问每类人数。进入 validate_requirement 前，所有数值筛选字段全部准备为无空格 JSON 区间字符串 "[min,max]"，返点固定为 "[min,1]"，不得靠 Provider 报错试类型。首次需求必调；后续单次修改只涉及一个条件时由 Agent 直接更新，涉及两个及以上条件时只用用户原始表述和后续改口重建完整需求再调用，禁止把旧解析输出或 Provider 归一化值回填。',
+        "解析当前单个平台的完整最新需求。成功时 data.outputs 仅返回当前 Provider 契约消费的标签、品牌、粉丝/返点和报价/CPM/CPE 字段；未命中字段省略。所有合法标签数组原样采用，null 或缺失时直接省略，包括 pgyBloggerTypeLabel/xtTalentTypeLabel；不得询问、映射或推断标签。唯一合法品牌和数值候选直接采用，缺失、多候选或冲突时才询问。抖音指标按 L2=植入视频、L3=定制视频路由，不使用 L1。首次需求必调；单条件修改直接更新，两个及以上条件修改时只用最新用户原始表述重建需求再调用。",
       parameters: PARSE_REQUIREMENT_PARAMETERS,
       outputSchema: PARSE_REQUIREMENT_OUTPUT_SCHEMA,
       async execute(_id, params) {

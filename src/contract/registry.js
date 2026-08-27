@@ -1132,7 +1132,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
       typeof rawRecord.parse_outputs !== "object" ||
       Array.isArray(rawRecord.parse_outputs)
     ) {
-      add("rawMessagesJson", "必须包含非空 original 和完整 parse_outputs 对象");
+      add("rawMessagesJson", "必须包含非空 original 和本次契约内 parse_outputs 对象");
     }
   }
 

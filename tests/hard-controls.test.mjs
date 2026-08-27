@@ -84,7 +84,7 @@ test("fixed result directives skip the search workbook and save only after rank"
   const parseText = directiveText(parse);
   assert.match(parseText, /下一步由 Agent.*validate_requirement/u);
   assert.match(parseText, /不得调用 Browser/u);
-  assert.match(parseText, /data\.outputs 是完整、未改写的原始 Workflow 输出/u);
+  assert.match(parseText, /data\.outputs 仅包含当前 Provider 契约消费的 Workflow 字段/u);
   assert.match(parseText, /PARSER_OWNED_LOGICAL_FIELDS=/u);
   assert.match(parseText, /VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
   assert.match(parseText, /无空格 JSON 区间字符串 "\[min,max\]"/u);
@@ -739,7 +739,7 @@ test("startup instruction makes backend manual sourcing the only manual path", (
   assert.match(first.prependContext, /无空格 JSON 区间字符串 "\[min,max\]"/u);
   assert.match(first.prependContext, /禁止通过 Provider 报错逐字段、逐类型试探/u);
   assert.match(first.prependContext, /首次按单平台完整需求.*ypscan_parse_requirement/u);
-  assert.match(first.prependContext, /data\.outputs 完整透传原始 Workflow 输出/u);
+  assert.match(first.prependContext, /data\.outputs 仅返回当前 Provider 契约消费的 Workflow 字段/u);
   assert.match(first.prependContext, /解析结果负责八个标签数组/u);
   assert.match(first.prependContext, /Dify 品牌候选唯一且为合法非占位值时必须原样采用/u);
   assert.match(first.prependContext, /kolOfficialPriceL2\/cpmL2\/cpeL2=植入视频/u);
