@@ -81,10 +81,10 @@ test("Provider matching errors remain visible and forbid a full-payload retry", 
   assert.equal(result.message.content[0], original.content[0]);
   assert.match(result.message.content[0].text, /未精确匹配库内机构/u);
   const directive = directiveText(result);
-  assert.match(directive, /原始 Provider 结果.*必须原样展示/u);
-  assert.match(directive, /禁止自动重发原始完整参数/u);
-  assert.match(directive, /仅把选中候选的 supplier ID 放入 supplierIds/u);
-  assert.match(directive, /supplier_name 传空数组/u);
+  assert.match(directive, /原样展示 Provider 状态/u);
+  assert.match(directive, /已成功机构不得重新加入，禁止自动重发/u);
+  assert.match(directive, /使用 AskUserQuestion 让用户选择/u);
+  assert.match(directive, /只传选中的 supplier ID，supplier_name 传 \[\]/u);
 });
 
 test("empty recipients require explicit selection instead of inferring top-ranked agencies", () => {
@@ -102,10 +102,9 @@ test("empty recipients require explicit selection instead of inferring top-ranke
   });
 
   const directive = directiveText(result);
-  assert.match(directive, /没有任何收件机构/u);
-  assert.match(directive, /只选择“询价机构”分支不构成机构提名/u);
-  assert.match(directive, /不得从 MCN 排名、覆盖人数或推荐顺序自动挑选机构/u);
-  assert.match(directive, /待用户选中机构后/u);
+  assert.match(directive, /无收件机构/u);
+  assert.match(directive, /回到本轮真实 MCN 的机构选择/u);
+  assert.match(directive, /不能按排名自动选或重发空数组/u);
   assert.doesNotMatch(directive, /GET_WORKFLOW_STATE_ARGS=/u);
 });
 
@@ -123,12 +122,27 @@ test("non-active project failure only triggers a workflow-state diagnostic", () 
   });
 
   const directive = directiveText(result);
-  assert.match(directive, /关联项目不是进行中状态/u);
-  assert.match(directive, /不得自动重发或猜测状态转换/u);
-  assert.match(directive, /状态查询不授权再次发送/u);
+  assert.match(directive, /项目非进行中/u);
+  assert.match(directive, /调用一次 get_workflow_state 诊断，不自动重发/u);
   assert.deepEqual(namedArgsFromDirective(directive, "GET_WORKFLOW_STATE_ARGS"), {
     requirement_id: "req-status",
   });
+});
+
+test("workflow-state success keeps the raw diagnostic without a repeated directive", () => {
+  const { hooks } = registeredPlugin();
+  const message = toolMessage({
+    success: true,
+    data: { requirement_id: "req-status", allowed_actions: ["create_with_distributions"] },
+  });
+
+  assert.equal(
+    hooks.get("tool_result_persist")({
+      toolName: "get_workflow_state",
+      message,
+    }),
+    undefined,
+  );
 });
 
 test("partial success defers candidate resolution instead of asking for manual expansion", () => {
@@ -148,7 +162,7 @@ test("partial success defers candidate resolution instead of asking for manual e
 
   const directive = directiveText(result);
   assert.match(directive, /成功 1 家，失败 1 家/u);
-  assert.match(directive, /不得自动重发完整参数/u);
+  assert.match(directive, /不自动重发/u);
   assert.match(directive, /排除本次已成功机构/u);
   assert.doesNotMatch(directive, /ASK_USER_QUESTION_ARGS=/u);
 });
@@ -161,8 +175,8 @@ test("success without per-supplier evidence remains unknown", () => {
       message: toolMessage({ success: true, data: { send_status } }),
     });
     const directive = directiveText(result);
-    assert.match(directive, /不能证明任何机构已发送/u);
-    assert.match(directive, /状态标为未知/u);
+    assert.match(directive, /缺少逐机构发送状态/u);
+    assert.match(directive, /标为未知/u);
     assert.doesNotMatch(directive, /ASK_USER_QUESTION_ARGS=/u);
   }
 });
@@ -181,7 +195,7 @@ test("Provider idempotency errors are terminal for the repeated institution", ()
   });
 
   assert.match(result.message.content[0].text, /当前需求已经给此机构发送过询价消息/u);
-  assert.match(directiveText(result), /重复发送错误.*停止重试/u);
+  assert.match(directiveText(result), /重复发送则停止/u);
   assert.doesNotMatch(directiveText(result), /发送确认|sync_mcn_inquiry_status/u);
 });
 

@@ -82,42 +82,15 @@ test("fixed result directives skip the search workbook and save only after rank"
     }),
   });
   const parseText = directiveText(parse);
-  assert.match(parseText, /下一步由 Agent.*validate_requirement/u);
+  assert.match(parseText, /按当前平台和字段名结构化展开、补齐必填项后调用 validate_requirement/u);
   assert.match(parseText, /不得调用 Browser/u);
   assert.match(parseText, /data\.outputs 仅包含当前 Provider 契约消费的 Workflow 字段/u);
-  assert.match(parseText, /PARSER_OWNED_LOGICAL_FIELDS=/u);
-  assert.match(parseText, /VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
-  assert.match(parseText, /无空格 JSON 区间字符串 "\[min,max\]"/u);
-  assert.match(parseText, /min < max/u);
-  assert.match(parseText, /禁止再问用户/u);
   assert.match(parseText, /DIFY_RESOLVED_FIELDS=brandName,followercount,rebate,kolOfficialPrice/u);
   assert.match(parseText, /DIFY_MISSING_FIELDS=cpm,cpe/u);
-  assert.match(parseText, /Dify 已给出的唯一数值候选直接采用/u);
-  assert.match(parseText, /返点.*固定为 "\[min,1\]"/u);
-  assert.match(parseText, /不得用 Provider 报错试探类型/u);
-  assert.match(parseText, /同一次修改涉及两个及以上/u);
-  assert.match(parseText, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
-  assert.match(parseText, /禁止把旧解析输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
-  assert.match(parseText, /先合并 original 与各数值字段最新非空 clarification/u);
-  assert.match(parseText, /八个 Label 字段.*和 contentTag 是纯解析结果/u);
-  assert.match(parseText, /xtTalentTypeLabel/u);
-  assert.match(parseText, /有什么就原样落库什么/u);
-  assert.match(parseText, /不做映射、不推断、不弹窗/u);
-  assert.match(parseText, /同一字段新答案覆盖旧答案/u);
-  assert.match(parseText, /Dify 品牌候选只有一个合法非空非占位值/u);
-  assert.match(parseText, /不得询问、改写或被原文与 clarification 覆盖/u);
-  assert.match(parseText, /解析品牌为空、多候选或占位值时才弹窗/u);
-  assert.match(parseText, /submissionDeadlineAt 缺失或不精确/u);
-  assert.match(parseText, /抖音报价、CPM、CPE 统一按视频类型映射/u);
-  assert.match(parseText, /kolOfficialPriceL2\/cpmL2\/cpeL2 仅表示植入视频/u);
-  assert.match(parseText, /kolOfficialPriceL3\/cpmL3\/cpeL3 仅表示定制视频/u);
-  assert.match(parseText, /kolOfficialPriceL1\/cpmL1\/cpeL1 禁止使用/u);
-  assert.match(parseText, /旧档位名不作为视频类型证据/u);
-  assert.match(parseText, /确定性路由到当前 L2\/L3，不得因此询问用户/u);
-  assert.match(parseText, /唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值/u);
-  assert.match(parseText, /只创建一个 requirement/u);
-  assert.match(parseText, /不询问每类人数、不创建子需求/u);
-  assert.match(parseText, /本地边界完成预检后只序列化一次/u);
+  assert.match(parseText, /唯一值直接采用/u);
+  assert.match(parseText, /标签有则原样保留，无则省略/u);
+  assert.doesNotMatch(parseText, /PARSER_OWNED_LOGICAL_FIELDS=|VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
+  assert.ok(parseText.length < 800, `parse directive too long: ${parseText.length}`);
   assert.doesNotMatch(parseText, /VALIDATE_REQUIREMENT_ARGS=/u);
 
   const validate = persist({
@@ -128,8 +101,7 @@ test("fixed result directives skip the search workbook and save only after rank"
     }),
   });
   assert.match(directiveText(validate), /当前需求只保留一个 requirement/u);
-  assert.match(directiveText(validate), /不创建子需求、不重复落库/u);
-  assert.match(directiveText(validate), /立即逐字使用 SEARCH_CREATORS_ARGS/u);
+  assert.match(directiveText(validate), /立即使用 SEARCH_CREATORS_ARGS/u);
   assert.match(directiveText(validate), /严禁使用 data\.demand_id/u);
   assert.deepEqual(namedArgsFromDirective(directiveText(validate), "SEARCH_CREATORS_ARGS"), {
     id: "a".repeat(32),
@@ -148,8 +120,9 @@ test("fixed result directives skip the search workbook and save only after rank"
     }),
   });
   const searchText = directiveText(search);
-  assert.match(searchText, /不保存、不展示 creators_export_path/u);
-  assert.match(searchText, /不得调用 ypscan_save_excel_artifact/u);
+  assert.match(searchText, /忽略 creators_export_path 等表格链接，不保存或展示/u);
+  assert.match(searchText, /不调用保存工具/u);
+  assert.match(searchText, /不得用 Browser、脚本或其他方式下载/u);
   assert.doesNotMatch(searchText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
   assert.deepEqual(namedArgsFromDirective(searchText, "RANK_MCNS_ARGS"), { id: "req-1" });
 
@@ -163,58 +136,23 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(directiveText(rank), /完整 MCN Markdown 表格/u);
   assert.match(directiveText(rank), /用户可见正文文本块/u);
   assert.match(directiveText(rank), /MCN_OUTPUT_FORMAT_LOCK=/u);
-  assert.match(directiveText(rank), /不得根据响应 schema、原始字段、旧模板或上一轮结果/u);
-  assert.match(directiveText(rank), /\| 排名 \| 机构 \| 覆盖达人 \| 返点 \| 综合分 \|/u);
-  assert.ok(
-    directiveText(rank).indexOf("MCN_OUTPUT_FORMAT_LOCK=") <
-      directiveText(rank).indexOf("输出顺序："),
-  );
-  assert.match(directiveText(rank), /禁止改成项目符号或编号列表/u);
-  assert.match(directiveText(rank), /排名、机构、覆盖达人、返点、综合分/u);
-  assert.match(directiveText(rank), /只显示这一张五列表格/u);
-  assert.match(directiveText(rank), /固定列且不得增减/u);
-  assert.match(directiveText(rank), /排名严格按当前响应顺序从 1 开始连续编号/u);
-  assert.match(directiveText(rank), /禁止在表格内外另行展示 supplier_id/u);
-  assert.match(directiveText(rank), /匹配机构数、推荐数量/u);
-  assert.match(directiveText(rank), /MCN:人工、推荐理由/u);
-  assert.match(
-    directiveText(rank),
-    /Supplier ID\/supplier_id、候选达人、供给占比、手扒补量和推荐理由/u,
-  );
-  assert.match(directiveText(rank), /supplier_id 仅禁止对用户展示/u);
-  assert.match(directiveText(rank), /不得丢失.*机构名与 supplier_id 的真实对应关系/u);
-  assert.match(directiveText(rank), /supplier_id 是第一优先级/u);
-  assert.match(directiveText(rank), /命中且有非空 supplier_id 就只放入 supplierIds/u);
-  assert.match(directiveText(rank), /未匹配或无 ID 才把原始名称放入 supplier_name/u);
-  assert.match(directiveText(rank), /candidate_count 原值/u);
-  assert.match(directiveText(rank), /严禁使用累计字段 mcn_covered_creator_count/u);
-  assert.match(directiveText(rank), /严禁与前序机构累加/u);
-  assert.match(directiveText(rank), /不得用累计\/聚合覆盖字段或相邻行差值替代/u);
-  assert.match(directiveText(rank), /表格不得放入弹窗 question/u);
-  assert.match(directiveText(rank), /不要输出 MCN 排名表下载链接/u);
-  assert.match(directiveText(rank), /MCN_RANKING_LOCAL_PATH/u);
-  assert.doesNotMatch(directiveText(rank), /CREATOR_PREVIEW_LOCAL_PATH/u);
-  assert.match(directiveText(rank), /本地 file_path 不得放入弹窗 question/u);
-  assert.match(directiveText(rank), /不得在 AskUserQuestion 返回后补发/u);
-  assert.match(directiveText(rank), /同一 requirement_id/u);
-  assert.match(directiveText(rank), /直接复用 Provider 持久化字段并调用 manual_source_creators/u);
-  assert.match(directiveText(rank), /不得再次调用 select_inquiry_form_fields/u);
-  assert.match(directiveText(rank), /否则先调用 select_inquiry_form_fields/u);
-  assert.match(directiveText(rank), /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
-  assert.match(directiveText(rank), /“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”/u);
-  assert.match(directiveText(rank), /一律默认走 MCP/u);
-  assert.match(directiveText(rank), /manual_source_creators_status 轮询，间隔 30 秒、单轮最多 10 次/u);
-  assert.match(directiveText(rank), /轮询成功返回 Excel 后立即用 ypscan_save_excel_artifact\(manual_source\) 保存/u);
-  assert.match(directiveText(rank), /不得激活额外的浏览器手扒分支/u);
+  assert.match(directiveText(rank), /只能是五列：排名、机构、覆盖达人、返点、综合分/u);
+  assert.match(directiveText(rank), /candidate_count/u);
+  assert.match(directiveText(rank), /禁止展示 supplier_id、其他字段、汇总或历史数据/u);
+  assert.match(directiveText(rank), /同一 requirement_id、同一平台.*唯一精确匹配/u);
+  assert.match(directiveText(rank), /只传 supplierIds/u);
+  assert.match(directiveText(rank), /传原始名称 supplier_name/u);
+  assert.ok(directiveText(rank).length < 1500, `rank directive too long: ${directiveText(rank).length}`);
   assert.doesNotMatch(directiveText(rank), /ypscan_manual_research|宿主 Browser/u);
+  assert.doesNotMatch(directiveText(rank), /manual_source_creators_status/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
   const question = argsFromDirective(directiveText(rank));
   assert.deepEqual(
     question.questions[0].options.map((option) => option.label),
     ["询价机构", "人工拓展并提报"],
   );
-  assert.match(directiveText(rank), /“询价机构”仅选择业务分支/u);
-  assert.match(directiveText(rank), /不得按排名、覆盖达人、返点、综合分或其他字段自行选择机构/u);
+  assert.match(directiveText(rank), /用户选择“询价机构”后/u);
+  assert.match(directiveText(rank), /不得按排名或指标自行选择/u);
   const recipientQuestion = namedArgsFromDirective(
     directiveText(rank),
     "INQUIRY_RECIPIENT_SELECTION_ARGS",
@@ -245,8 +183,8 @@ test("rank result saves the Provider MCN workbook before the branch question", (
     }),
   });
   const rankText = directiveText(rank);
-  assert.match(rankText, /完整 MCN Markdown 表格输出后.*ypscan_save_excel_artifact/u);
-  assert.match(rankText, /保存成功前不得展示本地路径或调用 AskUserQuestion/u);
+  assert.match(rankText, /完整表格输出后立即使用下面参数保存/u);
+  assert.match(rankText, /保存成功前不得展示本地路径/u);
   assert.deepEqual(saveExcelArgsFromDirective(rankText), {
     artifact_kind: "mcn_ranking",
     artifact_id: "req-1",
@@ -268,20 +206,20 @@ test("rank result saves the Provider MCN workbook before the branch question", (
     }),
   });
   const savedText = directiveText(saved);
-  assert.match(savedText, /MCN 排名表 Excel 已保存到当前项目/u);
+  assert.match(savedText, /MCN 排名表已保存/u);
   assert.match(savedText, /MCN_RANKING_LOCAL_PATH=\/workspace\/mcn-ranking\.xlsx/u);
   assert.match(
     savedText,
     /MCN_RANKING_LOCAL_LINK=\[\/workspace\/mcn-ranking\.xlsx\]\(<file:\/\/\/workspace\/mcn-ranking\.xlsx>\)/u,
   );
-  assert.match(savedText, /不得只输出裸路径/u);
+  assert.match(savedText, /不要只输出裸路径/u);
   assert.doesNotMatch(savedText, /CREATOR_PREVIEW_LOCAL_PATH/u);
-  assert.match(savedText, /下面的 ASK_USER_QUESTION_ARGS/u);
+  assert.match(savedText, /执行下一步/u);
   assert.deepEqual(
     argsFromDirective(savedText).questions[0].options.map((option) => option.label),
     ["询价机构", "人工拓展并提报"],
   );
-  assert.match(savedText, /本地路径不得放进弹窗 question/u);
+  assert.match(savedText, /把路径\/链接放入弹窗/u);
 
   const failed = persist({
     toolName: "ypscan_save_excel_artifact",
@@ -307,7 +245,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     namedArgsFromDirective(sourceText, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: "req-manual", batch_id: 42 },
   );
-  assert.match(sourceText, /不含 Excel/u);
+  assert.match(sourceText, /仅返回 batch_id/u);
   assert.match(sourceText, /轮询间隔 30 秒，单轮最多查询 10 次/u);
   assert.match(sourceText, /不得猜测或更换 requirement_id 或 batch_id/u);
   assert.doesNotMatch(sourceText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
@@ -328,7 +266,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   );
   assert.match(pendingText, /BATCH_NOT_READY/u);
   assert.match(pendingText, /轮询间隔 30 秒，单轮最多查询 10 次/u);
-  assert.match(pendingText, /第 10 次仍为 BATCH_NOT_READY 时停止/u);
+  assert.match(pendingText, /第 10 次仍未完成则如实报告/u);
   assert.doesNotMatch(pendingText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
   assert.doesNotMatch(pendingText, /ASK_USER_QUESTION_ARGS=/u);
 
@@ -349,7 +287,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     artifact_id: "42",
     excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
   });
-  assert.match(completedText, /不向用户展示下载 URL/u);
+  assert.match(completedText, /不展示 Provider 下载 URL/u);
   assert.doesNotMatch(completedText, /ASK_USER_QUESTION_ARGS=/u);
 
   const saved = persist({
@@ -367,7 +305,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   const savedText = directiveText(saved);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_LINK=/u);
-  assert.match(savedText, /当前人工拓展交付/u);
+  assert.match(savedText, /作为交付/u);
   assert.doesNotMatch(savedText, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(savedText, /ypscan_manual_research|宿主 Browser/u);
 });
@@ -387,8 +325,8 @@ test("default manual sourcing repairs missing field selection before retrying", 
   assert.deepEqual(namedArgsFromDirective(text, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
     requirement_id: "req-manual",
   });
-  assert.match(text, /不得原参数重试 manual_source_creators/u);
-  assert.match(text, /提交并回复“好了”后/u);
+  assert.match(text, /不得原参数重试/u);
+  assert.match(text, /收到“好了”后/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
@@ -482,7 +420,7 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
   assert.deepEqual(namedArgsFromDirective(directiveText(pending), "GET_INGEST_JOB_ARGS"), {
     job_id: "job-ingest-1",
   });
-  assert.match(directiveText(pending), /同一个 job_id/u);
+  assert.match(directiveText(pending), /同一 job_id/u);
   assert.doesNotMatch(directiveText(pending), /ASK_USER_QUESTION_ARGS=/u);
 
   const completed = persist({
@@ -501,7 +439,7 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
     directiveText(completed),
     /MCN_CREATOR_PREVIEW_URL=https:\/\/files\.eshypdata\.com\/exports\/mcn-preview\.xlsx/u,
   );
-  assert.match(directiveText(completed), /原始 URL 直接输出为单独一行用户可见正文/u);
+  assert.match(directiveText(completed), /原样输出 MCN_CREATOR_PREVIEW_URL/u);
   assert.deepEqual(saveExcelArgsFromDirective(directiveText(completed)), {
     artifact_kind: "mcn_creator_preview",
     artifact_id: "req-ingest",
@@ -565,9 +503,9 @@ test("submission enrichment choice maps directly to get_creator_detail", () => {
     }),
   });
   const text = directiveText(saved);
-  assert.match(text, /选择“补充更新达人信息”.*固定调用 get_creator_detail/u);
-  assert.match(text, /再用 get_creator_detail_export 轮询/u);
-  assert.match(text, /不得调用 select_inquiry_form_fields/u);
+  assert.match(text, /选择补充更新时固定调用 get_creator_detail/u);
+  assert.match(text, /再轮询 get_creator_detail_export/u);
+  assert.match(text, /不得改字段配置/u);
   assert.match(text, /不得.*再次追问/u);
 });
 
@@ -618,7 +556,7 @@ test("empty rank result still outputs the Markdown table and offers manual expan
   assert.doesNotMatch(question.question, /匹配机构：/u);
 });
 
-test("parse directives preserve field ownership and change policy", () => {
+test("parse directives preserve compact dynamic field summaries", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypscan_parse_requirement",
@@ -635,31 +573,12 @@ test("parse directives preserve field ownership and change policy", () => {
   });
 
   const text = directiveText(result);
-  assert.match(text, /PARSER_OWNED_LOGICAL_FIELDS=/u);
-  assert.match(text, /先合并 original 与各数值字段最新非空 clarification/u);
-  assert.match(text, /八个 Label 字段.*和 contentTag 是纯解析结果/u);
-  assert.match(text, /Dify 已给出的唯一数值候选直接采用，禁止再问用户/u);
-  assert.match(text, /DIFY_RESOLVED_FIELDS=/u);
-  assert.match(text, /DIFY_MISSING_FIELDS=/u);
-  assert.match(text, /同一字段新答案覆盖旧答案/u);
-  assert.match(text, /Dify 品牌候选只有一个合法非空非占位值/u);
-  assert.match(text, /不得询问、改写或被原文与 clarification 覆盖/u);
-  assert.match(text, /解析品牌为空、多候选或占位值时才弹窗/u);
-  assert.match(text, /单次修改只涉及一个业务条件时，不再调用/u);
-  assert.match(text, /同一次修改涉及两个及以上不同业务条件时/u);
-  assert.match(text, /只.*用户最初原文和后续改口.*重建完整单平台 demand/u);
-  assert.match(text, /禁止把旧解析输出、已拓展价格或其他 Provider 归一化值写回 demand/u);
-  assert.match(text, /刷新全部解析字段/u);
-  assert.match(text, /kolOfficialPriceL2\/cpmL2\/cpeL2 仅表示植入视频/u);
-  assert.match(text, /kolOfficialPriceL3\/cpmL3\/cpeL3 仅表示定制视频/u);
-  assert.match(text, /kolOfficialPriceL1\/cpmL1\/cpeL1 禁止使用/u);
-  assert.match(text, /旧档位名不作为视频类型证据/u);
-  assert.match(text, /只创建一个 requirement/u);
-  assert.match(text, /不询问每类人数、不创建子需求/u);
-  assert.match(text, /original 或该字段最新 clarification/u);
-  assert.match(text, /已有确认答案时直接复用/u);
-  assert.match(text, /项目名 projectName 由 Agent 根据当前需求自行总结生成/u);
-  assert.match(text, /用一句用户可见正文告知本次取的项目名/u);
+  assert.match(text, /DIFY_RESOLVED_FIELDS=brandName,kolOfficialPrice/u);
+  assert.match(text, /DIFY_MISSING_FIELDS=followercount,rebate,cpm,cpe/u);
+  assert.match(text, /唯一值直接采用/u);
+  assert.match(text, /标签有则原样保留，无则省略/u);
+  assert.ok(text.length < 800, `parse directive too long: ${text.length}`);
+  assert.doesNotMatch(text, /PARSER_OWNED_LOGICAL_FIELDS=|VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /VALIDATE_REQUIREMENT_ARGS=/u);
 });
@@ -1021,26 +940,18 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
     text,
     /FIELD_SELECTION_URL=https:\/\/agenta\.eshypdata\.com\/demand-field-selector\?token=abc/u,
   );
-  assert.match(text, /原样输出为单独一行用户可见正文/u);
-  assert.match(text, /禁止 Markdown 包装、重写、用 Browser 打开/u);
-  assert.match(text, /按 requirement ID 持久化到 Provider 数据库/u);
-  assert.match(text, /绝不是 demand_id/u);
-  assert.match(text, /不得调用已弃用的 get_selected_inquiry_form_fields/u);
-  assert.match(text, /不得.*把 columns 放入 Agent 上下文/u);
-  assert.match(text, /等待用户完成选择后回复“好了”/u);
-  assert.match(text, /恢复发起本次字段选择的原分支/u);
-  assert.match(text, /撰写 description 与 wechat_notification_message/u);
+  assert.match(text, /原样输出 URL/u);
+  assert.match(text, /不得改写、包装、用 Browser 打开/u);
+  assert.match(text, /按 validate_requirement 返回的 requirement_id/u);
+  assert.match(text, /不得使用 demand_id/u);
+  assert.match(text, /调用已弃用的 get_selected_inquiry_form_fields/u);
+  assert.match(text, /把 columns 放入上下文/u);
+  assert.match(text, /等待用户提交并回复“好了”/u);
+  assert.match(text, /按原分支恢复/u);
+  assert.match(text, /用户明确选中的当前 MCN/u);
   assert.match(text, /发送前确认/u);
-  assert.match(text, /完整展示最终机构名称列表和完整企微消息/u);
-  assert.match(text, /“确认发送”和“返回修改”/u);
-  assert.match(text, /只有用户选择“确认发送”后才.*调用一次/u);
-  assert.match(text, /返点只作内部筛选条件，绝不写入这两个消息字段/u);
-  assert.match(text, /人工拓展分支.*调用 manual_source_creators/u);
-  assert.match(text, /读取实际 input schema/u);
-  assert.match(text, /需求原文的可选字段/u);
-  assert.match(text, /去掉原文字段、保留同一 requirement_id 和 size 重试一次/u);
-  assert.match(text, /不得再次调用 select_inquiry_form_fields/u);
-  assert.match(text, /不得调用 create_submission_batch/u);
+  assert.match(text, /人工拓展使用原 requirement_id 和 size/u);
+  assert.ok(text.length < 900, `field-selection directive too long: ${text.length}`);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
@@ -1060,8 +971,7 @@ test("field-selection auto-open failure with a valid link still emits the link d
     text,
     /FIELD_SELECTION_URL=https:\/\/agenta\.eshypdata\.com\/demand-field-selector\?token=degraded/u,
   );
-  assert.match(text, /只有在用户已明确选中至少一家当前 MCN 后/u);
-  assert.match(text, /绝不传空数组、按排名\/覆盖数自行挑选机构或自动发送/u);
+  assert.match(text, /用户明确选中的当前 MCN/u);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);
 });
 
@@ -1085,15 +995,10 @@ test("rank and startup directives reuse submitted fields for the same requiremen
     toolName: "ypmcn__rank_mcns",
     message: toolMessage({ success: true, data: { mcns: [] } }),
   });
-  assert.match(directiveText(rank), /同一 requirement_id/u);
-  assert.match(directiveText(rank), /不得再次调用 select_inquiry_form_fields/u);
-  assert.match(directiveText(rank), /否则先调用 select_inquiry_form_fields/u);
-  assert.match(directiveText(rank), /REQUIREMENT_COLUMNS_NOT_CONFIGURED/u);
-  assert.match(directiveText(rank), /manual_source_creators_status 轮询，间隔 30 秒、单轮最多 10 次/u);
-  assert.match(directiveText(rank), /轮询成功返回 Excel 后立即用 ypscan_save_excel_artifact\(manual_source\) 保存/u);
-  assert.match(directiveText(rank), /读取.*input schema/u);
-  assert.match(directiveText(rank), /需求原文.*可选字段/u);
-  assert.match(directiveText(rank), /去掉原文字段.*同一 requirement_id 和 size.*重试一次/u);
+  assert.match(directiveText(rank), /完整 MCN Markdown 表格/u);
+  assert.match(directiveText(rank), /禁止展示 supplier_id/u);
+  assert.doesNotMatch(directiveText(rank), /manual_source_creators_status/u);
+  assert.ok(directiveText(rank).length < 1000, `empty rank directive too long: ${directiveText(rank).length}`);
 
   const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });

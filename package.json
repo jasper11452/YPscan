@@ -1,6 +1,6 @@
 {
   "name": "ypscan",
-  "version": "0.1.24-beta88",
+  "version": "0.1.24-beta89",
   "description": "悦普识星客户端集成层：固定 Provider 首发链路，人工拓展默认由后端完成并交付本地 Excel。",
   "type": "module",
   "private": true,

@@ -5,7 +5,6 @@ import {
   VALIDATE_REQUIREMENT_RANGE_PARAMS,
   validateRequirementPreflight,
 } from "../contract/registry.js";
-import { DIFY_REQUIREMENT_FIELDS } from "../tools/parse-requirement.js";
 import { mcnRankingBranchQuestionPayload } from "../tools/post-save-questions.js";
 import { localFileMarkdownLink } from "../tools/save-excel-artifact.js";
 
@@ -106,11 +105,11 @@ function flowPauseDirective(stage, message) {
   const result = parsedToolResult(message);
   const code = nonemptyString(result?.error?.code) ? result.error.code : "结果未能继续";
   return [
-    `YPSCAN_FLOW_DIRECTIVE=${stage} 已暂停（${code}）。不得用普通文本提问后结束本轮。`,
+    `YPSCAN_FLOW_DIRECTIVE=${stage} 已暂停（${code}）。使用下方 AskUserQuestion 选择重试或结束。`,
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-      askQuestion("悦普识星下一步", `${stage} 当前无法自动继续，请选择下一步。`, [
-        { label: "重试", description: "按当前真实参数重新执行当前步骤" },
-        { label: "结束本次", description: "保留当前结果并结束本次流程" },
+      askQuestion("悦普识星下一步", `${stage} 无法自动继续，请选择下一步。`, [
+        { label: "重试", description: "按当前参数重试" },
+        { label: "结束本次", description: "保留结果并结束" },
       ]),
     )}`,
   ].join("\n");
@@ -213,19 +212,10 @@ function parseOutputsFromMessage(message) {
 function requirementParseSuccessDirective(message) {
   const { resolved, missing } = classifyDifyOutputs(parseOutputsFromMessage(message));
   return [
-    "YPSCAN_FLOW_DIRECTIVE=需求解析成功。data.outputs 仅包含当前 Provider 契约消费的 Workflow 字段。下一步由 Agent 按需求解析工具卡结构性展开当前平台参数片段、补齐其余字段，再调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
-    `PARSER_OWNED_LOGICAL_FIELDS=${DIFY_REQUIREMENT_FIELDS.join(",")}`,
+    "YPSCAN_FLOW_DIRECTIVE=需求解析成功。data.outputs 仅包含当前 Provider 契约消费的 Workflow 字段。按当前平台和字段名结构化展开、补齐必填项后调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
     `DIFY_RESOLVED_FIELDS=${resolved.join(",")}`,
     `DIFY_MISSING_FIELDS=${missing.join(",")}`,
-    "已列入 DIFY_RESOLVED_FIELDS 的字段必须直接采用，禁止再问用户。DIFY_MISSING_FIELDS 中仅 brandName、followercount、rebate、kolOfficialPrice 在仍为空时弹窗；cpm/cpe 缺失则省略。非解析字段 quantityTotal、submissionDeadlineAt 仍按原文证据处理，缺失或不精确时才问。",
-    `VALIDATE_REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。以下字段只能使用该格式，禁止传数组、对象、单个数字、百分号文本或自然语言：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")}。返点表达最低要求，固定为 "[min,1]"。抖音报价、CPM、CPE 统一按视频类型映射：L2=植入视频，L3=定制视频，L1 禁止使用。所有数值字段必须在第一次 validate_requirement 调用前一次性准备正确，不得用 Provider 报错试探类型。`,
-    "解析结果只允许按字段名结构性展开，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe。八个 Label 字段（growBloggerTypeLabel、contentFeatureLabel、contentThemeLabel、kolPersonaLabel、pgyBloggerTypeLabel、xtTalentTypeLabel、industryTagLabel、growTalentTypeLabel）和 contentTag 是纯解析结果，不向用户确认、不向用户提问任何标签内容：有什么就原样落库什么，保留元素与顺序；任何标签字段（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。Dify 已给出的唯一数值候选直接采用，禁止再问用户；本地只做区间格式与技术上限截断，不再二次找用户确认。当前平台 Dify 品牌候选只有一个合法非空非占位值时，必须原样映射为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌为空、多候选或占位值时才弹窗。数组或单值到 Provider 标准区间字符串的确定性格式归一化由本地调用边界一次完成。落库 validate_requirement 前，先合并 original 与各数值字段最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的字段继续复用。同平台多个达人类型只有总量时，将所有类型标签合并到同一个 requirement，quantityTotal 保持原总量，不拆分、不重复落库。",
-    "提交前一次性检查所有必填字段和全部区间格式。quantityTotal 缺失、submissionDeadlineAt 缺失或不精确、抖音数值字段无法确定视频类型、Dify 品牌缺失/多候选/占位或其他必填数值缺失/null/多候选时，必须先弹窗确认；Dify 已给出唯一合法品牌或唯一合法数值时禁止询问或修改；所有解析标签（八个 Label 和 contentTag）不得触发任何确认或询问，有什么原样落库、没有就省略。用户未回答前禁止调用 validate_requirement。同平台多个达人类型只有总量时只创建一个 requirement，保留总量并合并全部类型标签，不询问每类人数、不创建子需求。",
-    "rawMessagesJson 在 Agent 入参中必须是 JSON 对象并保留 original、本次契约内 parse_outputs 和每个数值字段最新有效 clarification；本地边界完成预检后只序列化一次再提交 Provider，Agent 禁止自行切换对象和字符串形态。同一数值字段的新答案覆盖旧答案，重建参数时保留其他字段答案。解析标签数组可直接采用，当前平台唯一合法 Dify 品牌候选是不可改写的 brandName 权威值；解析品牌缺失或不唯一时才使用最新弹窗答案。Dify 已给出的唯一 followercount、rebate、报价、CPM、CPE 视为已确认，禁止再问。",
-    "用户后续单次修改只涉及一个业务条件时，不再调用 ypscan_parse_requirement，由 Agent 直接更新该条件；同一次修改涉及两个及以上不同业务条件时，只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand，再调用一次 ypscan_parse_requirement，并以新响应刷新全部解析字段。禁止把旧解析输出、已拓展价格或其他 Provider 归一化值写回 demand。",
-    "报价参数片段按 Provider 字段展开：抖音 kolOfficialPriceL2/cpmL2/cpeL2 仅表示植入视频，kolOfficialPriceL3/cpmL3/cpeL3 仅表示定制视频，kolOfficialPriceL1/cpmL1/cpeL1 禁止使用。解析片段中的旧档位名不作为视频类型证据；original 或该字段最新 clarification 已唯一明确植入/定制时，保留合法数值区间并确定性路由到当前 L2/L3，不得因此询问用户。只有视频类型仍缺失或模糊时才弹窗确认。已有确认答案时直接复用，不得重复询问。其余 Provider 字段严格按 media-assistant 的 ypscan_parse_requirement 解析参考从当前有效用户证据构造。",
-    PARSED_METRIC_REUSE_RULE,
-    "项目名 projectName 由 Agent 根据当前需求自行总结生成（可用品牌/产品、平台与达人类型概括），不调用 AskUserQuestion、不要求用户确认；在调用 validate_requirement 前，用一句用户可见正文告知本次取的项目名，用户无需回复。",
+    "DIFY_RESOLVED_FIELDS 中的唯一值直接采用；DIFY_MISSING_FIELDS 与非解析必填项按启动规则收集确认。标签有则原样保留，无则省略；不要把解析输出整体塞入 Provider 参数。",
   ].join("\n");
 }
 
@@ -242,9 +232,9 @@ function requirementPreflightBlockReason(issues) {
 
 function requirementPreflightBlockedDirective() {
   return [
-    "YPSCAN_FLOW_DIRECTIVE=validate_requirement 已被本地完整性预检阻断，Provider 未执行写入。必须先处理原始工具错误列出的全部字段，不得把本次阻断描述成 Provider 字段报错。",
+    "YPSCAN_FLOW_DIRECTIVE=validate_requirement 已被本地预检阻断，Provider 未执行写入。一次处理工具错误列出的全部字段，不得把阻断说成 Provider 报错。",
     `REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。禁止数组、对象、单值和百分号文本直接进入数值筛选字段。`,
-    "纯格式问题由本地边界一次性规范化。先把当前对话中已经回答但漏传的字段补回 rawMessagesJson.clarifications；只把仍未回答、无效、冲突或确需用户决定的字段在同一次 AskUserQuestion 中成组收集（每次最多四题，超过后分批）。解析标签不在此列：八个 Label 和 contentTag 有什么原样落库，null 或缺失就省略。projectName 由 Agent 根据当前需求自行总结生成，不属于待收集字段，禁止为此弹窗。禁止自主选择、默认补值、普通文本追问或再次试探 validate_requirement。",
+    "先把当前对话中已经回答但漏传的字段补回 rawMessagesJson.clarifications；只对仍未回答、无效、冲突或需选择的字段在同一次 AskUserQuestion 中成组收集（最多四题）。标签有则原样落库、缺失就省略；projectName 由 Agent 根据当前需求自行总结生成。禁止自主选择、默认补值或重试探测。",
   ].join("\n");
 }
 
@@ -276,11 +266,9 @@ function fieldSelectionDirective(message) {
   const linkReady = result?.success === true || (result?.success === false && autoOpenFailed);
   if (!linkReady || !url) return flowPauseDirective("字段选择", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。先把 FIELD_SELECTION_URL 里的原始 url 原样输出为单独一行用户可见正文：禁止 Markdown 包装、重写、用 Browser 打开或替用户选择字段。",
-    "用户在选择页提交后，select_inquiry_form_fields 会把所选字段按 requirement ID 持久化到 Provider 数据库；requirement ID 来自 validate_requirement 返回的 data.requirement_id，缺失时兼容 data.id，绝不是 demand_id。不得调用已弃用的 get_selected_inquiry_form_fields，不得查询、重建、转存或把 columns 放入 Agent 上下文；后续 Provider 工具只传当前 schema 要求的业务标识，由后端关联字段。",
-    "现在停止业务调用并等待用户完成选择后回复“好了”。收到后恢复发起本次字段选择的原分支：询价机构分支只有在用户已明确选中至少一家当前 MCN 后，才保留原需求的全部项目、平台、合作形式、价格、档期、数量、粉丝、内容、画像、城市、CPM 和截止时间，撰写 description 与 wechat_notification_message；返点只作内部筛选条件，绝不写入这两个消息字段。随后必须调用一次 AskUserQuestion 做发送前确认：question 完整展示最终机构名称列表和完整企微消息，选项固定为“确认发送”和“返回修改”。只有用户选择“确认发送”后才按 create_with_distributions 工具卡调用一次；选择返回修改、关闭、取消或无答案都不得发送。只选择“询价机构”分支不等于选中收件人或授权发送；没有收件人时先使用本轮真实 MCN 的机构选择弹窗，绝不传空数组、按排名/覆盖数自行挑选机构或自动发送。人工拓展分支使用原 requirement_id 和用户要求的 size 调用 manual_source_creators。不得调用 create_submission_batch，不得再次调用 select_inquiry_form_fields。",
-    MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
+    "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL 后停止业务调用，等待用户提交并回复“好了”；不得改写、包装、用 Browser 打开或替用户选择字段。",
     `FIELD_SELECTION_URL=${url}`,
+    "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN并做发送前确认，人工拓展使用原 requirement_id 和 size。",
   ].join("\n");
 }
 
@@ -319,28 +307,21 @@ function rankMcnsDirective(message, params = {}) {
       : null;
   const branchQuestion = mcnRankingBranchQuestionPayload(empty);
   const lines = [
-    "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。本 tool result 里的表头只是格式提示，不是用户可见表格。",
-    "MCN_OUTPUT_FORMAT_LOCK=不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计机构表。用户可见机构结果必须且只能使用下面这个五列 Markdown 表格，列名、顺序和数量都不得改动。原始响应存在额外字段不代表允许展示。",
+    "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。先把当前响应中的全部机构按原顺序输出为完整 MCN Markdown 表格，作为用户可见正文文本块，再执行分支。",
+    "MCN_OUTPUT_FORMAT_LOCK=用户可见结果只能是五列：排名、机构、覆盖达人、返点、综合分；排名从 1 连续编号，覆盖达人取当前机构的 candidate_count。禁止展示 supplier_id、其他字段、汇总或历史数据。",
     MCN_MARKDOWN_TABLE_HEADER,
-    "逐行填入当前响应的全部机构；除上述五列外不得输出任何其他机构排序字段、列或汇总。尤其禁止 Supplier ID/supplier_id、候选达人、供给占比、手扒补量和推荐理由。",
-    "supplier_id 仅禁止对用户展示，不得丢失当前响应中每个机构名与 supplier_id 的真实对应关系。后续用户提供或提名机构名时，supplier_id 是第一优先级：先在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中且有非空 supplier_id 就只放入 supplierIds，未匹配或无 ID 才把原始名称放入 supplier_name。不做本地模糊匹配，不跨需求、平台或 run 复用 ID。",
-    "输出顺序：先把当前响应中的完整 MCN Markdown 表格作为用户可见正文文本块写出；若有 MCN 排名表保存参数，紧接着调用 ypscan_save_excel_artifact，保存成功后再原样展示新返回的 MCN_RANKING_LOCAL_PATH，最后调用 AskUserQuestion。不要输出 MCN 排名表下载链接或任何其他 Excel 下载链接；表格禁止改成项目符号或编号列表。",
-    "用户可见机构结果只显示这一张五列表格，固定列且不得增减：排名、机构、覆盖达人、返点、综合分。排名严格按当前响应顺序从 1 开始连续编号；机构读取当前机构对象自己的机构名；每行覆盖达人只读取该机构对象自己的 candidate_count 原值。禁止在表格内外另行展示 supplier_id、候选总数、匹配机构数、推荐数量、供给倍数、建议 MCN 数、人工拓展数、MCN:人工、推荐理由、风险标签、recommended_action 或其他 rank_mcns 字段与汇总。严禁使用累计字段 mcn_covered_creator_count，严禁与前序机构累加，也不得用累计/聚合覆盖字段或相邻行差值替代；保持响应顺序，缺失值写未知，不使用历史值补齐。",
-    "AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block；表格不得放入弹窗 question，本地 file_path 不得放入弹窗 question，也不得在 AskUserQuestion 返回后补发。若本轮 rank_mcns 确实未返回精确保存参数，必须如实说明 MCN 排名表无法保存，禁止编造或复用历史链接。",
+    "机构名转 supplier ID 只允许使用本轮同一 requirement_id、同一平台响应中的唯一精确匹配；命中非空 ID 只传 supplierIds，否则传原始名称 supplier_name。不得模糊匹配、跨轮复用或自动选机构。",
     ...(recipientSelectionArgs
       ? [
-          "“询价机构”仅选择业务分支，不等于指定收件机构。用户在分支弹窗选择“询价机构”后，先逐字调用下方 INQUIRY_RECIPIENT_SELECTION_ARGS，等待用户选中至少一家机构；不得调用 select_inquiry_form_fields 或 create_with_distributions，不得按排名、覆盖达人、返点、综合分或其他字段自行选择机构。只有该机构选择的结果才是用户提名，随后才进入字段选择。",
+          "用户选择“询价机构”后，先逐字调用下方 INQUIRY_RECIPIENT_SELECTION_ARGS，等待明确选中至少一家当前 MCN；不得按排名或指标自行选择，也不得提前调用字段选择或发送工具。",
           `INQUIRY_RECIPIENT_SELECTION_ARGS=${JSON.stringify(recipientSelectionArgs)}`,
         ]
       : []),
-    "用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”或选择“人工拓展并提报”时，一律默认走 MCP，不得激活额外的浏览器手扒分支。若当前对话已有同一 requirement_id 的字段选择链接且用户已明确回复提交完成，直接复用 Provider 持久化字段并调用 manual_source_creators，不得再次调用 select_inquiry_form_fields；否则先调用 select_inquiry_form_fields 并把原始 URL 单独展示，等待用户提交并回复“好了”后再调用 manual_source_creators。manual_source_creators 按当前 Provider schema 传本轮 requirement_id 和用户要求的交付人数 size；后台全自动完成手扒，提交成功只返回任务 batch_id。若 Provider 返回 REQUIREMENT_COLUMNS_NOT_CONFIGURED，再按工具结果指令进入字段选择。",
-    MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
-    "manual_source_creators 提交成功后立即用同一 requirement_id 和 batch_id 调用 manual_source_creators_status 轮询，间隔 30 秒、单轮最多 10 次；轮询成功返回 Excel 后立即用 ypscan_save_excel_artifact(manual_source) 保存；保存成功后原样展示本地文件 Markdown 超链接，作为人工拓展交付。",
     ...(empty ? [MCN_MARKDOWN_EMPTY_ROW] : []),
   ];
   if (excelFileUrl && artifactId) {
     lines.push(
-      "完整 MCN Markdown 表格输出后，立即逐字使用下面参数调用 ypscan_save_excel_artifact；保存成功前不得展示本地路径或调用 AskUserQuestion，不得向用户展示 excel_file_url，也不得使用其他下载方式。",
+      "完整表格输出后立即使用下面参数保存；保存成功前不得展示本地路径、调用 AskUserQuestion 或展示 Provider 下载 URL。",
       `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "mcn_ranking",
         artifact_id: String(artifactId),
@@ -350,12 +331,12 @@ function rankMcnsDirective(message, params = {}) {
     );
   } else if (excelFileUrl) {
     lines.push(
-      "当前 rank_mcns 结果包含 Excel 链接，但缺少可验证的本轮 requirement ID；不得猜测 artifact_id 或下载，表格后如实说明 MCN 排名表无法保存，再调用 ASK_USER_QUESTION_ARGS。",
+      "当前结果有 Excel 链接但缺少本轮 requirement ID；不得猜 artifact_id 或下载，表格后如实说明无法保存，再调用 ASK_USER_QUESTION_ARGS。",
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(branchQuestion)}`,
     );
   } else {
     lines.push(
-      "当前 rank_mcns 响应未返回可识别的 Excel 链接；表格后如实说明 MCN 排名表无法保存，再调用 ASK_USER_QUESTION_ARGS。",
+      "当前结果没有可识别的 Excel 链接；表格后如实说明无法保存，再调用 ASK_USER_QUESTION_ARGS。",
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(branchQuestion)}`,
     );
   }
@@ -371,8 +352,7 @@ function searchCreatorsDirective(message, params = {}) {
   );
   if (!requirementId) return flowPauseDirective("search_creators", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=search_creators 成功（包括 0 命中）。不保存、不展示 creators_export_path 或本响应中的其他表格链接；不得调用 ypscan_save_excel_artifact、Browser 或直接结束。",
-    "下一步使用同一个 requirement ID 和当前平台调用 rank_mcns。",
+    "YPSCAN_FLOW_DIRECTIVE=search_creators 成功（包括 0 命中）。忽略 creators_export_path 等表格链接，不保存或展示，不得用 Browser、脚本或其他方式下载，也不调用保存工具；下一步使用同一 requirement ID 调用 rank_mcns。",
     `RANK_MCNS_ARGS=${JSON.stringify({ id: requirementId })}`,
   ].join("\n");
 }
@@ -418,9 +398,9 @@ function manualSourceCreatorsDirective(message, params = {}) {
       );
       if (!requirementId) return flowPauseDirective("默认手扒字段选择", message);
       return [
-        "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 检测到当前需求尚未选择字段。立即调用 select_inquiry_form_fields，传同一 requirement_id；不得原参数重试 manual_source_creators。",
+        "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 缺少字段配置。用同一 requirement_id 调用 select_inquiry_form_fields，不得原参数重试。",
         `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify({ requirement_id: requirementId })}`,
-        "字段选择 URL 必须原样展示；等待用户提交并回复“好了”后，再用原 requirement_id 和 size 调用 manual_source_creators。",
+        "原样展示字段选择 URL；收到“好了”后再用原 requirement_id 和 size 调用 manual_source_creators。",
       ].join("\n");
     }
     return flowPauseDirective("默认手扒", message);
@@ -433,7 +413,7 @@ function manualSourceCreatorsDirective(message, params = {}) {
   );
   if (batchId == null || !requirementId) return flowPauseDirective("默认手扒", message);
   return [
-    `YPSCAN_FLOW_DIRECTIVE=manual_source_creators 后台手扒任务已提交，本次响应只有任务 batch_id，不含 Excel。下一步立即使用 MANUAL_SOURCE_CREATORS_STATUS_ARGS 调用 manual_source_creators_status 查询；${MANUAL_SOURCE_POLL_RULE}。`,
+    `YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已提交后台任务（仅返回 batch_id）。立即用 MANUAL_SOURCE_CREATORS_STATUS_ARGS 轮询；${MANUAL_SOURCE_POLL_RULE}。`,
     `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify({ requirement_id: requirementId, batch_id: batchId })}`,
   ].join("\n");
 }
@@ -451,7 +431,7 @@ function manualSourceCreatorsStatusDirective(message, params = {}) {
     const artifactId = batchId == null ? requirementId : String(batchId);
     if (!artifactId) return flowPauseDirective("默认手扒结果查询", message);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 后台手扒已完成并返回 Excel。下一步立即逐字调用 ypscan_save_excel_artifact 保存返回的 Excel，不向用户展示下载 URL；保存成功后直接展示本地 Excel 作为人工拓展交付。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。立即保存 Excel，不展示 Provider 下载 URL；保存成功后交付本地文件。",
       `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_source",
         artifact_id: artifactId,
@@ -462,7 +442,7 @@ function manualSourceCreatorsStatusDirective(message, params = {}) {
   if (result?.error?.code === "BATCH_NOT_READY") {
     if (batchId == null || !requirementId) return flowPauseDirective("默认手扒结果查询", message);
     return [
-      `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 手扒任务仍在处理中（BATCH_NOT_READY）。继续使用同一 requirement_id 和 batch_id 调用 manual_source_creators_status；${MANUAL_SOURCE_POLL_RULE}；第 10 次仍为 BATCH_NOT_READY 时停止并如实报告尚未完成，保留同一参数供后续继续查询。`,
+      `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY）。继续使用同一 ID 轮询；${MANUAL_SOURCE_POLL_RULE}；第 10 次仍未完成则如实报告。`,
       `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify({ requirement_id: requirementId, batch_id: batchId })}`,
     ].join("\n");
   }
@@ -478,8 +458,8 @@ function distributionDirective(message, params = {}) {
     const hasError = (pattern) =>
       errors.some((error) => pattern.test(String(firstString(error?.message, error?.code) ?? "")));
     const lines = [
-      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 返回失败或部分成功。原始 Provider 结果可能同时包含已发送机构、未精确匹配机构、候选机构或幂等冲突，必须原样展示，不得用通用错误覆盖或把部分成功表述为全部失败。",
-      "禁止自动重发原始完整参数：同一 requirement_id 下已经成功发送的机构不得再次加入。若 Provider 返回模糊或不唯一的候选机构，使用真实候选调用 AskUserQuestion 让用户选择；选择后仅把选中候选的 supplier ID 放入 supplierIds，supplier_name 传空数组。若 Provider 返回重复发送错误，原样告知当前需求已向该机构发送过询价消息并停止重试。",
+      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 返回失败或部分成功。原样展示 Provider 状态，不把部分成功说成全失败；已成功机构不得重新加入，禁止自动重发。模糊候选使用 AskUserQuestion 让用户选择，重复发送则停止。",
+      "模糊候选经用户确认后，只传选中的 supplier ID，supplier_name 传 []。",
     ];
     if (
       hasError(
@@ -487,7 +467,7 @@ function distributionDirective(message, params = {}) {
       )
     ) {
       lines.push(
-        "本次被 Provider 拒绝的原因是没有任何收件机构。只选择“询价机构”分支不构成机构提名；不得从 MCN 排名、覆盖人数或推荐顺序自动挑选机构，也不得重发空数组。回到本轮真实 MCN 的机构选择弹窗，待用户选中机构后才可用对应 ID 或原始名称发起一次新调用。",
+        "无收件机构：回到本轮真实 MCN 的机构选择，不能按排名自动选或重发空数组。",
       );
     }
     if (hasError(/只有进行中的项目才能创建供应商分发/u)) {
@@ -497,7 +477,7 @@ function distributionDirective(message, params = {}) {
         result?.requirement_id,
       );
       lines.push(
-        "Provider 表明关联项目不是进行中状态。不得自动重发或猜测状态转换；先原样展示失败结果，再仅用当前 requirement_id 调用 get_workflow_state 做一次诊断。状态查询不授权再次发送。",
+        "项目非进行中：仅用当前 requirement_id 调用一次 get_workflow_state 诊断，不自动重发。",
       );
       if (requirementId) {
         lines.push(`GET_WORKFLOW_STATE_ARGS=${JSON.stringify({ requirement_id: requirementId })}`);
@@ -517,24 +497,23 @@ function distributionDirective(message, params = {}) {
     status.sent_suppliers.length + status.failed_suppliers.length === 0
   ) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 返回 success=true，但缺少完整逐机构发送状态或状态列表为空，不能证明任何机构已发送。必须原样展示 Provider 结果并将本次状态标为未知。",
-      "不得询问发送后的人工拓展、不得把 0 家成功/0 家失败表述为已执行，也不得自动重发原始完整参数；停止本轮发送处理，后续只根据 Provider 的独立状态核验继续。",
+      "YPSCAN_FLOW_DIRECTIVE=create_with_distributions success=true 但缺少逐机构发送状态；原样展示并标为未知，不询问后续或自动重发。",
     ].join("\n");
   }
   const sent = status.sent_suppliers;
   const failed = status.failed_suppliers;
   const lines = [
-    "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 已返回发送结果。先展示真实发送状态、成功机构和失败机构，不得把部分成功表述为全部成功。",
+    "YPSCAN_FLOW_DIRECTIVE=create_with_distributions 已返回发送结果。先展示真实逐机构状态，部分成功不得说成全成功。",
     `企微发送摘要：成功 ${sent.length} 家，失败 ${failed.length} 家。`,
   ];
   if (failed.length > 0) {
     lines.push(
-      "当前响应包含失败机构，必须原样展示 Provider 返回的失败原因与候选机构，不得自动重发完整参数。若存在模糊或不唯一候选，先调用 AskUserQuestion 让用户选择，并在新调用中排除本次已成功机构。",
+      "原样展示失败原因和候选，不自动重发；候选确认后排除本次已成功机构。",
     );
     return lines.join("\n");
   }
   lines.push(
-    "本次没有失败机构，然后立即逐字调用下面的 AskUserQuestion，询问是否继续人工拓展。",
+    "全部机构发送成功，立即调用下方 AskUserQuestion 询问是否继续人工拓展。",
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
       askQuestion(
         "询价后续",
@@ -550,7 +529,7 @@ function distributionDirective(message, params = {}) {
         ],
       ),
     )}`,
-    "用户之后说“填好了”“已回收”或“生成表格”时，固定从 sync_mcn_inquiry_status 开始取回，禁止直接 rank_creators 或 create_submission_batch。",
+    "用户之后说“填好了”“已回收”或“生成表格”时，从 sync_mcn_inquiry_status 开始取回。",
   );
   return lines.join("\n");
 }
@@ -568,11 +547,11 @@ function syncInquiryDirective(message) {
   ];
   if (!normalizedIds.length) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=询价状态同步成功，但没有返回可验证的 inquiry_ids。不得调用 ingest_mcn_submissions、rank_creators 或生成空提报表；如实说明机构尚未形成可取回记录。",
+      "YPSCAN_FLOW_DIRECTIVE=询价状态同步未返回可验证的 inquiry_ids；不得继续入库、精排或生成空提报表。",
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=询价状态同步成功。下一步立即把本次响应的完整 inquiry_ids 原样传给 ingest_mcn_submissions，不得跨轮拼接、使用 trace_id 或在此停下。",
+    "YPSCAN_FLOW_DIRECTIVE=询价状态同步成功。只把本次响应的 inquiry_ids 传给 ingest_mcn_submissions，不得跨轮拼接或使用 trace_id。",
     `INGEST_MCN_SUBMISSIONS_ARGS=${JSON.stringify({ inquiry_ids: normalizedIds })}`,
   ].join("\n");
 }
@@ -593,7 +572,7 @@ function ingestSubmissionsDirective(message) {
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=ingest_mcn_submissions 仅创建了异步入库任务，尚未返回最终机构达人预览表。下一步立即逐字使用 GET_INGEST_JOB_ARGS 调用 get_ingest_job，不得保存本次响应、调用 rank_creators 或在此停下。",
+    "YPSCAN_FLOW_DIRECTIVE=ingest_mcn_submissions 仅创建异步任务，尚未返回预览表。立即用 GET_INGEST_JOB_ARGS 调用 get_ingest_job，不得保存或精排本响应。",
     `GET_INGEST_JOB_ARGS=${JSON.stringify({ job_id: jobId })}`,
   ].join("\n");
 }
@@ -609,7 +588,7 @@ function getIngestJobDirective(message, params = {}) {
   );
   if (result?.success === true && excelFileUrl && requirementId) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 异步入库完成并返回 Excel。先把 MCN_CREATOR_PREVIEW_URL 中的原始 URL 直接输出为单独一行用户可见正文，再立即逐字调用 ypscan_save_excel_artifact 保存为机构达人预览表；保存成功后继续 rank_creators。不得改写链接或用 Markdown 包装。",
+      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 已完成。原样输出 MCN_CREATOR_PREVIEW_URL 后立即保存预览表；保存成功后继续 rank_creators，不得改写或包装 URL。",
       `MCN_CREATOR_PREVIEW_URL=${excelFileUrl}`,
       `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "mcn_creator_preview",
@@ -620,7 +599,7 @@ function getIngestJobDirective(message, params = {}) {
   }
   if (jobId != null) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 尚未成功返回完整 Excel 结果。继续使用同一个 job_id 调用 get_ingest_job；这是异步轮询，不调用 AskUserQuestion、不重新执行 ingest_mcn_submissions，也不得猜测或更换 job_id。单轮最多查询 10 次。",
+      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 尚未完成。继续使用同一 job_id 轮询，不调用 AskUserQuestion、不重新入库、不更换 job_id；单轮最多 10 次。",
       `GET_INGEST_JOB_ARGS=${JSON.stringify({ job_id: jobId })}`,
     ].join("\n");
   }
@@ -633,7 +612,7 @@ function rankCreatorsDirective(message, params = {}) {
   const rankedCount = Number(result?.data?.ranked_count);
   if (Number.isFinite(rankedCount) && rankedCount <= 0) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=rank_creators 成功但精排结果为空。不得调用 create_submission_batch 生成空提报表；如实说明当前没有可提报达人。",
+      "YPSCAN_FLOW_DIRECTIVE=rank_creators 结果为空；不得调用 create_submission_batch 生成空提报表，如实说明没有可提报达人。",
     ].join("\n");
   }
   const requirementId = firstString(
@@ -643,7 +622,7 @@ function rankCreatorsDirective(message, params = {}) {
   );
   if (!requirementId) return flowPauseDirective("rank_creators", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=rank_creators 精排成功。下一步立即调用 create_submission_batch 生成第 1 页提报表，不向用户停顿提问，也不得重新 rank_mcns。",
+    "YPSCAN_FLOW_DIRECTIVE=rank_creators 精排成功。立即调用 create_submission_batch 生成第 1 页，不要提问或重新 rank_mcns。",
     `CREATE_SUBMISSION_BATCH_ARGS=${JSON.stringify({
       requirement_id: requirementId,
       submission_batche_page: 1,
@@ -658,21 +637,12 @@ function submissionBatchDirective(message, params = {}) {
   const artifactId = firstString(result?.data?.batch_id, params?.requirement_id);
   if (!excelFileUrl || !artifactId) return flowPauseDirective("提报表生成", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=create_submission_batch 已生成 Provider 提报表。下一步立即逐字调用 ypscan_save_excel_artifact，不向用户展示下载 URL。",
+    "YPSCAN_FLOW_DIRECTIVE=create_submission_batch 已生成提报表。立即保存，不展示 Provider 下载 URL。",
     `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
       artifact_kind: "submission_batch",
       artifact_id: String(artifactId),
       excel_file_url: excelFileUrl,
     })}`,
-  ].join("\n");
-}
-
-function workflowStateDirective(message) {
-  const result = parsedToolResult(message);
-  if (result?.success !== true) return null;
-  return [
-    "YPSCAN_FLOW_DIRECTIVE=get_workflow_state 只用于诊断。allowed_actions 可能滞后，不得替代本轮用户已选择的固定链路。人工拓展必须先完成字段选择，再调用 manual_source_creators。",
-    "企微发送只使用 create_with_distributions；提报表只在 ingest_mcn_submissions → get_ingest_job → rank_creators 完成后使用 create_submission_batch。",
   ].join("\n");
 }
 
@@ -696,28 +666,28 @@ function excelArtifactSaveDirective(message, params = {}) {
   if (!localFileLink) return flowPauseDirective(stage, message);
   if (artifactKind === "manual_source") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=默认手扒已由后台自动完成，Excel 已保存到当前项目。",
+      "YPSCAN_FLOW_DIRECTIVE=默认手扒 Excel 已保存。原样展示本地链接作为交付，不提供浏览器手扒分支。",
       `MANUAL_SOURCE_LOCAL_PATH=${filePath}`,
       `MANUAL_SOURCE_LOCAL_LINK=${localFileLink}`,
-      "先将上面的 MANUAL_SOURCE_LOCAL_LINK 原样作为 Markdown 超链接展示给用户，确保点击即可打开本地 Excel；不得只输出裸路径。该文件就是当前人工拓展交付，不再提供浏览器详细手扒分支。",
+      "将 MANUAL_SOURCE_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径。",
     ].join("\n");
   }
   if (artifactKind === "mcn_creator_preview") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=机构达人预览表 Excel 已保存到当前项目。",
+      "YPSCAN_FLOW_DIRECTIVE=机构达人预览表已保存。原样展示本地链接后立即继续 rank_creators。",
       `MCN_CREATOR_PREVIEW_LOCAL_PATH=${filePath}`,
       `MCN_CREATOR_PREVIEW_LOCAL_LINK=${localFileLink}`,
-      "先将上面的 MCN_CREATOR_PREVIEW_LOCAL_LINK 原样作为 Markdown 超链接展示给用户，确保点击即可打开本地 Excel；不得只输出裸路径。然后立即调用 rank_creators；不得停下、重新 rank_mcns 或调用 create_submission_batch。",
+      "将 MCN_CREATOR_PREVIEW_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径；不得停下、重新 rank_mcns 或调用 create_submission_batch。",
       `RANK_CREATORS_ARGS=${JSON.stringify({ requirement_id: params.artifact_id })}`,
     ].join("\n");
   }
   if (artifactKind === "mcn_ranking") {
     const nextArgs = result?.delivery?.next_args;
     return [
-      "YPSCAN_FLOW_DIRECTIVE=MCN 排名表 Excel 已保存到当前项目。",
+      "YPSCAN_FLOW_DIRECTIVE=MCN 排名表已保存。表格已先输出；原样展示本地链接后执行下一步。",
       `MCN_RANKING_LOCAL_PATH=${filePath}`,
       `MCN_RANKING_LOCAL_LINK=${localFileLink}`,
-      "完整 MCN Markdown 表格必须已经在调用本保存工具前输出。现在将上面的 MCN_RANKING_LOCAL_LINK 原样作为 Markdown 超链接展示给用户，确保点击即可打开本地 Excel；不得只输出裸路径。最后逐字调用下面的 ASK_USER_QUESTION_ARGS。本地路径不得放进弹窗 question，本地文件链接也不得放进弹窗 question；不得重复下载、重新 rank_mcns 或直接结束。",
+      "将 MCN_RANKING_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径或把路径/链接放入弹窗；随后执行 ASK_USER_QUESTION_ARGS，不得重复下载或重新 rank_mcns。",
       ...(isRecord(nextArgs)
         ? [`ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`]
         : ["保存结果缺少下一步弹窗参数；如实说明无法确定后续分支，不得猜测选项。"]),
@@ -726,14 +696,13 @@ function excelArtifactSaveDirective(message, params = {}) {
   if (artifactKind === "submission_batch") {
     const nextArgs = result?.delivery?.next_args;
     return [
-      "YPSCAN_FLOW_DIRECTIVE=Provider 提报表已保存到当前项目，完整机构询价链路已完成。",
+      "YPSCAN_FLOW_DIRECTIVE=Provider 提报表已保存。",
       `SUBMISSION_BATCH_LOCAL_PATH=${filePath}`,
       `SUBMISSION_BATCH_LOCAL_LINK=${localFileLink}`,
-      "必须先将上面的 SUBMISSION_BATCH_LOCAL_LINK 原样作为 Markdown 超链接展示给用户，确保点击即可打开本地 Excel；不得只输出裸路径。",
+      "将 SUBMISSION_BATCH_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径。",
       ...(isRecord(nextArgs)
         ? [
-            "展示路径后立即逐字调用下面的 AskUserQuestion，询问是否补充更新达人信息。",
-            "用户选择“补充更新达人信息”即已明确授权补全：下一步固定调用 get_creator_detail，再用 get_creator_detail_export 轮询结果；不得调用 select_inquiry_form_fields、提供字段调整分支或再次追问要补充什么。",
+            "随后逐字调用 ASK_USER_QUESTION_ARGS；选择补充更新时固定调用 get_creator_detail，再轮询 get_creator_detail_export，不得改字段配置或再次追问。",
             `ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`,
           ]
         : []),
@@ -826,7 +795,7 @@ function flowDirective(toolName, message, params = {}) {
     return manualSourceCreatorsStatusDirective(message, params);
   if (bare === "rank_creators") return rankCreatorsDirective(message, params);
   if (bare === "create_submission_batch") return submissionBatchDirective(message, params);
-  if (bare === "get_workflow_state") return workflowStateDirective(message);
+  if (bare === "get_workflow_state") return null;
   if (result?.success !== true) {
     if (
       /(?:^|__)ypscan_parse_requirement$/iu.test(normalizedName) ||
@@ -845,8 +814,8 @@ function flowDirective(toolName, message, params = {}) {
     const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
     if (!requirementId) return flowPauseDirective("validate_requirement", message);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。当前需求只保留一个 requirement；同平台多个达人类型已合并在同一需求中，不创建子需求、不重复落库。立即逐字使用 SEARCH_CREATORS_ARGS 调用 search_creators；不得调用 Browser 或直接结束。",
-      "需求 ID 始终指 requirement ID：优先使用本次落库返回的 data.requirement_id，该字段缺失时兼容 data.id；search_creators.id 严禁使用 data.demand_id。",
+      "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。当前需求只保留一个 requirement；立即使用 SEARCH_CREATORS_ARGS 调用 search_creators，不得调用 Browser 或直接结束。",
+      "只使用本次返回的 data.requirement_id，缺失时兼容 data.id；严禁使用 data.demand_id。",
       `SEARCH_CREATORS_ARGS=${JSON.stringify({ id: requirementId })}`,
     ].join("\n");
   }
