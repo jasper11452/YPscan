@@ -88,7 +88,8 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /DIFY_RESOLVED_FIELDS=brandName,followercount,rebate,kolOfficialPrice/u);
   assert.match(parseText, /DIFY_MISSING_FIELDS=cpm,cpe/u);
   assert.match(parseText, /唯一值直接采用/u);
-  assert.match(parseText, /标签有则原样保留，无则省略/u);
+  assert.match(parseText, /八个可选 Label 有则原样保留、无则省略/u);
+  assert.match(parseText, /contentTag 缺失.*重新解析/u);
   assert.doesNotMatch(parseText, /PARSER_OWNED_LOGICAL_FIELDS=|VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
   assert.ok(parseText.length < 800, `parse directive too long: ${parseText.length}`);
   assert.doesNotMatch(parseText, /VALIDATE_REQUIREMENT_ARGS=/u);
@@ -157,9 +158,10 @@ test("fixed result directives skip the search workbook and save only after rank"
     directiveText(rank),
     "INQUIRY_RECIPIENT_SELECTION_ARGS",
   ).questions[0];
-  assert.equal(recipientQuestion.multiSelect, true);
+  assert.equal(recipientQuestion.multiSelect, false);
   assert.deepEqual(recipientQuestion.options, [
     { label: "机构 A", description: "选择该机构作为本次询价收件人" },
+    { label: "暂不询价", description: "结束本次询价分支，不发送消息" },
   ]);
   assert.doesNotMatch(JSON.stringify(recipientQuestion), /supplier-a/u);
   assert.match(question.questions[0].question, /弹窗打开前已在对话中完整展示/u);
@@ -576,7 +578,8 @@ test("parse directives preserve compact dynamic field summaries", () => {
   assert.match(text, /DIFY_RESOLVED_FIELDS=brandName,kolOfficialPrice/u);
   assert.match(text, /DIFY_MISSING_FIELDS=followercount,rebate,cpm,cpe/u);
   assert.match(text, /唯一值直接采用/u);
-  assert.match(text, /标签有则原样保留，无则省略/u);
+  assert.match(text, /八个可选 Label 有则原样保留、无则省略/u);
+  assert.match(text, /contentTag 缺失.*重新解析/u);
   assert.ok(text.length < 800, `parse directive too long: ${text.length}`);
   assert.doesNotMatch(text, /PARSER_OWNED_LOGICAL_FIELDS=|VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
@@ -601,6 +604,91 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
       ["重试", "结束本次"],
     );
   }
+});
+
+test("parse and startup directives enumerate required business values before validation", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const parse = persist({
+    toolName: "ypscan_parse_requirement",
+    message: toolMessage({ success: true, data: { outputs: {} } }),
+  });
+  const parseText = directiveText(parse);
+
+  assert.match(
+    parseText,
+    /brandName、quantityTotal、submissionDeadlineAt、rebate、followercount/u,
+  );
+  assert.match(parseText, /至少一个当前平台支持且与内容形式匹配的报价档位/u);
+  assert.match(parseText, /contentTag.*解析结果.*重新解析/u);
+  assert.match(parseText, /抖音仅使用 L2\/L3.*小红书不使用 L3/u);
+  assert.doesNotMatch(parseText, /至少一个当前平台 kolOfficialPriceL1\/L2\/L3/u);
+  assert.match(parseText, /这些业务值缺失.*AskUserQuestion/u);
+
+  const startup = registeredHooks().get("before_prompt_build")({}, { runId: "required-fields" });
+  assert.match(
+    startup.prependContext,
+    /brandName、quantityTotal、submissionDeadlineAt、rebate、followercount/u,
+  );
+  assert.match(startup.prependContext, /至少一个当前平台支持且与内容形式匹配的报价档位/u);
+  assert.match(startup.prependContext, /contentTag.*解析结果.*重新解析/u);
+  assert.match(startup.prependContext, /抖音仅使用 L2\/L3.*小红书不使用 L3/u);
+  assert.doesNotMatch(startup.prependContext, /至少一个当前平台 kolOfficialPriceL1\/L2\/L3/u);
+  assert.match(
+    startup.prependContext,
+    /这些业务值缺失.*AskUserQuestion/u,
+  );
+});
+
+test("recipient selection statically hands off to field selection", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "rank_mcns",
+    params: { id: "req-inquiry" },
+    message: toolMessage({
+      success: true,
+      data: { mcns: [{ agency_name: "机构 A", supplier_id: "supplier-a" }] },
+    }),
+  });
+  const text = directiveText(result);
+
+  assert.match(text, /收到机构选择答案后，第一个动作必须调用 select_inquiry_form_fields/u);
+  assert.match(text, /requirement_id.*req-inquiry/u);
+  assert.match(text, /不得提前调用字段选择/u);
+  assert.deepEqual(namedArgsFromDirective(text, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
+    requirement_id: "req-inquiry",
+  });
+});
+
+test("more than four inquiry recipients use a warning prompt without option truncation", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const names = ["机构 A", "机构 B", "机构 C", "机构 D", "机构 E"];
+  const result = persist({
+    toolName: "rank_mcns",
+    params: { id: "req-many" },
+    message: toolMessage({
+      success: true,
+      data: { mcns: names.map((agency_name) => ({ agency_name })) },
+    }),
+  });
+  const recipient = namedArgsFromDirective(
+    directiveText(result),
+    "INQUIRY_RECIPIENT_SELECTION_ARGS",
+  ).questions[0];
+  const text = directiveText(result);
+
+  assert.match(recipient.header, /提示|警示/u);
+  assert.match(recipient.question, /超过.*4.*选项/u);
+  names.forEach((name) => assert.doesNotMatch(recipient.question, new RegExp(name, "u")));
+  assert.equal(recipient.multiSelect, false);
+  assert.deepEqual(recipient.options, [
+    { label: "询价全部机构", description: "选择本轮全部候选机构并进入字段选择" },
+    { label: "暂不询价", description: "结束本次询价分支，不发送消息" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(recipient.options), /机构 [A-E]/u);
+  assert.match(text, /自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立/u);
+  assert.match(text, /选择“询价全部机构”.*全部当前机构/u);
+  assert.match(text, /空输入、未知机构、无法解析或存在歧义时，不得调用 select_inquiry_form_fields/u);
+  assert.match(text, /重新调用本提示或结束本轮/u);
 });
 
 test("startup instruction makes backend manual sourcing the only manual path", () => {
@@ -646,9 +734,13 @@ test("startup instruction makes backend manual sourcing the only manual path", (
   assert.doesNotMatch(first.prependContext, /ypscan_manual_research|YPSCAN_MANUAL_BROWSER_UNAVAILABLE|宿主 Browser/u);
   assert.match(first.prependContext, /需求澄清规则/u);
   assert.match(first.prependContext, /同一字段新答案覆盖旧答案/u);
-  assert.match(first.prependContext, /Label 数组和 contentTag.*不调用 AskUserQuestion 确认/u);
+  assert.match(first.prependContext, /八个可选 Label 数组.*不调用 AskUserQuestion 确认/u);
+  assert.match(first.prependContext, /contentTag.*重新解析.*禁止询问用户/u);
   assert.match(first.prependContext, /xtTalentTypeLabel/u);
   assert.match(first.prependContext, /只有这些必填数值仍缺失.*才调用 AskUserQuestion/u);
+  assert.match(first.prependContext, /自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立/u);
+  assert.match(first.prependContext, /选择“询价全部机构”.*全部当前机构/u);
+  assert.match(first.prependContext, /空输入、未知机构、无法解析或存在歧义时，不得调用 select_inquiry_form_fields/u);
   assert.match(first.prependContext, /Dify 品牌候选唯一、合法且非空时必须原样作为 brandName/u);
   assert.match(first.prependContext, /不得询问、改写或被原文与 clarification 覆盖/u);
   assert.match(first.prependContext, /解析品牌缺失、多候选或为 null、未知等占位值时才询问/u);

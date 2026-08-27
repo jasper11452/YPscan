@@ -207,6 +207,88 @@ test("complete canonical validate_requirement params pass the local preflight", 
   assert.deepEqual(validateRequirementPreflight(completeValidateParams(), { now }), []);
 });
 
+test("validate_requirement rejects non-string values for every scalar parameter", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const scalarFields = [
+    "id",
+    "demandId",
+    "demandVersion",
+    "product",
+    "description",
+    "talentTypeLabel",
+    "kwGender",
+    "kwIpDependency",
+    "kwUserUrl",
+    "organization",
+    "hasOrganization",
+    "hasOrder30day",
+    "hasSocial30day",
+    "originalBrief",
+    "refNickname",
+    "refUrl",
+  ];
+
+  for (const field of scalarFields) {
+    const normalized = normalizeToolCallParams(
+      "validate_requirement",
+      { ...completeValidateParams(), [field]: { unsafe: true } },
+      { now },
+    );
+    const issues = validateRequirementPreflight(normalized, { now });
+
+    assert.equal(
+      issues.some((issue) => issue.field === field),
+      true,
+      `${field} accepted a non-string value`,
+    );
+  }
+});
+
+test("validate_requirement boolean filters accept only string booleans", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+
+  for (const field of ["hasOrganization", "hasOrder30day", "hasSocial30day"]) {
+    for (const value of [true, false, "yes", "0"]) {
+      const params = { ...completeValidateParams(), [field]: value };
+      assert.equal(
+        validateRequirementPreflight(params, { now }).some((issue) => issue.field === field),
+        true,
+        `${field} accepted ${JSON.stringify(value)}`,
+      );
+    }
+    for (const value of ["true", "false"]) {
+      const params = { ...completeValidateParams(), [field]: value };
+      assert.equal(
+        validateRequirementPreflight(params, { now }).some((issue) => issue.field === field),
+        false,
+        `${field} rejected ${value}`,
+      );
+    }
+  }
+});
+
+test("validate_requirement rejects undeclared parameters before the Provider call", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = { ...completeValidateParams(), unexpected: { unsafe: true } };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).filter((issue) => issue.field === "unexpected"),
+    [{ field: "unexpected", reason: "不是 validate_requirement 的已声明参数" }],
+  );
+});
+
+test("missing contentTag is a parser contract failure instead of a user question", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = completeValidateParams();
+  delete params.contentTag;
+
+  assert.match(
+    validateRequirementPreflight(params, { now }).find((issue) => issue.field === "contentTag")
+      ?.reason ?? "",
+    /解析结果.*重新解析.*禁止向用户询问/u,
+  );
+});
+
 test("preflight rejects followercount above the technical maximum", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
@@ -1280,4 +1362,3 @@ test("optional platform labels do not enter the required-field list", () => {
     false,
   );
 });
-

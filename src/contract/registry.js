@@ -131,6 +131,18 @@ const TAG_ARRAY_PARAMS = new Set([
   "industryTagLabel",
 ]);
 
+const STRING_VALIDATE_PARAMS = new Set(
+  VALIDATE_REQUIREMENT_PARAMS.filter(
+    (name) => name !== "rawMessagesJson" && name !== "contentTag" && !TAG_ARRAY_PARAMS.has(name),
+  ),
+);
+
+const STRING_BOOLEAN_PARAMS = new Set([
+  "hasOrganization",
+  "hasOrder30day",
+  "hasSocial30day",
+]);
+
 export const VALIDATE_REQUIREMENT_RANGE_PARAMS = Object.freeze([
   "rebate",
   "followercount",
@@ -1092,8 +1104,19 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     }
   };
 
+  for (const field of Object.keys(payload)) {
+    if (!VALIDATE_REQUIREMENT_PARAMS.includes(field)) {
+      add(field, "不是 validate_requirement 的已声明参数");
+    }
+  }
+
   for (const field of missingRequiredValidateParams(payload)) {
-    add(field, "缺失或为空，必须先向用户确认");
+    add(
+      field,
+      field === "contentTag"
+        ? "解析结果缺少非空 contentTag；必须重新解析，禁止向用户询问或自行补值"
+        : "缺失或为空，必须先向用户确认",
+    );
   }
   if (payload.status !== "ready") add("status", '固定传字符串 "ready"');
   if (!["xiaohongshu", "douyin"].includes(String(payload.platform))) {
@@ -1282,6 +1305,21 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   const projectEnd = projectDateTimestamp(payload.projectStartEnd);
   if (Number.isFinite(projectStart) && Number.isFinite(projectEnd) && projectStart > projectEnd) {
     add("projectStartStart/projectStartEnd", "项目开始时间不能晚于结束时间");
+  }
+
+  for (const field of STRING_VALIDATE_PARAMS) {
+    if (Object.hasOwn(payload, field) && typeof payload[field] !== "string") {
+      add(field, "必须是字符串");
+    }
+  }
+  for (const field of STRING_BOOLEAN_PARAMS) {
+    const value = payload[field];
+    if (
+      Object.hasOwn(payload, field) &&
+      (typeof value !== "string" || !["true", "false"].includes(value))
+    ) {
+      add(field, '必须是字符串 "true" 或 "false"');
+    }
   }
 
   return issues;

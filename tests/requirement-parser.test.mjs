@@ -45,6 +45,19 @@ test("validate_requirement card forbids same-platform child allocation", () => {
   assert.match(card, /keep one requirement with the original total/u);
 });
 
+test("parser card keeps required contentTag distinct from optional labels", () => {
+  const card = projectFile("skills/media-assistant/references/tools/ypscan_parse_requirement.md");
+  const validateCard = projectFile("skills/media-assistant/references/tools/validate_requirement.md");
+
+  assert.match(card, /八个可选 Label 数组/u);
+  assert.match(card, /`contentTag` 必须是非空字符串数组/u);
+  assert.match(card, /contentTag.*缺失.*重新解析/u);
+  assert.doesNotMatch(card, /八个 Label 和 `contentTag`.*缺失直接省略/u);
+  assert.doesNotMatch(card, /任何标签（八个 Label 和 `contentTag`）不得触发弹窗/u);
+  assert.match(validateCard, /contentTag.*non-empty string array/iu);
+  assert.doesNotMatch(validateCard, /Parsed Label arrays and `contentTag`.*omit any label/iu);
+});
+
 test("parser publishes only the single-platform workflow input", () => {
   assert.deepEqual(PARSE_REQUIREMENT_PARAMETERS.required, ["demand"]);
   assert.deepEqual(Object.keys(PARSE_REQUIREMENT_PARAMETERS.properties), ["demand"]);
