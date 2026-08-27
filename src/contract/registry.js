@@ -254,7 +254,24 @@ function normalizedQuantityTotal(value) {
 }
 
 function normalizedBrandName(value) {
-  if (typeof value === "string") return value.trim();
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return trimmed;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (
+        Array.isArray(parsed) &&
+        parsed.length === 1 &&
+        typeof parsed[0] === "string" &&
+        parsed[0].trim()
+      ) {
+        return parsed[0].trim();
+      }
+    } catch {
+      // Keep the original string when it is not JSON.
+    }
+    return trimmed;
+  }
   if (
     Array.isArray(value) &&
     value.length === 1 &&
@@ -584,9 +601,20 @@ function normalizedPlatformName(value) {
 }
 
 function tagArrayValue(value) {
-  return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item.trim())
-    ? value
-    : null;
+  if (Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item.trim())) {
+    return value;
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return Array.isArray(parsed) && parsed.length > 0 && parsed.every((item) => typeof item === "string" && item.trim())
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -637,6 +665,23 @@ export function missingRequiredValidateParams(params) {
   });
 
   return missing;
+}
+
+function parsedJsonObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return /** @type {Record<string, unknown>} */ (value);
+}
+
+function parsedJsonObjectString(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsedJsonObject(parsed);
+  } catch {
+    return null;
+  }
 }
 
 function parsedCanonicalRange(value) {
@@ -727,9 +772,17 @@ function uniqueParsedBrand(value, platform) {
   const field =
     platform === "xiaohongshu" ? "xhsbrandName" : platform === "douyin" ? "dybrandName" : null;
   if (!field) return null;
-  const values = [outputRecord[field], outputRecord.brandName].flatMap((source) =>
-    Array.isArray(source) ? source : [source],
-  );
+  const values = [outputRecord[field], outputRecord.brandName].flatMap((source) => {
+    if (typeof source === "string") {
+      try {
+        const parsed = JSON.parse(source);
+        return Array.isArray(parsed) ? parsed : [source];
+      } catch {
+        return [source];
+      }
+    }
+    return Array.isArray(source) ? source : [source];
+  });
   const candidates = [
     ...new Set(
       values
@@ -874,13 +927,11 @@ function metricOutputRecord(rawMessages, field) {
   if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) return null;
   let value = outputs[field];
   if (typeof value === "string") {
-    try {
-      value = JSON.parse(value);
-    } catch {
-      return null;
-    }
+    const parsed = parsedJsonObjectString(value);
+    if (!parsed) return null;
+    value = parsed;
   }
-  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  return parsedJsonObject(value);
 }
 
 function usableMetricValue(value) {

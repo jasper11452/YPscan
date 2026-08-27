@@ -296,6 +296,64 @@ test("normalization accepts parsed tag arrays", () => {
   assert.deepEqual(normalized.xtTalentTypeLabel, ["科技数码-3C数码"]);
   assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
 });
+
+test("normalization expands parsed stringified tag arrays", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = completeValidateParams();
+  delete params.contentTag;
+  delete params.contentThemeLabel;
+  params.rawMessagesJson = {
+    ...params.rawMessagesJson,
+    parse_outputs: {
+      ...params.rawMessagesJson.parse_outputs,
+      contentTag: '["AI智能体耳机","科技数码"]',
+      contentThemeLabel: '["科技数码"]',
+    },
+  };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+
+  assert.deepEqual(normalized.contentTag, ["AI智能体耳机", "科技数码"]);
+  assert.deepEqual(normalized.contentThemeLabel, ["科技数码"]);
+  assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
+});
+
+test("normalization expands a parsed stringified brand array", () => {
+  const params = {
+    ...completeValidateParams(),
+    brandName: "品牌B",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      parse_outputs: { dybrandName: '["品牌A"]' },
+    },
+  };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params);
+
+  assert.equal(normalized.brandName, "品牌A");
+});
+
+test("normalization expands parsed stringified metric objects", () => {
+  const params = completeValidateParams();
+  delete params.kolOfficialPriceL3;
+  delete params.cpmL3;
+  delete params.cpeL3;
+  params.rawMessagesJson = {
+    ...params.rawMessagesJson,
+    parse_outputs: {
+      ...params.rawMessagesJson.parse_outputs,
+      dy_kolOfficialPrice: '{"kolOfficialPriceL3":[35000,60000]}',
+      dy_cpm: '{"cpmL3":[0,500]}',
+      dy_cpe: '{"cpeL3":[0,20]}',
+    },
+  };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params);
+
+  assert.equal(normalized.kolOfficialPriceL3, "[35000,60000]");
+  assert.equal(normalized.cpmL3, "[0,500]");
+  assert.equal(normalized.cpeL3, "[0,20]");
+});
 test("normalizeRequirement silently omits a null Douyin primary parsed label", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = completeValidateParams();
