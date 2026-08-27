@@ -17,7 +17,7 @@ const MANUAL_SOURCE_ORIGINAL_TEXT_RULE =
 const SINGLE_REQUIREMENT_TYPE_RULE =
   "同平台多个达人类型只创建一个 requirement：保留用户给出的总量，合并全部类型标签与条件，不拆分子需求、不重复落库、不重复搜索；本规则覆盖任何旧的平均分配或批量子需求指令。";
 const PARSED_METRIC_REUSE_RULE =
-  "解析 Workflow 已给出的唯一且合法报价、CPM 或 CPE 候选属于已解析数值，直接复用；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。只有候选缺失、多候选、非法或与用户条件冲突时才调用 AskUserQuestion。";
+  "解析 Workflow 已给出的唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值，必须直接采用，禁止再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。粉丝技术上限溢出由本地截断到 999999999，不弹窗。只有这些字段缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。";
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。轮询间隔 30 秒，单轮最多查询 10 次";
@@ -116,17 +116,115 @@ function flowPauseDirective(stage, message) {
   ].join("\n");
 }
 
-function requirementParseSuccessDirective() {
+function isUsableDifyValue(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text !== "" && text.toLowerCase() !== "null";
+  }
+  if (Array.isArray(value)) return value.some((item) => isUsableDifyValue(item));
+  if (typeof value === "object") {
+    return Object.values(value).some((item) => isUsableDifyValue(item));
+  }
+  return typeof value === "number" ? Number.isFinite(value) : typeof value === "boolean";
+}
+
+function classifyDifyOutputs(outputs) {
+  /** @type {string[]} */
+  const resolved = [];
+  /** @type {string[]} */
+  const missing = [];
+  if (!isRecord(outputs)) {
+    return {
+      resolved,
+      missing: ["brandName", "followercount", "rebate", "kolOfficialPrice", "cpm", "cpe"],
+    };
+  }
+  const brandCandidates = [
+    ...new Set(
+      [outputs.brandName, outputs.dybrandName, outputs.xhsbrandName]
+        .flatMap((source) => (Array.isArray(source) ? source : [source]))
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(
+          (item) =>
+            item &&
+            !/^(?:null|undefined|未知|未明确|未提及|未提供|暂无|无|不详|待确认|待定)$/iu.test(
+              item,
+            ),
+        ),
+    ),
+  ];
+  if (brandCandidates.length === 1) resolved.push("brandName");
+  else missing.push("brandName");
+  for (const field of ["followercount", "rebate"]) {
+    if (isUsableDifyValue(outputs[field])) resolved.push(field);
+    else missing.push(field);
+  }
+  if (
+    [
+      outputs.kolOfficialPrice,
+      outputs.kolOfficialPriceL1,
+      outputs.kolOfficialPriceL2,
+      outputs.kolOfficialPriceL3,
+      outputs.dy_kolOfficialPrice,
+      outputs.xhs_kolOfficialPrice,
+    ].some(isUsableDifyValue)
+  ) {
+    resolved.push("kolOfficialPrice");
+  } else missing.push("kolOfficialPrice");
+  if (
+    [outputs.cpm, outputs.cpmL1, outputs.cpmL2, outputs.cpmL3, outputs.dy_cpm, outputs.xhs_cpm].some(
+      isUsableDifyValue,
+    )
+  ) {
+    resolved.push("cpm");
+  } else missing.push("cpm");
+  if (
+    [outputs.cpe, outputs.cpeL1, outputs.cpeL2, outputs.cpeL3, outputs.dy_cpe, outputs.xhs_cpe].some(
+      isUsableDifyValue,
+    )
+  ) {
+    resolved.push("cpe");
+  } else missing.push("cpe");
+  for (const field of [
+    "growBloggerTypeLabel",
+    "contentFeatureLabel",
+    "contentThemeLabel",
+    "kolPersonaLabel",
+    "pgyBloggerTypeLabel",
+    "xtTalentTypeLabel",
+    "industryTagLabel",
+    "growTalentTypeLabel",
+    "contentTag",
+  ]) {
+    if (Array.isArray(outputs[field]) && outputs[field].length > 0) resolved.push(field);
+  }
+  return { resolved, missing };
+}
+
+function parseOutputsFromMessage(message) {
+  const result = parsedToolResult(message);
+  if (isRecord(result?.data?.outputs)) return result.data.outputs;
+  if (isRecord(result?.outputs)) return result.outputs;
+  return null;
+}
+
+function requirementParseSuccessDirective(message) {
+  const { resolved, missing } = classifyDifyOutputs(parseOutputsFromMessage(message));
   return [
     "YPSCAN_FLOW_DIRECTIVE=需求解析成功。data.outputs 是完整、未改写的原始 Workflow 输出。下一步由 Agent 按需求解析工具卡结构性展开当前平台参数片段、补齐其余字段，再调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
     `PARSER_OWNED_LOGICAL_FIELDS=${DIFY_REQUIREMENT_FIELDS.join(",")}`,
+    `DIFY_RESOLVED_FIELDS=${resolved.join(",")}`,
+    `DIFY_MISSING_FIELDS=${missing.join(",")}`,
+    "已列入 DIFY_RESOLVED_FIELDS 的字段必须直接采用，禁止再问用户。DIFY_MISSING_FIELDS 中仅 brandName、followercount、rebate、kolOfficialPrice 在仍为空时弹窗；cpm/cpe 缺失则省略。非解析字段 quantityTotal、submissionDeadlineAt 仍按原文证据处理，缺失或不精确时才问。",
     `VALIDATE_REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。以下字段只能使用该格式，禁止传数组、对象、单个数字、百分号文本或自然语言：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")}。返点表达最低要求，固定为 "[min,1]"。抖音报价、CPM、CPE 统一按视频类型映射：L2=植入视频，L3=定制视频，L1 禁止使用。所有数值字段必须在第一次 validate_requirement 调用前一次性准备正确，不得用 Provider 报错试探类型。`,
-    "解析结果只允许按字段名结构性展开，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe。八个 Label 字段（growBloggerTypeLabel、contentFeatureLabel、contentThemeLabel、kolPersonaLabel、pgyBloggerTypeLabel、xtTalentTypeLabel、industryTagLabel、growTalentTypeLabel）和 contentTag 是纯解析结果，不向用户确认、不向用户提问任何标签内容：有什么就原样落库什么，保留元素与顺序；任何标签字段（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。数值候选仍必须依用户证据和区间规则二次校验；合法且不冲突时原样使用，不得收窄或扩大，缺失、模糊、非法或冲突时才弹窗。当前平台 Dify 品牌候选只有一个合法非空非占位值时，必须原样映射为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌为空、多候选或占位值时才弹窗。不得改写、重排或丢弃未知 Workflow 输出；数组或单值到 Provider 标准区间字符串的确定性格式归一化由本地调用边界一次完成。落库 validate_requirement 前，先合并 original 与各数值字段最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的字段继续复用。同平台多个达人类型只有总量时，将所有类型标签合并到同一个 requirement，quantityTotal 保持原总量，不拆分、不重复落库。",
-    "提交前一次性检查所有必填字段和全部区间格式。quantityTotal 缺失、submissionDeadlineAt 缺失或不精确、抖音数值字段无法确定视频类型、Dify 品牌缺失/多候选/占位或其他必填数值缺失/模糊/冲突时，必须先弹窗确认；Dify 返回唯一合法品牌时禁止询问或修改；所有解析标签（八个 Label 和 contentTag）不得触发任何确认或询问，有什么原样落库、没有就省略。用户未回答前禁止调用 validate_requirement。同平台多个达人类型只有总量时只创建一个 requirement，保留总量并合并全部类型标签，不询问每类人数、不创建子需求。",
-    "rawMessagesJson 在 Agent 入参中必须是 JSON 对象并保留 original、本次完整 parse_outputs 和每个数值字段最新有效 clarification；本地边界完成预检后只序列化一次再提交 Provider，Agent 禁止自行切换对象和字符串形态。同一数值字段的新答案覆盖旧答案，重建参数时保留其他字段答案。解析标签数组可直接采用，当前平台唯一合法 Dify 品牌候选是不可改写的 brandName 权威值；解析品牌缺失或不唯一时才使用最新弹窗答案。其他非标签解析默认值不能证明用户已确认。",
+    "解析结果只允许按字段名结构性展开，并按当前平台选择 xhsbrandName/dybrandName、xhs_/dy_kolOfficialPrice、xhs_/dy_cpm、xhs_/dy_cpe。八个 Label 字段（growBloggerTypeLabel、contentFeatureLabel、contentThemeLabel、kolPersonaLabel、pgyBloggerTypeLabel、xtTalentTypeLabel、industryTagLabel、growTalentTypeLabel）和 contentTag 是纯解析结果，不向用户确认、不向用户提问任何标签内容：有什么就原样落库什么，保留元素与顺序；任何标签字段（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。Dify 已给出的唯一数值候选直接采用，禁止再问用户；本地只做区间格式与技术上限截断，不再二次找用户确认。当前平台 Dify 品牌候选只有一个合法非空非占位值时，必须原样映射为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌为空、多候选或占位值时才弹窗。不得改写、重排或丢弃未知 Workflow 输出；数组或单值到 Provider 标准区间字符串的确定性格式归一化由本地调用边界一次完成。落库 validate_requirement 前，先合并 original 与各数值字段最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的字段继续复用。同平台多个达人类型只有总量时，将所有类型标签合并到同一个 requirement，quantityTotal 保持原总量，不拆分、不重复落库。",
+    "提交前一次性检查所有必填字段和全部区间格式。quantityTotal 缺失、submissionDeadlineAt 缺失或不精确、抖音数值字段无法确定视频类型、Dify 品牌缺失/多候选/占位或其他必填数值缺失/null/多候选时，必须先弹窗确认；Dify 已给出唯一合法品牌或唯一合法数值时禁止询问或修改；所有解析标签（八个 Label 和 contentTag）不得触发任何确认或询问，有什么原样落库、没有就省略。用户未回答前禁止调用 validate_requirement。同平台多个达人类型只有总量时只创建一个 requirement，保留总量并合并全部类型标签，不询问每类人数、不创建子需求。",
+    "rawMessagesJson 在 Agent 入参中必须是 JSON 对象并保留 original、本次完整 parse_outputs 和每个数值字段最新有效 clarification；本地边界完成预检后只序列化一次再提交 Provider，Agent 禁止自行切换对象和字符串形态。同一数值字段的新答案覆盖旧答案，重建参数时保留其他字段答案。解析标签数组可直接采用，当前平台唯一合法 Dify 品牌候选是不可改写的 brandName 权威值；解析品牌缺失或不唯一时才使用最新弹窗答案。Dify 已给出的唯一 followercount、rebate、报价、CPM、CPE 视为已确认，禁止再问。",
     "用户后续单次修改只涉及一个业务条件时，不再调用 ypscan_parse_requirement，由 Agent 直接更新该条件；同一次修改涉及两个及以上不同业务条件时，只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand，再调用一次 ypscan_parse_requirement，并以新响应刷新全部解析字段。禁止把旧解析输出、已拓展价格或其他 Provider 归一化值写回 demand。",
     "报价参数片段按 Provider 字段展开：抖音 kolOfficialPriceL2/cpmL2/cpeL2 仅表示植入视频，kolOfficialPriceL3/cpmL3/cpeL3 仅表示定制视频，kolOfficialPriceL1/cpmL1/cpeL1 禁止使用。解析片段中的旧档位名不作为视频类型证据；original 或该字段最新 clarification 已唯一明确植入/定制时，保留合法数值区间并确定性路由到当前 L2/L3，不得因此询问用户。只有视频类型仍缺失或模糊时才弹窗确认。已有确认答案时直接复用，不得重复询问。其余 Provider 字段严格按 media-assistant 的 ypscan_parse_requirement 解析参考从当前有效用户证据构造。",
-    "解析 Workflow 已给出的唯一且合法报价、CPM 或 CPE 候选属于已解析数值，直接复用；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。只有候选缺失、多候选、非法或与用户条件冲突时才调用 AskUserQuestion。",
+    PARSED_METRIC_REUSE_RULE,
     "项目名 projectName 由 Agent 根据当前需求自行总结生成（可用品牌/产品、平台与达人类型概括），不调用 AskUserQuestion、不要求用户确认；在调用 validate_requirement 前，用一句用户可见正文告知本次取的项目名，用户无需回复。",
   ].join("\n");
 }
@@ -741,7 +839,7 @@ function flowDirective(toolName, message, params = {}) {
     return null;
   }
   if (/(?:^|__)ypscan_parse_requirement$/iu.test(normalizedName)) {
-    return requirementParseSuccessDirective();
+    return requirementParseSuccessDirective(message);
   }
   if (bare === "validate_requirement") {
     const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
@@ -804,10 +902,10 @@ export function registerFlowDirectiveHooks(api) {
           "rank_mcns 后先把完整 MCN Markdown 表格作为用户可见正文文本块写出，再用包含真实 mcn_count 的参数保存 MCN 排名表，原样展示保存结果中的 delivery.local_file_link Markdown 超链接，并逐字调用同一保存结果 delivery.next_args 给出的 AskUserQuestion，不得改写弹窗参数。用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”或选择人工拓展后，一律默认走 MCP，不得激活额外的浏览器手扒分支。若当前对话已有同一 requirement_id 的字段选择链接且用户已明确回复提交完成，直接调用 manual_source_creators，不得再次调用 select_inquiry_form_fields；否则先调用 select_inquiry_form_fields，用户提交字段并回复“好了”后再调用 manual_source_creators。按当前 Provider schema 传本轮 requirement_id 和用户要求的 size；若 Provider 返回 REQUIREMENT_COLUMNS_NOT_CONFIGURED，再按工具结果指令进入字段选择。提交成功只返回任务 batch_id，不含 Excel：立即用同一 requirement_id 和 batch_id 调用 manual_source_creators_status 轮询，间隔 30 秒、单轮最多 10 次；只有轮询成功返回 excel_file_url 后才立即用 ypscan_save_excel_artifact(manual_source) 保存。",
           MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
           "默认手扒 Excel 保存成功后原样展示保存结果中的 delivery.local_file_link Markdown 超链接，作为人工拓展交付；不再提供浏览器详细手扒分支。",
-          "需求澄清规则：解析返回的八个 Label 数组和 contentTag 是纯解析结果，有什么就原样落库什么，保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认、不询问任何标签内容；任何标签字段（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。数值字段先合并用户原始需求和最新非空 clarification；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。只有必填数值仍缺失、无效、模糊或冲突时才调用 AskUserQuestion。当前平台 Dify 品牌候选唯一、合法且非空时必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为 null、未知等占位值时才询问。项目名由 Agent 根据当前需求自行总结生成，不弹窗确认；调用 validate_requirement 前用一句可见正文告知用户取的项目名。禁止编造标签、默认补数值或普通文本追问。解析 Workflow 唯一合法报价、CPM、CPE 候选直接复用，不因原文单值与 Provider 区间格式差异询问；同平台多个达人类型只保留一个 requirement，总量不变并合并条件，不拆分或追问每类人数。正常成功交付不追加完成弹窗。",
+          "需求澄清规则：解析返回的八个 Label 数组和 contentTag 是纯解析结果，有什么就原样落库什么，保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认、不询问任何标签内容；任何标签字段（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。数值字段先采用 Dify 唯一解析值，再与最新非空 clarification 合并；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。Dify 已给出唯一 followercount、rebate、报价、CPM、CPE 时禁止再问。只有这些必填数值仍缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。当前平台 Dify 品牌候选唯一、合法且非空时必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为 null、未知等占位值时才询问。项目名由 Agent 根据当前需求自行总结生成，不弹窗确认；调用 validate_requirement 前用一句可见正文告知用户取的项目名。禁止编造标签、默认补数值或普通文本追问。解析 Workflow 唯一合法报价、CPM、CPE 候选直接复用，不因原文单值与 Provider 区间格式差异询问；同平台多个达人类型只保留一个 requirement，总量不变并合并条件，不拆分或追问每类人数。正常成功交付不追加完成弹窗。",
           `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
-          "解析数值是候选，必须经本地用户证据和区间规则二次校验；合法且不冲突的候选原样使用，不得收窄或扩大，非法或冲突时阻断而不是静默改写。",
-          "需求解析分工：首次按单平台完整需求调用 ypscan_parse_requirement，data.outputs 完整透传原始 Workflow 输出。解析结果负责八个标签数组、contentTag、品牌、followercount、rebate、报价、CPM、CPE 的候选值；Agent 只按字段名和当前平台结构性展开参数片段。八个 Label 数组和 contentTag 是纯解析结果，有什么原样落库、没有就省略，不向用户确认、不询问任何标签内容；主达人类型字段 pgyBloggerTypeLabel/xtTalentTypeLabel 为 null 或缺失时同样省略，不做映射、不推断。当前平台 Dify 品牌候选唯一且为合法非占位值时必须原样采用，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失或不唯一时才询问。解析数值若缺少 original 或字段最新 clarification 证据、与用户证据冲突或存在多种合法映射，必须弹窗确认。抖音报价、CPM、CPE 按视频类型映射：kolOfficialPriceL2/cpmL2/cpeL2=植入视频，kolOfficialPriceL3/cpmL3/cpeL3=定制视频，不使用任何 L1。解析片段中的旧档位名不作为类型证据；当前用户证据已唯一明确视频类型时，保留合法区间并确定性路由到新档位，不得询问用户。其余 Provider 字段按解析参考从当前有效用户证据构造。同平台多个达人类型只有总量时只保留一个 requirement，原始总量不变并合并全部类型标签和条件，不拆分子需求。单次修改只涉及一个条件时由 Agent 直接更新；同一次修改涉及两个及以上不同业务条件时，只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand，再调用一次 ypscan_parse_requirement，并以新响应刷新全部解析字段。禁止回填旧解析输出、已拓展价格或其他 Provider 归一化值。",
+          "Dify 已给出的唯一数值直接采用，禁止再问；本地只做区间格式与粉丝技术上限截断。只有解析缺失、null、多候选或与用户明确改口冲突时才阻断。",
+          "需求解析分工：首次按单平台完整需求调用 ypscan_parse_requirement，data.outputs 完整透传原始 Workflow 输出。解析结果负责八个标签数组、contentTag、品牌、followercount、rebate、报价、CPM、CPE 的候选值；Agent 只按字段名和当前平台结构性展开参数片段。八个 Label 数组和 contentTag 是纯解析结果，有什么原样落库、没有就省略，不向用户确认、不询问任何标签内容；主达人类型字段 pgyBloggerTypeLabel/xtTalentTypeLabel 为 null 或缺失时同样省略，不做映射、不推断。当前平台 Dify 品牌候选唯一且为合法非占位值时必须原样采用，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失或不唯一时才询问。Dify 已给出的唯一 followercount、rebate、报价、CPM、CPE 直接采用，不要求原文再出现粉丝或报价关键词，禁止再问；只有这些字段缺失、null、多候选或与用户明确改口冲突时才弹窗确认。抖音报价、CPM、CPE 按视频类型映射：kolOfficialPriceL2/cpmL2/cpeL2=植入视频，kolOfficialPriceL3/cpmL3/cpeL3=定制视频，不使用任何 L1。解析片段中的旧档位名不作为类型证据；当前用户证据已唯一明确视频类型时，保留合法区间并确定性路由到新档位，不得询问用户。其余 Provider 字段按解析参考从当前有效用户证据构造。同平台多个达人类型只有总量时只保留一个 requirement，原始总量不变并合并全部类型标签和条件，不拆分子需求。单次修改只涉及一个条件时由 Agent 直接更新；同一次修改涉及两个及以上不同业务条件时，只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand，再调用一次 ypscan_parse_requirement，并以新响应刷新全部解析字段。禁止回填旧解析输出、已拓展价格或其他 Provider 归一化值。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           PARSED_METRIC_REUSE_RULE,
           SINGLE_REQUIREMENT_TYPE_RULE,

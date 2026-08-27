@@ -89,8 +89,10 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
   assert.match(parseText, /无空格 JSON 区间字符串 "\[min,max\]"/u);
   assert.match(parseText, /min < max/u);
-  assert.match(parseText, /二次校验/u);
-  assert.match(parseText, /不得收窄或扩大/u);
+  assert.match(parseText, /禁止再问用户/u);
+  assert.match(parseText, /DIFY_RESOLVED_FIELDS=brandName,followercount,rebate,kolOfficialPrice/u);
+  assert.match(parseText, /DIFY_MISSING_FIELDS=cpm,cpe/u);
+  assert.match(parseText, /Dify 已给出的唯一数值候选直接采用/u);
   assert.match(parseText, /返点.*固定为 "\[min,1\]"/u);
   assert.match(parseText, /不得用 Provider 报错试探类型/u);
   assert.match(parseText, /同一次修改涉及两个及以上/u);
@@ -112,7 +114,7 @@ test("fixed result directives skip the search workbook and save only after rank"
   assert.match(parseText, /kolOfficialPriceL1\/cpmL1\/cpeL1 禁止使用/u);
   assert.match(parseText, /旧档位名不作为视频类型证据/u);
   assert.match(parseText, /确定性路由到当前 L2\/L3，不得因此询问用户/u);
-  assert.match(parseText, /唯一且合法报价、CPM 或 CPE 候选属于已解析数值，直接复用/u);
+  assert.match(parseText, /唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值/u);
   assert.match(parseText, /只创建一个 requirement/u);
   assert.match(parseText, /不询问每类人数、不创建子需求/u);
   assert.match(parseText, /本地边界完成预检后只序列化一次/u);
@@ -636,7 +638,9 @@ test("parse directives preserve field ownership and change policy", () => {
   assert.match(text, /PARSER_OWNED_LOGICAL_FIELDS=/u);
   assert.match(text, /先合并 original 与各数值字段最新非空 clarification/u);
   assert.match(text, /八个 Label 字段.*和 contentTag 是纯解析结果/u);
-  assert.match(text, /数值候选.*缺失、模糊、非法或冲突时才弹窗/u);
+  assert.match(text, /Dify 已给出的唯一数值候选直接采用，禁止再问用户/u);
+  assert.match(text, /DIFY_RESOLVED_FIELDS=/u);
+  assert.match(text, /DIFY_MISSING_FIELDS=/u);
   assert.match(text, /同一字段新答案覆盖旧答案/u);
   assert.match(text, /Dify 品牌候选只有一个合法非空非占位值/u);
   assert.match(text, /不得询问、改写或被原文与 clarification 覆盖/u);
@@ -725,7 +729,7 @@ test("startup instruction makes backend manual sourcing the only manual path", (
   assert.match(first.prependContext, /同一字段新答案覆盖旧答案/u);
   assert.match(first.prependContext, /Label 数组和 contentTag.*不调用 AskUserQuestion 确认/u);
   assert.match(first.prependContext, /xtTalentTypeLabel/u);
-  assert.match(first.prependContext, /只有必填数值仍缺失.*才调用 AskUserQuestion/u);
+  assert.match(first.prependContext, /只有这些必填数值仍缺失.*才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /Dify 品牌候选唯一、合法且非空时必须原样作为 brandName/u);
   assert.match(first.prependContext, /不得询问、改写或被原文与 clarification 覆盖/u);
   assert.match(first.prependContext, /解析品牌缺失、多候选或为 null、未知等占位值时才询问/u);
@@ -746,7 +750,7 @@ test("startup instruction makes backend manual sourcing the only manual path", (
   assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
   assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);
   assert.match(first.prependContext, /主达人类型字段 pgyBloggerTypeLabel\/xtTalentTypeLabel 为 null 或缺失时同样省略/u);
-  assert.match(first.prependContext, /缺少 original 或字段最新 clarification 证据/u);
+  assert.match(first.prependContext, /Dify 已给出的唯一 followercount、rebate、报价、CPM、CPE 直接采用/u);
   assert.match(first.prependContext, /单次修改只涉及一个条件时由 Agent 直接更新/u);
   assert.match(first.prependContext, /同一次修改涉及两个及以上不同业务条件时/u);
   assert.match(first.prependContext, /只能用用户最初原文和后续改口维护的当前原始条件重建完整单平台 demand/u);

@@ -24,8 +24,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 固定 Provider 链路
 
-1. **需求解析**：首次按单平台完整需求调用 `ypscan_parse_requirement`；严格按 [解析参考](references/tools/ypscan_parse_requirement.md) 使用结果。`data.outputs` 完整透传原始 Workflow 输出。解析返回的八个 Label 数组和 `contentTag` 只要是合法非 `null` 数组，就直接原样采用，不要求原文逐项证明，也不得向用户确认；可选 Label 缺失或 `null` 时直接省略——包括主达人类型 `pgyBloggerTypeLabel`/`xtTalentTypeLabel`，不做映射、不推断、不询问；任何标签内容都不向用户提问。当前平台 `xhsbrandName`/`dybrandName` 只有一个合法非空候选时，该 Dify 结果是权威 `brandName`：直接原样采用，不得询问、改写或被原文与 `clarification` 覆盖；解析品牌缺失、多候选或为 `null`、`未知` 等占位值时才调用 `AskUserQuestion`。数值解析字段先合并 `original` 与最新非空 `clarification`：同一字段的新答案覆盖旧答案，其他已经确认且未修改的数值继续复用；只有数值仍缺失、模糊或冲突时才调用 `AskUserQuestion`。抖音报价、CPM、CPE 按视频类型映射：L2 仅表示植入视频，L3 仅表示定制视频，不使用任何 L1。解析片段仍带旧档位名时，以当前用户明确的视频类型确定性路由到新档位并保持合法数值区间不变，不得因此向用户确认；只有视频类型仍缺失或模糊时才询问。解析 Workflow 已给出的唯一合法报价、CPM、CPE 候选直接复用；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此重复提问。
-   解析数值是候选：本地必须按用户证据和区间规则二次校验。候选合法且不冲突时原样使用，不得收窄或扩大；非法或冲突时阻断，不得静默改写。所有数值区间必须 `min < max`，禁止 `[v,v]`。
+1. **需求解析**：首次按单平台完整需求调用 `ypscan_parse_requirement`；严格按 [解析参考](references/tools/ypscan_parse_requirement.md) 使用结果。`data.outputs` 完整透传原始 Workflow 输出。解析返回的八个 Label 数组和 `contentTag` 只要是合法非 `null` 数组，就直接原样采用，不要求原文逐项证明，也不得向用户确认；可选 Label 缺失或 `null` 时直接省略——包括主达人类型 `pgyBloggerTypeLabel`/`xtTalentTypeLabel`，不做映射、不推断、不询问；任何标签内容都不向用户提问。当前平台 `xhsbrandName`/`dybrandName` 只有一个合法非空候选时，该 Dify 结果是权威 `brandName`：直接原样采用，不得询问、改写或被原文与 `clarification` 覆盖；解析品牌缺失、多候选或为 `null`、`未知` 等占位值时才调用 `AskUserQuestion`。数值解析字段先合并 `original` 与最新非空 `clarification`：同一字段的新答案覆盖旧答案，其他已经确认且未修改的数值继续复用；只有数值仍缺失、模糊或冲突时才调用 `AskUserQuestion`。抖音报价、CPM、CPE 按视频类型映射：L2 仅表示植入视频，L3 仅表示定制视频，不使用任何 L1。解析片段仍带旧档位名时，以当前用户明确的视频类型确定性路由到新档位并保持合法数值区间不变，不得因此向用户确认；只有视频类型仍缺失或模糊时才询问。解析 Workflow 已给出的唯一合法 followercount、rebate、报价、CPM、CPE 候选直接复用，不要求原文再出现「粉丝」等关键词，不得再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此重复提问。粉丝技术上限溢出由本地截断，不弹窗。只有这些字段缺失、`null`、多候选或与用户明确改口冲突时才调用 `AskUserQuestion`。所有数值区间必须 `min < max`，禁止 `[v,v]`。
    同平台多个达人类型处理覆盖旧版拆分规则：只创建一个 requirement，保留用户总量并合并全部类型标签和条件；不得拆分子需求、重复落库或重复搜索，也不得询问每类人数。
 2. **创建需求**：projectName 由 Agent 根据当前需求自行总结生成（如品牌/产品 + 平台 + 达人类型概括），不向用户确认；调用 `validate_requirement` 前用一句可见正文告知用户取的项目名，然后按解析结果调用 `validate_requirement`。此后“需求 ID”始终指 requirement ID：优先取响应 `data.requirement_id`，该字段缺失时兼容 `data.id`；绝不能使用 `data.demand_id`。同时保留真实 `platform`。单一需求成功后立即进入 `search_creators`；同平台多个达人类型已合并在同一 requirement 中，不创建子需求。
 3. **搜索达人**：将上述 requirement ID 作为 `search_creators.id`。成功后包括 0 命中都不保存、不展示 `creators_export_path` 或响应中的其他表格链接，也不得用 Browser、shell、curl、Python 或其他方式下载；直接使用同一 requirement ID 和当前平台调用 `rank_mcns`。
@@ -38,7 +37,7 @@ MCN 表格按当前响应顺序从 1 开始连续编号；每行覆盖达人只�
 
 ## AskUserQuestion 规则
 
-只要下一步确实需要用户选择、补充数值、登录、处理验证码、暂停或结束当前流程，必须在同一轮调用宿主 `AskUserQuestion`。需求解析中，八个 Label 数组和 `contentTag` 有什么就原样落库什么，`null` 或缺失直接省略，不映射、不推断、不询问任何标签内容。数值字段先与最新有效 `clarification` 合并；同一数值字段新答案覆盖旧答案，已确认且未修改的数值不得重复询问，只有仍缺失、模糊或冲突时才弹窗。只有不改变业务语义的本地格式规范化，以及普通弹窗关闭、页面导航/刷新和筛选复位，才允许自助恢复；禁止通过 Provider 报错逐字段或逐类型试探。禁止用普通聊天问句等待用户，也禁止用户未回答时自行选择。
+只要下一步确实需要用户选择、补充数值、登录、处理验证码、暂停或结束当前流程，必须在同一轮调用宿主 `AskUserQuestion`。需求解析中，八个 Label 数组和 `contentTag` 有什么就原样落库什么，`null` 或缺失直接省略，不映射、不推断、不询问任何标签内容。数值字段先采用 Dify 唯一解析值，再与最新有效 `clarification` 合并；同一数值字段新答案覆盖旧答案。Dify 已给出唯一 `followercount`、`rebate`、报价、CPM、CPE 时禁止再问；只有仍缺失、`null`、多候选或与用户明确改口冲突时才弹窗。只有不改变业务语义的本地格式规范化，以及普通弹窗关闭、页面导航/刷新和筛选复位，才允许自助恢复；禁止通过 Provider 报错逐字段或逐类型试探。禁止用普通聊天问句等待用户，也禁止用户未回答时自行选择。
 
 同一平台明确要求多个达人类型但只给总量时，保留一个 requirement，传入原始总量并合并所有类型标签和条件；不得拆分子需求、重复落库或重复搜索，也不得询问每类人数。
 

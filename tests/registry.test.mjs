@@ -220,6 +220,62 @@ test("preflight rejects followercount above the technical maximum", () => {
   );
 });
 
+test("normalization clamps followercount down to the technical maximum", () => {
+  const normalized = normalizeToolCallParams("validate_requirement", {
+    ...completeValidateParams(),
+    followercount: "[5000000,9999999999]",
+  });
+
+  assert.equal(normalized.followercount, "[5000000,999999999]");
+});
+
+test("Dify-parsed followercount and price do not require extra user evidence", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    brandName: "千问",
+    followercount: "[5000000,9999999999]",
+    kolOfficialPriceL3: "[35000,50000]",
+    rebate: "[0.25,1]",
+    rawMessagesJson: {
+      original:
+        "项目：千问耳夹式AI智能体耳机；平台：抖音；形式：定制视频；档期：8月底-9月；数量：30位；单价：5w；返点：25%以上。类型：行业头部。",
+      parse_outputs: {
+        brandName: null,
+        followercount: "[5000000,9999999999]",
+        rebate: "[0.25,1]",
+        kolOfficialPriceL3: "[35000,50000]",
+      },
+      clarifications: { brandName: "千问" },
+    },
+  };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+  assert.equal(normalized.followercount, "[5000000,999999999]");
+  assert.deepEqual(
+    validateRequirementPreflight(normalized, { now }).map((issue) => issue.field),
+    ["submissionDeadlineAt"],
+  );
+});
+
+test("preflight accepts a unique Dify price without 单价 wording", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    kolOfficialPriceL3: "[35000,50000]",
+    rawMessagesJson: {
+      original:
+        "抖音项目：项目A；品牌：品牌A；定制视频；30位；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
+      parse_outputs: {
+        dybrandName: ["品牌A"],
+        kolOfficialPriceL3: "[35000,50000]",
+      },
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
 test("normalization accepts parsed tag arrays", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = completeValidateParams();
@@ -358,7 +414,7 @@ test("null current-platform primary parsed labels are silently omitted", () => {
   }
 });
 
-test("preflight rejects parser defaults that have no user evidence", () => {
+test("preflight still requires brand and deadline when Dify did not parse them", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
     ...completeValidateParams(),
@@ -374,7 +430,7 @@ test("preflight rejects parser defaults that have no user evidence", () => {
 
   assert.deepEqual(
     validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["brandName", "followercount", "submissionDeadlineAt"],
+    ["brandName", "submissionDeadlineAt"],
   );
 });
 

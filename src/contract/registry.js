@@ -335,6 +335,15 @@ function normalizedNumericRange(value, { rate = false, price = false, maximum = 
   return JSON.stringify(normalized);
 }
 
+function clampFollowerCountRange(value) {
+  if (typeof value !== "string") return value;
+  const range = parsedCanonicalRange(value);
+  if (!range) return value;
+  if (range[1] <= MAX_FOLLOWER_COUNT) return value;
+  if (range[0] < MAX_FOLLOWER_COUNT) return JSON.stringify([range[0], MAX_FOLLOWER_COUNT]);
+  return value;
+}
+
 function normalizedFollowerRange(value) {
   if (
     typeof value === "string" &&
@@ -343,14 +352,18 @@ function normalizedFollowerRange(value) {
     return UNRESTRICTED_FOLLOWERCOUNT_RANGE;
   }
   const normalized = normalizedNumericRange(value);
-  if (normalized !== value || typeof value !== "string") return normalized;
+  if (normalized !== value || typeof value !== "string") {
+    return clampFollowerCountRange(normalized);
+  }
   const match = value.trim().match(
     /^(\d+(?:\.\d+)?)\s*(?:-|~|～|至|到)\s*(\d+(?:\.\d+)?)$/u,
   );
-  if (!match) return value;
+  if (!match) return clampFollowerCountRange(value);
   const lower = Number(match[1]);
   const upper = Number(match[2]);
-  return lower <= upper ? JSON.stringify([lower, upper]) : value;
+  return lower <= upper
+    ? clampFollowerCountRange(JSON.stringify([lower, upper]))
+    : value;
 }
 
 function normalizedRebateRange(value) {
@@ -692,6 +705,7 @@ function latestFieldEvidence(value, keys) {
   const latest = latestScalarClarification(value, keys);
   return latest ? `${latest.key} ${latest.text}` : null;
 }
+
 const INVALID_BRAND_CANDIDATE =
   /^(?:null|undefined|unknown|n\/?a|none|未知|未明确|未提及|未提供|暂无|无|不详|待确认|待定)$/iu;
 
@@ -874,6 +888,88 @@ function usableMetricValue(value) {
     !(typeof value === "string" && (!value.trim() || value.trim().toLowerCase() === "null"));
 }
 
+const PARSED_RANGE_FIELDS = Object.freeze([
+  "followercount",
+  "rebate",
+  ...PRICE_FIELDS,
+  ...DOUYIN_VIDEO_TYPE_METRIC_FIELDS.filter((field) => !PRICE_FIELDS.includes(field)),
+]);
+
+/**
+ * @param {unknown} outputs
+ * @param {string} field
+ * @returns {unknown[]}
+ */
+function collectParsedMetricValues(outputs, field) {
+  if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) return [];
+  const outputRecord = /** @type {Record<string, unknown>} */ (outputs);
+  /** @type {unknown[]} */
+  const values = [];
+  const add = (value) => {
+    if (!usableMetricValue(value)) return;
+    if (value && typeof value === "object" && !Array.isArray(value) && field in value) {
+      add(/** @type {Record<string, unknown>} */ (value)[field]);
+      return;
+    }
+    values.push(value);
+  };
+  add(outputRecord[field]);
+  const metricMatch = field.match(/^(kolOfficialPrice|cpm|cpe)(L[123])$/u);
+  if (metricMatch) {
+    for (const key of [`dy_${metricMatch[1]}`, `xhs_${metricMatch[1]}`, metricMatch[1]]) {
+      const record = outputRecord[key];
+      if (record && typeof record === "object" && !Array.isArray(record)) {
+        add(/** @type {Record<string, unknown>} */ (record)[field]);
+      }
+    }
+  }
+  return values;
+}
+
+/**
+ * @param {string} field
+ * @param {unknown} value
+ */
+function canonicalizeMetricRange(field, value) {
+  if (field === "rebate") return normalizedRebateRange(value);
+  if (field === "followercount") return normalizedFollowerRange(value);
+  return normalizedNumericRange(value, {
+    rate: RATE_RANGE_PARAMS.has(field),
+    price: PRICE_RANGE_PARAMS.has(field),
+    maximum: MAXIMUM_METRIC_RANGE_PARAMS.has(field),
+  });
+}
+
+/**
+ * @param {unknown} rawMessages
+ * @param {string} field
+ * @returns {string | null}
+ */
+function uniqueParsedRange(rawMessages, field) {
+  if (!rawMessages || typeof rawMessages !== "object" || Array.isArray(rawMessages)) {
+    return null;
+  }
+  const outputs = /** @type {Record<string, unknown>} */ (rawMessages).parse_outputs;
+  const unique = new Set();
+  for (const value of collectParsedMetricValues(outputs, field)) {
+    const canonical = canonicalizeMetricRange(field, value);
+    if (typeof canonical === "string" && parsedCanonicalRange(canonical)) unique.add(canonical);
+  }
+  return unique.size === 1 ? [...unique][0] : null;
+}
+
+/**
+ * @param {unknown} rawMessages
+ * @param {string} field
+ * @param {unknown} submitted
+ */
+function hasUniqueParsedRangeEvidence(rawMessages, field, submitted) {
+  const parsed = uniqueParsedRange(rawMessages, field);
+  if (!parsed) return false;
+  const submittedRange = canonicalizeMetricRange(field, submitted);
+  return parsed === submittedRange;
+}
+
 function equivalentMetricValues(left, right) {
   const key = (value) => {
     if (typeof value === "string") {
@@ -1049,14 +1145,24 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   if (!hasQuantityEvidence(quantityEvidence, payload.quantityTotal)) {
     add("quantityTotal", "原始需求或弹窗澄清记录中没有与提交值一致的达人数量证据");
   }
-  if (!/(?:粉丝|万粉|w粉|followercount)/iu.test(evidence)) {
-    add("followercount", "原始需求或弹窗澄清记录中没有粉丝量证据，禁止接受解析默认值");
+  if (
+    !hasUniqueParsedRangeEvidence(rawMessages, "followercount", payload.followercount) &&
+    !/(?:粉丝|万粉|w粉|followercount)/iu.test(evidence)
+  ) {
+    add("followercount", "原始需求或弹窗澄清记录中没有粉丝量证据，且 Dify 未给出唯一粉丝区间");
   }
-  if (!/(?:返点|返佣|佣金|rebate)/iu.test(evidence)) {
-    add("rebate", "原始需求或弹窗澄清记录中没有返点证据，禁止接受解析默认值");
+  if (
+    !hasUniqueParsedRangeEvidence(rawMessages, "rebate", payload.rebate) &&
+    !/(?:返点|返佣|佣金|rebate)/iu.test(evidence)
+  ) {
+    add("rebate", "原始需求或弹窗澄清记录中没有返点证据，且 Dify 未给出唯一返点区间");
   }
-  if (!/(?:单价|报价|预算|费用|价格|kolOfficialPrice)/iu.test(evidence)) {
-    add("kolOfficialPriceL1/L2/L3", "原始需求或弹窗澄清记录中没有报价证据");
+  const hasParsedPrice = PRICE_FIELDS.some((field) =>
+    Object.hasOwn(payload, field) &&
+    hasUniqueParsedRangeEvidence(rawMessages, field, payload[field]),
+  );
+  if (!hasParsedPrice && !/(?:单价|报价|预算|费用|价格|kolOfficialPrice)/iu.test(evidence)) {
+    add("kolOfficialPriceL1/L2/L3", "原始需求或弹窗澄清记录中没有报价证据，且 Dify 未给出唯一报价区间");
   }
   const deadlineEvidence =
     latestFieldEvidence(rawMessages, [
@@ -1184,6 +1290,18 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
       if (rawMessages && typeof rawMessages === "object" && !Array.isArray(rawMessages)) {
         const parsedBrand = uniqueParsedBrand(rawMessages, normalizedPlatformName(normalized.platform));
         if (parsedBrand) set("brandName", parsedBrand);
+        for (const field of PARSED_RANGE_FIELDS) {
+          if (
+            Object.hasOwn(normalized, field) &&
+            normalized[field] !== undefined &&
+            normalized[field] !== null &&
+            normalized[field] !== ""
+          ) {
+            continue;
+          }
+          const parsed = uniqueParsedRange(rawMessages, field);
+          if (parsed) set(field, parsed);
+        }
         normalized = normalizeParsedDouyinMetrics(normalized, rawMessages);
       }
     }
