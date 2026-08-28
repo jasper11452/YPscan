@@ -1,6 +1,6 @@
 # 用户要求 Review Checklist
 
-- [ ] 只有用户改变业务需求时才创建新版本；解析修正不算需求变更。解析返回的合法标签数组直接采用，不向用户确认；可选标签缺失时省略，但小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel` 解析为 `null` 时先按当前原文、已回答内容和平台枚举做唯一映射，只有仍无法唯一确定时才调用 `AskUserQuestion`，且问题只能问主达人类型，不得把内容约束或孩子/宠物等附加要求反问成主类型。数值字段缺失、模糊、冲突或需要选择映射时才调用 `AskUserQuestion`，不从历史数据推断，也不要求确认整份 Brief；同平台多达人类型保留一个 requirement、原始总量和合并标签，不拆分或重复落库。
+- [ ] 只有用户改变业务需求时才创建新版本；解析修正不算需求变更。解析返回的合法标签数组直接采用，不向用户确认；可选标签（包括小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel`）缺失或为 `null` 时直接省略，不做映射、不推断、不询问。数值字段缺失、模糊、冲突或需要选择映射时才调用 `AskUserQuestion`，不从历史数据推断，也不要求确认整份 Brief；同平台多达人类型保留一个 requirement、原始总量和合并标签，不拆分或重复落库。
 - [ ] `rebate`、`followercount`、报价、CPM、CPE 及其他数值筛选字段在第一次 `validate_requirement` 调用前全部规范成无空格 JSON 区间字符串 `"[min,max]"` 且 `min < max`，返点固定为 `"[min,1]"`；禁止 `[v,v]`，也禁止向 Provider 传数组、对象、单值、百分号文本或自然语言并来回试类型。
 - [ ] 品牌、项目名、达人数量、截止时间和可选项目日期与 `rawMessagesJson.original` 或非空 `clarifications` 中的明确值一致；空澄清键、解析数值默认值和 Agent 推断不算用户证据。解析标签不适用这条证据门禁。
 - [ ] 抖音报价、CPM、CPE 固定使用 L2=植入视频、L3=定制视频，不传 `kolOfficialPriceL1`、`cpmL1`、`cpeL1`；小红书不传任何 L3 字段，模糊档期不转换成具体日期。
@@ -8,15 +8,15 @@
 - [ ] 金额、数量、比例、范围、平台、合作形式和指标档位按当前契约正确解析；纯格式差异由本地边界一次性规范化，未知或不支持的字段省略或保留在 Brief 中。
 - [ ] Provider 检索单价只按原价向下 30%、向上 20% 扩展一次；人工拓展结果不得把这个区间回写到需求参数。
 - [ ] 解析结果完整透传给本地完整预检；所有字段一次性通过后才调用 Provider。预检阻断时 Provider 未写入，先弹窗收齐全部用户值；真实 Provider 错误只根据明确错误处理，禁止逐字段或逐类型盲试。
-- [ ] 主链路连续执行 `parse → validate → search_creators → rank_mcns`；搜索为 0 或用户直接要求人工拓展时也不跳步。
-- [ ] 忽略本轮 `search_creators` 返回的 `creators_export_path` 或其他表格链接，不调用保存工具；`rank_mcns` 成功后先输出完整机构表格，再使用其精确保存参数调用 `ypscan_save_excel_artifact` 保存 MCN 排名表，按“完整机构表格 → 真实本地 `file_path` → 后续分支弹窗”顺序输出。禁止用其他下载或写文件方式代替保存工具，也不复用其他需求或平台的历史值。
-- [ ] 机构询价和人工拓展可并行、重复进入，互不阻塞；供给风险只提示，不默认放宽条件。
+- [ ] 首次业务动作先用 `AskUserQuestion` 选择“询价机构”或“直接手扒”，回答前不解析或落库；选择后以该模式作为 `ypscan_parse_requirement` 的 `business_mode` 执行 `parse → validate`（`rawMessagesJson.business_mode` 使用同一值），再且只再进入已选分支。
+- [ ] 仅询价分支调用 `search_creators → rank_mcns`。忽略 `search_creators` 的表格链接；`rank_mcns` 成功后按“完整机构表格 → 真实本地 `file_path` → 收件机构弹窗”输出，不再次询问业务模式。
+- [ ] 询价和直接手扒不得交叉、并行或在同一 requirement 中切换；供给风险只提示，不默认放宽条件。
 - [ ] `select_inquiry_form_fields` 必须用当前真实需求 ID 建立字段关联；用户提交后由 Provider 直接持久化。不得调用已弃用的 `get_selected_inquiry_form_fields`，不得轮询 callback，也不得在 Agent 上下文读取、重建或缓存 `columns`。
-- [ ] 人工拓展默认调用 `manual_source_creators`，收到 Excel URL 后立即保存并展示真实本地路径；保存成功后直接以该本地 Excel 交付。
+- [ ] 直接手扒调用 `manual_source_creators`，保存并展示后台筛选后的达人详情 Excel；随后继续 `rank_creators` 与 `create_submission_batch`，不把详情 Excel 当作最终提报表。
 - [ ] 默认 `manual_source_creators` 调用先读取实际 input schema；若存在需求原文可选字段，优先传当前完整原文；schema 不支持或仅因未知参数失败时，只去掉原文字段、保留同一 `requirement_id` 和 `size` 重试一次，不猜字段名、不掩盖其他业务错误。
 - [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；不得用普通聊天问句停住流程。
 - [ ] Agent 必须自主完成所有可执行步骤并持续推进；不得随意要求用户代为操作、整理信息、输入“完成”或帮助排错。仅在缺少必要授权、必要输入、登录或真实 CAPTCHA 等无法自主完成的情况下暂停。
-- [ ] 企微发送只调用 `create_with_distributions`；发送前必须用 `AskUserQuestion` 完整展示最终机构名称列表和企微消息，选项固定为“确认发送”和“返回修改”。插件不做额外 `before_tool_call` 门禁；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]` 且至少一侧非空。
+- [ ] 企微发送只调用 `create_with_distributions`；发送前必须用 `AskUserQuestion` 完整展示最终机构名称列表和企微消息，选项固定为“确认发送”和“返回修改”。本地 `before_tool_call` 只做 `business_mode` 分支互斥门禁和 `validate_requirement` 预检，不做发送内容确认门禁；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]` 且至少一侧非空。
 - [ ] 机构名匹配、合并去重和同一 requirement_id/机构幂等由 Provider 负责；模糊、不唯一、部分成功和重复发送结果原样展示，不重发已成功机构。
 - [ ] `rank_mcns` 机构表格严格只展示排名、机构、覆盖达人、返点、综合分；排名按响应顺序从 1 开始，缺失写“未知”，不得另行展示匹配机构数、推荐数量或其他汇总。
 - [ ] `rank_mcns` 每行覆盖人数只取当前机构自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，不得用作本机构人数，不得与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。

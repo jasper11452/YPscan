@@ -1,10 +1,11 @@
 # YPscan Client Integration Layer
 
-悦普识星是一个 OpenClaw 客户端集成层：通过 SSE 调用 Provider；人工拓展默认由后端 `manual_source_creators` 提交任务，再用 `manual_source_creators_status` 轮询拿回 Excel。所有达人筛选固定执行：
+悦普识星是一个 OpenClaw 客户端集成层：通过 SSE 调用 Provider。所有达人筛选先选择业务模式，再解析并落库：
 
-`ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 完整 MCN Markdown 表格 → 保存并展示 MCN 排名表本地文件超链接 → AskUserQuestion`
+- 询价机构：`选择模式 → 解析落库 → search_creators → rank_mcns → 选择机构和字段 → 企微询价 → 回收 → rank_creators → 提报表`
+- 直接手扒：`选择模式 → 解析落库 → 选择字段 → manual_source_creators → 详情列表 → rank_creators → 提报表`
 
-用户选择“人工拓展并提报”后，若当前对话已经确认同一 requirement ID 的字段选择已提交，则直接复用 Provider 持久化字段并调用 `manual_source_creators`；否则先通过 `select_inquiry_form_fields` 选择字段。调用默认手扒前优先查看其实际 input schema：若有明确的需求原文可选字段，传当前完整、未改写的原始需求文本；schema 不支持或仅因未知参数拒绝时，去掉该字段，仅用同一 requirement ID 和 `size` 重试一次。不得猜字段名、传解析输出或 `rawMessagesJson`。Provider 返回字段未配置时再回退到字段选择。“手扒”“手动拓展”“人工拓展”“直接手扒”“手捞筛选”都默认走这个 MCP 链路。提交成功只返回任务 batch ID：立即用同一 requirement ID 和 batch ID 调用 `manual_source_creators_status` 轮询，间隔 30 秒、单轮最多 10 次；轮询成功返回 Excel 后立即使用 `ypscan_save_excel_artifact(artifact_kind=manual_source)` 保存，并原样展示本地文件 Markdown 超链接作为交付。
+直接手扒由后端 `manual_source_creators` 完成 API 搜索、详情抓取和筛选，再用 `manual_source_creators_status` 轮询详情 Excel。详情列表保存并展示后继续 `rank_creators` 和 `create_submission_batch`，最终交付提报表。提报表生成后的任何需求修改都会重新解析并从原业务模式重新执行。
 
 ## 当前组成
 
@@ -29,4 +30,4 @@ npm run smoke
 npm pack --dry-run --cache /tmp/ypscan-npm-cache
 ```
 
-Smoke 断言本地工具为 2 个、字段选择由远端 MCP 直接暴露且旧字段查询工具不再暴露、自定义 Browser 状态机入口未注册、Hook 集合包含流程指令、`validate_requirement` 调用前完整预检与 Gateway 生命周期事件，不包含企微发送前后门禁。
+Smoke 断言本地工具为 2 个、字段选择由远端 MCP 直接暴露且旧字段查询工具不再暴露、自定义 Browser 状态机入口未注册、Hook 集合包含流程指令、`validate_requirement` 调用前完整预检与 Gateway 生命周期事件；`before_tool_call` 仅做 `business_mode` 分支互斥，不包含企微发送确认门禁。

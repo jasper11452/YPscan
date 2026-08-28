@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-`ypscan`（悦普识星）是一个 OpenClaw 插件（id `ypscan`，`private: true`），是「悦普达人采买」的客户端集成层：注册 2 个本地工具、通过 SSE 连远端 MCP（`https://mcp.eshypdata.com/sse`，12 个工具白名单），人工拓展默认由后端 `manual_source_creators` 完成并返回 Excel。
+`ypscan`（悦普识星）是一个 OpenClaw 插件（id `ypscan`，`private: true`），是「悦普达人采买」的客户端集成层：注册 2 个本地工具、通过 SSE 连远端 MCP（`https://mcp.eshypdata.com/sse`）。业务模式在需求解析前选择，支持机构询价与后台直接手扒双分支。
 
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type":"module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。
 
@@ -28,7 +28,7 @@
   - `save-excel-artifact.js` — 保存 Provider 返回的 Excel。
   - `test-adapter.js`、`tool-result.js`、`post-save-questions.js` — 测试下载与结果适配。
 - `src/contract/registry.js` — 参数归一化和平台别名。
-- `src/hooks/register-flow-directives.js` — 注入固定 Provider 链路、询价结果与交付指令；默认手扒保存后直接交付本地 Excel；不拦截 `create_with_distributions`。
+ - `src/hooks/register-flow-directives.js` — 注入双分支 Provider 链路、询价结果与交付指令；直接手扒详情表保存后继续精排并生成提报表；`before_tool_call` 只做 `business_mode` 分支互斥与 `validate_requirement` 预检，不做企微发送确认门禁。
 - `skills/media-assistant/` — 强制 agent 行为规范：`SKILL.md`（固定链路、默认后端手扒、Provider 幂等规则）+ `references/`（Provider 工具说明）。
 - `spec/`、`docs/mcp-developer-tool-by-tool-tickets.md` — 声明式规范与 MCP 侧工单，**只读参考，不是本仓库运行时代码**。
 - `skills/media-assistant/references/` — Provider 工具说明。
@@ -36,7 +36,7 @@
 ## 关键不变量（改代码必须遵守）
 
 1. **分析 vs 修改**：默认只做分析评审；只有用户明确要求时才改代码。
-2. **Provider 与 Browser 不混用**：解析结果只提供 Provider 参数和残余条件；Browser 只在 MCN 分支选择后由 Agent 直接操作，平台证据缺失必须如实标明。
+2. **Provider 与 Browser 不混用**：解析结果只提供 Provider 参数和残余条件；当前流程不再提供浏览器手扒分支，平台证据缺失必须如实标明。
 3. **不跨需求混用**：结果只使用当前真实 Provider 或 Browser 证据，不用历史 MCN、达人或覆盖数补齐当前列表。
 4. **企微幂等在 Provider**：插件不预检、不确认、不匹配、不缓存发送状态；`create_with_distributions` 的机构名匹配、合并去重和同一需求/机构幂等全部由 Provider 负责。固定链路和 native Browser 使用说明仅是静态下一步指令。
 5. **改动最小化**：不顺手重构无关代码；改完跑完整验证清单。

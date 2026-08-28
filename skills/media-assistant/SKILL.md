@@ -5,13 +5,15 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 # YPscan Media Assistant
 
-所有达人筛选遵循同一固定链路；需求解析阶段调用 `ypscan_parse_requirement`、`validate_requirement`，随后进入 `search_creators`：
+所有达人筛选先选择业务模式，再解析并落库。首次相关业务动作必须调用 `AskUserQuestion`，选项固定为“询价机构”和“直接手扒”；用户回答前不得调用解析或 Provider 业务工具。选择后将该模式作为 `ypscan_parse_requirement` 的 `business_mode` 参数解析并落库，`validate_requirement` 的 `rawMessagesJson.business_mode` 使用同一值，再进入对应分支：
 
 工具能力只按宿主完整名称中最后一个 `__` 后的实际工具名判断；前面的命名空间（包括 `test`）不区分正式、测试或旁路，不得因前缀拒绝调用或宣称工具未开放。实际工具名单一匹配时直接使用宿主展示的完整名称；多个可用工具映射到同一实际名称时才调用 `AskUserQuestion` 请用户选择；无匹配时才报告缺失。
 
-`ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 输出完整 MCN Markdown 表格 → 保存并展示 MCN 排名表本地文件超链接 → AskUserQuestion`
+询价机构：`AskUserQuestion → ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → 输出并保存 MCN 排名表 → 选择收件机构 → 选择字段 → 确认并发送企微 → 回收 → rank_creators → create_submission_batch`
 
-即使用户一开始明确要求手扒，也不得跳过前四步或提前打开 Browser。
+直接手扒：`AskUserQuestion → ypscan_parse_requirement → validate_requirement → select_inquiry_form_fields → manual_source_creators → manual_source_creators_status → 展示达人详情列表 → rank_creators → create_submission_batch`
+
+两个分支不得交叉执行，也不得在流程中再次询问业务模式。
 
 ## MCN 输出格式锁
 
@@ -22,14 +24,14 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 尤其禁止展示 `Supplier ID`/`supplier_id`、候选达人、供给占比、手扒补量、推荐理由，也禁止展示其他 `rank_mcns` 字段或汇总。这些字段即使真实存在也只是内部上下文，不是可选展示列。
 
-## 固定 Provider 链路
+## 双分支 Provider 链路
 
 1. **需求解析**：首次按单平台完整需求调用 `ypscan_parse_requirement`；严格按 [解析参考](references/tools/ypscan_parse_requirement.md) 使用结果。`data.outputs` 只返回当前 Provider 契约消费的 Workflow 字段。解析返回的八个可选 Label 数组有什么就原样采用，不要求原文逐项证明，也不得向用户确认；缺失或 `null` 时直接省略，包括主达人类型 `pgyBloggerTypeLabel`/`xtTalentTypeLabel`，不做映射、不推断、不询问。`contentTag` 只有在解析结果为非空数组时才能采用；缺失或无效时重新解析，禁止询问用户或自行补值。当前平台 `xhsbrandName`/`dybrandName` 只有一个合法非空候选时，该 Dify 结果是权威 `brandName`：直接原样采用，不得询问、改写或被原文与 `clarification` 覆盖；解析品牌缺失、多候选或为 `null`、`未知` 等占位值时才调用 `AskUserQuestion`。数值解析字段先合并 `original` 与最新非空 `clarification`：同一字段的新答案覆盖旧答案，其他已经确认且未修改的数值继续复用；只有数值仍缺失、模糊或冲突时才调用 `AskUserQuestion`。抖音报价、CPM、CPE 按视频类型映射：L2 仅表示植入视频，L3 仅表示定制视频，不使用任何 L1。解析片段仍带旧档位名时，以当前用户明确的视频类型确定性路由到新档位并保持合法数值区间不变，不得因此向用户确认；只有视频类型仍缺失或模糊时才询问。解析 Workflow 已给出的唯一合法 followercount、rebate、报价、CPM、CPE 候选直接复用，不要求原文再出现「粉丝」等关键词，不得再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此重复提问。粉丝技术上限溢出由本地截断，不弹窗。只有这些字段缺失、`null`、多候选或与用户明确改口冲突时才调用 `AskUserQuestion`。进入 `validate_requirement` 前还必须检查 `brandName`、`quantityTotal`、`submissionDeadlineAt`、`rebate`、`followercount` 和至少一个当前平台报价字段；缺失业务值必须在调用前一次性通过 `AskUserQuestion` 收集，禁止默认补值。`status=ready`、`projectName` 和 `rawMessagesJson` 由 Agent 构造。所有数值区间必须 `min < max`，禁止 `[v,v]`。
    同平台多个达人类型处理覆盖旧版拆分规则：只创建一个 requirement，保留用户总量并合并全部类型标签和条件；不得拆分子需求、重复落库或重复搜索，也不得询问每类人数。
-2. **创建需求**：projectName 由 Agent 根据当前需求自行总结生成（如品牌/产品 + 平台 + 达人类型概括），不向用户确认；调用 `validate_requirement` 前用一句可见正文告知用户取的项目名，然后按解析结果调用 `validate_requirement`。此后“需求 ID”始终指 requirement ID：优先取响应 `data.requirement_id`，该字段缺失时兼容 `data.id`；绝不能使用 `data.demand_id`。同时保留真实 `platform`。单一需求成功后立即进入 `search_creators`；同平台多个达人类型已合并在同一 requirement 中，不创建子需求。
-3. **搜索达人**：将上述 requirement ID 作为 `search_creators.id`。成功后包括 0 命中都不保存、不展示 `creators_export_path` 或响应中的其他表格链接，也不得用 Browser、shell、curl、Python 或其他方式下载；直接使用同一 requirement ID 和当前平台调用 `rank_mcns`。
-4. **机构排序并保存排名表**：保存成功后将同一个 requirement ID 作为 `rank_mcns.id`，并传当前平台。成功后先按响应顺序输出全部 MCN，不得只说“已完成”或只列部分机构；若 Hook 给出 `SAVE_EXCEL_ARTIFACT_ARGS`，立即逐字调用 `ypscan_save_excel_artifact` 保存 MCN 排名表，不得展示下载链接或使用其他下载方式。
-5. **保存后的弹窗**：MCN 排名表保存成功后，先原样展示本次保存结果中的 `delivery.local_file_link` Markdown 超链接，再逐字调用同一保存结果 `delivery.next_args` 对应的 `AskUserQuestion`。MCN 非空时选项固定为“询价机构”和“人工拓展并提报”；MCN 为空时选项固定为“人工拓展并提报”和“结束本次”。表格和本地文件链接不得放入弹窗 `question`，也不得留到弹窗返回后补发；排名表保存成功前禁止调用分支弹窗。若当前响应缺少精确保存参数，如实说明无法保存，并使用 `rank_mcns` 结果中的回退弹窗参数。
+2. **创建需求**：projectName 由 Agent 根据当前需求自行总结生成（如品牌/产品 + 平台 + 达人类型概括），不向用户确认；调用 `validate_requirement` 前用一句可见正文告知用户取的项目名，然后按解析结果调用 `validate_requirement`。此后“需求 ID”始终指 requirement ID：优先取响应 `data.requirement_id`，该字段缺失时兼容 `data.id`；绝不能使用 `data.demand_id`。同时保留真实 `platform`。成功后只进入用户已选模式对应的分支；同平台多个达人类型已合并在同一 requirement 中，不创建子需求。
+3. **分支路由**：询价机构将 requirement ID 作为 `search_creators.id`；成功后包括 0 命中都不保存、不展示 `creators_export_path`，直接调用 `rank_mcns`。直接手扒不调用 `search_creators` 或 `rank_mcns`，立即进入字段选择。
+4. **机构排序并保存排名表**：将同一个 requirement ID 作为 `rank_mcns.id`，并传当前平台。成功后先按响应顺序输出全部 MCN，不得只说“已完成”或只列部分机构；若 Hook 给出 `SAVE_EXCEL_ARTIFACT_ARGS`，立即逐字调用 `ypscan_save_excel_artifact` 保存 MCN 排名表，不得展示下载链接或使用其他下载方式。
+5. **保存后的机构选择**：MCN 排名表保存成功后，先展示 `delivery.local_file_link`，再逐字调用 `delivery.next_args` 选择询价收件机构。不得再次询问业务模式。MCN 为空时如实说明询价分支无法继续，不得自动切换到直接手扒。
 
 “先输出”只指已经发出的用户可见 assistant 文本块；工具结果里的表头、directive、思考过程都不算，AskUserQuestion 返回后补写的表格或本地路径也不满足。AskUserQuestion 不得成为 rank_mcns 后的第一个 assistant block。
 
@@ -43,21 +45,25 @@ MCN 表格按当前响应顺序从 1 开始连续编号；每行覆盖达人只�
 
 同一平台明确要求多个达人类型但只给总量时，保留一个 requirement，传入原始总量并合并所有类型标签和条件；不得拆分子需求、重复落库或重复搜索，也不得询问每类人数。
 
-rank_mcns 后的首个弹窗只问分支，不承载机构表格或本地路径。用户选择“询价机构”只表示进入询价分支，不代表已指定收件机构；必须随后逐字调用该轮 `rank_mcns` 指令中的 `INQUIRY_RECIPIENT_SELECTION_ARGS`，让用户从真实 MCN 中选择至少一家（可多选），收到机构选择答案后第一个业务动作必须调用 `select_inquiry_form_fields`，使用本轮 requirement ID。候选机构超过 4 家时使用提示型弹窗，完整名单复用弹窗前已展示的 MCN 表格，不在 `question` 中重复；选项固定为“询价全部机构”和“暂不询价”。用户选择“询价全部机构”表示选择全部当前机构；自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时表示只选择这些机构。空输入、未知机构、无法解析或存在歧义时，不得调用 `select_inquiry_form_fields`，应重新调用本提示或结束本轮，不得把机构名全部放入 options。不得按排名、覆盖达人、返点、综合分或推荐顺序自行挑选机构；未选中机构时不得调用 `select_inquiry_form_fields` 或 `create_with_distributions`。
+rank_mcns 后的弹窗只选择收件机构，不承载机构表格、本地路径或业务模式。候选机构超过 4 家时使用提示型弹窗，完整名单复用弹窗前已展示的 MCN 表格；选项固定为“询价全部机构”和“暂不询价”。用户选择“询价全部机构”表示选择全部当前机构；自定义输入必须解析为当前机构的唯一编号或完整名称。未有效选中机构时不得调用 `select_inquiry_form_fields` 或 `create_with_distributions`。
 
 正常成功交付可以直接结束，不额外弹“完成确认”。`create_with_distributions` 是外部发送副作用：用户选择询价机构并完成字段选择后，先撰写最终消息，再用 `AskUserQuestion` 完整展示机构名称列表和企微消息，选项固定为“确认发送”和“返回修改”。只有用户选择“确认发送”后才调用一次；其他答案、关闭、取消或无答案均不发送。Provider 继续负责发送去重与幂等。
 
-## 人工拓展：默认后端手扒
+## 直接手扒：后端 API
 
-用户在 MCN 表格和排名表本地文件链接后的弹窗选择“人工拓展并提报”后，先判断当前对话是否已有同一 requirement ID 的字段选择链接和用户明确回复提交完成的证据。有证据时直接复用 Provider 按 requirement ID 持久化的字段并调用 [manual_source_creators](references/tools/manual_source_creators.md)，不得再次调用 `select_inquiry_form_fields`；没有证据时才调用 `select_inquiry_form_fields`，原样展示字段选择 URL，等待用户在页面提交字段并回复“好了”后再调用 `manual_source_creators`。调用默认手扒前先读取 `manual_source_creators` 的实际 input schema：如果存在明确用于需求原文的可选字段，优先传当前完整、未改写的用户原始需求文本；只传原文，不传解析输出或 `rawMessagesJson`。schema 不支持该字段时只传 requirement ID 和 `size`；若仅因未知可选字段被拒绝，去掉原文字段用相同 requirement ID 和 `size` 重试一次，否则按原业务错误处理。不得猜字段名。由后端全自动完成手扒；若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`，再按工具结果指令进入字段选择。提交成功只返回任务 `batch_id`，不含 Excel：立即用同一 requirement ID 和 `batch_id` 调用 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 轮询，间隔 30 秒、单轮最多 10 次，期间不调用 `AskUserQuestion`、不重新提交 `manual_source_creators`；第 10 次仍是 `BATCH_NOT_READY` 就停止并如实报告尚未完成，保留同一参数供后续继续。轮询成功返回 Excel 后立即用 `ypscan_save_excel_artifact(artifact_kind=manual_source)` 保存并展示返回的 `delivery.local_file_link`；保存成功前不得启动额外流程。
+用户选择“直接手扒”后，需求落库成功立即调用 `select_inquiry_form_fields`，展示 URL 并等待用户提交。随后调用 [manual_source_creators](references/tools/manual_source_creators.md)，由后端 API 完成平台达人搜索、详情抓取和筛选。提交成功后用同一 requirement ID 和 `batch_id` 调用 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 轮询，间隔 30 秒、单轮最多 10 次。成功 Excel 是筛选后的达人详情列表：保存并展示后立即用同一 requirement ID 调用 `rank_creators`，随后 `create_submission_batch` 生成并保存提报表；不得把详情 Excel 当作最终提报表。
 
-用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”或“手捞筛选”时同样适用上述默认 MCP 链路和同一 requirement ID 的字段复用规则。
+用户只说“手扒”“手动拓展”“人工拓展”“直接手扒”或“手捞筛选”时，一律进入上述直接手扒分支，不创建并行流程。
 
-默认 Excel 保存成功后，直接向用户展示真实本地 Excel 作为人工拓展交付，不再提供浏览器详细手扒分支。
+不再提供浏览器详细手扒分支。
+
+## 需求变更
+
+提报表生成后，只要用户修改需求，无论一个或多个条件，都必须按最新完整原始需求重新调用 `ypscan_parse_requirement`（`business_mode` 仍为原模式）、创建新的 requirement，并从原来选择的业务模式重新执行。不得复用旧 requirement、机构、询价、达人、batch 或 Excel。
 
 ## Provider 后续
 
-用户选择“询价机构”后，先让其在当前真实 MCN 中明确选中收件机构；分支选择本身不是机构提名或发送授权。收到收件机构答案后，第一个业务动作必须按本轮 requirement ID 调用 `select_inquiry_form_fields`，随后原样展示 URL；用户提交并回复“好了”后，按固定模板生成 `description` 与 `wechat_notification_message`。调用发送工具前必须用 `AskUserQuestion` 在 `question` 中完整展示最终机构名称列表和完整企微消息，选项固定为“确认发送”和“返回修改”；只有确认后才调用一次 `create_with_distributions`。`supplierIds` 和 `supplier_name` 始终传数组，空侧传 `[]`，至少一侧非空。对每个用户选中名称，先查找本轮同一 requirement ID、同一平台的 `rank_mcns.data.mcns`；唯一精确匹配且有 `supplier_id` 时只放入 `supplierIds`，否则把原名放入 `supplier_name`。不做模糊匹配或跨需求复用 ID；Provider 负责名称匹配、合并去重和发送幂等。若 Provider 返回“只有进行中的项目才能创建供应商分发”，只调用一次 `get_workflow_state` 诊断，不自动重发。企微发送成功后选择继续人工拓展时调用 `manual_source_creators`，不直接启动 Browser。
+用户选择“询价机构”后，先让其在当前真实 MCN 中明确选中收件机构；分支选择本身不是机构提名或发送授权。收到收件机构答案后，第一个业务动作必须按本轮 requirement ID 调用 `select_inquiry_form_fields`，随后原样展示 URL；用户提交并回复“好了”后，按固定模板生成 `description` 与 `wechat_notification_message`。调用发送工具前必须用 `AskUserQuestion` 在 `question` 中完整展示最终机构名称列表和完整企微消息，选项固定为“确认发送”和“返回修改”；只有确认后才调用一次 `create_with_distributions`。`supplierIds` 和 `supplier_name` 始终传数组，空侧传 `[]`，至少一侧非空。对每个用户选中名称，先查找本轮同一 requirement ID、同一平台的 `rank_mcns.data.mcns`；唯一精确匹配且有 `supplier_id` 时只放入 `supplierIds`，否则把原名放入 `supplier_name`。不做模糊匹配或跨需求复用 ID；Provider 负责名称匹配、合并去重和发送幂等。若 Provider 返回“只有进行中的项目才能创建供应商分发”，只调用一次 `get_workflow_state` 诊断，不自动重发。企微发送成功后等待用户随时回收，不切换到直接手扒分支。
 
 机构回填取回固定执行 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators`。`ingest_mcn_submissions` 成功只表示异步任务已创建：复制其真实 `job_id` 调用 `get_ingest_job`，不得把 ingest 响应当作最终 Excel。若查询尚未成功或未返回完整 Excel，使用同一个 `job_id` 继续调用 `get_ingest_job`，不重新 ingest、不更换或猜测 ID，也不询问用户；单轮最多查询 10 次。只有 `get_ingest_job` 成功返回本轮真实 Excel 后才保存并继续精排。
 

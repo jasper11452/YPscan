@@ -15,7 +15,7 @@ import { hostToolResult } from "./tool-result.js";
 import { nonemptyString } from "../util/value.js";
 import { excelArtifactTestDownloadUrl } from "./test-adapter.js";
 import {
-  mcnRankingBranchQuestionPayload,
+  mcnRankingRecipientQuestionPayload,
   submissionEnrichmentQuestionPayload,
 } from "./post-save-questions.js";
 
@@ -63,13 +63,12 @@ function failure(code, message, reason = code, {
   return hostToolResult(payload, { details: payload.error.details });
 }
 
-function followUpDelivery(artifactKind, mcnCount) {
-  if (artifactKind === "mcn_ranking" && Number.isSafeInteger(mcnCount) && mcnCount >= 0) {
+function followUpDelivery(artifactKind, mcnNames) {
+  if (artifactKind === "mcn_ranking" && Array.isArray(mcnNames) && mcnNames.length > 0) {
     return {
       next_tool: "AskUserQuestion",
-      next_args: mcnRankingBranchQuestionPayload(mcnCount === 0),
-      next_action:
-        "MCN 排名表已保存；展示本地文件链接后立即按 next_args 询问询价、人工拓展或结束",
+      next_args: mcnRankingRecipientQuestionPayload(mcnNames),
+      next_action: "MCN 排名表已保存；展示本地文件链接后按 next_args 选择询价收件机构",
     };
   }
   if (artifactKind === "submission_batch") {
@@ -82,7 +81,7 @@ function followUpDelivery(artifactKind, mcnCount) {
   return {};
 }
 
-function success(details, artifactKind, mcnCount) {
+function success(details, artifactKind, mcnNames) {
   const localFileLink = localFileMarkdownLink(details.file_path);
   const delivery = {
     local_path: details.file_path,
@@ -90,7 +89,7 @@ function success(details, artifactKind, mcnCount) {
     display_required: true,
     display_before_next_action: true,
     user_visible_message: `已完成：Excel 已保存到本地。\n本地文件：${localFileLink}`,
-    ...followUpDelivery(artifactKind, mcnCount),
+    ...followUpDelivery(artifactKind, mcnNames),
   };
   return hostToolResult(
     { success: true, data: details, delivery },
@@ -493,7 +492,7 @@ export async function saveExcelArtifact(params, {
       idempotent: published.idempotent,
       download_attempts: downloaded.attempts,
     };
-    return success(details, artifactKind, params?.mcn_count);
+    return success(details, artifactKind, params?.mcn_names);
   } catch {
     return failure(
       "YPSCAN_EXCEL_SAVE_FAILED",

@@ -2,7 +2,7 @@
   "id": "ypscan",
   "name": "悦普识星",
   "version": "0.1.24-beta90",
-  "description": "悦普识星客户端集成层：固定 Provider 首发链路，默认手扒由后端自动完成并直接交付。",
+  "description": "悦普识星客户端集成层：业务模式前置，支持机构询价与后台直接手扒双分支。",
   "author": {
     "name": "Jasper"
   },

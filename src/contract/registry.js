@@ -8,6 +8,8 @@ const MAX_FOLLOWER_COUNT = 999_999_999;
 
 export const UNRESTRICTED_FOLLOWERCOUNT_RANGE = `[0,${MAX_FOLLOWER_COUNT}]`;
 
+export const BUSINESS_MODE_VALUES = Object.freeze(["询价机构", "直接手扒"]);
+
 export const HOST_PREFIX = "mcp__ypscan__";
 export const HOST_PREFIXES = Object.freeze([
   HOST_PREFIX,
@@ -1156,6 +1158,10 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
       Array.isArray(rawRecord.parse_outputs)
     ) {
       add("rawMessagesJson", "必须包含非空 original 和本次契约内 parse_outputs 对象");
+    }
+    const businessMode = rawRecord.business_mode;
+    if (typeof businessMode !== "string" || !BUSINESS_MODE_VALUES.includes(businessMode)) {
+      add("business_mode", '必须是解析前用户选择的 "询价机构" 或 "直接手扒"');
     }
   }
 

@@ -25,6 +25,7 @@ function completeValidateParams() {
       original:
         "抖音项目：项目A；品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；科技耳机方向。",
       parse_outputs: { dybrandName: ["品牌A"] },
+      business_mode: "询价机构",
     },
     contentThemeLabel: ["科技数码"],
     growTalentTypeLabel: ["成熟达人"],
@@ -53,6 +54,25 @@ test("validate_requirement drops non-positive or malformed quantityTotal values"
   );
   assert.equal(normalizeToolCallParams("validate_requirement", { quantityTotal: 1 }).quantityTotal, "1");
   assert.equal(normalizeToolCallParams("validate_requirement", { quantityTotal: "10" }).quantityTotal, "10");
+});
+
+test("validate_requirement preflight requires the pre-selected business mode", () => {
+  const missing = completeValidateParams();
+  missing.rawMessagesJson = {
+    original: missing.rawMessagesJson.original,
+    parse_outputs: missing.rawMessagesJson.parse_outputs,
+  };
+  assert.equal(
+    validateRequirementPreflight(missing).some((issue) => issue.field === "business_mode"),
+    true,
+  );
+
+  const invalid = completeValidateParams();
+  invalid.rawMessagesJson = { ...invalid.rawMessagesJson, business_mode: "人工拓展" };
+  assert.equal(
+    validateRequirementPreflight(invalid).some((issue) => issue.field === "business_mode"),
+    true,
+  );
 });
 
 test("missingRequiredValidateParams still reports quantityTotal when normalization drops an invalid value", () => {
@@ -97,6 +117,7 @@ test("validate_requirement canonicalizes numeric fields once before the Provider
     original:
       "抖音项目：项目A；品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；科技耳机方向。",
     parse_outputs: { dybrandName: ["品牌A"] },
+    business_mode: "询价机构",
   });
 });
 
@@ -329,6 +350,7 @@ test("Dify-parsed followercount and price do not require extra user evidence", (
         kolOfficialPriceL3: "[35000,50000]",
       },
       clarifications: { brandName: "千问" },
+      business_mode: "询价机构",
     },
   };
 
@@ -352,6 +374,7 @@ test("preflight accepts a unique Dify price without 单价 wording", () => {
         dybrandName: ["品牌A"],
         kolOfficialPriceL3: "[35000,50000]",
       },
+      business_mode: "询价机构",
     },
   };
 
@@ -565,6 +588,7 @@ test("preflight still requires brand and deadline when Dify did not parse them",
         followercount: [0, 999999999],
         dy_kolOfficialPrice: { kolOfficialPriceL3: "50000" },
       },
+      business_mode: "询价机构",
     },
   };
 
@@ -884,6 +908,7 @@ test("preflight does not treat empty clarification keys as user evidence", () =>
         quantityTotal: null,
         submissionDeadlineAt: {},
       },
+      business_mode: "询价机构",
     },
   };
 
@@ -1224,6 +1249,7 @@ test("preflight rejects unsupported Xiaohongshu L3 numeric tiers", () => {
       original:
         "小红书项目：项目A；品牌：品牌A；30位；视频单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00。",
       parse_outputs: { xhsbrandName: ["品牌A"] },
+      business_mode: "询价机构",
     },
     contentFeatureLabel: ["真实测评"],
     growBloggerTypeLabel: ["成熟博主"],

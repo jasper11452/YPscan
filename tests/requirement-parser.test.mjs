@@ -43,6 +43,25 @@ test("validate_requirement card forbids same-platform child allocation", () => {
   assert.doesNotMatch(card, /same-platform multi-type allocation/iu);
   assert.doesNotMatch(card, /remaining child calls.*same-platform type allocation/iu);
   assert.match(card, /keep one requirement with the original total/u);
+  assert.match(card, /for `询价机构`.*search_creators/iu);
+  assert.match(card, /for `直接手扒`.*select_inquiry_form_fields/iu);
+  assert.match(card, /Execute only the previously selected branch/u);
+  assert.doesNotMatch(card, /normal new-requirement flow.*immediately call `search_creators`/iu);
+});
+
+test("save artifact card binds manual_source saves to the requirement ID", () => {
+  const card = projectFile("skills/media-assistant/references/tools/ypscan_save_excel_artifact.md");
+
+  assert.match(card, /`manual_source_creators_status`/iu);
+  assert.doesNotMatch(
+    card,
+    /`get_ingest_job`, or `manual_source_creators` returns a Provider Excel/iu,
+  );
+  assert.match(card, /`manual_source`.*requirement ID/iu);
+  assert.match(
+    card,
+    /`artifact_id`.*`manual_source`.*requirement ID/isu,
+  );
 });
 
 test("parser card keeps required contentTag distinct from optional labels", () => {
@@ -59,8 +78,15 @@ test("parser card keeps required contentTag distinct from optional labels", () =
 });
 
 test("parser publishes only the single-platform workflow input", () => {
-  assert.deepEqual(PARSE_REQUIREMENT_PARAMETERS.required, ["demand"]);
-  assert.deepEqual(Object.keys(PARSE_REQUIREMENT_PARAMETERS.properties), ["demand"]);
+  assert.deepEqual(PARSE_REQUIREMENT_PARAMETERS.required, ["demand", "business_mode"]);
+  assert.deepEqual(Object.keys(PARSE_REQUIREMENT_PARAMETERS.properties), [
+    "demand",
+    "business_mode",
+  ]);
+  assert.deepEqual(PARSE_REQUIREMENT_PARAMETERS.properties.business_mode.enum, [
+    "询价机构",
+    "直接手扒",
+  ]);
   assert.equal(PARSE_REQUIREMENT_PARAMETERS.additionalProperties, false);
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /用户原始表述/u);
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /禁止回填历史解析输出/u);
@@ -130,7 +156,7 @@ test("parser calls the workflow in blocking mode and returns only contracted out
     },
   });
 
-  const result = await parser({ demand: "  小红书护肤需求  " });
+  const result = await parser({ demand: "  小红书护肤需求  ", business_mode: "询价机构" });
   const parsed = payload(result);
 
   assert.equal(captured.url, DIFY_WORKFLOW_URL);
@@ -170,7 +196,7 @@ test("parser preserves every output field declared by the independent spec", asy
       }),
   });
 
-  const parsed = payload(await parser({ demand: "抖音需求" }));
+  const parsed = payload(await parser({ demand: "抖音需求", business_mode: "直接手扒" }));
   assert.deepEqual(parsed.data.outputs, expected);
 });
 
@@ -181,8 +207,28 @@ test("missing parser-owned fields remain missing inside the compact outputs obje
       response({ data: { id: "data-run-1", status: "succeeded", outputs: { brandName: null } } }),
   });
 
-  const parsed = payload(await parser({ demand: "抖音需求" }));
+  const parsed = payload(await parser({ demand: "抖音需求", business_mode: "直接手扒" }));
   assert.deepEqual(parsed.data.outputs, { brandName: null });
+});
+
+test("parser requires the pre-selected business mode before calling the workflow", async () => {
+  let called = false;
+  const parser = createRequirementParser({
+    apiKey: "test-key",
+    fetchImpl: async () => {
+      called = true;
+      return response({ data: { status: "succeeded", outputs: {} } });
+    },
+  });
+
+  const missing = await parser({ demand: "抖音需求" });
+  assert.equal(called, false);
+  assert.equal(missing.isError, true);
+  assert.equal(payload(missing).error.code, "INVALID_BUSINESS_MODE");
+
+  const invalid = await parser({ demand: "抖音需求", business_mode: "人工拓展" });
+  assert.equal(payload(invalid).error.code, "INVALID_BUSINESS_MODE");
+  assert.equal(called, false);
 });
 
 test("invalid demand fails without calling the workflow", async () => {
@@ -250,7 +296,7 @@ test("workflow transport and response failures keep distinct error codes", async
   for (const item of cases) {
     await t.test(item.name, async () => {
       const parser = createRequirementParser({ apiKey: "test-key", fetchImpl: item.fetchImpl });
-      const result = await parser({ demand: "测试需求" });
+      const result = await parser({ demand: "测试需求", business_mode: "询价机构" });
       assert.equal(result.isError, true);
       assert.equal(payload(result).error.code, item.code);
     });

@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { saveExcelArtifact } from "../src/tools/save-excel-artifact.js";
 import {
-  mcnRankingBranchQuestionPayload,
+  mcnRankingRecipientQuestionPayload,
   submissionEnrichmentQuestionPayload,
 } from "../src/tools/post-save-questions.js";
 
@@ -58,19 +58,23 @@ test("only Provider submission save offers enrichment", async (t) => {
     workspaceDir,
     "mcn_ranking",
     "mcn-ranking.xlsx",
-    { mcn_count: 2 },
+    { mcn_names: ["机构 A", "机构 B"] },
   )).content[0].text);
   assert.equal(mcnRanking.success, true);
   assert.equal(mcnRanking.delivery.next_tool, "AskUserQuestion");
-  assert.deepEqual(mcnRanking.delivery.next_args, mcnRankingBranchQuestionPayload(false));
+  assert.deepEqual(
+    mcnRanking.delivery.next_args,
+    mcnRankingRecipientQuestionPayload(["机构 A", "机构 B"]),
+  );
+  assert.equal(mcnRanking.delivery.next_args.questions[0].multiSelect, true);
 
   const emptyMcnRanking = JSON.parse((await saveFixture(
     workspaceDir,
     "mcn_ranking",
     "empty-mcn-ranking.xlsx",
-    { mcn_count: 0 },
+    { mcn_names: [] },
   )).content[0].text);
-  assert.deepEqual(emptyMcnRanking.delivery.next_args, mcnRankingBranchQuestionPayload(true));
+  assert.equal(emptyMcnRanking.delivery.next_args, undefined);
 
   const mcnPreview = JSON.parse((await saveFixture(
     workspaceDir,

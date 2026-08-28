@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { isRecord, nonemptyString } from "../util/value.js";
+import { BUSINESS_MODE_VALUES } from "../contract/registry.js";
 import { hostToolResult } from "./tool-result.js";
 
 export const DIFY_WORKFLOW_URL = "https://dfi.eshypdata.com/v1/workflows/run";
@@ -63,13 +64,19 @@ export const DIFY_REQUIREMENT_OUTPUT_FIELDS = Object.freeze([
 export const PARSE_REQUIREMENT_PARAMETERS = Object.freeze({
   type: "object",
   additionalProperties: false,
-  required: ["demand"],
+  required: ["demand", "business_mode"],
   properties: {
     demand: {
       type: "string",
       minLength: 1,
       description:
         "当前单个平台的完整最新用户需求原文；首次解析必传，用户一次修改涉及两个及以上条件时只合并用户原始表述和后续改口后重传，禁止回填历史解析输出或 Provider 归一化值",
+    },
+    business_mode: {
+      type: "string",
+      enum: [...BUSINESS_MODE_VALUES],
+      description:
+        "解析前用户通过 AskUserQuestion 选择的业务模式；必须与弹窗答案一致，整个流程保持不变",
     },
   },
 });
@@ -145,10 +152,17 @@ export function createRequirementParser({
   fetchImpl = globalThis.fetch,
   timeoutMs = 60_000,
 } = {}) {
-  /** @param {{ demand?: string }} [params] */
+  /** @param {{ demand?: string, business_mode?: string }} [params] */
   return async function parseRequirement(params = {}) {
     const demand = typeof params.demand === "string" ? params.demand.trim() : "";
     if (!demand) return failure("INVALID_INPUT", "demand 必须是非空的单平台需求文本");
+    const businessMode = params.business_mode;
+    if (typeof businessMode !== "string" || !BUSINESS_MODE_VALUES.includes(businessMode)) {
+      return failure(
+        "INVALID_BUSINESS_MODE",
+        'business_mode 必须是解析前用户选择的 "询价机构" 或 "直接手扒"',
+      );
+    }
     if (!nonemptyString(apiKey)) {
       return failure("DIFY_API_KEY_MISSING", "需求解析 Workflow 凭据不可用");
     }
