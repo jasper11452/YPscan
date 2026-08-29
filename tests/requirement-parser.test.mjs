@@ -75,6 +75,8 @@ test("parser card keeps required contentTag distinct from optional labels", () =
   assert.doesNotMatch(card, /任何标签（八个 Label 和 `contentTag`）不得触发弹窗/u);
   assert.match(validateCard, /contentTag.*non-empty string array/iu);
   assert.doesNotMatch(validateCard, /Parsed Label arrays and `contentTag`.*omit any label/iu);
+  assert.match(card, /用户主动修改任何业务条件.*重新解析/isu);
+  assert.doesNotMatch(card, /单条件修改|只修改一个条件.*直接更新/isu);
 });
 
 test("parser publishes only the single-platform workflow input", () => {
@@ -88,8 +90,15 @@ test("parser publishes only the single-platform workflow input", () => {
     "直接手扒",
   ]);
   assert.equal(PARSE_REQUIREMENT_PARAMETERS.additionalProperties, false);
+  assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /任何业务条件/u);
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /用户原始表述/u);
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /禁止回填历史解析输出/u);
+  assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.business_mode.description, /用户明确表达/u);
+  assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.business_mode.description, /未明确.*AskUserQuestion/u);
+  assert.doesNotMatch(
+    PARSE_REQUIREMENT_PARAMETERS.properties.business_mode.description,
+    /必须与弹窗答案一致/u,
+  );
 
   assert.deepEqual(PARSE_REQUIREMENT_OUTPUT_SCHEMA.properties.data.required, ["outputs"]);
   assert.equal(
@@ -211,7 +220,7 @@ test("missing parser-owned fields remain missing inside the compact outputs obje
   assert.deepEqual(parsed.data.outputs, { brandName: null });
 });
 
-test("parser requires the pre-selected business mode before calling the workflow", async () => {
+test("parser requires a valid current business mode before calling the workflow", async () => {
   let called = false;
   const parser = createRequirementParser({
     apiKey: "test-key",

@@ -245,7 +245,8 @@ function requirementParseSuccessDirective(message, params = {}) {
   const { resolved, missing } = classifyDifyOutputs(parseOutputsFromMessage(message));
   const mode = businessModeFromParams(params);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=需求解析成功。data.outputs 仅包含当前 Provider 契约消费的 Workflow 字段。按当前平台和字段名结构化展开、补齐必填项后调用 validate_requirement；不得调用 Browser、search_creators 或直接结束。",
+    "YPSCAN_FLOW_DIRECTIVE=需求解析成功。data.outputs 仅包含当前 Provider 契约消费的 Workflow 字段。下一步必须先复核，不得直接调用 Browser、search_creators 或结束。",
+    "YPSCAN_NEXT_ACTION=REVIEW_REQUIREMENT",
     `DIFY_RESOLVED_FIELDS=${resolved.join(",")}`,
     `DIFY_MISSING_FIELDS=${missing.join(",")}`,
     ...(mode
@@ -255,7 +256,8 @@ function requirementParseSuccessDirective(message, params = {}) {
         ]
       : []),
     "DIFY_RESOLVED_FIELDS 中的唯一值直接采用；DIFY_MISSING_FIELDS 与非解析必填项按启动规则收集确认。八个可选 Label 有则原样保留、无则省略；contentTag 缺失时按下方规则重新解析。不要把解析输出整体塞入 Provider 参数。",
-    REQUIREMENT_COMPLETENESS_RULE,
+    "YPSCAN_POLICY=按 media-assistant Skill 的“解析后、落库前必须复核”执行；复核通过后才调用 validate_requirement。",
+    "复核时必须确认 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount、contentTag 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3，小红书不使用 L3。缺失或有歧义时按 Skill 一次性询问；contentTag 必须来自解析结果，缺失时重新解析。",
   ].join("\n");
 }
 
@@ -345,10 +347,16 @@ function rankMcnsDirective(message, params = {}) {
     "MCN_OUTPUT_FORMAT_LOCK=用户可见结果只能是五列：排名、机构、覆盖达人、返点、综合分；排名从 1 连续编号，覆盖达人取当前机构的 candidate_count。禁止展示 supplier_id、其他字段、汇总或历史数据。",
     MCN_MARKDOWN_TABLE_HEADER,
     "机构名转 supplier ID 只允许使用本轮同一 requirement_id、同一平台响应中的唯一精确匹配；命中非空 ID 只传 supplierIds，否则传原始名称 supplier_name。不得模糊匹配、跨轮复用或自动选机构。",
-    ...(empty
-      ? [MCN_MARKDOWN_EMPTY_ROW, "当前没有可选机构，询价分支无法继续；不得自动切换业务模式。"]
-      : []),
   ];
+  if (empty) {
+    return [
+      ...lines,
+      MCN_MARKDOWN_EMPTY_ROW,
+      "YPSCAN_NEXT_ACTION=REVIEW_BEFORE_RELAXATION",
+      "YPSCAN_POLICY=按 media-assistant Skill 的“结果不足：先复核，再放宽”执行。",
+      "当前没有可选机构；不得保存空排名表、猜测机构、切换模式或未经复核就放宽。",
+    ].join("\n");
+  }
   if (excelFileUrl && artifactId) {
     lines.push(
       "完整表格输出后立即使用下面参数保存；保存成功前不得展示本地路径、调用 AskUserQuestion 或展示 Provider 下载 URL。保存结果指令中的 ASK_USER_QUESTION_ARGS 就是收件机构选择弹窗，保存成功后逐字调用，不得重复弹窗。",
@@ -359,7 +367,7 @@ function rankMcnsDirective(message, params = {}) {
         mcn_names: recipientNames,
       })}`,
     );
-  } else if (artifactId && !empty && recipientNames.length > 0) {
+  } else if (artifactId && recipientNames.length > 0) {
     lines.push(
       "当前结果无法保存 MCN 排名表；表格后如实说明，再调用 ASK_USER_QUESTION_ARGS 选择收件机构。收到机构选择答案后，第一个动作必须调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得按排名或指标自行选择，也不得提前调用字段选择或发送工具。",
       `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify({ requirement_id: artifactId })}`,
@@ -473,7 +481,7 @@ function manualSourceCreatorsStatusDirective(message, params = {}) {
   if (result?.error?.code === "BATCH_NOT_READY") {
     if (batchId == null || !requirementId) return flowPauseDirective("默认手扒结果查询", message);
     return [
-      `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY）。继续使用同一 ID 轮询；${MANUAL_SOURCE_POLL_RULE}；第 10 次仍未完成则如实报告。`,
+      `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY）。继续使用同一 ID 轮询；${MANUAL_SOURCE_POLL_RULE}；由当前对话累计查询次数，第 10 次仍未完成时按 media-assistant Skill 询问“继续查询/暂时结束”，不得自动开始第 11 次。`,
       `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify({ requirement_id: requirementId, batch_id: batchId })}`,
     ].join("\n");
   }
@@ -614,7 +622,7 @@ function getIngestJobDirective(message, params = {}) {
   }
   if (jobId != null) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 尚未完成。继续使用同一 job_id 轮询，不调用 AskUserQuestion、不重新入库、不更换 job_id；单轮最多 10 次。",
+      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 尚未完成。继续使用同一 job_id 轮询，不重新入库、不更换 job_id；由当前对话累计查询次数，单轮最多 10 次，第 10 次仍未完成时按 media-assistant Skill 询问“继续查询/暂时结束”，不得自动开始第 11 次。",
       `GET_INGEST_JOB_ARGS=${JSON.stringify({ job_id: jobId })}`,
     ].join("\n");
   }
@@ -625,23 +633,26 @@ function rankCreatorsDirective(message, params = {}) {
   const result = parsedToolResult(message);
   if (result?.success !== true) return flowPauseDirective("rank_creators", message);
   const rankedCount = Number(result?.data?.ranked_count);
-  if (Number.isFinite(rankedCount) && rankedCount <= 0) {
-    return [
-      "YPSCAN_FLOW_DIRECTIVE=rank_creators 结果为空；不得调用 create_submission_batch 生成空提报表，如实说明没有可提报达人。",
-    ].join("\n");
-  }
   const requirementId = firstString(
     params?.requirement_id,
     result?.data?.requirement_id,
     result?.requirement_id,
   );
+  if (Number.isFinite(rankedCount) && rankedCount <= 0) {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=rank_creators 结果为空；不得调用 create_submission_batch 生成空提报表。",
+      "YPSCAN_NEXT_ACTION=APPLY_CURRENT_MODE_RANK_POLICY",
+      ...(requirementId ? [`RANK_REQUIREMENT_ID=${requirementId}`] : []),
+      "询价机构模式：如实说明本轮没有可交付达人并结束，不自动放宽或重新询价。直接手扒模式：按 media-assistant Skill 先复核，确认正确后才逐项放宽。",
+    ].join("\n");
+  }
   if (!requirementId) return flowPauseDirective("rank_creators", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=rank_creators 精排成功。立即调用 create_submission_batch 生成第 1 页，不要提问或重新 rank_mcns。",
-    `CREATE_SUBMISSION_BATCH_ARGS=${JSON.stringify({
-      requirement_id: requirementId,
-      submission_batche_page: 1,
-    })}`,
+    "YPSCAN_FLOW_DIRECTIVE=rank_creators 已返回真实达人。按当前 requirement 原业务模式处理，不依赖临时模式缓存。",
+    "YPSCAN_NEXT_ACTION=APPLY_CURRENT_MODE_RANK_POLICY",
+    `RANKED_COUNT=${Number.isFinite(rankedCount) ? rankedCount : "unknown"}`,
+    `RANK_REQUIREMENT_ID=${requirementId}`,
+    "询价机构模式：生成当前提报表，数量不足时说明实际数量和缺口，不自动放宽或重新询价。直接手扒模式：先与当前 quantityTotal 比较，足量才生成提报表；不足时先复核，禁止直接放宽或生成不足数量的提报表。需要生成时调用 create_submission_batch，使用本行 RANK_REQUIREMENT_ID 且 submission_batche_page=1。",
   ].join("\n");
 }
 
@@ -898,7 +909,7 @@ export function registerFlowDirectiveHooks(api) {
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          `首次媒介助手业务动作必须逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}。用户回答前不得调用 ypscan_parse_requirement、validate_requirement 或任何 Provider 业务工具；选择后将该模式作为 ypscan_parse_requirement 的 business_mode 参数解析并落库，validate_requirement 的 rawMessagesJson.business_mode 必须使用同一值；整个流程保留该模式且不得再次询问。询价机构链路：ypscan_parse_requirement → validate_requirement → search_creators → rank_mcns → MCN 排名表 → 选择收件机构 → 选择字段 → 发送前确认 → create_with_distributions → 回收 → rank_creators → create_submission_batch。直接手扒链路：ypscan_parse_requirement → validate_requirement → select_inquiry_form_fields → 用户提交字段 → manual_source_creators → manual_source_creators_status → 保存并展示达人详情列表 → rank_creators → create_submission_batch。禁止交叉执行两个分支。需求 ID 始终优先取 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。询价发送前必须完整展示机构列表和完整企微消息，选项固定为“确认发送”和“返回修改”，仅“确认发送”可调用一次 create_with_distributions；supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。回收固定执行 sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → ypscan_save_excel_artifact(mcn_creator_preview) → rank_creators → create_submission_batch → ypscan_save_excel_artifact(submission_batch)。`,
+          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“直接手扒/手扒/手动拓展/人工拓展/手捞筛选”时直接使用“直接手扒”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；同一 requirement 禁止交叉分支。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送前确认→回收→rank_creators→create_submission_batch。直接手扒：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→详情表→rank_creators→create_submission_batch。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前确认必须展示完整企微消息和机构名单，并提供“确认发送/返回修改”；用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。`,
           "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手扒补量、推荐理由及其他 rank_mcns 字段或汇总。",
@@ -910,7 +921,7 @@ export function registerFlowDirectiveHooks(api) {
           INQUIRY_RECIPIENT_RESPONSE_RULE,
           `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
           "Dify 已给出的唯一数值直接采用，禁止再问；本地只做区间格式与粉丝技术上限截断。只有解析缺失、null、多候选或与用户明确改口冲突时才阻断。",
-          "需求解析分工：选择业务模式后，首次按单平台完整需求调用 ypscan_parse_requirement。提报表生成前，单条件修改可直接更新；同一次修改两个及以上条件时重建完整 demand 后重新解析。提报表生成后，只要用户修改需求，无论一个或多个条件，都必须按最新完整原始需求重新调用 ypscan_parse_requirement、创建新的 requirement，并从所选原业务模式起点重新执行；不得复用旧 requirement、机构、询价、达人、batch 或 Excel。解析结果中的标签、contentTag、品牌和数值仍按现有可信值与缺失值规则处理。",
+          "需求解析复核、结果不足后的二次复核与逐项放宽、用户修改需求后的重建规则，统一按 media-assistant Skill 执行；Hook 只提供当前工具结果和下一步动态参数。",
           "人工拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
           PARSED_METRIC_REUSE_RULE,
           SINGLE_REQUIREMENT_TYPE_RULE,
@@ -960,7 +971,8 @@ export function registerFlowDirectiveHooks(api) {
     (event) => {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
       const params = paramsFromEvent(event);
-      if (stripHostPrefix(toolName.toLowerCase()) === "validate_requirement") {
+      const bare = stripHostPrefix(toolName.toLowerCase());
+      if (bare === "validate_requirement") {
         const result = parsedToolResult(event?.message);
         const requirementId =
           result?.success === true

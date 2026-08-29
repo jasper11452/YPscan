@@ -6,7 +6,7 @@ This is the institutional inquiry creation entry point.
 
 ## When to call
 
-Call once after the user has chosen the inquiry branch, field selection has been submitted, recipients and the complete message are available, and the user has approved the final preview. Immediately before the call, use `AskUserQuestion`: its `question` must show the final institution-name list and the complete `wechat_notification_message`, with options `确认发送` and `返回修改`. Only `确认发送` authorizes this one call; closing, cancelling, missing an answer, or choosing `返回修改` does not.
+Call once after the user has chosen the inquiry branch, field selection has been submitted, recipients and the complete message are available, and the user has approved the final preview. Immediately before the call, show the final institution-name list and complete `wechat_notification_message` with `AskUserQuestion` options `确认发送` and `返回修改`. A selected `确认发送`, or an unambiguous unconditional reply such as `可以发`, `发吧`, `按这个发`, or `就这样发送` after that preview, authorizes this one call. Closing, cancelling, missing an answer, requesting a change, negating the send, or giving only a conditional approval does not.
 
 ## Recipient and field preparation
 

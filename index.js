@@ -20,7 +20,7 @@ export default {
     api.registerTool({
       name: "ypscan_parse_requirement",
       description:
-        "解析当前单个平台的完整最新需求。必须携带解析前用户选择的 business_mode（询价机构/直接手扒），与弹窗答案一致。成功时 data.outputs 仅返回当前 Provider 契约消费的标签、品牌、粉丝/返点和报价/CPM/CPE 字段；未命中字段省略。所有合法标签数组原样采用，null 或缺失时直接省略，包括 pgyBloggerTypeLabel/xtTalentTypeLabel；不得询问、映射或推断标签。唯一合法品牌和数值候选直接采用，缺失、多候选或冲突时才询问。抖音指标按 L2=植入视频、L3=定制视频路由，不使用 L1。首次需求必调；提报表生成前单条件修改直接更新、两个及以上条件修改时重建需求再调用；提报表生成后任何需求修改都必须按最新完整原文重新解析。",
+        "解析当前单个平台的完整最新需求。business_mode 来自用户明确表达，未明确或语义冲突时通过模式选择确定。data.outputs 只返回当前 Provider 契约消费的标签、品牌、粉丝/返点和报价/CPM/CPE 字段；未命中字段省略。具体复核、缺失值处理、需求修改和自动放宽规则统一按 media-assistant Skill 执行。",
       parameters: PARSE_REQUIREMENT_PARAMETERS,
       outputSchema: PARSE_REQUIREMENT_OUTPUT_SCHEMA,
       async execute(_id, params) {

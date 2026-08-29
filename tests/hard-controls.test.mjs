@@ -93,8 +93,9 @@ test("validated requirements route by the previously selected business mode", ()
     }),
   });
   const parseText = directiveText(parse);
-  assert.match(parseText, /按当前平台和字段名结构化展开、补齐必填项后调用 validate_requirement/u);
-  assert.match(parseText, /不得调用 Browser/u);
+  assert.match(parseText, /YPSCAN_NEXT_ACTION=REVIEW_REQUIREMENT/u);
+  assert.match(parseText, /media-assistant Skill.*解析后、落库前必须复核/u);
+  assert.match(parseText, /不得直接调用 Browser/u);
   assert.match(parseText, /data\.outputs 仅包含当前 Provider 契约消费的 Workflow 字段/u);
   assert.match(parseText, /DIFY_RESOLVED_FIELDS=brandName,followercount,rebate,kolOfficialPrice/u);
   assert.match(parseText, /DIFY_MISSING_FIELDS=cpm,cpe/u);
@@ -379,7 +380,9 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   );
   assert.match(pendingText, /BATCH_NOT_READY/u);
   assert.match(pendingText, /轮询间隔 30 秒，单轮最多查询 10 次/u);
-  assert.match(pendingText, /第 10 次仍未完成则如实报告/u);
+  assert.match(pendingText, /当前对话累计查询次数/u);
+  assert.match(pendingText, /第 10 次仍未完成.*继续查询\/暂时结束/u);
+  assert.doesNotMatch(pendingText, /POLL_LIMIT_QUESTION_ARGS=/u);
   assert.doesNotMatch(pendingText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
   assert.doesNotMatch(pendingText, /ASK_USER_QUESTION_ARGS=/u);
 
@@ -580,10 +583,11 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
     params: { requirement_id: "req-ingest" },
     message: toolMessage({ success: true, data: { ranked_count: 8 } }),
   });
-  assert.deepEqual(namedArgsFromDirective(directiveText(ranked), "CREATE_SUBMISSION_BATCH_ARGS"), {
-    requirement_id: "req-ingest",
-    submission_batche_page: 1,
-  });
+  const rankedText = directiveText(ranked);
+  assert.match(rankedText, /YPSCAN_NEXT_ACTION=APPLY_CURRENT_MODE_RANK_POLICY/u);
+  assert.match(rankedText, /RANK_REQUIREMENT_ID=req-ingest/u);
+  assert.match(rankedText, /询价机构模式：生成当前提报表/u);
+  assert.doesNotMatch(rankedText, /^CREATE_SUBMISSION_BATCH_ARGS=/mu);
 
   const submission = persist({
     toolName: "test__create_submission_batch",
@@ -646,8 +650,38 @@ test("successful WeCom distribution waits for inquiry retrieval without switchin
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
+test("rank result follows the current conversation mode after transient state resets", () => {
+  const hooks = new Map();
+  const transientState = registerFlowDirectiveHooks({
+    on(name, handler) {
+      hooks.set(name, handler);
+    },
+  });
+  const persist = hooks.get("tool_result_persist");
+  persist({
+    toolName: "validate_requirement",
+    params: validateParamsWithMode("直接手扒"),
+    message: toolMessage({ success: true, data: { requirement_id: "req-after-reset" } }),
+  });
+  transientState.resetTransientState();
 
-test("empty rank result ends the inquiry branch without switching modes", () => {
+  const ranked = persist({
+    toolName: "rank_creators",
+    params: { requirement_id: "req-after-reset" },
+    message: toolMessage({ success: true, data: { ranked_count: 8 } }),
+  });
+  const text = directiveText(ranked);
+  assert.match(text, /YPSCAN_NEXT_ACTION=APPLY_CURRENT_MODE_RANK_POLICY/u);
+  assert.match(text, /RANKED_COUNT=8/u);
+  assert.match(text, /RANK_REQUIREMENT_ID=req-after-reset/u);
+  assert.match(text, /询价机构模式：生成当前提报表/u);
+  assert.match(text, /直接手扒模式：先与当前 quantityTotal 比较/u);
+  assert.match(text, /不足时先复核/u);
+  assert.doesNotMatch(text, /CREATE_SUBMISSION_BATCH_ARGS=|IF_SUFFICIENT/u);
+});
+
+
+test("empty rank result reviews the requirement before relaxation", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "rank_mcns",
@@ -660,7 +694,9 @@ test("empty rank result ends the inquiry branch without switching modes", () => 
   assert.match(text, /\| 排名 \| 机构 \| 覆盖达人 \| 返点 \| 综合分 \|/u);
   assert.match(text, /\| — \| 暂无匹配机构 \| — \| — \| — \|/u);
   assert.match(text, /当前已处于询价机构分支/u);
-  assert.match(text, /询价分支无法继续/u);
+  assert.match(text, /YPSCAN_NEXT_ACTION=REVIEW_BEFORE_RELAXATION/u);
+  assert.match(text, /media-assistant Skill.*结果不足：先复核，再放宽/u);
+  assert.match(text, /不得保存空排名表/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
@@ -686,6 +722,7 @@ test("parse directives preserve compact dynamic field summaries", () => {
   assert.match(text, /唯一值直接采用/u);
   assert.match(text, /八个可选 Label 有则原样保留、无则省略/u);
   assert.match(text, /contentTag 缺失.*重新解析/u);
+  assert.match(text, /YPSCAN_NEXT_ACTION=REVIEW_REQUIREMENT/u);
   assert.ok(text.length < 800, `parse directive too long: ${text.length}`);
   assert.doesNotMatch(text, /PARSER_OWNED_LOGICAL_FIELDS=|VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
@@ -728,7 +765,7 @@ test("parse and startup directives enumerate required business values before val
   assert.match(parseText, /contentTag.*解析结果.*重新解析/u);
   assert.match(parseText, /抖音仅使用 L2\/L3.*小红书不使用 L3/u);
   assert.doesNotMatch(parseText, /至少一个当前平台 kolOfficialPriceL1\/L2\/L3/u);
-  assert.match(parseText, /这些业务值缺失.*AskUserQuestion/u);
+  assert.match(parseText, /缺失或有歧义.*按 Skill 一次性询问/u);
 
   const startup = registeredHooks().get("before_prompt_build")({}, { runId: "required-fields" });
   assert.match(
@@ -803,15 +840,14 @@ test("startup instruction selects and preserves one business mode", () => {
   const context = { runId: "startup-run" };
   const first = hooks.get("before_prompt_build")({}, context);
 
-  assert.match(
-    first.prependContext,
-    /首次媒介助手业务动作必须逐字调用 BUSINESS_MODE_QUESTION_ARGS/u,
-  );
-  assert.match(first.prependContext, /用户回答前不得调用 ypscan_parse_requirement/u);
-  assert.match(first.prependContext, /business_mode 参数解析并落库/u);
-  assert.match(first.prependContext, /询价机构链路：ypscan_parse_requirement → validate_requirement → search_creators/u);
-  assert.match(first.prependContext, /直接手扒链路：ypscan_parse_requirement → validate_requirement → select_inquiry_form_fields/u);
-  assert.match(first.prependContext, /禁止交叉执行两个分支/u);
+  assert.match(first.prependContext, /用户明确说.*询价机构.*直接使用/u);
+  assert.match(first.prependContext, /明确说.*直接手扒.*直接使用/u);
+  assert.match(first.prependContext, /未明确、同时出现两种模式或语义冲突/u);
+  assert.match(first.prependContext, /BUSINESS_MODE_QUESTION_ARGS=/u);
+  assert.match(first.prependContext, /回答前不得解析或落库/u);
+  assert.match(first.prependContext, /同一 requirement 禁止交叉分支/u);
+  assert.match(first.prependContext, /询价链路：解析→复核→validate_requirement/u);
+  assert.match(first.prependContext, /直接手扒：解析→复核→validate_requirement/u);
   assert.match(first.prependContext, /rank_mcns 成功后先输出完整五列表格/u);
   assert.match(first.prependContext, /保存 MCN 排名表/u);
   assert.match(first.prependContext, /MCN 用户可见输出格式锁/u);
@@ -848,14 +884,14 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /禁止通过 Provider 报错逐字段、逐类型试探/u);
   assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
   assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);
-  assert.match(first.prependContext, /提报表生成前，单条件修改可直接更新/u);
-  assert.match(first.prependContext, /提报表生成后，只要用户修改需求/u);
-  assert.match(first.prependContext, /创建新的 requirement，并从所选原业务模式起点重新执行/u);
-  assert.match(first.prependContext, /不得复用旧 requirement、机构、询价、达人、batch 或 Excel/u);
+  assert.doesNotMatch(first.prependContext, /单条件修改可直接更新/u);
+  assert.match(first.prependContext, /需求解析复核、结果不足后的二次复核与逐项放宽/u);
+  assert.match(first.prependContext, /用户修改需求后的重建规则.*media-assistant Skill/u);
   assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
   assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
+  assert.match(first.prependContext, /明确无条件回复“可以发\/发吧\/按这个发\/就这样发送”/u);
 
   assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
 });

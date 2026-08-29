@@ -1,11 +1,11 @@
 # YPscan Client Integration Layer
 
-悦普识星是一个 OpenClaw 客户端集成层：通过 SSE 调用 Provider。所有达人筛选先选择业务模式，再解析并落库：
+悦普识星是一个 OpenClaw 客户端集成层：通过 SSE 调用 Provider。用户明确表达业务模式时直接采用，未明确或语义冲突时再询问；确定模式后解析、复核并落库：
 
 - 询价机构：`选择模式 → 解析落库 → search_creators → rank_mcns → 选择机构和字段 → 企微询价 → 回收 → rank_creators → 提报表`
 - 直接手扒：`选择模式 → 解析落库 → 选择字段 → manual_source_creators → 详情列表 → rank_creators → 提报表`
 
-直接手扒由后端 `manual_source_creators` 完成 API 搜索、详情抓取和筛选，再用 `manual_source_creators_status` 轮询详情 Excel。详情列表保存并展示后继续 `rank_creators` 和 `create_submission_batch`，最终交付提报表。提报表生成后的任何需求修改都会重新解析并从原业务模式重新执行。
+直接手扒由后端 `manual_source_creators` 完成 API 搜索、详情抓取和筛选，再用 `manual_source_creators_status` 轮询详情 Excel。详情列表保存并展示后继续 `rank_creators` 和 `create_submission_batch`，最终交付提报表。用户主动修改任何业务条件时，都会从用户原始需求合并最新人工修改、撤销自动放宽、重新解析和复核，并从原业务模式重新执行。
 
 ## 当前组成
 

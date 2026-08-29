@@ -70,13 +70,13 @@ export const PARSE_REQUIREMENT_PARAMETERS = Object.freeze({
       type: "string",
       minLength: 1,
       description:
-        "当前单个平台的完整最新用户需求原文；首次解析必传，用户一次修改涉及两个及以上条件时只合并用户原始表述和后续改口后重传，禁止回填历史解析输出或 Provider 归一化值",
+        "当前单个平台的完整最新用户需求原文；首次解析及用户主动修改任何业务条件后都必传，重传时只合并用户原始表述和后续人工改口，禁止回填历史解析输出、自动放宽值或 Provider 归一化值",
     },
     business_mode: {
       type: "string",
       enum: [...BUSINESS_MODE_VALUES],
       description:
-        "解析前用户通过 AskUserQuestion 选择的业务模式；必须与弹窗答案一致，整个流程保持不变",
+        "用户明确表达的业务模式；未明确或语义冲突时通过 AskUserQuestion 选择，整个 requirement 保持不变",
     },
   },
 });
@@ -160,7 +160,7 @@ export function createRequirementParser({
     if (typeof businessMode !== "string" || !BUSINESS_MODE_VALUES.includes(businessMode)) {
       return failure(
         "INVALID_BUSINESS_MODE",
-        'business_mode 必须是解析前用户选择的 "询价机构" 或 "直接手扒"',
+        'business_mode 必须是用户明确表达或通过模式选择确定的 "询价机构" 或 "直接手扒"',
       );
     }
     if (!nonemptyString(apiKey)) {
