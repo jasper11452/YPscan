@@ -5,6 +5,7 @@ import { registerFlowDirectiveHooks } from "../src/hooks/register-flow-directive
 import {
   MAX_POPUP_LINE_LENGTH,
   mcnRankingRecipientQuestionPayload,
+  popupQuestionPayload,
 } from "../src/tools/post-save-questions.js";
 
 function registeredHooks() {
@@ -629,6 +630,26 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
   });
 });
 
+test("submission batch save falls back to a top-level requirement_id", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "test__create_submission_batch",
+    params: { submission_batche_page: 1 },
+    message: toolMessage({
+      success: true,
+      requirement_id: "req-top-level",
+      batch_id: 202,
+      excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+    }),
+  });
+  assert.deepEqual(saveExcelArgsFromDirective(directiveText(result)), {
+    artifact_kind: "submission_batch",
+    artifact_id: "202",
+    excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+    requirement_id: "req-top-level",
+  });
+});
+
 test("submission enrichment choice maps directly to get_creator_detail", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const saved = persist({
@@ -875,6 +896,39 @@ test("long institution names wrap without changing their matching identity", () 
   assert.match(wrappedName, /\n/u);
   assert.equal(popupPlainText(wrappedName), originalName);
   assertPopupLines(payload);
+});
+
+test("popup text prefers semantic breaks and keeps ASCII tokens intact", () => {
+  const question = "进入 followercount 前必须检查品牌和数量，缺失时通过 AskUserQuestion 收集。";
+  const description = "立即调用 get_creator_detail 异步补全当前批次，不再选择字段或追问";
+  const payload = popupQuestionPayload("标题", question, [{ label: "选项", description }]);
+  assertPopupLines(payload);
+
+  const questionLines = payload.questions[0].question.split("\n");
+  assert.equal(popupPlainText(payload.questions[0].question), question);
+  assert.ok(
+    questionLines.some((line) => line.startsWith("前必须检查品牌和数量，")),
+    "breaks after the clause punctuation",
+  );
+
+  const descriptionLines = payload.questions[0].options[0].description.split("\n");
+  assert.equal(popupPlainText(payload.questions[0].options[0].description), description);
+  assert.equal(descriptionLines[1].trim(), "get_creator_detail");
+  for (const line of [...questionLines, ...descriptionLines]) {
+    assert.ok(!/^[，。！？；：、]/u.test(line), "no punctuation stranded at line start");
+  }
+});
+
+test("popup text hard-splits an overlong ASCII token without losing characters", () => {
+  const token = "get_creator_detail_export_v2";
+  const payload = popupQuestionPayload("标题", "请选择工具。", [
+    { label: token, description: "选项说明" },
+  ]);
+  const wrappedLabel = payload.questions[0].options[0].label;
+
+  assertPopupLines(payload);
+  assert.match(wrappedLabel, /\n/u);
+  assert.equal(popupPlainText(wrappedLabel), token);
 });
 
 test("startup instruction selects and preserves one business mode", () => {

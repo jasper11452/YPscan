@@ -661,7 +661,11 @@ function submissionBatchDirective(message, params = {}) {
   const artifactId = Number.isSafeInteger(rawBatchId) && rawBatchId > 0
     ? String(rawBatchId)
     : firstString(rawBatchId, params?.requirement_id);
-  const requirementId = firstString(params?.requirement_id, result?.data?.requirement_id);
+  const requirementId = firstString(
+    params?.requirement_id,
+    result?.data?.requirement_id,
+    result?.requirement_id,
+  );
   if (!excelFileUrl || !artifactId) return flowPauseDirective("提报表生成", message);
   return [
     "YPSCAN_FLOW_DIRECTIVE=create_submission_batch 已生成提报表。立即保存，不展示 Provider 下载 URL。",

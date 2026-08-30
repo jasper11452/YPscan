@@ -1,21 +1,62 @@
 export const MAX_POPUP_LINE_LENGTH = 20;
 
+const POPUP_BREAK_AFTER = /[。！？；：，、…～）】》」』\s]/u;
+
+function isAsciiWordCharacter(character) {
+  return character.length === 1 && /[A-Za-z0-9_]/u.test(character);
+}
+
 /**
- * Keep every visible popup line within the host dialog width.
+ * Wrap one logical line into lines of at most MAX_POPUP_LINE_LENGTH
+ * characters, preferring semantic break points: after punctuation or
+ * whitespace, then at ASCII word boundaries, and only hard-splitting
+ * when none exist.
+ * @param {string} line
+ */
+function wrapSemanticLine(line) {
+  const characters = [...line];
+  if (characters.length === 0) return [""];
+  const lines = [];
+  let start = 0;
+  while (characters.length - start > MAX_POPUP_LINE_LENGTH) {
+    const windowEnd = start + MAX_POPUP_LINE_LENGTH;
+    let breakAt = -1;
+    let priority = 0;
+    for (let index = windowEnd; index > start; index -= 1) {
+      let score = 0;
+      if (POPUP_BREAK_AFTER.test(characters[index - 1])) score = 3;
+      else if (
+        isAsciiWordCharacter(characters[index - 1]) !==
+        isAsciiWordCharacter(characters[index])
+      ) score = 2;
+      else if (
+        !(
+          isAsciiWordCharacter(characters[index - 1]) &&
+          isAsciiWordCharacter(characters[index])
+        )
+      ) score = 1;
+      if (score > priority) {
+        priority = score;
+        breakAt = index;
+      }
+    }
+    if (breakAt < 0) breakAt = windowEnd;
+    lines.push(characters.slice(start, breakAt).join(""));
+    start = breakAt;
+  }
+  lines.push(characters.slice(start).join(""));
+  return lines;
+}
+
+/**
+ * Keep every visible popup line within the host dialog width, breaking at
+ * semantic positions where possible.
  * @param {string} value
  */
 export function wrapPopupText(value) {
   return String(value)
     .split("\n")
-    .flatMap((line) => {
-      const characters = [...line];
-      if (characters.length === 0) return [""];
-      const chunks = [];
-      for (let index = 0; index < characters.length; index += MAX_POPUP_LINE_LENGTH) {
-        chunks.push(characters.slice(index, index + MAX_POPUP_LINE_LENGTH).join(""));
-      }
-      return chunks;
-    })
+    .flatMap(wrapSemanticLine)
     .join("\n");
 }
 
