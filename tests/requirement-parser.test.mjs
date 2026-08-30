@@ -43,9 +43,9 @@ test("validate_requirement card forbids same-platform child allocation", () => {
   assert.doesNotMatch(card, /same-platform multi-type allocation/iu);
   assert.doesNotMatch(card, /remaining child calls.*same-platform type allocation/iu);
   assert.match(card, /keep one requirement with the original total/u);
-  assert.match(card, /for `询价机构`.*search_creators/iu);
-  assert.match(card, /for `直接手扒`.*select_inquiry_form_fields/iu);
-  assert.match(card, /Execute only the previously selected branch/u);
+  assert.match(card, /initial `询价机构` function.*search_creators/iu);
+  assert.match(card, /initial `直接手扒` function.*select_inquiry_form_fields/iu);
+  assert.match(card, /unchanged requirement may be reused for the other function/iu);
   assert.doesNotMatch(card, /normal new-requirement flow.*immediately call `search_creators`/iu);
 });
 
@@ -62,6 +62,15 @@ test("save artifact card binds manual_source saves to the requirement ID", () =>
     card,
     /`artifact_id`.*`manual_source`.*requirement ID/isu,
   );
+  assert.match(card, /`requirement_id`.*`submission_batch`/isu);
+});
+
+test("creator enrichment card requires the current requirement association", () => {
+  const card = projectFile("skills/media-assistant/references/tools/get_creator_detail.md");
+
+  assert.match(card, /exact string `requirement_id`/iu);
+  assert.match(card, /exact positive integer `batch_id`/iu);
+  assert.doesNotMatch(card, /Do not pass.*`requirement_id`/iu);
 });
 
 test("parser card keeps required contentTag distinct from optional labels", () => {

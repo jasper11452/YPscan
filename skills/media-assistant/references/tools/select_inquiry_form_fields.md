@@ -4,7 +4,7 @@ Risk tier: internal preparation. This Provider MCP tool creates a field-selectio
 
 ## When to call
 
-Call when the current institutional inquiry or submission request needs a persisted field configuration. Resolve recipients before asking the user to select fields: choosing the “询价机构” branch alone does not nominate a recipient, so first ask the user to select one or more real current MCNs. Never infer recipients from rank, coverage, rebate, score, or recommendation order. These Provider fields apply to the institutional inquiry/export path; the native Browser path reads the platform's own visible/exported fields and does not accept or generate a project-side column template.
+Call when the current requirement needs a persisted field configuration. If the same conversation already records that the user submitted the field page for this exact requirement, reuse that Provider-persisted configuration and do not call this tool again. For institutional inquiry, resolve recipients before asking the user to select fields: choosing the “询价机构” function alone does not nominate a recipient, so first ask the user to select one or more real current MCNs. Never infer recipients from rank, coverage, rebate, score, or recommendation order.
 
 ## Call
 
@@ -21,6 +21,7 @@ Do not add local-only correlation fields or substitute `runId`, `sessionKey`, in
 - Extract the real non-empty `url` from the response. When the Provider returns `success=false` with exact message `浏览器打开请求未成功` but the selection URL is valid, treat only the automatic-open action as failed and continue with the generated link.
 - Output the unchanged selection URL once on its own line. Do not wrap it in Markdown, rewrite it, open it with Browser, or select fields for the user.
 - Submission on the selection page persists the chosen fields in the Provider database under that requirement ID. `get_selected_inquiry_form_fields` is deprecated: never call it or poll a callback.
+- Reuse is based only on visible same-conversation evidence that this exact requirement's field page was submitted. Do not create a local cache or query/rebuild `columns`.
 
 ## Result
 

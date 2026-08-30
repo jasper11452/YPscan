@@ -63,7 +63,7 @@ function failure(code, message, reason = code, {
   return hostToolResult(payload, { details: payload.error.details });
 }
 
-function followUpDelivery(artifactKind, mcnNames) {
+function followUpDelivery(artifactKind, mcnNames, requirementId, artifactId) {
   if (artifactKind === "mcn_ranking" && Array.isArray(mcnNames) && mcnNames.length > 0) {
     return {
       next_tool: "AskUserQuestion",
@@ -71,7 +71,14 @@ function followUpDelivery(artifactKind, mcnNames) {
       next_action: "MCN 排名表已保存；展示本地文件链接后按 next_args 选择询价收件机构",
     };
   }
-  if (artifactKind === "submission_batch") {
+  if (
+    artifactKind === "submission_batch" &&
+    nonemptyString(requirementId) &&
+    nonemptyString(artifactId) &&
+    /^\d+$/u.test(artifactId.trim()) &&
+    Number.isSafeInteger(Number(artifactId)) &&
+    Number(artifactId) > 0
+  ) {
     return {
       next_tool: "AskUserQuestion",
       next_args: submissionEnrichmentQuestionPayload(),
@@ -81,7 +88,7 @@ function followUpDelivery(artifactKind, mcnNames) {
   return {};
 }
 
-function success(details, artifactKind, mcnNames) {
+function success(details, artifactKind, mcnNames, requirementId, artifactId) {
   const localFileLink = localFileMarkdownLink(details.file_path);
   const delivery = {
     local_path: details.file_path,
@@ -89,7 +96,7 @@ function success(details, artifactKind, mcnNames) {
     display_required: true,
     display_before_next_action: true,
     user_visible_message: `已完成：Excel 已保存到本地。\n本地文件：${localFileLink}`,
-    ...followUpDelivery(artifactKind, mcnNames),
+    ...followUpDelivery(artifactKind, mcnNames, requirementId, artifactId),
   };
   return hostToolResult(
     { success: true, data: details, delivery },
@@ -492,7 +499,13 @@ export async function saveExcelArtifact(params, {
       idempotent: published.idempotent,
       download_attempts: downloaded.attempts,
     };
-    return success(details, artifactKind, params?.mcn_names);
+    return success(
+      details,
+      artifactKind,
+      params?.mcn_names,
+      params?.requirement_id,
+      artifactId,
+    );
   } catch {
     return failure(
       "YPSCAN_EXCEL_SAVE_FAILED",

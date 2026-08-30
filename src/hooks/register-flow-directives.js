@@ -9,6 +9,7 @@ import {
 import {
   businessModeQuestionPayload,
   mcnRankingRecipientQuestionPayload,
+  popupQuestionPayload,
 } from "../tools/post-save-questions.js";
 import { localFileMarkdownLink } from "../tools/save-excel-artifact.js";
 
@@ -24,19 +25,14 @@ const PARSED_METRIC_REUSE_RULE =
 const REQUIREMENT_COMPLETENESS_RULE =
   "进入 validate_requirement 前必须检查 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3 且必须匹配视频类型，小红书不使用 L3。这些业务值缺失、无效或需要选择时，必须在调用前一次性通过 AskUserQuestion 收集，禁止默认补值。contentTag 必须是解析结果中的非空数组；缺失或无效时重新解析，禁止向用户询问或自行补值；本规则覆盖任何“contentTag 缺失时直接省略”的旧指令。status=ready、projectName 和 rawMessagesJson（当前原文+parse_outputs）由 Agent 构造。";
 const INQUIRY_RECIPIENT_RESPONSE_RULE =
-  "机构选择仅在用户选中弹窗中的一个或多个当前机构、选择“询价全部机构”，或自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立；选择“询价全部机构”表示选择全部当前机构。空输入、未知机构、无法解析或存在歧义时，不得调用 select_inquiry_form_fields，应重新调用本提示或结束本轮。";
+  "机构选择仅在用户选中弹窗中的一个或多个当前机构、选择“询价全部机构”，或自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立；弹窗机构标签中的换行仅用于展示，匹配前必须移除换行并还原完整机构名；选择“询价全部机构”表示选择全部当前机构。空输入、未知机构、无法解析或存在歧义时，不得继续询价，应重新调用本提示或结束本轮。";
+const REQUIREMENT_REUSE_RULE =
+  "同一会话、同一平台的最近成功 requirement 在业务条件未变时可于前一功能完成或明确停止后复用于另一功能；功能切换本身不算需求修改，不重新解析或 validate。已提交过字段配置时继续复用，否则才调用 select_inquiry_form_fields。不得并行执行两个功能，也不得复用旧机构、达人、batch 或 Excel。用户修改任何业务条件时仍必须重新解析、复核并创建新 requirement。";
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。轮询间隔 30 秒，单轮最多查询 10 次";
 
-const [BUSINESS_MODE_INQUIRY, BUSINESS_MODE_MANUAL] = BUSINESS_MODE_VALUES;
-const TOOL_BUSINESS_MODES = new Map([
-  ["search_creators", BUSINESS_MODE_INQUIRY],
-  ["rank_mcns", BUSINESS_MODE_INQUIRY],
-  ["create_with_distributions", BUSINESS_MODE_INQUIRY],
-  ["manual_source_creators", BUSINESS_MODE_MANUAL],
-  ["manual_source_creators_status", BUSINESS_MODE_MANUAL],
-]);
+const [BUSINESS_MODE_INQUIRY] = BUSINESS_MODE_VALUES;
 
 function businessModeFromParams(params) {
   const direct = params?.business_mode;
@@ -127,19 +123,13 @@ function parsedToolResult(message) {
   return null;
 }
 
-function askQuestion(header, question, options, multiSelect = false) {
-  return {
-    questions: [{ header, question, options, multiSelect }],
-  };
-}
-
 function flowPauseDirective(stage, message) {
   const result = parsedToolResult(message);
   const code = nonemptyString(result?.error?.code) ? result.error.code : "结果未能继续";
   return [
     `YPSCAN_FLOW_DIRECTIVE=${stage} 已暂停（${code}）。使用下方 AskUserQuestion 选择重试或结束。`,
     `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-      askQuestion("悦普识星下一步", `${stage} 无法自动继续，请选择下一步。`, [
+      popupQuestionPayload("悦普识星下一步", `${stage} 无法自动继续，请选择下一步。`, [
         { label: "重试", description: "按当前参数重试" },
         { label: "结束本次", description: "保留结果并结束" },
       ]),
@@ -354,7 +344,7 @@ function rankMcnsDirective(message, params = {}) {
       MCN_MARKDOWN_EMPTY_ROW,
       "YPSCAN_NEXT_ACTION=REVIEW_BEFORE_RELAXATION",
       "YPSCAN_POLICY=按 media-assistant Skill 的“结果不足：先复核，再放宽”执行。",
-      "当前没有可选机构；不得保存空排名表、猜测机构、切换模式或未经复核就放宽。",
+      "当前没有可选机构；不得保存空排名表、猜测机构、自动切换功能或未经复核就放宽。",
     ].join("\n");
   }
   if (excelFileUrl && artifactId) {
@@ -369,14 +359,14 @@ function rankMcnsDirective(message, params = {}) {
     );
   } else if (artifactId && recipientNames.length > 0) {
     lines.push(
-      "当前结果无法保存 MCN 排名表；表格后如实说明，再调用 ASK_USER_QUESTION_ARGS 选择收件机构。收到机构选择答案后，第一个动作必须调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得按排名或指标自行选择，也不得提前调用字段选择或发送工具。",
+      "当前结果无法保存 MCN 排名表；表格后如实说明，再调用 ASK_USER_QUESTION_ARGS 选择收件机构。收到机构选择答案后，若当前对话中同一 requirement_id 已提交字段配置则复用，否则调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得查询、缓存或重建 columns，也不得按排名或指标自行选择。",
       `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify({ requirement_id: artifactId })}`,
       INQUIRY_RECIPIENT_RESPONSE_RULE,
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(mcnRankingRecipientQuestionPayload(recipientNames))}`,
     );
   } else {
     lines.push(
-      "当前结果无法保存 MCN 排名表，也缺少进入收件机构选择的条件；表格后如实说明并结束本轮询价，不得猜测 requirement ID 或切换业务模式。",
+      "当前结果无法保存 MCN 排名表，也缺少进入收件机构选择的条件；表格后如实说明并结束本轮询价，不得猜测 requirement ID 或自动切换功能。",
     );
   }
   return lines.join("\n");
@@ -427,6 +417,13 @@ function manualSourceBatchId(result) {
   return undefined;
 }
 
+function positiveInteger(value) {
+  if (Number.isSafeInteger(value) && value > 0) return value;
+  if (!nonemptyString(value) || !/^\d+$/u.test(value.trim())) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function manualSourceCreatorsDirective(message, params = {}) {
   const result = parsedToolResult(message);
   if (result?.success !== true) {
@@ -470,7 +467,7 @@ function manualSourceCreatorsStatusDirective(message, params = {}) {
     const artifactId = requirementId;
     if (!artifactId) return flowPauseDirective("默认手扒结果查询", message);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。该 Excel 是后台 API 搜索、详情抓取和筛选后的达人详情列表；立即保存且不展示 Provider 下载 URL，保存后继续精排和生成提报表。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。该 Excel 是后台 API 搜索、详情抓取和筛选后的最终手扒结果；立即保存且不展示 Provider 下载 URL，保存后原样交付并结束本次手扒，不调用 rank_creators 或 create_submission_batch。",
       `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_source",
         artifact_id: artifactId,
@@ -587,7 +584,7 @@ function ingestSubmissionsDirective(message) {
     return [
       "YPSCAN_FLOW_DIRECTIVE=ingest_mcn_submissions 成功但缺少可信 job_id，无法查询异步入库结果。不得把本次响应当成最终 Excel、编造任务 ID 或跳过预览表直接精排。",
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-        askQuestion("异步入库任务", "机构入库请求已返回，但缺少任务 ID，请选择下一步。", [
+        popupQuestionPayload("异步入库任务", "机构入库请求已返回，但缺少任务 ID，请选择下一步。", [
           { label: "重试", description: "使用本轮 inquiry_ids 重新发起入库" },
           { label: "结束本次", description: "停止本次机构提报取回" },
         ]),
@@ -641,18 +638,18 @@ function rankCreatorsDirective(message, params = {}) {
   if (Number.isFinite(rankedCount) && rankedCount <= 0) {
     return [
       "YPSCAN_FLOW_DIRECTIVE=rank_creators 结果为空；不得调用 create_submission_batch 生成空提报表。",
-      "YPSCAN_NEXT_ACTION=APPLY_CURRENT_MODE_RANK_POLICY",
+      "YPSCAN_NEXT_ACTION=APPLY_INQUIRY_RANK_POLICY",
       ...(requirementId ? [`RANK_REQUIREMENT_ID=${requirementId}`] : []),
-      "询价机构模式：如实说明本轮没有可交付达人并结束，不自动放宽或重新询价。直接手扒模式：按 media-assistant Skill 先复核，确认正确后才逐项放宽。",
+      "机构询价回收：如实说明本轮没有可交付达人并结束，不自动放宽或重新询价。直接手扒完成后不得调用本工具。",
     ].join("\n");
   }
   if (!requirementId) return flowPauseDirective("rank_creators", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=rank_creators 已返回真实达人。按当前 requirement 原业务模式处理，不依赖临时模式缓存。",
-    "YPSCAN_NEXT_ACTION=APPLY_CURRENT_MODE_RANK_POLICY",
+    "YPSCAN_FLOW_DIRECTIVE=rank_creators 已返回机构询价回收的真实达人。",
+    "YPSCAN_NEXT_ACTION=APPLY_INQUIRY_RANK_POLICY",
     `RANKED_COUNT=${Number.isFinite(rankedCount) ? rankedCount : "unknown"}`,
     `RANK_REQUIREMENT_ID=${requirementId}`,
-    "询价机构模式：生成当前提报表，数量不足时说明实际数量和缺口，不自动放宽或重新询价。直接手扒模式：先与当前 quantityTotal 比较，足量才生成提报表；不足时先复核，禁止直接放宽或生成不足数量的提报表。需要生成时调用 create_submission_batch，使用本行 RANK_REQUIREMENT_ID 且 submission_batche_page=1。",
+    "生成当前机构询价提报表；数量不足时说明实际数量和缺口，不自动放宽或重新询价。调用 create_submission_batch 时使用本行 RANK_REQUIREMENT_ID 且 submission_batche_page=1。直接手扒完成后不得调用本工具。",
   ].join("\n");
 }
 
@@ -660,7 +657,11 @@ function submissionBatchDirective(message, params = {}) {
   const result = parsedToolResult(message);
   if (result?.success !== true) return flowPauseDirective("提报表生成", message);
   const excelFileUrl = providerExcelUrl(result);
-  const artifactId = firstString(result?.data?.batch_id, params?.requirement_id);
+  const rawBatchId = result?.data?.batch_id ?? result?.batch_id;
+  const artifactId = Number.isSafeInteger(rawBatchId) && rawBatchId > 0
+    ? String(rawBatchId)
+    : firstString(rawBatchId, params?.requirement_id);
+  const requirementId = firstString(params?.requirement_id, result?.data?.requirement_id);
   if (!excelFileUrl || !artifactId) return flowPauseDirective("提报表生成", message);
   return [
     "YPSCAN_FLOW_DIRECTIVE=create_submission_batch 已生成提报表。立即保存，不展示 Provider 下载 URL。",
@@ -668,6 +669,7 @@ function submissionBatchDirective(message, params = {}) {
       artifact_kind: "submission_batch",
       artifact_id: String(artifactId),
       excel_file_url: excelFileUrl,
+      ...(requirementId ? { requirement_id: requirementId } : {}),
     })}`,
   ].join("\n");
 }
@@ -692,11 +694,11 @@ function excelArtifactSaveDirective(message, params = {}) {
   if (!localFileLink) return flowPauseDirective(stage, message);
   if (artifactKind === "manual_source") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=直接手扒达人详情 Excel 已保存。先原样展示本地链接作为筛选后的达人详情列表，再立即用同一 requirement_id 调用 rank_creators；不提供浏览器手扒分支。",
+      "YPSCAN_FLOW_DIRECTIVE=直接手扒 Excel 已保存。原样展示本地链接作为后台搜索、详情抓取和筛选后的最终手扒结果，然后结束本次手扒；不得调用 rank_creators、create_submission_batch 或补充达人信息弹窗。",
       `MANUAL_SOURCE_LOCAL_PATH=${filePath}`,
       `MANUAL_SOURCE_LOCAL_LINK=${localFileLink}`,
       "将 MANUAL_SOURCE_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径。",
-      `RANK_CREATORS_ARGS=${JSON.stringify({ requirement_id: params.artifact_id })}`,
+      REQUIREMENT_REUSE_RULE,
     ].join("\n");
   }
   if (artifactKind === "mcn_creator_preview") {
@@ -719,25 +721,35 @@ function excelArtifactSaveDirective(message, params = {}) {
         ? [
             `ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`,
             INQUIRY_RECIPIENT_RESPONSE_RULE,
-            "收到机构选择答案后，第一个动作必须调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得提前调用字段选择或发送工具。",
+            "收到机构选择答案后，先检查当前对话中同一 requirement_id 是否已经提交过字段配置：已提交则复用并继续发送预览，未提交才调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得查询、缓存或重建 columns。",
             `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify({ requirement_id: params.artifact_id })}`,
           ]
-        : ["当前没有可选机构；如实说明询价分支无法继续，不得切换业务模式或猜测收件机构。"]),
+        : ["当前没有可选机构；如实说明询价功能无法继续，不得自动切换功能或猜测收件机构。"]),
     ].join("\n");
   }
   if (artifactKind === "submission_batch") {
     const nextArgs = result?.delivery?.next_args;
+    const requirementId = firstString(params?.requirement_id);
+    const batchId = positiveInteger(params?.artifact_id);
+    const canEnrich = isRecord(nextArgs) && requirementId && batchId;
     return [
       "YPSCAN_FLOW_DIRECTIVE=Provider 提报表已保存。",
       `SUBMISSION_BATCH_LOCAL_PATH=${filePath}`,
       `SUBMISSION_BATCH_LOCAL_LINK=${localFileLink}`,
       "将 SUBMISSION_BATCH_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径。",
-      ...(isRecord(nextArgs)
+      ...(canEnrich
         ? [
-            "随后逐字调用 ASK_USER_QUESTION_ARGS；选择补充更新时固定调用 get_creator_detail，再轮询 get_creator_detail_export，不得改字段配置或再次追问。",
+            "随后逐字调用 ASK_USER_QUESTION_ARGS；选择补充更新时逐字使用 GET_CREATOR_DETAIL_ARGS 调用 get_creator_detail，再轮询 get_creator_detail_export，不得改字段配置或再次追问。",
             `ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`,
+            `GET_CREATOR_DETAIL_ARGS=${JSON.stringify({
+              platform: "xhs",
+              batch_id: batchId,
+              requirement_id: requirementId,
+            })}`,
           ]
-        : []),
+        : [
+            "当前提报表缺少可信的正整数 batch_id 或 requirement_id；保留并交付当前文件，不调用 get_creator_detail，也不猜测关联 ID。",
+          ]),
     ].join("\n");
   }
   return null;
@@ -749,7 +761,7 @@ function cascadeSelectionDirective(message) {
     return [
       `YPSCAN_FLOW_DIRECTIVE=级联菜单操作被${result?.error?.code ?? "登录或全局验证"}阻止。`,
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-        askQuestion("Browser 验证", "当前平台需要登录或完成全局安全验证，请处理后继续。", [
+        popupQuestionPayload("Browser 验证", "当前平台需要登录或完成全局安全验证，请处理后继续。", [
           { label: "已处理，继续", description: "重新观察页面后继续当前手扒任务" },
           { label: "结束本次", description: "保留当前 checkpoint 并结束" },
         ]),
@@ -775,7 +787,7 @@ function filterRangeDirective(message) {
     return [
       `YPSCAN_FLOW_DIRECTIVE=范围筛选操作被${result?.error?.code ?? "登录或全局验证"}阻止。`,
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-        askQuestion("Browser 验证", "当前平台需要登录或完成全局安全验证，请处理后继续。", [
+        popupQuestionPayload("Browser 验证", "当前平台需要登录或完成全局安全验证，请处理后继续。", [
           { label: "已处理，继续", description: "重新观察页面后继续当前手扒任务" },
           { label: "结束本次", description: "保留当前 checkpoint 并结束" },
         ]),
@@ -895,8 +907,6 @@ function scopeKey(event, context) {
 /** Register fixed-flow prompt and result directives. */
 export function registerFlowDirectiveHooks(api) {
   const startupScopes = new Set();
-  /** @type {Map<string, string>} */
-  const requirementModes = new Map();
 
   api.on(
     "before_prompt_build",
@@ -909,13 +919,15 @@ export function registerFlowDirectiveHooks(api) {
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“直接手扒/手扒/手动拓展/人工拓展/手捞筛选”时直接使用“直接手扒”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；同一 requirement 禁止交叉分支。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送前确认→回收→rank_creators→create_submission_batch。直接手扒：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→详情表→rank_creators→create_submission_batch。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前确认必须展示完整企微消息和机构名单，并提供“确认发送/返回修改”；用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。`,
-          "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即按当前 schema 使用本轮 batch 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
+          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“直接手扒/手扒/手动拓展/人工拓展/手捞筛选”时直接使用“直接手扒”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；business_mode 只决定首次落库后的初始功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→回收→rank_creators→create_submission_batch。直接手扒：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→保存并交付最终手扒表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前确认必须展示完整企微消息和机构名单，并提供“确认发送/返回修改”；用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。`,
+          REQUIREMENT_REUSE_RULE,
+          "所有 AskUserQuestion 弹窗的 header、question、label 和 description 均主动换行，任何一行最多 20 个 Unicode 字符；长机构名可为展示插入换行，匹配前移除换行还原原名。",
+          "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即使用本轮正整数 batch_id、同一 requirement_id 和 platform=xhs 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手扒补量、推荐理由及其他 rank_mcns 字段或汇总。",
-          "直接手扒分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成平台达人搜索、详情抓取和筛选。提交成功后用同一 requirement_id 和 batch_id 轮询 manual_source_creators_status；成功 Excel 作为筛选后的达人详情列表保存并展示，随后必须继续 rank_creators → create_submission_batch → 保存提报表，不得把详情 Excel 当作最终提报表或切换询价分支。",
+          "直接手扒分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成平台达人搜索、详情抓取和筛选。提交成功后用同一 requirement_id 和 batch_id 轮询 manual_source_creators_status；成功 Excel 保存并展示为最终手扒结果，随后结束本次手扒，不调用 rank_creators 或 create_submission_batch。",
           MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
-          "直接手扒达人详情 Excel 保存成功后原样展示 delivery.local_file_link，再用同一 requirement_id 调用 rank_creators；不再提供浏览器详细手扒分支。",
+          "直接手扒 Excel 保存成功后原样展示 delivery.local_file_link，不再提供浏览器详细手扒分支，也不追加完成弹窗。",
           "需求澄清规则：解析返回的八个可选 Label 数组是纯解析结果，有什么就原样落库什么，保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认、不询问任何标签内容；可选 Label（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。contentTag 必须是本次解析结果中的非空数组；缺失或无效时重新解析，禁止询问用户或自行补值。数值字段先采用 Dify 唯一解析值，再与最新非空 clarification 合并；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。Dify 已给出唯一 followercount、rebate、报价、CPM、CPE 时禁止再问。只有这些必填数值仍缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。当前平台 Dify 品牌候选唯一、合法且非空时必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为 null、未知等占位值时才询问。项目名由 Agent 根据当前需求自行总结生成，不弹窗确认；调用 validate_requirement 前用一句可见正文告知用户取的项目名。禁止编造标签、默认补数值或普通文本追问。解析 Workflow 唯一合法报价、CPM、CPE 候选直接复用，不因原文单值与 Provider 区间格式差异询问；同平台多个达人类型只保留一个 requirement，总量不变并合并条件，不拆分或追问每类人数。正常成功交付不追加完成弹窗。",
           REQUIREMENT_COMPLETENESS_RULE,
           INQUIRY_RECIPIENT_RESPONSE_RULE,
@@ -940,17 +952,6 @@ export function registerFlowDirectiveHooks(api) {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
       const bare = stripHostPrefix(toolName.toLowerCase());
       const params = paramsFromEvent(event);
-      const branchMode = TOOL_BUSINESS_MODES.get(bare);
-      if (branchMode) {
-        const requirementId = firstString(params?.requirement_id, params?.id);
-        const bound = requirementId ? requirementModes.get(requirementId) : undefined;
-        if (bound && bound !== branchMode) {
-          return {
-            block: true,
-            blockReason: `YPSCAN_BUSINESS_MODE_MISMATCH：requirement ${requirementId} 已选择「${bound}」模式；${bare} 属于「${branchMode}」分支，禁止交叉执行。如需更改模式，按需求变更规则重新解析并创建新 requirement。`,
-          };
-        }
-      }
       if (bare !== "validate_requirement") return undefined;
       const normalized = normalizeToolCallParams(toolName, params);
       const issues = validateRequirementPreflight(normalized);
@@ -971,18 +972,6 @@ export function registerFlowDirectiveHooks(api) {
     (event) => {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
       const params = paramsFromEvent(event);
-      const bare = stripHostPrefix(toolName.toLowerCase());
-      if (bare === "validate_requirement") {
-        const result = parsedToolResult(event?.message);
-        const requirementId =
-          result?.success === true
-            ? firstString(result?.data?.requirement_id, result?.data?.id)
-            : null;
-        if (requirementId) {
-          const mode = businessModeFromParams(params);
-          if (mode) requirementModes.set(requirementId, mode);
-        }
-      }
       return appendDirective(event?.message, flowDirective(toolName, event?.message, params));
     },
     HOOK_OPTIONS,
@@ -991,7 +980,6 @@ export function registerFlowDirectiveHooks(api) {
   return {
     resetTransientState() {
       startupScopes.clear();
-      requirementModes.clear();
     },
   };
 }

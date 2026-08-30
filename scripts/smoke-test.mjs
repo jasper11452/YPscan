@@ -74,6 +74,7 @@ try {
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_ranking"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_creator_preview"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("manual_source"));
+  assert.equal(excelSaver.parameters.properties.requirement_id.type, "string");
   assert.equal(toolNames.includes("ypscan__select_inquiry_form_fields"), false);
   assert.equal(toolNames.length, 2);
   assert.equal(toolNames.includes("ypscan_runtime_status"), false);

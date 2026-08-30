@@ -15,11 +15,13 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 - 用户明确说“直接手扒”“手扒”“手动拓展”“人工拓展”或“手捞筛选”时，直接使用 `直接手扒`。
 - 未明确模式、同时出现两种模式或语义冲突时，调用 `AskUserQuestion`，选项固定为“询价机构”和“直接手扒”。用户回答前不解析、不落库。
 
-选定后将模式传入 `ypscan_parse_requirement.business_mode`，并写入 `validate_requirement.rawMessagesJson.business_mode`。同一 requirement 不得交叉调用另一分支工具。
+选定后将模式传入 `ypscan_parse_requirement.business_mode`，并写入 `validate_requirement.rawMessagesJson.business_mode`。该模式只决定首次落库后的初始功能。
 
 询价机构：`ypscan_parse_requirement → 复核 → validate_requirement → search_creators → rank_mcns → MCN 排名表 → 选择收件机构 → 选择字段 → 发送确认 → create_with_distributions → 回收 → rank_creators → create_submission_batch`
 
-直接手扒：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators → manual_source_creators_status → 达人详情表 → rank_creators → create_submission_batch`
+直接手扒：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators → manual_source_creators_status → 保存并交付最终手扒表`
+
+同一会话、同一平台的最近成功 requirement 在业务条件未变时，可以在前一功能完成或明确停止后复用于另一功能。“改用询价机构”或“改用直接手扒”本身不算需求修改，不重新调用 `ypscan_parse_requirement` 或 `validate_requirement`；已提交过字段配置时直接复用，尚未提交时才调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。用户修改任何业务条件时仍按下文创建新 requirement。
 
 ## 解析后、落库前必须复核
 
@@ -50,7 +52,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 覆盖达人只取当前机构自己的 `candidate_count`，缺失写“未知”。不得展示 supplier ID、候选达人、供给占比、手扒补量、推荐理由、汇总字段或历史数据。
 
-排名表保存后展示 `delivery.local_file_link`，再让用户从本轮真实机构中选择收件机构。机构名只在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；不模糊匹配、不跨轮复用。选中机构后先调用 `select_inquiry_form_fields`，原样展示 URL，等待用户提交并回复“好了”。
+排名表保存后展示 `delivery.local_file_link`，再让用户从本轮真实机构中选择收件机构。机构名只在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；弹窗换行只用于展示，匹配前去掉换行还原完整名称；不模糊匹配、不跨轮复用。选中机构后，若同一 requirement 已提交字段配置则直接复用，否则调用 `select_inquiry_form_fields`，原样展示 URL，等待用户提交并回复“好了”。
 
 收到“好了”后立即恢复询价分支。发送前完整展示最终机构名单和企微消息。用户点击“确认发送”，或明确回复“可以发”“发吧”“按这个发”“就这样发送”等无条件肯定表达时，调用一次 `create_with_distributions`；否定、要求修改或带条件的表达不算确认。Provider 负责机构匹配、去重和发送幂等，插件不控制在线表格是否预填或 Provider 如何处理机构回填达人。
 
@@ -62,7 +64,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 提交成功后按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID 和 `batch_id` 轮询。每轮最多 10 次；第 10 次仍未完成时，用 `AskUserQuestion` 提供“继续查询”和“暂时结束”。继续查询仍使用同一 ID，最多再查 10 次；不得重复创建任务或猜测、更换 ID。
 
-成功 Excel 是中间达人详情表：保存并展示后继续 `rank_creators → create_submission_batch`，不得把详情表称为最终提报表。不再提供浏览器详细手扒分支。
+成功 Excel 是后台搜索、详情抓取和筛选后的最终手扒结果：保存并展示后结束本次手扒，不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。不再提供浏览器详细手扒分支。
 
 ## 结果不足：先复核，再放宽
 
@@ -71,7 +73,6 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 触发点：
 
 - 询价分支：`search_creators` 为 0 仍先执行 `rank_mcns`；只有 `rank_mcns` 为空时进入复核和放宽。
-- 直接手扒：`rank_creators` 少于用户要求数量时进入复核和放宽。
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
 
 每轮放宽前先可见地告诉用户本轮修改的唯一条件，再以“用户原始需求 + 已公开的累计放宽”重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
@@ -87,12 +88,14 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 自动放宽后的每轮结果仍不足时，再次复核本轮有效需求和实际落库参数，确认正确后才进入下一项。足量后，在结果前汇总全部放宽记录。
 
-全部允许项用完仍不足时：直接手扒有部分结果，询问“交付当前结果 / 手动修改需求 / 改用另一模式 / 结束”；完全无结果，询问“手动修改需求 / 改用另一模式 / 结束”。切换模式时撤销全部自动放宽，恢复用户原始需求，创建新 requirement。
+全部允许项用完仍无可询价机构时，询问“手动修改需求 / 改用直接手扒 / 结束”。用户只改用另一功能且业务条件未变时复用当前 requirement；用户修改业务条件时撤销全部自动放宽，恢复用户原始需求并创建新 requirement。
 
 ## 用户修改需求与最终交付
 
 用户主动修改任何业务条件时，无论是否已生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销全部自动放宽，重新解析、复核、创建新 requirement，并沿原业务模式重跑。不得复用旧 requirement、机构、询价、达人、batch 或 Excel。
 
-MCN 排名表、达人详情表和机构达人预览表都是中间产物。`create_submission_batch` 生成的提报表保存后，展示 `delivery.local_file_link`，再询问是否“补充更新达人信息”。用户选择补充时，唯一映射到 `get_creator_detail`，随后用同一 batch 轮询 `get_creator_detail_export` 并保存新版提报表；不得改成字段配置或再次追问补充什么。
+业务条件未变、只是前一功能完成或明确停止后要求另一功能时，复用同一会话中最近成功的 requirement 和已提交字段配置；不重新落库，也不把前一功能的机构、达人、batch 或 Excel 当作新功能结果。
+
+MCN 排名表和机构达人预览表是询价链路中间产物；直接手扒 Excel 是手扒最终交付。询价回收后由 `create_submission_batch` 生成的提报表保存后，展示 `delivery.local_file_link`，再询问是否“补充更新达人信息”。用户选择补充时，唯一映射到 `get_creator_detail`，传当前 requirement ID 和同一正整数 batch ID，随后用同一 batch 轮询 `get_creator_detail_export` 并保存新版提报表；不得改成字段配置或再次追问补充什么。
 
 所有结果只使用本轮真实 Provider 证据，不跨需求、平台、账号或历史 run 混用。

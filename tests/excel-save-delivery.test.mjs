@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { saveExcelArtifact } from "../src/tools/save-excel-artifact.js";
 import {
+  MAX_POPUP_LINE_LENGTH,
   mcnRankingRecipientQuestionPayload,
   submissionEnrichmentQuestionPayload,
 } from "../src/tools/post-save-questions.js";
@@ -25,6 +26,24 @@ function saveFixture(workspaceDir, artifactKind, fileName, extraParams = {}) {
   });
 }
 
+function popupPlainText(value) {
+  return value.replaceAll("\n", "");
+}
+
+function assertPopupLines(payload) {
+  for (const question of payload.questions) {
+    for (const value of [
+      question.header,
+      question.question,
+      ...question.options.flatMap((option) => [option.label, option.description]),
+    ]) {
+      for (const line of value.split("\n")) {
+        assert.ok([...line].length <= MAX_POPUP_LINE_LENGTH);
+      }
+    }
+  }
+}
+
 test("only Provider submission save offers enrichment", async (t) => {
   const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-submission-enrichment-"));
   t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
@@ -33,6 +52,7 @@ test("only Provider submission save offers enrichment", async (t) => {
     workspaceDir,
     "submission_batch",
     "initial-submission.xlsx",
+    { artifact_id: "123", requirement_id: "req-submission" },
   )).content[0].text);
   assert.equal(initial.delivery.next_tool, "AskUserQuestion");
   assert.equal(
@@ -43,8 +63,9 @@ test("only Provider submission save offers enrichment", async (t) => {
   assert.deepEqual(initial.delivery.next_args, submissionEnrichmentQuestionPayload());
   const enrichmentOption = initial.delivery.next_args.questions[0].options[0];
   assert.equal(enrichmentOption.label, "补充更新达人信息");
-  assert.match(enrichmentOption.description, /立即调用 get_creator_detail/u);
-  assert.match(enrichmentOption.description, /不再选择字段或追问/u);
+  assert.match(popupPlainText(enrichmentOption.description), /立即调用 get_creator_detail/u);
+  assert.match(popupPlainText(enrichmentOption.description), /不再选择字段或追问/u);
+  assertPopupLines(initial.delivery.next_args);
 
   const enriched = JSON.parse((await saveFixture(
     workspaceDir,
@@ -91,6 +112,30 @@ test("only Provider submission save offers enrichment", async (t) => {
   )).content[0].text);
   assert.equal(manualSource.success, true);
   assert.equal(manualSource.delivery.next_tool, undefined);
+});
+
+test("submission enrichment is omitted without a trusted requirement association", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-submission-no-requirement-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+
+  const missingRequirement = JSON.parse((await saveFixture(
+    workspaceDir,
+    "submission_batch",
+    "missing-requirement.xlsx",
+    { artifact_id: "123" },
+  )).content[0].text);
+  assert.equal(missingRequirement.success, true);
+  assert.equal(missingRequirement.delivery.next_tool, undefined);
+  assert.equal(missingRequirement.delivery.next_args, undefined);
+
+  const malformedBatch = JSON.parse((await saveFixture(
+    workspaceDir,
+    "submission_batch",
+    "malformed-batch.xlsx",
+    { artifact_id: "batch-1", requirement_id: "req-submission" },
+  )).content[0].text);
+  assert.equal(malformedBatch.success, true);
+  assert.equal(malformedBatch.delivery.next_args, undefined);
 });
 
 test("successful saves expose a clickable local file link with an encoded target", async (t) => {

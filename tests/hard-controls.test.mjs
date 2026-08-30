@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { registerFlowDirectiveHooks } from "../src/hooks/register-flow-directives.js";
-import { mcnRankingRecipientQuestionPayload } from "../src/tools/post-save-questions.js";
+import {
+  MAX_POPUP_LINE_LENGTH,
+  mcnRankingRecipientQuestionPayload,
+} from "../src/tools/post-save-questions.js";
 
 function registeredHooks() {
   const hooks = new Map();
@@ -39,6 +42,27 @@ function namedArgsFromDirective(text, name) {
   const prefix = `${name}=`;
   const line = text.split("\n").find((item) => item.startsWith(prefix));
   return JSON.parse(line.slice(prefix.length));
+}
+
+function popupPlainText(value) {
+  return value.replaceAll("\n", "");
+}
+
+function assertPopupLines(payload) {
+  for (const question of payload.questions) {
+    for (const value of [
+      question.header,
+      question.question,
+      ...question.options.flatMap((option) => [option.label, option.description]),
+    ]) {
+      for (const line of value.split("\n")) {
+        assert.ok(
+          [...line].length <= MAX_POPUP_LINE_LENGTH,
+          `popup line is too long: ${line}`,
+        );
+      }
+    }
+  }
 }
 
 function completeValidateParams() {
@@ -223,7 +247,7 @@ test("validated requirements route by the previously selected business mode", ()
   assert.doesNotMatch(question.questions[0].question, /匹配机构：/u);
 });
 
-test("bound requirements cannot call opposite branch tools", () => {
+test("completed requirements can reuse the other business function", () => {
   const hooks = registeredHooks();
   const persist = hooks.get("tool_result_persist");
   const before = hooks.get("before_tool_call");
@@ -241,20 +265,17 @@ test("bound requirements cannot call opposite branch tools", () => {
     message: validateResult("req-manual"),
   });
 
-  const blockedManualTool = before({
+  const manualTool = before({
     toolName: "ypmcn__manual_source_creators",
     params: { requirement_id: "req-inquiry", size: 10 },
   });
-  assert.equal(blockedManualTool.block, true);
-  assert.match(blockedManualTool.blockReason, /询价机构/u);
-  assert.match(blockedManualTool.blockReason, /manual_source_creators/u);
+  assert.equal(manualTool, undefined);
 
-  const blockedInquiryTool = before({
+  const inquiryTool = before({
     toolName: "test__rank_mcns",
     params: { id: "req-manual" },
   });
-  assert.equal(blockedInquiryTool.block, true);
-  assert.match(blockedInquiryTool.blockReason, /直接手扒/u);
+  assert.equal(inquiryTool, undefined);
 
   assert.equal(
     before({ toolName: "test__search_creators", params: { id: "req-inquiry" } })?.block,
@@ -421,10 +442,10 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   const savedText = directiveText(saved);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_LINK=/u);
-  assert.match(savedText, /达人详情列表/u);
-  assert.deepEqual(namedArgsFromDirective(savedText, "RANK_CREATORS_ARGS"), {
-    requirement_id: "req-manual",
-  });
+  assert.match(savedText, /最终手扒结果/u);
+  assert.match(savedText, /业务条件未变/u);
+  assert.doesNotMatch(savedText, /RANK_CREATORS_ARGS=/u);
+  assert.doesNotMatch(savedText, /CREATE_SUBMISSION_BATCH_ARGS=/u);
   assert.doesNotMatch(savedText, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(savedText, /ypscan_manual_research|宿主 Browser/u);
 });
@@ -584,9 +605,9 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
     message: toolMessage({ success: true, data: { ranked_count: 8 } }),
   });
   const rankedText = directiveText(ranked);
-  assert.match(rankedText, /YPSCAN_NEXT_ACTION=APPLY_CURRENT_MODE_RANK_POLICY/u);
+  assert.match(rankedText, /YPSCAN_NEXT_ACTION=APPLY_INQUIRY_RANK_POLICY/u);
   assert.match(rankedText, /RANK_REQUIREMENT_ID=req-ingest/u);
-  assert.match(rankedText, /询价机构模式：生成当前提报表/u);
+  assert.match(rankedText, /生成当前机构询价提报表/u);
   assert.doesNotMatch(rankedText, /^CREATE_SUBMISSION_BATCH_ARGS=/mu);
 
   const submission = persist({
@@ -595,15 +616,16 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
     message: toolMessage({
       success: true,
       data: {
-        batch_id: "batch-1",
+        batch_id: 101,
         excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
       },
     }),
   });
   assert.deepEqual(saveExcelArgsFromDirective(directiveText(submission)), {
     artifact_kind: "submission_batch",
-    artifact_id: "batch-1",
+    artifact_id: "101",
     excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+    requirement_id: "req-ingest",
   });
 });
 
@@ -615,6 +637,7 @@ test("submission enrichment choice maps directly to get_creator_detail", () => {
       artifact_kind: "submission_batch",
       artifact_id: "123",
       excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+      requirement_id: "req-submission",
     },
     message: toolMessage({
       success: true,
@@ -623,10 +646,15 @@ test("submission enrichment choice maps directly to get_creator_detail", () => {
     }),
   });
   const text = directiveText(saved);
-  assert.match(text, /选择补充更新时固定调用 get_creator_detail/u);
+  assert.match(text, /GET_CREATOR_DETAIL_ARGS.*调用 get_creator_detail/u);
   assert.match(text, /再轮询 get_creator_detail_export/u);
   assert.match(text, /不得改字段配置/u);
   assert.match(text, /不得.*再次追问/u);
+  assert.deepEqual(namedArgsFromDirective(text, "GET_CREATOR_DETAIL_ARGS"), {
+    platform: "xhs",
+    batch_id: 123,
+    requirement_id: "req-submission",
+  });
 });
 
 test("successful WeCom distribution waits for inquiry retrieval without switching branches", () => {
@@ -650,7 +678,7 @@ test("successful WeCom distribution waits for inquiry retrieval without switchin
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
-test("rank result follows the current conversation mode after transient state resets", () => {
+test("rank result is reserved for institutional inquiry after transient state resets", () => {
   const hooks = new Map();
   const transientState = registerFlowDirectiveHooks({
     on(name, handler) {
@@ -671,12 +699,11 @@ test("rank result follows the current conversation mode after transient state re
     message: toolMessage({ success: true, data: { ranked_count: 8 } }),
   });
   const text = directiveText(ranked);
-  assert.match(text, /YPSCAN_NEXT_ACTION=APPLY_CURRENT_MODE_RANK_POLICY/u);
+  assert.match(text, /YPSCAN_NEXT_ACTION=APPLY_INQUIRY_RANK_POLICY/u);
   assert.match(text, /RANKED_COUNT=8/u);
   assert.match(text, /RANK_REQUIREMENT_ID=req-after-reset/u);
-  assert.match(text, /询价机构模式：生成当前提报表/u);
-  assert.match(text, /直接手扒模式：先与当前 quantityTotal 比较/u);
-  assert.match(text, /不足时先复核/u);
+  assert.match(text, /生成当前机构询价提报表/u);
+  assert.match(text, /直接手扒完成后不得调用本工具/u);
   assert.doesNotMatch(text, /CREATE_SUBMISSION_BATCH_ARGS=|IF_SUFFICIENT/u);
 });
 
@@ -742,6 +769,7 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
     });
     const text = directiveText(result);
     assert.match(text, /ASK_USER_QUESTION_ARGS=/u, toolName);
+    assertPopupLines(argsFromDirective(text));
     assert.deepEqual(
       argsFromDirective(text).questions[0].options.map((option) => option.label),
       ["重试", "结束本次"],
@@ -782,7 +810,7 @@ test("parse and startup directives enumerate required business values before val
   );
 });
 
-test("recipient selection statically hands off to field selection", () => {
+test("recipient selection reuses submitted fields or hands off to field selection", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "rank_mcns",
@@ -794,15 +822,17 @@ test("recipient selection statically hands off to field selection", () => {
   });
   const text = directiveText(result);
 
-  assert.match(text, /收到机构选择答案后，第一个动作必须调用 select_inquiry_form_fields/u);
+  assert.match(text, /同一 requirement_id 已提交字段配置/u);
+  assert.match(text, /已提交字段配置则复用/u);
+  assert.match(text, /否则调用 select_inquiry_form_fields/u);
   assert.match(text, /requirement_id.*req-inquiry/u);
-  assert.match(text, /不得提前调用字段选择/u);
+  assert.match(text, /不得查询、缓存或重建 columns/u);
   assert.deepEqual(namedArgsFromDirective(text, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
     requirement_id: "req-inquiry",
   });
 });
 
-test("more than four inquiry recipients use a warning prompt without option truncation", () => {
+test("more than four inquiry recipients use a compact prompt without option truncation", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const names = ["机构 A", "机构 B", "机构 C", "机构 D", "机构 E"];
   const result = persist({
@@ -819,8 +849,10 @@ test("more than four inquiry recipients use a warning prompt without option trun
   ).questions[0];
   const text = directiveText(result);
 
-  assert.match(recipient.header, /提示|警示/u);
-  assert.match(recipient.question, /超过.*4.*选项/u);
+  assert.equal(popupPlainText(recipient.header), "选择询价机构");
+  assert.doesNotMatch(popupPlainText(recipient.question), /超过.*4.*选项/u);
+  assert.match(popupPlainText(recipient.question), /候选机构共 5 家/u);
+  assertPopupLines({ questions: [recipient] });
   names.forEach((name) => assert.doesNotMatch(recipient.question, new RegExp(name, "u")));
   assert.equal(recipient.multiSelect, false);
   assert.deepEqual(recipient.options, [
@@ -831,8 +863,18 @@ test("more than four inquiry recipients use a warning prompt without option trun
   assert.match(text, /自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立/u);
   assert.match(text, /用户选中弹窗中的一个或多个当前机构/u);
   assert.match(text, /选择“询价全部机构”.*全部当前机构/u);
-  assert.match(text, /空输入、未知机构、无法解析或存在歧义时，不得调用 select_inquiry_form_fields/u);
+  assert.match(text, /空输入、未知机构、无法解析或存在歧义时，不得继续询价/u);
   assert.match(text, /重新调用本提示或结束本轮/u);
+});
+
+test("long institution names wrap without changing their matching identity", () => {
+  const originalName = "这是一家名称超过二十个字符用于测试换行还原能力的机构";
+  const payload = mcnRankingRecipientQuestionPayload([originalName, "机构 B"]);
+  const wrappedName = payload.questions[0].options[0].label;
+
+  assert.match(wrappedName, /\n/u);
+  assert.equal(popupPlainText(wrappedName), originalName);
+  assertPopupLines(payload);
 });
 
 test("startup instruction selects and preserves one business mode", () => {
@@ -845,7 +887,11 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /未明确、同时出现两种模式或语义冲突/u);
   assert.match(first.prependContext, /BUSINESS_MODE_QUESTION_ARGS=/u);
   assert.match(first.prependContext, /回答前不得解析或落库/u);
-  assert.match(first.prependContext, /同一 requirement 禁止交叉分支/u);
+  assert.match(first.prependContext, /business_mode 只决定首次落库后的初始功能/u);
+  assert.match(first.prependContext, /前一功能完成或明确停止后复用于另一功能/u);
+  assert.match(first.prependContext, /功能切换本身不算需求修改/u);
+  assert.match(first.prependContext, /已提交过字段配置时继续复用/u);
+  assert.match(first.prependContext, /任何一行最多 20 个 Unicode 字符/u);
   assert.match(first.prependContext, /询价链路：解析→复核→validate_requirement/u);
   assert.match(first.prependContext, /直接手扒：解析→复核→validate_requirement/u);
   assert.match(first.prependContext, /rank_mcns 成功后先输出完整五列表格/u);
@@ -858,7 +904,7 @@ test("startup instruction selects and preserves one business mode", () => {
   );
   assert.match(first.prependContext, /同一 requirement_id/u);
   assert.match(first.prependContext, /直接手扒分支先选择字段，再调用 manual_source_creators/u);
-  assert.match(first.prependContext, /直接手扒达人详情 Excel 保存成功后原样展示 delivery\.local_file_link/u);
+  assert.match(first.prependContext, /直接手扒 Excel 保存成功后原样展示 delivery\.local_file_link/u);
   assert.match(first.prependContext, /后台 API 完成平台达人搜索、详情抓取和筛选/u);
   assert.match(first.prependContext, /不再提供浏览器详细手扒分支/u);
   assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
@@ -873,7 +919,7 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立/u);
   assert.match(first.prependContext, /用户选中弹窗中的一个或多个当前机构/u);
   assert.match(first.prependContext, /选择“询价全部机构”.*全部当前机构/u);
-  assert.match(first.prependContext, /空输入、未知机构、无法解析或存在歧义时，不得调用 select_inquiry_form_fields/u);
+  assert.match(first.prependContext, /空输入、未知机构、无法解析或存在歧义时，不得继续询价/u);
   assert.match(first.prependContext, /Dify 品牌候选唯一、合法且非空时必须原样作为 brandName/u);
   assert.match(first.prependContext, /不得询问、改写或被原文与 clarification 覆盖/u);
   assert.match(first.prependContext, /解析品牌缺失、多候选或为 null、未知等占位值时才询问/u);
@@ -1219,7 +1265,8 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /同一 requirement_id/u);
   assert.match(startup.prependContext, /直接手扒分支先选择字段，再调用 manual_source_creators/u);
-  assert.match(startup.prependContext, /不得把详情 Excel 当作最终提报表/u);
+  assert.match(startup.prependContext, /最终手扒结果/u);
+  assert.match(startup.prependContext, /不调用 rank_creators 或 create_submission_batch/u);
   assert.match(startup.prependContext, /读取.*input schema/u);
   assert.match(startup.prependContext, /需求原文.*可选字段/u);
   assert.match(startup.prependContext, /去掉原文字段.*同一 requirement_id 和 size.*重试一次/u);

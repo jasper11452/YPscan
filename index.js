@@ -65,6 +65,12 @@ export default {
                 minLength: 1,
                 description: "Provider 返回的原始 Excel 下载 URL",
               },
+              requirement_id: {
+                type: "string",
+                minLength: 1,
+                description:
+                  "submission_batch 使用；当前提报表所属 requirement ID，用于后续 get_creator_detail 补全",
+              },
               mcn_names: {
                 type: "array",
                 items: { type: "string", minLength: 1 },
