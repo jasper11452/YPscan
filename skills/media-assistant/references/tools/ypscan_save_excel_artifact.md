@@ -2,7 +2,7 @@
 
 Risk tier: local trusted-endpoint save.
 
-Use this tool after `rank_mcns`, `create_submission_batch`, `get_creator_detail_export`, `get_ingest_job`, or `manual_source_creators_status` returns a Provider Excel download URL. Never use it for the workbook returned by `search_creators`. For `rank_mcns`, first output the complete five-column Markdown table, then save without displaying the ranking URL; show its local path before the recipient question.
+Use this tool after `rank_mcns`, `create_submission_batch`, `get_creator_detail_export`, `get_ingest_job`, `manual_source_creators`, or `manual_source_creators_status` returns a Provider Excel download URL. A synchronous Excel from `manual_source_creators` is the final manual-source result and must be saved immediately without polling status. Never use this tool for the workbook returned by `search_creators`. For `rank_mcns`, first output the complete five-column Markdown table, then save without displaying the ranking URL; show its local path before the recipient question.
 
 ## Arguments
 

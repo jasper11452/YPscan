@@ -14,7 +14,7 @@
 { "demand": "当前单个平台的完整最新需求文本", "business_mode": "询价机构 或 手动拓展" }
 ```
 
-- `business_mode` 必填：使用用户明确说出的模式，或在语义未明确/冲突时通过 `AskUserQuestion` 选定的用户侧模式（`询价机构` / `手动拓展`）；旧说法统一映射为 `手动拓展`。该值决定首次落库后的初始功能，缺失或不合法时本工具直接失败。
+- `business_mode` 必填：使用用户明确说出的模式，或在语义未明确/冲突时通过 `AskUserQuestion` 选定的用户侧模式（`询价机构` / `手动拓展`）；旧说法统一映射为 `手动拓展`。该值决定本次新建 requirement 进入的功能，缺失或不合法时本工具直接失败。
 - 单平台需求直接传完整原文。
 - 多平台需求按平台分别调用：保留明确共享条件和当前平台条件，删除另一平台专属条件，并明确写出当前平台；每个平台保留自己的最近一次成功结果。
 - 不得为了让解析命中而添加用户没说过的条件。
@@ -53,7 +53,7 @@
 
 ## 后续修改与重解析
 
-- 没有条件变化：复用同一会话、同一平台的最近成功 requirement；前一功能完成或明确停止后只改用另一功能时，不重新调用本工具或 `validate_requirement`，已提交字段配置也继续复用。
+- 每次开始询价机构或手动拓展都重新调用本工具。即使同一会话、同一平台、条件未变，或前一功能刚完成/明确停止后只改用另一功能，也必须重新解析、复核并调用 `validate_requirement` 创建新 requirement；不得复用旧 requirement 或已提交字段配置。
 - 用户主动修改任何业务条件时，无论是否已经生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销此前全部自动放宽，形成新的完整单平台 `demand`。
 - 重新调用本工具，复核新输出和待提交参数，创建新的 requirement，并从用户当前要求的功能起点重新执行；不得复用旧 requirement、机构、询价、达人、batch 或 Excel。
 - 重新解析后不得把旧解析字段与新响应拼接。
@@ -76,7 +76,7 @@
 | `description`          | 用当前明确需求写简短中文说明，保留无法映射成 Provider 筛选字段但后续需要人工核验的条件。                                                                                                                                                                                                                                                                                               |
 | `originalBrief`        | 保留用户最初完整原文，不因平台拆分或后续归一化改写。                                                                                                                                                                                                                                                                                                                                   |
 
-`product`、`projectStartStart`、`projectStartEnd` 是可选上下文字段；只在原文明确时传。新需求不传 `id`、`demandId`、`demandVersion`、`createdAt`、`updatedAt`、`refNickname` 或 `refUrl`。参考达人昵称和链接分别以带标签的原文写入 `description`/`originalBrief`。
+`product`、`projectStartStart`、`projectStartEnd` 是可选上下文字段；只在原文明确时传。新需求不传 `id`、`demandId`、`demandVersion`、`createdAt` 或 `updatedAt`。`refNickname` 和 `refUrl` 只有在用户明确提供对应准确值且语义唯一时才传，绝不从另一字段、`description` 或 `originalBrief` 推断；参考达人昵称和链接仍分别以带标签的原文写入 `description`/`originalBrief`。
 
 ### 内容形式和分组
 

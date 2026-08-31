@@ -15,13 +15,13 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 - 用户明确说“手动拓展”“人工拓展”“直接手扒”“手扒”或“手捞筛选”时，统一使用用户侧模式 `手动拓展`；旧说法只作为输入别名。
 - 未明确模式、同时出现两种模式或语义冲突时，调用 `AskUserQuestion`，选项固定为“询价机构”和“手动拓展”。用户回答前不解析、不落库。
 
-选定后将用户侧模式传入 `ypscan_parse_requirement.business_mode`，并写入 `validate_requirement.rawMessagesJson.business_mode`。插件在 Provider 边界把 `手动拓展` 规范为兼容线值 `直接手扒`；Agent 不得自行使用或展示该内部值。该模式只决定首次落库后的初始功能。
+选定后将用户侧模式传入 `ypscan_parse_requirement.business_mode`，并写入 `validate_requirement.rawMessagesJson.business_mode`。插件在 Provider 边界把 `手动拓展` 规范为兼容线值 `直接手扒`；Agent 不得自行使用或展示该内部值。该模式决定本次新建 requirement 进入的功能。
 
 询价机构：`ypscan_parse_requirement → 复核 → validate_requirement → search_creators → rank_mcns → MCN 排名表 → 选择收件机构 → 选择字段 → 发送确认 → create_with_distributions → 回收 → rank_creators → create_submission_batch`
 
 手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators → manual_source_creators_status → 保存并交付最终手动拓展表`
 
-同一会话、同一平台的最近成功 requirement 在业务条件未变时，可以在前一功能完成或明确停止后复用于另一功能。“改用询价机构”或“改用手动拓展”本身不算需求修改，不重新调用 `ypscan_parse_requirement` 或 `validate_requirement`；已提交过字段配置时直接复用，尚未提交时才调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。用户修改任何业务条件时仍按下文创建新 requirement。
+每次开始询价机构或手动拓展都必须先创建独立的新 requirement。即使同一会话、同一平台、业务条件未变，或询价完成/停止后改用手动拓展（反之亦然），也必须重新调用 `ypscan_parse_requirement`、按下文复核并调用 `validate_requirement`；不得跨功能复用 requirement 或已提交字段配置，新 requirement 必须重新调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。
 
 ## 解析后、落库前必须复核
 
@@ -88,13 +88,13 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 自动放宽后的每轮结果仍不足时，再次复核本轮有效需求和实际落库参数，确认正确后才进入下一项。足量后，在结果前汇总全部放宽记录。
 
-全部允许项用完仍无可询价机构时，询问“手动修改需求 / 改用手动拓展 / 结束”。用户只改用另一功能且业务条件未变时复用当前 requirement；用户修改业务条件时撤销全部自动放宽，恢复用户原始需求并创建新 requirement。
+全部允许项用完仍无可询价机构时，询问“手动修改需求 / 改用手动拓展 / 结束”。用户改用手动拓展时，无论业务条件是否变化，都恢复用户当前完整有效需求，重新解析、复核并创建新 requirement；不得把询价阶段的自动放宽带入手动拓展。用户修改业务条件时撤销全部自动放宽，恢复用户原始需求并合并最新人工修改后创建新 requirement。
 
 ## 用户修改需求与最终交付
 
 用户主动修改任何业务条件时，无论是否已生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销全部自动放宽，重新解析、复核、创建新 requirement，并沿原业务模式重跑。不得复用旧 requirement、机构、询价、达人、batch 或 Excel。
 
-业务条件未变、只是前一功能完成或明确停止后要求另一功能时，复用同一会话中最近成功的 requirement 和已提交字段配置；不重新落库，也不把前一功能的机构、达人、batch 或 Excel 当作新功能结果。
+业务条件未变、只是前一功能完成或明确停止后要求另一功能时，也必须按当前功能重新解析、复核并创建新 requirement，重新提交字段配置；不得复用前一功能的 requirement、字段配置、机构、达人、batch 或 Excel。
 
 MCN 排名表和机构达人预览表是询价链路中间产物；手动拓展 Excel 是手动拓展最终交付。询价回收后由 `create_submission_batch` 生成的提报表保存时，把当前 requirement 的已确认平台传给本地保存工具并展示 `delivery.local_file_link`。小红书和抖音提报表都询问是否“补充更新达人信息”；用户选择补充时，唯一映射到 `get_creator_detail`，传当前平台缩写（小红书 `xhs`、抖音 `dy`）、当前 requirement ID 和同一正整数 batch ID，随后用相同的 `platform` 和 `batch_id` 轮询 `get_creator_detail_export` 并保存新版提报表。平台缺失时不得展示补全选项、调用补全工具或猜测平台；不得把补全改成字段配置或再次追问补充什么。
 

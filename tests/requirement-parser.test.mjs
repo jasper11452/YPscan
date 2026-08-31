@@ -46,26 +46,64 @@ test("validate_requirement card forbids same-platform child allocation", () => {
   assert.doesNotMatch(card, /same-platform multi-type allocation/iu);
   assert.doesNotMatch(card, /remaining child calls.*same-platform type allocation/iu);
   assert.match(card, /keep one requirement with the original total/u);
-  assert.match(card, /initial `询价机构` function.*search_creators/iu);
-  assert.match(card, /initial `手动拓展` function.*select_inquiry_form_fields/iu);
-  assert.match(card, /unchanged requirement may be reused for the other function/iu);
+  assert.match(card, /for `询价机构`.*search_creators/iu);
+  assert.match(card, /for `手动拓展`.*select_inquiry_form_fields/iu);
+  assert.match(card, /Every later start of either function requires a new parse/iu);
+  assert.match(card, /never reuse the previous function's requirement/iu);
   assert.doesNotMatch(card, /normal new-requirement flow.*immediately call `search_creators`/iu);
+});
+
+test("business contracts require a fresh requirement for every function start", () => {
+  const contracts = {
+    skill: projectFile("skills/media-assistant/SKILL.md"),
+    parse: projectFile("skills/media-assistant/references/tools/ypscan_parse_requirement.md"),
+    validate: projectFile("skills/media-assistant/references/tools/validate_requirement.md"),
+    manual: projectFile("skills/media-assistant/references/tools/manual_source_creators.md"),
+    question: projectFile("skills/media-assistant/references/tools/askuserquestion.md"),
+  };
+
+  assert.match(contracts.skill, /每次开始询价机构或手动拓展都必须先创建独立的新 requirement/u);
+  assert.match(contracts.parse, /每次开始询价机构或手动拓展都重新调用本工具/u);
+  assert.match(contracts.validate, /Every later start of either function requires a new parse/iu);
+  assert.match(contracts.manual, /每次开始手动拓展都先解析、复核并创建独立的新 requirement/u);
+  assert.match(contracts.question, /改用另一功能时，也必须重新解析、复核并创建新 requirement/u);
+
+  for (const contract of Object.values(contracts)) {
+    assert.doesNotMatch(contract, /unchanged requirement may be reused for the other function/iu);
+    assert.doesNotMatch(contract, /do not create another requirement for the same request/iu);
+  }
 });
 
 test("save artifact card binds manual_source saves to the requirement ID", () => {
   const card = projectFile("skills/media-assistant/references/tools/ypscan_save_excel_artifact.md");
 
+  assert.match(card, /`manual_source_creators`/iu);
   assert.match(card, /`manual_source_creators_status`/iu);
-  assert.doesNotMatch(
-    card,
-    /`get_ingest_job`, or `manual_source_creators` returns a Provider Excel/iu,
-  );
+  assert.match(card, /synchronous Excel from `manual_source_creators`.*saved immediately/iu);
   assert.match(
     card,
     /Use the current requirement ID for `mcn_ranking`, `mcn_creator_preview`, and `manual_source`/iu,
   );
   assert.match(card, /`artifact_id`.*current requirement ID.*`manual_source`/isu);
   assert.match(card, /`requirement_id`.*`submission_batch`/isu);
+});
+
+test("parser and validation cards agree on explicit reference creator fields", () => {
+  const parseCard = projectFile(
+    "skills/media-assistant/references/tools/ypscan_parse_requirement.md",
+  );
+  const validateCard = projectFile(
+    "skills/media-assistant/references/tools/validate_requirement.md",
+  );
+
+  for (const card of [parseCard, validateCard]) {
+    assert.match(
+      card,
+      /`refNickname`.*`refUrl`.*用户明确|`refNickname`.*`refUrl`.*user explicitly/isu,
+    );
+    assert.match(card, /绝不.*推断|Never infer/iu);
+  }
+  assert.doesNotMatch(parseCard, /不传[^。\n]*`refNickname`[^。\n]*`refUrl`/u);
 });
 
 test("creator enrichment card requires the current requirement association", () => {

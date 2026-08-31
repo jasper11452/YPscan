@@ -1,11 +1,11 @@
 # YPscan Client Integration Layer
 
-悦普识星是一个 OpenClaw 客户端集成层：通过 SSE 调用 Provider。用户明确表达初始功能时直接采用，未明确或语义冲突时再询问；确定后解析、复核并落库：
+悦普识星是一个 OpenClaw 客户端集成层：通过 Streamable HTTP 调用 Provider。用户明确表达当前功能时直接采用，未明确或语义冲突时再询问；确定后解析、复核并落库：
 
 - 询价机构：`选择模式 → 解析落库 → search_creators → rank_mcns → 选择机构和字段 → 企微询价 → 回收 → rank_creators → 提报表`
 - 手动拓展：`选择模式 → 解析落库 → 选择字段 → manual_source_creators → 最终手动拓展表`
 
-手动拓展由后端 `manual_source_creators` 完成 API 搜索、详情抓取和筛选；任务提交成功后先等待 30 秒，再用 `manual_source_creators_status` 查询，之后每隔 30 秒查询一次，单轮最多 10 次。第 10 次仍未完成时报告并停止，不弹窗或自动查询第 11 次。成功后保存最终手动拓展 Excel；完成后不再调用 `rank_creators` 或 `create_submission_batch`。同一会话、同一平台、需求条件未变且前一功能完成或明确停止后，可复用同一 requirement 和已提交字段配置顺序执行另一功能；用户主动修改任何业务条件时，才从用户原始需求合并最新人工修改、撤销自动放宽、重新解析和复核并创建新 requirement。
+手动拓展由后端 `manual_source_creators` 完成 API 搜索、详情抓取和筛选；任务提交成功后先等待 30 秒，再用 `manual_source_creators_status` 查询，之后每隔 30 秒查询一次，单轮最多 10 次。第 10 次仍未完成时报告并停止，不弹窗或自动查询第 11 次。成功后保存最终手动拓展 Excel；完成后不再调用 `rank_creators` 或 `create_submission_batch`。每次开始询价或手动拓展都必须重新解析、复核并创建独立的新 requirement；即使同一会话、同一平台、需求条件未变且前一功能刚完成或停止，也不得跨功能复用 requirement 或已提交字段配置。
 
 ## 当前组成
 

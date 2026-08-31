@@ -34,8 +34,8 @@ const RAW_MESSAGES_JSON_KEY_CONTRACT =
   "rawMessagesJson key 与取值严格按 validate_requirement 工具卡 rawMessagesJson 契约执行，禁止写成 original_demand 或 demand；key 写错会被本地预检当成缺失原文阻断。";
 const INQUIRY_RECIPIENT_RESPONSE_RULE =
   "机构选择仅在用户选中弹窗中的一个或多个当前机构、选择“询价全部机构”，或自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立；弹窗机构标签中的换行仅用于展示，匹配前必须移除换行并还原完整机构名；选择“询价全部机构”表示选择全部当前机构。空输入、未知机构、无法解析或存在歧义时，不得继续询价，应重新调用本提示或结束本轮。";
-const REQUIREMENT_REUSE_RULE =
-  "同一会话、同一平台的最近成功 requirement 在业务条件未变时可于前一功能完成或明确停止后复用于另一功能；功能切换本身不算需求修改，不重新解析或 validate。已提交过字段配置时继续复用，否则才调用 select_inquiry_form_fields。不得并行执行两个功能，也不得复用旧机构、达人、batch 或 Excel。用户修改任何业务条件时仍必须重新解析、复核并创建新 requirement。";
+const REQUIREMENT_CREATION_RULE =
+  "每次开始询价机构或手动拓展都必须先创建独立的新 requirement：即使同一会话、同一平台、业务条件未变，或刚完成/停止另一功能，也必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement。不得跨功能复用 requirement 或已提交字段配置；新 requirement 必须重新调用 select_inquiry_form_fields。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。";
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
@@ -52,7 +52,15 @@ const PLATFORM_ALIASES = Object.freeze({
 
 function canonicalPlatformName(value) {
   if (!nonemptyString(value)) return null;
-  return PLATFORM_ALIASES[value.trim().toLowerCase()] ?? PLATFORM_ALIASES[value.trim()] ?? null;
+  return PLATFORM_ALIASES[value.trim().toLowerCase()] ?? null;
+}
+
+function firstCanonicalPlatform(...values) {
+  for (const value of values) {
+    const platform = canonicalPlatformName(value);
+    if (platform) return platform;
+  }
+  return null;
 }
 
 function shortPlatformName(value) {
@@ -385,12 +393,13 @@ function rankMcnsDirective(
   if (!Array.isArray(mcns)) return flowPauseDirective("rank_mcns", message);
   const excelFileUrl = rankMcnsExcelUrl(result);
   const artifactId = firstString(params?.id, result?.data?.requirement_id, result?.requirement_id);
-  const platform =
-    canonicalPlatformName(params?.platform) ??
-    canonicalPlatformName(result?.data?.platform) ??
-    canonicalPlatformName(result?.platform) ??
-    requirementPlatform ??
-    recordedPlatform;
+  const platform = firstCanonicalPlatform(
+    params?.platform,
+    result?.data?.platform,
+    result?.platform,
+    requirementPlatform,
+    recordedPlatform,
+  );
   const empty = mcns.length === 0;
   const recipientNames = inquiryRecipientNames(mcns);
   const lines = [
@@ -453,12 +462,12 @@ function searchCreatorsDirective(
     result?.requirement_id,
   );
   if (!requirementId) return flowPauseDirective("search_creators", message);
-  const platform =
-    canonicalPlatformName(params?.platform) ??
-    canonicalPlatformName(result?.data?.platform) ??
-    canonicalPlatformName(result?.platform) ??
-    requirementPlatform ??
-    recordedPlatform;
+  const platform = firstCanonicalPlatform(
+    result?.data?.platform,
+    result?.platform,
+    requirementPlatform,
+    recordedPlatform,
+  );
   const nextArgs = rankMcnsArgs(requirementId, platform);
   if (!nextArgs) return flowPauseDirective("search_creators 缺少 platform", message);
   return [
@@ -492,8 +501,8 @@ function manualSourceBatchId(result) {
     result?.data?.batch_id,
     result?.data?.manual_source_result?.data?.batch_id,
   ]) {
-    if (Number.isSafeInteger(raw) && raw > 0) return raw;
-    if (nonemptyString(raw)) return raw;
+    const parsed = positiveInteger(raw);
+    if (parsed != null) return parsed;
   }
   return undefined;
 }
@@ -518,8 +527,7 @@ function manualSourceCreatorsDirective(
         params?.requirement_id,
         result?.error?.details?.requirement_id,
       );
-      const platform =
-        canonicalPlatformName(params?.platform) ?? requirementPlatform ?? recordedPlatform;
+      const platform = firstCanonicalPlatform(requirementPlatform, recordedPlatform);
       const selectArgs = selectInquiryFormFieldsArgs(requirementId, platform);
       if (!requirementId) return flowPauseDirective("手动拓展字段选择", message);
       if (!selectArgs) return flowPauseDirective("手动拓展字段选择缺少 platform", message);
@@ -711,7 +719,7 @@ function getIngestJobDirective(message, params = {}) {
   }
   if (jobId != null) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 尚未完成。继续使用同一 job_id 轮询，不重新入库、不更换 job_id；由当前对话累计查询次数，单轮最多 10 次，第 10 次仍未完成时按 media-assistant Skill 询问“继续查询/暂时结束”，不得自动开始第 11 次。",
+      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 尚未完成。继续使用同一 job_id 轮询，不重新入库、不更换 job_id、不询问用户；由当前对话累计查询次数，单轮最多 10 次，第 10 次仍未完成时如实报告并停止，不得自动开始第 11 次。",
       `GET_INGEST_JOB_ARGS=${JSON.stringify({ job_id: jobId })}`,
     ].join("\n");
   }
@@ -755,19 +763,21 @@ function submissionBatchDirective(
   if (result?.success !== true) return flowPauseDirective("提报表生成", message);
   const excelFileUrl = providerExcelUrl(result);
   const rawBatchId = result?.data?.batch_id ?? result?.batch_id;
-  const artifactId =
-    Number.isSafeInteger(rawBatchId) && rawBatchId > 0
-      ? String(rawBatchId)
-      : firstString(rawBatchId, params?.requirement_id);
+  const batchId = positiveInteger(rawBatchId);
+  const artifactId = batchId == null ? null : String(batchId);
   const requirementId = firstString(
     params?.requirement_id,
     result?.data?.requirement_id,
     result?.requirement_id,
   );
-  const platform =
-    shortPlatformName(firstString(result?.data?.platform, result?.platform)) ??
-    shortPlatformName(requirementPlatform) ??
-    shortPlatformName(recordedPlatform);
+  const platform = shortPlatformName(
+    firstCanonicalPlatform(
+      result?.data?.platform,
+      result?.platform,
+      requirementPlatform,
+      recordedPlatform,
+    ),
+  );
   if (!excelFileUrl || !artifactId) return flowPauseDirective("提报表生成", message);
   return [
     "YPSCAN_FLOW_DIRECTIVE=create_submission_batch 已生成提报表。立即保存，不展示 Provider 下载 URL。保存 submission_batch 时必须把当前 requirement 的已确认平台以 platform=xhs 或 platform=dy 传给本地保存工具；不得猜测，平台缺失时保存结果不得提供达人信息补全入口。",
@@ -810,7 +820,7 @@ function excelArtifactSaveDirective(
       `MANUAL_SOURCE_LOCAL_PATH=${filePath}`,
       `MANUAL_SOURCE_LOCAL_LINK=${localFileLink}`,
       "将 MANUAL_SOURCE_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径。",
-      REQUIREMENT_REUSE_RULE,
+      REQUIREMENT_CREATION_RULE,
     ].join("\n");
   }
   if (artifactKind === "mcn_creator_preview") {
@@ -1002,11 +1012,12 @@ function flowDirective(
     const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
     if (!requirementId) return flowPauseDirective("validate_requirement", message);
     const mode = businessModeFromParams(params) ?? recordedMode;
-    const platform =
-      canonicalPlatformName(params?.platform) ??
-      canonicalPlatformName(result?.data?.platform) ??
-      canonicalPlatformName(result?.platform) ??
-      recordedPlatform;
+    const platform = firstCanonicalPlatform(
+      params?.platform,
+      result?.data?.platform,
+      result?.platform,
+      recordedPlatform,
+    );
     if (!mode) {
       return flowPauseDirective("validate_requirement 缺少 business_mode", message);
     }
@@ -1085,8 +1096,8 @@ export function registerFlowDirectiveHooks(api) {
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 只决定首次落库后的初始功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→回收→rank_creators→create_submission_batch。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→保存并交付最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。`,
-          REQUIREMENT_REUSE_RULE,
+          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→回收→rank_creators→create_submission_batch。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→保存并交付最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。`,
+          REQUIREMENT_CREATION_RULE,
           "所有 AskUserQuestion 弹窗的 header、question、label 和 description 均主动换行，任何一行最多 20 个 Unicode 字符；长机构名可为展示插入换行，匹配前移除换行还原原名。",
           "当前 requirement 平台为小红书或抖音时，提报表保存后询问是否“补充更新达人信息”；该选项唯一映射到 get_creator_detail：用户一旦选择，立即使用本轮正整数 batch_id、同一 requirement_id 和已确认的平台缩写（小红书 xhs、抖音 dy）调用 get_creator_detail，随后使用同一 platform 和 batch_id 调用 get_creator_detail_export 轮询并保存新版表。平台缺失时不得展示该选项、不得调用补全工具或猜测平台；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
@@ -1149,11 +1160,12 @@ export function registerFlowDirectiveHooks(api) {
       const result = parsedToolResult(event?.message);
       if (bare === "validate_requirement" && result?.success === true) {
         const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
-        const platform =
-          canonicalPlatformName(params?.platform) ??
-          canonicalPlatformName(result?.data?.platform) ??
-          canonicalPlatformName(result?.platform) ??
-          recordedPlatform;
+        const platform = firstCanonicalPlatform(
+          params?.platform,
+          result?.data?.platform,
+          result?.platform,
+          recordedPlatform,
+        );
         if (requirementId && platform) platformByRequirement.set(String(requirementId), platform);
       } else if (result?.success === true) {
         const requirementId = firstString(params?.requirement_id, params?.id);

@@ -272,7 +272,7 @@ test("validated requirements route by the previously selected business mode", ()
   assert.doesNotMatch(question.questions[0].question, /匹配机构：/u);
 });
 
-test("completed requirements can reuse the other business function", () => {
+test("business tools remain free of local mode gates after requirements complete", () => {
   const hooks = registeredHooks();
   const persist = hooks.get("tool_result_persist");
   const before = hooks.get("before_tool_call");
@@ -405,7 +405,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const sourced = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-manual", num: "10", demand: "抖音科技耳机手动拓展 10 位" },
+    params: { requirement_id: "req-manual", num: 10, demand: "抖音科技耳机手动拓展 10 位" },
     message: toolMessage({
       success: true,
       requirement_id: "req-manual",
@@ -428,7 +428,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
 
   const immediate = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-manual", num: "10", demand: "抖音科技耳机手动拓展 10 位" },
+    params: { requirement_id: "req-manual", num: 10, demand: "抖音科技耳机手动拓展 10 位" },
     message: toolMessage({
       success: true,
       data: {
@@ -507,23 +507,70 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_LINK=/u);
   assert.match(savedText, /最终手动拓展结果/u);
-  assert.match(savedText, /业务条件未变/u);
+  assert.match(savedText, /每次开始询价机构或手动拓展都必须先创建独立的新 requirement/u);
   assert.doesNotMatch(savedText, /RANK_CREATORS_ARGS=/u);
   assert.doesNotMatch(savedText, /CREATE_SUBMISSION_BATCH_ARGS=/u);
   assert.doesNotMatch(savedText, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(savedText, /ypscan_manual_research|宿主 Browser/u);
 });
 
-test("default manual sourcing repairs missing field selection before retrying", () => {
+test("manual sourcing normalizes a numeric batch string before status polling", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-manual", platform: "douyin", num: 10 },
+    params: { requirement_id: "req-manual", num: 10 },
     message: toolMessage({
-      success: false,
-      error: { code: "REQUIREMENT_COLUMNS_NOT_CONFIGURED" },
+      success: true,
+      requirement_id: "req-manual",
+      batch_id: "42",
     }),
   });
+
+  assert.deepEqual(
+    namedArgsFromDirective(directiveText(result), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
+    { requirement_id: "req-manual", batch_id: 42 },
+  );
+});
+
+test("manual sourcing rejects a non-integer task batch", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypmcn__manual_source_creators",
+    params: { requirement_id: "req-manual", num: 10 },
+    message: toolMessage({
+      success: true,
+      requirement_id: "req-manual",
+      batch_id: "batch-42",
+    }),
+  });
+  const text = directiveText(result);
+
+  assert.match(text, /手动拓展 已暂停/u);
+  assert.doesNotMatch(text, /MANUAL_SOURCE_CREATORS_STATUS_ARGS=/u);
+});
+
+test("default manual sourcing repairs missing field selection before retrying", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const context = { sessionKey: "manual-source-missing-fields" };
+  persist(
+    {
+      toolName: "ypmcn__validate_requirement",
+      params: validateParamsWithMode("手动拓展"),
+      message: toolMessage({ success: true, data: { requirement_id: "req-manual" } }),
+    },
+    context,
+  );
+  const result = persist(
+    {
+      toolName: "ypmcn__manual_source_creators",
+      params: { requirement_id: "req-manual", num: 10 },
+      message: toolMessage({
+        success: false,
+        error: { code: "REQUIREMENT_COLUMNS_NOT_CONFIGURED" },
+      }),
+    },
+    context,
+  );
   const text = directiveText(result);
 
   assert.deepEqual(namedArgsFromDirective(text, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
@@ -540,7 +587,7 @@ test("default manual sourcing pauses without a task batch and falls back to para
   const persist = registeredHooks().get("tool_result_persist");
   const sourced = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-nobatch", num: "10", demand: "抖音科技耳机手动拓展 10 位" },
+    params: { requirement_id: "req-nobatch", num: 10, demand: "抖音科技耳机手动拓展 10 位" },
     message: toolMessage({ success: true, requirement_id: "req-nobatch" }),
   });
   const sourceText = directiveText(sourced);
@@ -626,6 +673,9 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
     job_id: "job-ingest-1",
   });
   assert.match(directiveText(pending), /同一 job_id/u);
+  assert.match(directiveText(pending), /第 10 次仍未完成时如实报告并停止/u);
+  assert.match(directiveText(pending), /不询问用户/u);
+  assert.doesNotMatch(directiveText(pending), /继续查询\/暂时结束/u);
   assert.doesNotMatch(directiveText(pending), /ASK_USER_QUESTION_ARGS=/u);
 
   const completed = persist({
@@ -716,6 +766,25 @@ test("submission batch save falls back to a top-level requirement_id", () => {
   });
   assert.match(directiveText(result), /必须把当前 requirement 的已确认平台/u);
   assert.match(directiveText(result), /平台缺失时.*不得提供达人信息补全入口/u);
+});
+
+test("submission batch save stops when the Provider omits a valid batch ID", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "test__create_submission_batch",
+    params: { requirement_id: "req-no-batch", submission_batche_page: 1 },
+    message: toolMessage({
+      success: true,
+      data: {
+        excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+      },
+    }),
+  });
+  const text = directiveText(result);
+
+  assert.match(text, /提报表生成 已暂停/u);
+  assert.doesNotMatch(text, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.doesNotMatch(text, /artifact_id.*req-no-batch/u);
 });
 
 test("submission enrichment choice maps both platforms to creator detail and export", () => {
@@ -1179,10 +1248,14 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /BUSINESS_MODE_QUESTION_ARGS=/u);
   assert.match(first.prependContext, /回答前不得解析或落库/u);
   assert.match(first.prependContext, /Provider 边界把“手动拓展”兼容映射为旧线值/u);
-  assert.match(first.prependContext, /business_mode 只决定首次落库后的初始功能/u);
-  assert.match(first.prependContext, /前一功能完成或明确停止后复用于另一功能/u);
-  assert.match(first.prependContext, /功能切换本身不算需求修改/u);
-  assert.match(first.prependContext, /已提交过字段配置时继续复用/u);
+  assert.match(first.prependContext, /business_mode 决定本次新建 requirement 进入的功能/u);
+  assert.match(first.prependContext, /每次开始询价机构或手动拓展都必须先创建独立的新 requirement/u);
+  assert.match(
+    first.prependContext,
+    /必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement/u,
+  );
+  assert.match(first.prependContext, /不得跨功能复用 requirement 或已提交字段配置/u);
+  assert.match(first.prependContext, /新 requirement 必须重新调用 select_inquiry_form_fields/u);
   assert.match(first.prependContext, /任何一行最多 20 个 Unicode 字符/u);
   assert.match(first.prependContext, /询价链路：解析→复核→validate_requirement/u);
   assert.match(first.prependContext, /手动拓展：解析→复核→validate_requirement/u);

@@ -1,6 +1,6 @@
 # manual_source_creators
 
-手动拓展的默认入口。首次以手动拓展处理新 requirement 时先执行 `select_inquiry_form_fields`；从同一会话已完成或明确停止的询价功能切换而来、且同一 requirement 已提交字段配置时直接复用，不重复选择。随后使用同一真实 `requirement_id` 和用户要求的正整数交付人数 `num` 提交任务，由 Provider 后台全自动完成手动拓展。`demand` 是 live schema 支持时才传的可选字段，只透传当前完整原文，不传解析输出或 `rawMessagesJson`。提交成功后可能同步直接返回 Excel，也可能异步返回抖音任务 `batch_id`；两种路径都只使用该次真实 Provider 响应，不猜测其他返回形态。
+手动拓展的默认入口。每次开始手动拓展都先解析、复核并创建独立的新 requirement，再使用该 requirement 调用 `select_inquiry_form_fields`；即使从同一会话已完成或明确停止的询价功能切换而来、且业务条件未变，也不得复用询价 requirement 或字段配置。随后使用当前真实 `requirement_id` 和用户要求的正整数交付人数 `num` 提交任务，由 Provider 后台全自动完成手动拓展。`demand` 是 live schema 支持时才传的可选字段，只透传当前完整原文，不传解析输出或 `rawMessagesJson`。提交成功后可能同步直接返回 Excel，也可能异步返回抖音任务 `batch_id`；两种路径都只使用该次真实 Provider 响应，不猜测其他返回形态。
 
 调用前先读取当前 `manual_source_creators` 的实际 input schema：如果 schema 明确提供了用于需求原文的可选字段 `demand`，优先把当前完整、未改写的用户原始需求文本放入该字段；只传原文，不传解析输出或 `rawMessagesJson`。如果 schema 没有这个字段，或 Provider 因不支持该可选字段拒绝调用，则只传 `requirement_id` 和 `num`；未知参数导致的失败最多去掉原文字段重试一次，不得改变这两个必填值，也不得用该回退掩盖其他业务错误。不要猜测字段名或强行扩展当前 schema。
 
