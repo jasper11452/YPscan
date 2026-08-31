@@ -39,6 +39,8 @@ const REQUIREMENT_CREATION_RULE =
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
+const MANUAL_SOURCE_SHORTFALL_RULE =
+  "交付时只在当前 Provider 响应明确给出可信实际数量时与本轮 num 比较：实际数量为 0 或少于 num，必须说明实际数量、目标数量和缺口，并建议用户放宽条件；不得猜测数量、解析 Excel、自动放宽或自动重跑。用户明确修改条件后，按新条件重新解析、复核并创建独立的新 requirement";
 
 const [BUSINESS_MODE_INQUIRY] = BUSINESS_MODE_VALUES;
 const PLATFORM_ALIASES = Object.freeze({
@@ -548,6 +550,7 @@ function manualSourceCreatorsDirective(
   if (excelFileUrl && requirementId) {
     return [
       "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已同步返回最终手动拓展 Excel。立即保存且不展示 Provider 下载 URL；保存后原样交付并结束本次手动拓展，不调用 manual_source_creators_status、rank_creators 或 create_submission_batch。",
+      MANUAL_SOURCE_SHORTFALL_RULE,
       `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_source",
         artifact_id: requirementId,
@@ -577,6 +580,7 @@ function manualSourceCreatorsStatusDirective(message, params = {}) {
     if (!artifactId) return flowPauseDirective("手动拓展结果查询", message);
     return [
       "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。该 Excel 是后台 API 搜索、详情抓取和筛选后的最终手动拓展结果；立即保存且不展示 Provider 下载 URL，保存后原样交付并结束本次手动拓展，不调用 rank_creators 或 create_submission_batch。",
+      MANUAL_SOURCE_SHORTFALL_RULE,
       `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_source",
         artifact_id: artifactId,
@@ -817,6 +821,7 @@ function excelArtifactSaveDirective(
   if (artifactKind === "manual_source") {
     return [
       "YPSCAN_FLOW_DIRECTIVE=手动拓展 Excel 已保存。原样展示本地链接作为后台搜索、详情抓取和筛选后的最终手动拓展结果，然后结束本次手动拓展；不得调用 rank_creators、create_submission_batch 或补充达人信息弹窗。",
+      MANUAL_SOURCE_SHORTFALL_RULE,
       `MANUAL_SOURCE_LOCAL_PATH=${filePath}`,
       `MANUAL_SOURCE_LOCAL_LINK=${localFileLink}`,
       "将 MANUAL_SOURCE_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径。",
@@ -1103,6 +1108,7 @@ export function registerFlowDirectiveHooks(api) {
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
           "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成平台达人搜索、详情抓取和筛选。若同步返回 Excel 则立即保存；若返回 batch_id，先等待 30 秒，再用同一 requirement_id 和 batch_id 第 1 次查询 manual_source_creators_status，之后每隔 30 秒查询一次，累计最多 10 次。成功 Excel 保存并展示为最终手动拓展结果，随后结束本次手动拓展，不调用 rank_creators 或 create_submission_batch；第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
+          MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
           "手动拓展 Excel 保存成功后原样展示 delivery.local_file_link，不再提供浏览器详细拓展分支，也不追加完成弹窗。",
           "需求澄清规则：解析返回的八个可选 Label 数组是纯解析结果，有什么就原样落库什么，保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认、不询问任何标签内容；可选 Label（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。contentTag 必须是本次解析结果中的非空数组；缺失或无效时重新解析，禁止询问用户或自行补值。数值字段先采用 Dify 唯一解析值，再与最新非空 clarification 合并；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。Dify 已给出唯一 followercount、rebate、报价、CPM、CPE 时禁止再问。只有这些必填数值仍缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。当前平台 Dify 品牌候选唯一、合法且非空时必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为 null、未知等占位值时才询问。项目名由 Agent 根据当前需求自行总结生成，不弹窗确认；调用 validate_requirement 前用一句可见正文告知用户取的项目名。禁止编造标签、默认补数值或普通文本追问。解析 Workflow 唯一合法报价、CPM、CPE 候选直接复用，不因原文单值与 Provider 区间格式差异询问；同平台多个达人类型只保留一个 requirement，总量不变并合并条件，不拆分或追问每类人数。正常成功交付不追加完成弹窗。",

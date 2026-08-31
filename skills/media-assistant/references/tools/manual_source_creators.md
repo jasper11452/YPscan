@@ -10,4 +10,4 @@
 
 如果提交响应同步直接返回 Excel URL，则立刻把它作为 `ypscan_save_excel_artifact` 的内部参数，使用 `artifact_kind="manual_source"` 和同一 `requirement_id` 保存到当前项目并结束。若提交响应返回异步 `batch_id`，先输出进度提示，再等待 30 秒，用同一 `requirement_id` 和返回的整数 `batch_id` 第 1 次调用 `manual_source_creators_status`（见该工具卡）。轮询成功拿到 Excel URL 后，把它作为 `ypscan_save_excel_artifact` 的内部参数，使用 `artifact_kind="manual_source"` 和同一 `requirement_id` 保存到当前项目。Provider 下载链接不作为最终交付；必须原样展示保存结果中的 `delivery.local_file_link` Markdown 超链接，不得只输出裸 `file_path`。
 
-本地保存成功后，把该 Excel 作为后台搜索、详情抓取和筛选后的最终手动拓展结果展示并结束本次手动拓展。不得调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。不再提供浏览器详细拓展分支。
+本地保存成功后，无论数量是否足够，都把该 Excel 作为后台搜索、详情抓取和筛选后的最终手动拓展结果展示并结束本次手动拓展。只有当前 Provider 响应明确给出可信实际数量时，才与本轮 `num` 比较；实际数量为 0 或少于 `num` 时，说明实际数量、目标数量和缺口，并建议用户放宽条件。Provider 未给出可信数量时不得猜测、解析 Excel 或宣称不足。不得自动放宽或重跑；用户明确修改条件后，重新解析、复核并创建独立的新 requirement。不得调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。不再提供浏览器详细拓展分支。

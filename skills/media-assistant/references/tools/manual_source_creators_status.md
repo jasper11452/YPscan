@@ -21,5 +21,5 @@
 ## Result
 
 - `BATCH_NOT_READY`（含远端 status `0`）表示任务仍在处理中，是预期中间态，不代表 batch ID 传错；按上面的轮询循环继续。
-- 成功要求 `success=true` 且返回 HTTPS `excel_file_url`。拿到后立即调用 `ypscan_save_excel_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 和该 URL 保存；保存成功后展示 `delivery.local_file_link` 作为最终手动拓展结果并结束本次手动拓展，不调用 `rank_creators` 或 `create_submission_batch`。不得打开下载链接、用 Browser 或其他方式下载。
+- 成功要求 `success=true` 且返回 HTTPS `excel_file_url`。拿到后立即调用 `ypscan_save_excel_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 和该 URL 保存；保存成功后展示 `delivery.local_file_link` 作为最终手动拓展结果并结束本次手动拓展，不调用 `rank_creators` 或 `create_submission_batch`。只有当前 Provider 响应明确给出可信实际数量时，才与本轮 `manual_source_creators.num` 比较；实际数量为 0 或不足时说明实际数量、目标数量和缺口，并建议用户放宽条件，但不自动放宽或重跑。Provider 未给出可信数量时不得猜测、解析 Excel 或宣称不足。不得打开下载链接、用 Browser 或其他方式下载。
 - 其他失败：原样展示原始 code 和 message 后停止，不得换 ID 重试或重新提交任务。

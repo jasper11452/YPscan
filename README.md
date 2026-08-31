@@ -5,7 +5,7 @@
 - 询价机构：`选择模式 → 解析落库 → search_creators → rank_mcns → 选择机构和字段 → 企微询价 → 回收 → rank_creators → 提报表`
 - 手动拓展：`选择模式 → 解析落库 → 选择字段 → manual_source_creators → 最终手动拓展表`
 
-手动拓展由后端 `manual_source_creators` 完成 API 搜索、详情抓取和筛选；任务提交成功后先等待 30 秒，再用 `manual_source_creators_status` 查询，之后每隔 30 秒查询一次，单轮最多 10 次。第 10 次仍未完成时报告并停止，不弹窗或自动查询第 11 次。成功后保存最终手动拓展 Excel；完成后不再调用 `rank_creators` 或 `create_submission_batch`。每次开始询价或手动拓展都必须重新解析、复核并创建独立的新 requirement；即使同一会话、同一平台、需求条件未变且前一功能刚完成或停止，也不得跨功能复用 requirement 或已提交字段配置。
+手动拓展由后端 `manual_source_creators` 完成 API 搜索、详情抓取和筛选；任务提交成功后先等待 30 秒，再用 `manual_source_creators_status` 查询，之后每隔 30 秒查询一次，单轮最多 10 次。第 10 次仍未完成时报告并停止，不弹窗或自动查询第 11 次。成功后保存最终手动拓展 Excel；Provider 明确报告实际数量为 0 或低于目标时，交付结果并说明缺口、建议用户放宽条件，但不自动放宽或重跑。完成后不再调用 `rank_creators` 或 `create_submission_batch`。每次开始询价或手动拓展都必须重新解析、复核并创建独立的新 requirement；即使同一会话、同一平台、需求条件未变且前一功能刚完成或停止，也不得跨功能复用 requirement 或已提交字段配置。
 
 ## 当前组成
 

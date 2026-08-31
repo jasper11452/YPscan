@@ -439,6 +439,8 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   });
   const immediateText = directiveText(immediate);
   assert.match(immediateText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.match(immediateText, /实际数量为 0 或少于 num.*建议用户放宽条件/u);
+  assert.match(immediateText, /不得猜测数量、解析 Excel、自动放宽或自动重跑/u);
   assert.deepEqual(saveExcelArgsFromDirective(immediateText), {
     artifact_kind: "manual_source",
     artifact_id: "req-manual",
@@ -489,6 +491,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
   });
   assert.match(completedText, /不展示 Provider 下载 URL/u);
+  assert.match(completedText, /实际数量为 0 或少于 num.*建议用户放宽条件/u);
   assert.doesNotMatch(completedText, /ASK_USER_QUESTION_ARGS=/u);
 
   const saved = persist({
@@ -507,6 +510,8 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_LINK=/u);
   assert.match(savedText, /最终手动拓展结果/u);
+  assert.match(savedText, /实际数量为 0 或少于 num.*建议用户放宽条件/u);
+  assert.match(savedText, /用户明确修改条件后.*独立的新 requirement/u);
   assert.match(savedText, /每次开始询价机构或手动拓展都必须先创建独立的新 requirement/u);
   assert.doesNotMatch(savedText, /RANK_CREATORS_ARGS=/u);
   assert.doesNotMatch(savedText, /CREATE_SUBMISSION_BATCH_ARGS=/u);
@@ -1275,6 +1280,8 @@ test("startup instruction selects and preserves one business mode", () => {
     /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u,
   );
   assert.match(first.prependContext, /后台 API 完成平台达人搜索、详情抓取和筛选/u);
+  assert.match(first.prependContext, /实际数量为 0 或少于 num.*建议用户放宽条件/u);
+  assert.match(first.prependContext, /不得猜测数量、解析 Excel、自动放宽或自动重跑/u);
   assert.match(first.prependContext, /不再提供浏览器详细拓展分支/u);
   assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
   assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);

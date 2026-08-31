@@ -64,7 +64,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 若提交响应同步直接返回 Excel，则立即保存并交付最终手动拓展表，不进入状态轮询。若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID 和 `batch_id` 第 1 次查询。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 ID 开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
 
-成功 Excel 是后台搜索、详情抓取和筛选后的最终手动拓展结果：保存并展示后结束本次手动拓展，不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。不再提供浏览器详细拓展分支。
+成功 Excel 是后台搜索、详情抓取和筛选后的最终手动拓展结果：无论数量是否足够都先保存并展示，然后结束本次手动拓展，不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。只有当前 Provider 响应明确给出可信实际数量时，才与本轮 `num` 比较；实际数量为 0 或少于 `num` 时，必须说明实际数量、目标数量和缺口，并建议用户放宽条件。Provider 未给出可信数量时不得猜测、解析 Excel 或宣称不足。这里只建议，不自动放宽或重跑；用户明确修改条件后，按“用户修改需求”规则重新解析、复核并创建独立的新 requirement。不再提供浏览器详细拓展分支。
 
 ## 结果不足：先复核，再放宽
 
@@ -74,6 +74,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 - 询价分支：`search_creators` 为 0 仍先执行 `rank_mcns`；只有 `rank_mcns` 为空时进入复核和放宽。
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
+- 手动拓展实际数量为 0 或少于 `num` 时仍交付当前真实结果，只建议用户放宽；不得套用询价分支的自动放宽顺序。用户明确修改条件后按新需求重建独立 requirement。
 
 每轮放宽前先可见地告诉用户本轮修改的唯一条件，再以“用户原始需求 + 已公开的累计放宽”重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
 

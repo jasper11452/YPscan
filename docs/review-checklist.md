@@ -12,7 +12,7 @@
 - [ ] 仅询价分支调用 `search_creators → rank_mcns`。忽略 `search_creators` 的表格链接；`rank_mcns` 成功后按“完整机构表格 → 真实本地 `file_path` → 收件机构弹窗”输出，不再次询问业务模式。
 - [ ] 询价和手动拓展不得并行或在功能处理中切换；前一功能完成或明确停止后可按用户要求顺序切换，但必须为新功能创建新 requirement，并重新提交字段配置，不复用旧机构、达人、batch 或 Excel。询价机构为空时先复核原需求、解析输出和实际落库参数；确认正确后才按 Skill 固定顺序逐项放宽，每次只改一项并提前告知用户。
 - [ ] `select_inquiry_form_fields` 必须按当前 live schema 传 `platform` 和当前真实 `requirement_id` 建立字段关联；用户提交后由 Provider 直接持久化。只有当前同一 requirement 已有提交证据时才复用字段配置；新建 requirement（包括跨功能切换）必须重新选择。不得调用已弃用的 `get_selected_inquiry_form_fields`，不得轮询 callback，也不得在 Agent 上下文读取、重建或缓存 `columns`。
-- [ ] 手动拓展调用 `manual_source_creators` 时必须使用当前真实 `requirement_id` 和正整数 `num`；`demand` 仅在 live schema 支持且用户原文可直接透传时才作为可选字段传入。工具可能同步直接返回 Excel，也可能异步返回抖音任务批次；无论哪种都只保存并展示当前真实结果作为最终手动拓展结果，随后不得调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
+- [ ] 手动拓展调用 `manual_source_creators` 时必须使用当前真实 `requirement_id` 和正整数 `num`；`demand` 仅在 live schema 支持且用户原文可直接透传时才作为可选字段传入。工具可能同步直接返回 Excel，也可能异步返回抖音任务批次；无论哪种都先保存并展示当前真实结果作为最终手动拓展结果。只有当前 Provider 响应明确给出可信实际数量时才与 `num` 比较；实际为 0 或不足时说明实际数量、目标数量和缺口并建议用户放宽条件，但不猜测数量、不解析 Excel、不自动放宽或重跑。用户明确修改条件后重建独立 requirement；随后不得调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
 - [ ] 默认 `manual_source_creators` 调用先读取实际 input schema；若存在需求原文可选字段，优先传当前完整原文到 `demand`；schema 不支持或仅因未知参数失败时，只去掉原文字段、保留同一 `requirement_id` 和 `num` 重试一次，不猜字段名、不掩盖其他业务错误。
 - [ ] `manual_source_creators` 若返回异步批次，先等待 30 秒再第 1 次调用 `manual_source_creators_status`，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`、不自动查询第 11 次、不重复提交任务或更换 ID。若同步直接返回 Excel，则跳过状态轮询并直接保存交付。
 - [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；`header`、`question`、`label`、`description` 每行最多 20 个 Unicode 字符，长机构名的展示换行在匹配前去除；不得用普通聊天问句停住流程。
