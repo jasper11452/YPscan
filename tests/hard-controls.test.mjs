@@ -895,6 +895,9 @@ test("parse and startup directives enumerate required business values before val
   assert.match(parseText, /抖音仅使用 L2\/L3.*小红书不使用 L3/u);
   assert.doesNotMatch(parseText, /至少一个当前平台 kolOfficialPriceL1\/L2\/L3/u);
   assert.match(parseText, /缺失或有歧义.*按 Skill 一次性询问/u);
+  assert.match(parseText, /最低返点要求是多少/u);
+  assert.match(parseText, /选项只给单个最低返点百分比/u);
+  assert.match(parseText, /禁止给返点区间、上限或“不限”类选项/u);
 
   const startup = registeredHooks().get("before_prompt_build")({}, { runId: "required-fields" });
   assert.match(
@@ -909,6 +912,9 @@ test("parse and startup directives enumerate required business values before val
     startup.prependContext,
     /这些业务值缺失.*AskUserQuestion/u,
   );
+  assert.match(startup.prependContext, /最低返点要求是多少/u);
+  assert.match(startup.prependContext, /选项只给单个最低返点百分比/u);
+  assert.match(startup.prependContext, /上限固定按 100% 处理/u);
 });
 
 test("recipient selection reuses submitted fields or hands off to field selection", () => {
