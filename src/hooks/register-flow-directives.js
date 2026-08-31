@@ -8,10 +8,13 @@ import {
   validateRequirementPreflight,
 } from "../contract/registry.js";
 import {
+  browserVerificationQuestionPayload,
   businessModeQuestionPayload,
+  flowRetryQuestionPayload,
+  ingestJobRecoveryQuestionPayload,
+  isPopupQuestionPayload,
   mcnRankingRecipientQuestionPayload,
-  popupQuestionPayload,
-} from "../tools/post-save-questions.js";
+} from "../tools/popup-questions.js";
 import { localFileMarkdownLink } from "../tools/save-excel-artifact.js";
 
 const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
@@ -128,12 +131,7 @@ function flowPauseDirective(stage, message) {
   const code = nonemptyString(result?.error?.code) ? result.error.code : "结果未能继续";
   return [
     `YPSCAN_FLOW_DIRECTIVE=${stage} 已暂停（${code}）。使用下方 AskUserQuestion 选择重试或结束。`,
-    `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-      popupQuestionPayload("悦普识星下一步", `${stage} 无法自动继续，请选择下一步。`, [
-        { label: "重试", description: "按当前参数重试" },
-        { label: "结束本次", description: "保留结果并结束" },
-      ]),
-    )}`,
+    `ASK_USER_QUESTION_ARGS=${JSON.stringify(flowRetryQuestionPayload(stage))}`,
   ].join("\n");
 }
 
@@ -583,12 +581,7 @@ function ingestSubmissionsDirective(message) {
   if (jobId == null) {
     return [
       "YPSCAN_FLOW_DIRECTIVE=ingest_mcn_submissions 成功但缺少可信 job_id，无法查询异步入库结果。不得把本次响应当成最终 Excel、编造任务 ID 或跳过预览表直接精排。",
-      `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-        popupQuestionPayload("异步入库任务", "机构入库请求已返回，但缺少任务 ID，请选择下一步。", [
-          { label: "重试", description: "使用本轮 inquiry_ids 重新发起入库" },
-          { label: "结束本次", description: "停止本次机构提报取回" },
-        ]),
-      )}`,
+      `ASK_USER_QUESTION_ARGS=${JSON.stringify(ingestJobRecoveryQuestionPayload())}`,
     ].join("\n");
   }
   return [
@@ -666,14 +659,23 @@ function submissionBatchDirective(message, params = {}) {
     result?.data?.requirement_id,
     result?.requirement_id,
   );
+  const platform = ({
+    xhs: "xhs",
+    xiaohongshu: "xhs",
+    "小红书": "xhs",
+    dy: "dy",
+    douyin: "dy",
+    "抖音": "dy",
+  })[firstString(result?.data?.platform, result?.platform)?.toLowerCase()];
   if (!excelFileUrl || !artifactId) return flowPauseDirective("提报表生成", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=create_submission_batch 已生成提报表。立即保存，不展示 Provider 下载 URL。",
+    "YPSCAN_FLOW_DIRECTIVE=create_submission_batch 已生成提报表。立即保存，不展示 Provider 下载 URL。保存 submission_batch 时必须把当前 requirement 的已确认平台以 platform=xhs 或 platform=dy 传给本地保存工具；不得猜测，平台缺失时保存结果不得提供达人信息补全入口。",
     `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
       artifact_kind: "submission_batch",
       artifact_id: String(artifactId),
       excel_file_url: excelFileUrl,
       ...(requirementId ? { requirement_id: requirementId } : {}),
+      ...(platform ? { platform } : {}),
     })}`,
   ].join("\n");
 }
@@ -721,7 +723,7 @@ function excelArtifactSaveDirective(message, params = {}) {
       `MCN_RANKING_LOCAL_PATH=${filePath}`,
       `MCN_RANKING_LOCAL_LINK=${localFileLink}`,
       "将 MCN_RANKING_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径或把路径/链接放入弹窗；随后执行 ASK_USER_QUESTION_ARGS 选择询价收件机构，不得按排名或指标自行选择，也不得重复下载或重新 rank_mcns。",
-      ...(isRecord(nextArgs)
+      ...(isPopupQuestionPayload(nextArgs)
         ? [
             `ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`,
             INQUIRY_RECIPIENT_RESPONSE_RULE,
@@ -735,25 +737,37 @@ function excelArtifactSaveDirective(message, params = {}) {
     const nextArgs = result?.delivery?.next_args;
     const requirementId = firstString(params?.requirement_id);
     const batchId = positiveInteger(params?.artifact_id);
-    const canEnrich = isRecord(nextArgs) && requirementId && batchId;
+    const isXiaohongshu = params?.platform === "xhs";
+    let enrichmentDirective;
+    if (!isXiaohongshu) {
+      enrichmentDirective = [
+        "当前提报表不是已确认的小红书批次；保留并交付当前文件，不展示达人信息补全弹窗，不调用 get_creator_detail，也不把平台猜成 xhs。",
+      ];
+    } else if (!requirementId || !batchId) {
+      enrichmentDirective = [
+        "当前小红书提报表缺少可信的正整数 batch_id 或 requirement_id；保留并交付当前文件，不调用 get_creator_detail，也不猜测关联 ID。",
+      ];
+    } else if (!isPopupQuestionPayload(nextArgs)) {
+      enrichmentDirective = [
+        "当前小红书提报表的达人信息补全弹窗载荷无效；保留并交付当前文件，不展示损坏弹窗或调用 get_creator_detail。",
+      ];
+    } else {
+      enrichmentDirective = [
+        "随后逐字调用 ASK_USER_QUESTION_ARGS；选择补充更新时逐字使用 GET_CREATOR_DETAIL_ARGS 调用 get_creator_detail，再轮询 get_creator_detail_export，不得改字段配置或再次追问。",
+        `ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`,
+        `GET_CREATOR_DETAIL_ARGS=${JSON.stringify({
+          platform: "xhs",
+          batch_id: batchId,
+          requirement_id: requirementId,
+        })}`,
+      ];
+    }
     return [
       "YPSCAN_FLOW_DIRECTIVE=Provider 提报表已保存。",
       `SUBMISSION_BATCH_LOCAL_PATH=${filePath}`,
       `SUBMISSION_BATCH_LOCAL_LINK=${localFileLink}`,
       "将 SUBMISSION_BATCH_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径。",
-      ...(canEnrich
-        ? [
-            "随后逐字调用 ASK_USER_QUESTION_ARGS；选择补充更新时逐字使用 GET_CREATOR_DETAIL_ARGS 调用 get_creator_detail，再轮询 get_creator_detail_export，不得改字段配置或再次追问。",
-            `ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`,
-            `GET_CREATOR_DETAIL_ARGS=${JSON.stringify({
-              platform: "xhs",
-              batch_id: batchId,
-              requirement_id: requirementId,
-            })}`,
-          ]
-        : [
-            "当前提报表缺少可信的正整数 batch_id 或 requirement_id；保留并交付当前文件，不调用 get_creator_detail，也不猜测关联 ID。",
-          ]),
+      ...enrichmentDirective,
     ].join("\n");
   }
   return null;
@@ -764,12 +778,7 @@ function cascadeSelectionDirective(message) {
   if (result?.status === "needs_user_action") {
     return [
       `YPSCAN_FLOW_DIRECTIVE=级联菜单操作被${result?.error?.code ?? "登录或全局验证"}阻止。`,
-      `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-        popupQuestionPayload("Browser 验证", "当前平台需要登录或完成全局安全验证，请处理后继续。", [
-          { label: "已处理，继续", description: "重新观察页面后继续当前手扒任务" },
-          { label: "结束本次", description: "保留当前 checkpoint 并结束" },
-        ]),
-      )}`,
+      `ASK_USER_QUESTION_ARGS=${JSON.stringify(browserVerificationQuestionPayload())}`,
     ].join("\n");
   }
   if (result?.applied === true && result?.verified === true) {
@@ -790,12 +799,7 @@ function filterRangeDirective(message) {
   if (result?.status === "needs_user_action") {
     return [
       `YPSCAN_FLOW_DIRECTIVE=范围筛选操作被${result?.error?.code ?? "登录或全局验证"}阻止。`,
-      `ASK_USER_QUESTION_ARGS=${JSON.stringify(
-        popupQuestionPayload("Browser 验证", "当前平台需要登录或完成全局安全验证，请处理后继续。", [
-          { label: "已处理，继续", description: "重新观察页面后继续当前手扒任务" },
-          { label: "结束本次", description: "保留当前 checkpoint 并结束" },
-        ]),
-      )}`,
+      `ASK_USER_QUESTION_ARGS=${JSON.stringify(browserVerificationQuestionPayload())}`,
     ].join("\n");
   }
   if (result?.applied === true && result?.verified === true) {
@@ -926,7 +930,7 @@ export function registerFlowDirectiveHooks(api) {
           `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 只决定首次落库后的初始功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→回收→rank_creators→create_submission_batch。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→保存并交付最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前确认必须展示完整企微消息和机构名单，并提供“确认发送/返回修改”；用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。`,
           REQUIREMENT_REUSE_RULE,
           "所有 AskUserQuestion 弹窗的 header、question、label 和 description 均主动换行，任何一行最多 20 个 Unicode 字符；长机构名可为展示插入换行，匹配前移除换行还原原名。",
-          "提报表保存后的“补充更新达人信息”选项唯一映射到 get_creator_detail：用户一旦选择，立即使用本轮正整数 batch_id、同一 requirement_id 和 platform=xhs 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
+          "仅当前 requirement 平台为小红书时，提报表保存后才询问是否“补充更新达人信息”；该选项唯一映射到 get_creator_detail：用户一旦选择，立即使用本轮正整数 batch_id、同一 requirement_id 和 platform=xhs 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表。抖音或平台缺失时不得展示该选项、不得调用 get_creator_detail，也不得把平台猜成 xhs；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
           "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成平台达人搜索、详情抓取和筛选。提交成功后先等待 30 秒，再用同一 requirement_id 和 batch_id 第 1 次查询 manual_source_creators_status；之后每隔 30 秒查询一次，累计最多 10 次。成功 Excel 保存并展示为最终手动拓展结果，随后结束本次手动拓展，不调用 rank_creators 或 create_submission_batch；第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",

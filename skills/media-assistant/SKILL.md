@@ -96,6 +96,6 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 业务条件未变、只是前一功能完成或明确停止后要求另一功能时，复用同一会话中最近成功的 requirement 和已提交字段配置；不重新落库，也不把前一功能的机构、达人、batch 或 Excel 当作新功能结果。
 
-MCN 排名表和机构达人预览表是询价链路中间产物；手动拓展 Excel 是手动拓展最终交付。询价回收后由 `create_submission_batch` 生成的提报表保存后，展示 `delivery.local_file_link`，再询问是否“补充更新达人信息”。用户选择补充时，唯一映射到 `get_creator_detail`，传当前 requirement ID 和同一正整数 batch ID，随后用同一 batch 轮询 `get_creator_detail_export` 并保存新版提报表；不得改成字段配置或再次追问补充什么。
+MCN 排名表和机构达人预览表是询价链路中间产物；手动拓展 Excel 是手动拓展最终交付。询价回收后由 `create_submission_batch` 生成的提报表保存时，把当前 requirement 的已确认平台传给本地保存工具并展示 `delivery.local_file_link`。仅小红书提报表再询问是否“补充更新达人信息”；用户选择补充时，唯一映射到 `get_creator_detail`，传 `platform=xhs`、当前 requirement ID 和同一正整数 batch ID，随后用同一 batch 轮询 `get_creator_detail_export` 并保存新版提报表。抖音或平台缺失时不得展示补全选项、调用 `get_creator_detail` 或把平台猜成 `xhs`；不得把补全改成字段配置或再次追问补充什么。
 
 所有结果只使用本轮真实 Provider 证据，不跨需求、平台、账号或历史 run 混用。

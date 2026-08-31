@@ -13,7 +13,7 @@
     "src/hooks/register-flow-directives.js",
     "src/tools/manual-research/platform-cascade-routes.json",
     "src/tools/parse-requirement.js",
-    "src/tools/post-save-questions.js",
+    "src/tools/popup-questions.js",
     "src/tools/save-excel-artifact.js",
     "src/tools/test-adapter.js",
     "src/tools/tool-result.js",

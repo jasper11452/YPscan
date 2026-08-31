@@ -3,11 +3,16 @@ import test from "node:test";
 
 import { registerFlowDirectiveHooks } from "../src/hooks/register-flow-directives.js";
 import {
+  browserVerificationQuestionPayload,
   businessModeQuestionPayload,
+  flowRetryQuestionPayload,
+  ingestJobRecoveryQuestionPayload,
+  isPopupQuestionPayload,
   MAX_POPUP_LINE_LENGTH,
   mcnRankingRecipientQuestionPayload,
   popupQuestionPayload,
-} from "../src/tools/post-save-questions.js";
+  submissionEnrichmentQuestionPayload,
+} from "../src/tools/popup-questions.js";
 
 function registeredHooks() {
   const hooks = new Map();
@@ -624,6 +629,7 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
       success: true,
       data: {
         batch_id: 101,
+        platform: "xiaohongshu",
         excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
       },
     }),
@@ -633,6 +639,7 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
     artifact_id: "101",
     excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
     requirement_id: "req-ingest",
+    platform: "xhs",
   });
 });
 
@@ -654,6 +661,8 @@ test("submission batch save falls back to a top-level requirement_id", () => {
     excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
     requirement_id: "req-top-level",
   });
+  assert.match(directiveText(result), /必须把当前 requirement 的已确认平台/u);
+  assert.match(directiveText(result), /平台缺失时.*不得提供达人信息补全入口/u);
 });
 
 test("submission enrichment choice maps directly to get_creator_detail", () => {
@@ -665,11 +674,12 @@ test("submission enrichment choice maps directly to get_creator_detail", () => {
       artifact_id: "123",
       excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
       requirement_id: "req-submission",
+      platform: "xhs",
     },
     message: toolMessage({
       success: true,
       data: { file_path: "/workspace/submission.xlsx" },
-      delivery: { next_args: { questions: [] } },
+      delivery: { next_args: submissionEnrichmentQuestionPayload() },
     }),
   });
   const text = directiveText(saved);
@@ -682,6 +692,51 @@ test("submission enrichment choice maps directly to get_creator_detail", () => {
     batch_id: 123,
     requirement_id: "req-submission",
   });
+});
+
+test("douyin and missing-platform submission saves do not offer creator enrichment", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  for (const [label, platform] of [["douyin", "dy"], ["missing", undefined]]) {
+    const saved = persist({
+      toolName: "ypscan_save_excel_artifact",
+      params: {
+        artifact_kind: "submission_batch",
+        artifact_id: "123",
+        excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+        requirement_id: `req-${label}`,
+        ...(platform ? { platform } : {}),
+      },
+      message: toolMessage({
+        success: true,
+        data: { file_path: `/workspace/${label}-submission.xlsx` },
+        delivery: { next_args: { questions: [] } },
+      }),
+    });
+    const text = directiveText(saved);
+    assert.match(text, /不展示达人信息补全弹窗/u);
+    assert.doesNotMatch(text, /GET_CREATOR_DETAIL_ARGS=/u);
+  }
+});
+
+test("xiaohongshu submission save rejects a malformed enrichment popup", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const saved = persist({
+    toolName: "ypscan_save_excel_artifact",
+    params: {
+      artifact_kind: "submission_batch",
+      artifact_id: "123",
+      requirement_id: "req-malformed-popup",
+      platform: "xhs",
+    },
+    message: toolMessage({
+      success: true,
+      data: { file_path: "/workspace/submission.xlsx" },
+      delivery: { next_args: { questions: [] } },
+    }),
+  });
+  const text = directiveText(saved);
+  assert.match(text, /达人信息补全弹窗载荷无效/u);
+  assert.doesNotMatch(text, /GET_CREATOR_DETAIL_ARGS=|ASK_USER_QUESTION_ARGS=/u);
 });
 
 test("successful WeCom distribution waits for inquiry retrieval without switching branches", () => {
@@ -804,6 +859,25 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
   }
 });
 
+test("saved artifact hooks reject malformed popup payloads", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const result = persist({
+    toolName: "ypscan_save_excel_artifact",
+    params: { artifact_kind: "mcn_ranking", artifact_id: "req-popup" },
+    message: toolMessage({
+      success: true,
+      data: { file_path: "/tmp/mcn-ranking.xlsx" },
+      delivery: {
+        local_file_link: "[排名表](<file:///tmp/mcn-ranking.xlsx>)",
+        next_args: { questions: [] },
+      },
+    }),
+  });
+
+  assert.doesNotMatch(directiveText(result), /ASK_USER_QUESTION_ARGS=/u);
+  assert.match(directiveText(result), /当前没有可选机构/u);
+});
+
 test("parse and startup directives enumerate required business values before validation", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const parse = persist({
@@ -904,10 +978,41 @@ test("long institution names wrap without changing their matching identity", () 
   assertPopupLines(payload);
 });
 
+test("recipient popup rejects empty names and deduplicates restored identities", () => {
+  assert.equal(mcnRankingRecipientQuestionPayload([]), null);
+  assert.equal(mcnRankingRecipientQuestionPayload(["", "\n", null]), null);
+
+  const payload = mcnRankingRecipientQuestionPayload([
+    "机构 A",
+    "机构 \nA",
+    "机构 A",
+    "机构 B",
+  ]);
+  assert.deepEqual(
+    payload.questions[0].options.map((option) => popupPlainText(option.label)),
+    ["机构 A", "机构 B"],
+  );
+  assertPopupLines(payload);
+});
+
+test("recipient popup avoids collisions with its fixed stop action", () => {
+  const payload = mcnRankingRecipientQuestionPayload(["暂不询价"]);
+
+  assert.deepEqual(
+    payload.questions[0].options.map((option) => popupPlainText(option.label)),
+    ["询价全部机构", "暂不询价"],
+  );
+  assert.equal(payload.questions[0].multiSelect, false);
+  assertPopupLines(payload);
+});
+
 test("popup text prefers semantic breaks and keeps ASCII tokens intact", () => {
   const question = "进入 followercount 前必须检查品牌和数量，缺失时通过 AskUserQuestion 收集。";
   const description = "立即调用 get_creator_detail 异步补全当前批次，不再选择字段或追问";
-  const payload = popupQuestionPayload("标题", question, [{ label: "选项", description }]);
+  const payload = popupQuestionPayload("标题", question, [
+    { label: "选项", description },
+    { label: "结束", description: "结束当前步骤" },
+  ]);
   assertPopupLines(payload);
 
   const questionLines = payload.questions[0].question.split("\n");
@@ -925,10 +1030,50 @@ test("popup text prefers semantic breaks and keeps ASCII tokens intact", () => {
   }
 });
 
+test("popup text normalizes carriage-return line endings", () => {
+  const payload = popupQuestionPayload("标题\r\n分类", "第一行\r第二行", [
+    { label: "继续", description: "执行\r\n当前步骤" },
+    { label: "结束", description: "停止当前步骤" },
+  ]);
+
+  for (const question of payload.questions) {
+    for (const value of [
+      question.header,
+      question.question,
+      ...question.options.flatMap((option) => [option.label, option.description]),
+    ]) {
+      assert.doesNotMatch(value, /\r/u);
+    }
+  }
+  assertPopupLines(payload);
+});
+
+test("popup payload validation rejects host-incompatible structures", () => {
+  assert.equal(isPopupQuestionPayload({ questions: [] }), false);
+  assert.equal(isPopupQuestionPayload({
+    questions: [{
+      header: "标题",
+      question: "请选择。",
+      options: [
+        { label: "重复", description: "第一个动作" },
+        { label: "重\n复", description: "第二个动作" },
+      ],
+      multiSelect: false,
+    }],
+  }), false);
+  assert.throws(
+    () => popupQuestionPayload("标题", "请选择。", [
+      { label: "唯一选项", description: "无法形成有效决策" },
+    ]),
+    /Invalid AskUserQuestion payload/u,
+  );
+});
+
 test("popup text hard-splits an overlong ASCII token without losing characters", () => {
   const token = "get_creator_detail_export_v2";
   const payload = popupQuestionPayload("标题", "请选择工具。", [
     { label: token, description: "选项说明" },
+    { label: "结束", description: "结束当前步骤" },
   ]);
   const wrappedLabel = payload.questions[0].options[0].label;
 
@@ -945,6 +1090,23 @@ test("business mode popup exposes the renamed user-facing option", () => {
     ["询价机构", "手动拓展"],
   );
   assert.doesNotMatch(JSON.stringify(payload), /直接手扒/u);
+});
+
+test("shared recovery popup templates preserve their actions and line limits", () => {
+  const retry = flowRetryQuestionPayload("MCN 排名表保存");
+  const ingest = ingestJobRecoveryQuestionPayload();
+  const browser = browserVerificationQuestionPayload();
+
+  for (const payload of [retry, ingest, browser]) assertPopupLines(payload);
+  assert.deepEqual(
+    retry.questions[0].options.map((option) => popupPlainText(option.label)),
+    ["重试", "结束本次"],
+  );
+  assert.match(popupPlainText(ingest.questions[0].question), /缺少任务 ID/u);
+  assert.deepEqual(
+    browser.questions[0].options.map((option) => popupPlainText(option.label)),
+    ["已处理，继续", "结束本次"],
+  );
 });
 
 test("startup instruction selects and preserves one business mode", () => {

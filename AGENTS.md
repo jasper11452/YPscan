@@ -25,7 +25,7 @@
 - `src/tools/` — 本地工具与辅助：
   - `parse-requirement.js` — 直连 Dify 的需求解析代理；`data.outputs` 只返回当前 Provider 契约消费的字段，缺失字段省略。
   - `save-excel-artifact.js` — 保存 Provider 返回的 Excel 并产出可点击的本地文件链接。
-  - `test-adapter.js`、`tool-result.js`、`post-save-questions.js` — 测试下载、结果适配与弹窗载荷。
+  - `test-adapter.js`、`tool-result.js`、`popup-questions.js` — 测试下载、结果适配与统一弹窗载荷。
   - `manual-browser-*`、`manual-research-*`、`select-cascade.js`、`set-filter-range.js` — **遗留 native Browser 手扒工具**：保留在仓库但不在 `index.js` 注册、不在发布包 `files` 内。不要重新注册。
 - `src/contract/registry.js` — 参数归一化、平台别名、`business_mode` 常量与 `validate_requirement` 预检。
 - `src/hooks/register-flow-directives.js` — 注入双功能链路、顺序复用与交付指令；`before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或企微发送确认门禁。

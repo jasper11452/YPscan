@@ -17,7 +17,7 @@ import { excelArtifactTestDownloadUrl } from "./test-adapter.js";
 import {
   mcnRankingRecipientQuestionPayload,
   submissionEnrichmentQuestionPayload,
-} from "./post-save-questions.js";
+} from "./popup-questions.js";
 
 export const EXCEL_ARTIFACT_KINDS = Object.freeze([
   "submission_batch",
@@ -63,21 +63,24 @@ function failure(code, message, reason = code, {
   return hostToolResult(payload, { details: payload.error.details });
 }
 
-function followUpDelivery(artifactKind, mcnNames, requirementId, artifactId) {
-  if (artifactKind === "mcn_ranking" && Array.isArray(mcnNames) && mcnNames.length > 0) {
+function followUpDelivery(artifactKind, params) {
+  if (artifactKind === "mcn_ranking") {
+    const nextArgs = mcnRankingRecipientQuestionPayload(params?.mcn_names);
+    if (!nextArgs) return {};
     return {
       next_tool: "AskUserQuestion",
-      next_args: mcnRankingRecipientQuestionPayload(mcnNames),
+      next_args: nextArgs,
       next_action: "MCN 排名表已保存；展示本地文件链接后按 next_args 选择询价收件机构",
     };
   }
   if (
     artifactKind === "submission_batch" &&
-    nonemptyString(requirementId) &&
-    nonemptyString(artifactId) &&
-    /^\d+$/u.test(artifactId.trim()) &&
-    Number.isSafeInteger(Number(artifactId)) &&
-    Number(artifactId) > 0
+    params?.platform === "xhs" &&
+    nonemptyString(params?.requirement_id) &&
+    nonemptyString(params?.artifact_id) &&
+    /^\d+$/u.test(params.artifact_id.trim()) &&
+    Number.isSafeInteger(Number(params.artifact_id)) &&
+    Number(params.artifact_id) > 0
   ) {
     return {
       next_tool: "AskUserQuestion",
@@ -88,7 +91,7 @@ function followUpDelivery(artifactKind, mcnNames, requirementId, artifactId) {
   return {};
 }
 
-function success(details, artifactKind, mcnNames, requirementId, artifactId) {
+function success(details, artifactKind, params) {
   const localFileLink = localFileMarkdownLink(details.file_path);
   const delivery = {
     local_path: details.file_path,
@@ -96,7 +99,7 @@ function success(details, artifactKind, mcnNames, requirementId, artifactId) {
     display_required: true,
     display_before_next_action: true,
     user_visible_message: `已完成：Excel 已保存到本地。\n本地文件：${localFileLink}`,
-    ...followUpDelivery(artifactKind, mcnNames, requirementId, artifactId),
+    ...followUpDelivery(artifactKind, params),
   };
   return hostToolResult(
     { success: true, data: details, delivery },
@@ -499,13 +502,7 @@ export async function saveExcelArtifact(params, {
       idempotent: published.idempotent,
       download_attempts: downloaded.attempts,
     };
-    return success(
-      details,
-      artifactKind,
-      params?.mcn_names,
-      params?.requirement_id,
-      artifactId,
-    );
+    return success(details, artifactKind, params);
   } catch {
     return failure(
       "YPSCAN_EXCEL_SAVE_FAILED",

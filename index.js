@@ -71,6 +71,12 @@ export default {
                 description:
                   "submission_batch 使用；当前提报表所属 requirement ID，用于后续 get_creator_detail 补全",
               },
+              platform: {
+                type: "string",
+                enum: ["xhs", "dy"],
+                description:
+                  "submission_batch 使用；当前 requirement 的平台，仅 xhs 提供后续达人信息补全",
+              },
               mcn_names: {
                 type: "array",
                 items: { type: "string", minLength: 1 },

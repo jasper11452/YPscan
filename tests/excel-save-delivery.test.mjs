@@ -9,7 +9,7 @@ import {
   MAX_POPUP_LINE_LENGTH,
   mcnRankingRecipientQuestionPayload,
   submissionEnrichmentQuestionPayload,
-} from "../src/tools/post-save-questions.js";
+} from "../src/tools/popup-questions.js";
 
 function saveFixture(workspaceDir, artifactKind, fileName, extraParams = {}) {
   return saveExcelArtifact({
@@ -52,7 +52,7 @@ test("only Provider submission save offers enrichment", async (t) => {
     workspaceDir,
     "submission_batch",
     "initial-submission.xlsx",
-    { artifact_id: "123", requirement_id: "req-submission" },
+    { artifact_id: "123", requirement_id: "req-submission", platform: "xhs" },
   )).content[0].text);
   assert.equal(initial.delivery.next_tool, "AskUserQuestion");
   assert.equal(
@@ -66,6 +66,24 @@ test("only Provider submission save offers enrichment", async (t) => {
   assert.match(popupPlainText(enrichmentOption.description), /立即调用 get_creator_detail/u);
   assert.match(popupPlainText(enrichmentOption.description), /不再选择字段或追问/u);
   assertPopupLines(initial.delivery.next_args);
+
+  const douyin = JSON.parse((await saveFixture(
+    workspaceDir,
+    "submission_batch",
+    "douyin-submission.xlsx",
+    { artifact_id: "124", requirement_id: "req-douyin", platform: "dy" },
+  )).content[0].text);
+  assert.equal(douyin.delivery.next_tool, undefined);
+  assert.equal(douyin.delivery.next_args, undefined);
+
+  const missingPlatform = JSON.parse((await saveFixture(
+    workspaceDir,
+    "submission_batch",
+    "missing-platform-submission.xlsx",
+    { artifact_id: "125", requirement_id: "req-missing-platform" },
+  )).content[0].text);
+  assert.equal(missingPlatform.delivery.next_tool, undefined);
+  assert.equal(missingPlatform.delivery.next_args, undefined);
 
   const enriched = JSON.parse((await saveFixture(
     workspaceDir,
@@ -136,6 +154,22 @@ test("submission enrichment is omitted without a trusted requirement association
   )).content[0].text);
   assert.equal(malformedBatch.success, true);
   assert.equal(malformedBatch.delivery.next_args, undefined);
+});
+
+test("MCN ranking save omits an invalid recipient question", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-invalid-recipients-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+
+  const result = JSON.parse((await saveFixture(
+    workspaceDir,
+    "mcn_ranking",
+    "invalid-recipients.xlsx",
+    { mcn_names: ["", "\n", null] },
+  )).content[0].text);
+
+  assert.equal(result.success, true);
+  assert.equal(result.delivery.next_tool, undefined);
+  assert.equal(result.delivery.next_args, undefined);
 });
 
 test("successful saves expose a clickable local file link with an encoded target", async (t) => {
