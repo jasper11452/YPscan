@@ -96,6 +96,7 @@ function completeValidateParams() {
 
 function validateParamsWithMode(mode) {
   return {
+    platform: "douyin",
     rawMessagesJson: {
       original: "抖音需求原文",
       parse_outputs: {},
@@ -106,6 +107,7 @@ function validateParamsWithMode(mode) {
 
 test("validated requirements route by the previously selected business mode", () => {
   const persist = registeredHooks().get("tool_result_persist");
+  const validateContext = { sessionKey: "validated-requirements-route" };
   const parse = persist({
     toolName: "ypscan_parse_requirement",
     message: toolMessage({
@@ -148,14 +150,17 @@ test("validated requirements route by the previously selected business mode", ()
   assert.match(directiveText(parseWithMode), /BUSINESS_MODE=询价机构/u);
   assert.match(directiveText(parseWithMode), /rawMessagesJson\.business_mode/u);
 
-  const validateInquiry = persist({
-    toolName: "ypmcn__validate_requirement",
-    params: validateParamsWithMode("询价机构"),
-    message: toolMessage({
-      success: true,
-      data: { id: "a".repeat(32), demand_id: "1787034545923844" },
-    }),
-  });
+  const validateInquiry = persist(
+    {
+      toolName: "ypmcn__validate_requirement",
+      params: validateParamsWithMode("询价机构"),
+      message: toolMessage({
+        success: true,
+        data: { id: "a".repeat(32), demand_id: "1787034545923844" },
+      }),
+    },
+    validateContext,
+  );
   assert.match(directiveText(validateInquiry), /当前需求只保留一个 requirement/u);
   assert.match(directiveText(validateInquiry), /业务模式：询价机构/u);
   assert.match(directiveText(validateInquiry), /严禁使用 data\.demand_id/u);
@@ -164,18 +169,21 @@ test("validated requirements route by the previously selected business mode", ()
   });
   assert.doesNotMatch(directiveText(validateInquiry), /SELECT_INQUIRY_FORM_FIELDS_ARGS=/u);
 
-  const validateManual = persist({
-    toolName: "ypmcn__validate_requirement",
-    params: validateParamsWithMode("手动拓展"),
-    message: toolMessage({
-      success: true,
-      data: { id: "a".repeat(32), demand_id: "1787034545923844" },
-    }),
-  });
+  const validateManual = persist(
+    {
+      toolName: "ypmcn__validate_requirement",
+      params: validateParamsWithMode("手动拓展"),
+      message: toolMessage({
+        success: true,
+        data: { id: "a".repeat(32), demand_id: "1787034545923844" },
+      }),
+    },
+    validateContext,
+  );
   assert.match(directiveText(validateManual), /业务模式：手动拓展/u);
   assert.deepEqual(
     namedArgsFromDirective(directiveText(validateManual), "SELECT_INQUIRY_FORM_FIELDS_ARGS"),
-    { requirement_id: "a".repeat(32) },
+    { requirement_id: "a".repeat(32), platform: "douyin" },
   );
   assert.doesNotMatch(directiveText(validateManual), /SEARCH_CREATORS_ARGS=/u);
 
@@ -192,28 +200,34 @@ test("validated requirements route by the previously selected business mode", ()
     /SEARCH_CREATORS_ARGS=|SELECT_INQUIRY_FORM_FIELDS_ARGS=/u,
   );
 
-  const search = persist({
-    toolName: "ypmcn__search_creators",
-    params: { id: "req-1" },
-    message: toolMessage({
-      success: true,
-      data: {
-        total_matched: 0,
-        creators_export_path:
-          "https://mcp.eshypdata.com/api/download?file_path=creator-preview.xlsx",
-      },
-    }),
-  });
+  const search = persist(
+    {
+      toolName: "ypmcn__search_creators",
+      params: { id: "a".repeat(32) },
+      message: toolMessage({
+        success: true,
+        data: {
+          total_matched: 0,
+          creators_export_path:
+            "https://mcp.eshypdata.com/api/download?file_path=creator-preview.xlsx",
+        },
+      }),
+    },
+    validateContext,
+  );
   const searchText = directiveText(search);
   assert.match(searchText, /忽略 creators_export_path 等表格链接，不保存或展示/u);
   assert.match(searchText, /不调用保存工具/u);
   assert.match(searchText, /不得用 Browser、脚本或其他方式下载/u);
   assert.doesNotMatch(searchText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
-  assert.deepEqual(namedArgsFromDirective(searchText, "RANK_MCNS_ARGS"), { id: "req-1" });
+  assert.deepEqual(namedArgsFromDirective(searchText, "RANK_MCNS_ARGS"), {
+    id: "a".repeat(32),
+    platform: "douyin",
+  });
 
   const rank = persist({
     toolName: "ypmcn__rank_mcns",
-    params: { id: "req-1" },
+    params: { id: "req-1", platform: "douyin" },
     message: toolMessage({
       success: true,
       data: { mcns: [{ agency_name: "机构 A", supplier_id: "supplier-a" }] },
@@ -250,6 +264,7 @@ test("validated requirements route by the previously selected business mode", ()
   assert.match(directiveText(rank), /不得按排名或指标自行选择/u);
   assert.deepEqual(namedArgsFromDirective(directiveText(rank), "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
     requirement_id: "req-1",
+    platform: "douyin",
   });
   assert.match(question.questions[0].question, /当前仅有 1 家候选机构/u);
   assert.doesNotMatch(question.questions[0].question, /下载链接/u);
@@ -261,23 +276,31 @@ test("completed requirements can reuse the other business function", () => {
   const hooks = registeredHooks();
   const persist = hooks.get("tool_result_persist");
   const before = hooks.get("before_tool_call");
+  const inquiryContext = { sessionKey: "reuse-inquiry" };
+  const manualContext = { sessionKey: "reuse-manual" };
   const validateResult = (requirementId) =>
     toolMessage({ success: true, data: { requirement_id: requirementId } });
 
-  persist({
-    toolName: "validate_requirement",
-    params: validateParamsWithMode("询价机构"),
-    message: validateResult("req-inquiry"),
-  });
-  persist({
-    toolName: "validate_requirement",
-    params: validateParamsWithMode("手动拓展"),
-    message: validateResult("req-manual"),
-  });
+  persist(
+    {
+      toolName: "validate_requirement",
+      params: validateParamsWithMode("询价机构"),
+      message: validateResult("req-inquiry"),
+    },
+    inquiryContext,
+  );
+  persist(
+    {
+      toolName: "validate_requirement",
+      params: validateParamsWithMode("手动拓展"),
+      message: validateResult("req-manual"),
+    },
+    manualContext,
+  );
 
   const manualTool = before({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-inquiry", size: 10 },
+    params: { requirement_id: "req-inquiry", num: 10 },
   });
   assert.equal(manualTool, undefined);
 
@@ -317,7 +340,7 @@ test("rank result saves the Provider MCN workbook before the branch question", (
       success: true,
       data: {
         mcns: [{ agency_name: "机构 A", supplier_id: "supplier-a" }],
-        mcns_export_path: "https://mcp.eshypdata.com/api/download?file_path=mcn-ranking.xlsx",
+        mcns_download_url: "https://mcp.eshypdata.com/api/download?file_path=mcn-ranking.xlsx",
       },
     }),
   });
@@ -366,6 +389,7 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   );
   assert.deepEqual(namedArgsFromDirective(savedText, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
     requirement_id: "req-1",
+    platform: "douyin",
   });
   assert.match(savedText, /把路径\/链接放入弹窗/u);
 
@@ -381,7 +405,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const sourced = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-manual", size: "10" },
+    params: { requirement_id: "req-manual", num: "10", demand: "抖音科技耳机手动拓展 10 位" },
     message: toolMessage({
       success: true,
       requirement_id: "req-manual",
@@ -398,8 +422,30 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   assert.match(sourceText, /之后每隔 30 秒查询一次，单轮累计最多 10 次/u);
   assert.match(sourceText, /第 10 次仍未完成.*不得自动查询第 11 次/u);
   assert.match(sourceText, /不得猜测或更换 requirement_id 或 batch_id/u);
+  assert.doesNotMatch(sourceText, /\bsize\b|creator_count|page_url|original_brief/u);
   assert.doesNotMatch(sourceText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
   assert.doesNotMatch(sourceText, /ASK_USER_QUESTION_ARGS=/u);
+
+  const immediate = persist({
+    toolName: "ypmcn__manual_source_creators",
+    params: { requirement_id: "req-manual", num: "10", demand: "抖音科技耳机手动拓展 10 位" },
+    message: toolMessage({
+      success: true,
+      data: {
+        requirement_id: "req-manual",
+        excel_file_url: "https://files.eshypdata.com/exports/manual-direct.xlsx",
+      },
+    }),
+  });
+  const immediateText = directiveText(immediate);
+  assert.match(immediateText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.deepEqual(saveExcelArgsFromDirective(immediateText), {
+    artifact_kind: "manual_source",
+    artifact_id: "req-manual",
+    excel_file_url: "https://files.eshypdata.com/exports/manual-direct.xlsx",
+  });
+  assert.doesNotMatch(immediateText, /MANUAL_SOURCE_CREATORS_STATUS_ARGS=/u);
+  assert.doesNotMatch(immediateText, /\bsize\b|creator_count|page_url|original_brief/u);
 
   const pending = persist({
     toolName: "ypmcn__manual_source_creators_status",
@@ -472,7 +518,7 @@ test("default manual sourcing repairs missing field selection before retrying", 
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-manual", size: 10 },
+    params: { requirement_id: "req-manual", platform: "douyin", num: 10 },
     message: toolMessage({
       success: false,
       error: { code: "REQUIREMENT_COLUMNS_NOT_CONFIGURED" },
@@ -482,9 +528,11 @@ test("default manual sourcing repairs missing field selection before retrying", 
 
   assert.deepEqual(namedArgsFromDirective(text, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
     requirement_id: "req-manual",
+    platform: "douyin",
   });
   assert.match(text, /不得原参数重试/u);
   assert.match(text, /收到“好了”后/u);
+  assert.doesNotMatch(text, /\bsize\b|creator_count|page_url|original_brief/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
@@ -492,7 +540,7 @@ test("default manual sourcing pauses without a task batch and falls back to para
   const persist = registeredHooks().get("tool_result_persist");
   const sourced = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-nobatch", size: "10" },
+    params: { requirement_id: "req-nobatch", num: "10", demand: "抖音科技耳机手动拓展 10 位" },
     message: toolMessage({ success: true, requirement_id: "req-nobatch" }),
   });
   const sourceText = directiveText(sourced);
@@ -925,7 +973,7 @@ test("recipient selection reuses submitted fields or hands off to field selectio
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
     toolName: "rank_mcns",
-    params: { id: "req-inquiry" },
+    params: { id: "req-inquiry", platform: "douyin" },
     message: toolMessage({
       success: true,
       data: { mcns: [{ agency_name: "机构 A", supplier_id: "supplier-a" }] },
@@ -940,6 +988,7 @@ test("recipient selection reuses submitted fields or hands off to field selectio
   assert.match(text, /不得查询、缓存或重建 columns/u);
   assert.deepEqual(namedArgsFromDirective(text, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
     requirement_id: "req-inquiry",
+    platform: "douyin",
   });
 });
 
@@ -948,7 +997,7 @@ test("more than four inquiry recipients use a compact prompt without option trun
   const names = ["机构 A", "机构 B", "机构 C", "机构 D", "机构 E"];
   const result = persist({
     toolName: "rank_mcns",
-    params: { id: "req-many" },
+    params: { id: "req-many", platform: "douyin" },
     message: toolMessage({
       success: true,
       data: { mcns: names.map((agency_name) => ({ agency_name })) },
@@ -1487,7 +1536,7 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /按原分支恢复/u);
   assert.match(text, /用户明确选中的当前 MCN/u);
   assert.match(text, /发送前警示弹窗确认/u);
-  assert.match(text, /手动拓展使用原 requirement_id 和 size/u);
+  assert.match(text, /手动拓展使用原 requirement_id 和 num/u);
   assert.ok(text.length < 900, `field-selection directive too long: ${text.length}`);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
@@ -1548,6 +1597,6 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   assert.match(startup.prependContext, /不调用 rank_creators 或 create_submission_batch/u);
   assert.match(startup.prependContext, /读取.*input schema/u);
   assert.match(startup.prependContext, /需求原文.*可选字段/u);
-  assert.match(startup.prependContext, /去掉原文字段.*同一 requirement_id 和 size.*重试一次/u);
+  assert.match(startup.prependContext, /schema 不支持该字段时只传 requirement_id 和 num/u);
   assert.doesNotMatch(startup.prependContext, /ypscan_manual_research|宿主 Browser/u);
 });

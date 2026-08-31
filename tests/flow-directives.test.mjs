@@ -218,6 +218,7 @@ test("validate_requirement success reuses the business mode recorded by the pref
   const { hooks } = registeredPlugin();
   const before = hooks.get("before_tool_call");
   const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "validate-scope" };
   const requirementId = "a".repeat(32);
   const validateParams = (businessMode) => ({
     platform: "douyin",
@@ -239,37 +240,47 @@ test("validate_requirement success reuses the business mode recorded by the pref
   // The persist event omits params, matching the reported production failure.
   const persistResult = () =>
     directiveText(
-      persist({
-        toolName: "mcp__ypscan__validate_requirement",
-        message: toolMessage({ success: true, data: { requirement_id: requirementId } }),
-      }),
+      persist(
+        {
+          toolName: "mcp__ypscan__validate_requirement",
+          message: toolMessage({ success: true, data: { requirement_id: requirementId } }),
+        },
+        context,
+      ),
     );
 
   // Without a recorded mode the flow still pauses conservatively.
   assert.match(persistResult(), /缺少 business_mode/u);
 
   assert.equal(
-    before({ toolName: "mcp__ypscan__validate_requirement", params: validateParams("手动拓展") })
-      .block,
+    before(
+      { toolName: "mcp__ypscan__validate_requirement", params: validateParams("手动拓展") },
+      context,
+    ).block,
     undefined,
   );
   const manual = persistResult();
   assert.doesNotMatch(manual, /已暂停|缺少 business_mode/u);
   assert.match(manual, /业务模式：手动拓展/u);
   assert.deepEqual(namedArgsFromDirective(manual, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
+    platform: "douyin",
     requirement_id: requirementId,
   });
   assert.doesNotMatch(manual, /SEARCH_CREATORS_ARGS=/u);
 
   assert.equal(
-    before({ toolName: "mcp__ypscan__validate_requirement", params: validateParams("询价机构") })
-      .block,
+    before(
+      { toolName: "mcp__ypscan__validate_requirement", params: validateParams("询价机构") },
+      context,
+    ).block,
     undefined,
   );
   const inquiry = persistResult();
   assert.doesNotMatch(inquiry, /已暂停|缺少 business_mode/u);
   assert.match(inquiry, /业务模式：询价机构/u);
-  assert.deepEqual(namedArgsFromDirective(inquiry, "SEARCH_CREATORS_ARGS"), { id: requirementId });
+  assert.deepEqual(namedArgsFromDirective(inquiry, "SEARCH_CREATORS_ARGS"), {
+    id: requirementId,
+  });
   assert.doesNotMatch(inquiry, /SELECT_INQUIRY_FORM_FIELDS_ARGS=/u);
 });
 

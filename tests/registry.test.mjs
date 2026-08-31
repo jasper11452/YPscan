@@ -358,6 +358,16 @@ test("validate_requirement rejects undeclared parameters before the Provider cal
   );
 });
 
+test("validate_requirement rejects the Provider-absent id field", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = { ...completeValidateParams(), id: "legacy-requirement-id" };
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).filter((issue) => issue.field === "id"),
+    [{ field: "id", reason: "不是 validate_requirement 的已声明参数" }],
+  );
+});
+
 test("missing contentTag is a parser contract failure instead of a user question", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = completeValidateParams();

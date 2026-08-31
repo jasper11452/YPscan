@@ -27,14 +27,17 @@ function projectFile(path) {
   return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 }
 
-test("declared parser spec matches the compact output contract", () => {
-  const spec = JSON.parse(projectFile("spec/requirement-parser.json"));
-
-  assert.equal(spec.schemaVersion, 6);
-  assert.equal(spec.outputPolicy.preserveDifyValues, true);
-  assert.equal(spec.outputPolicy.discardUnknownWorkflowFields, true);
-  assert.deepEqual(spec.outputPolicy.exposedWorkflowFields, DIFY_REQUIREMENT_OUTPUT_FIELDS);
-  assert.match(spec.outputPolicy.shape, /only the contracted Dify output fields/u);
+test("parser runtime constants keep the compact output contract", () => {
+  assert.ok(Object.isFrozen(DIFY_REQUIREMENT_OUTPUT_FIELDS));
+  assert.equal(new Set(DIFY_REQUIREMENT_OUTPUT_FIELDS).size, DIFY_REQUIREMENT_OUTPUT_FIELDS.length);
+  assert.deepEqual(
+    Object.keys(PARSE_REQUIREMENT_OUTPUT_SCHEMA.properties.data.properties.outputs.properties),
+    DIFY_REQUIREMENT_OUTPUT_FIELDS,
+  );
+  assert.equal(
+    PARSE_REQUIREMENT_OUTPUT_SCHEMA.properties.data.properties.outputs.additionalProperties,
+    false,
+  );
 });
 
 test("validate_requirement card forbids same-platform child allocation", () => {
@@ -57,8 +60,11 @@ test("save artifact card binds manual_source saves to the requirement ID", () =>
     card,
     /`get_ingest_job`, or `manual_source_creators` returns a Provider Excel/iu,
   );
-  assert.match(card, /`manual_source`.*requirement ID/iu);
-  assert.match(card, /`artifact_id`.*`manual_source`.*requirement ID/isu);
+  assert.match(
+    card,
+    /Use the current requirement ID for `mcn_ranking`, `mcn_creator_preview`, and `manual_source`/iu,
+  );
+  assert.match(card, /`artifact_id`.*current requirement ID.*`manual_source`/isu);
   assert.match(card, /`requirement_id`.*`submission_batch`/isu);
 });
 
@@ -207,10 +213,9 @@ test("parser calls the workflow in blocking mode and returns only contracted out
   assert.equal(result.content[0].text.includes("\n"), false);
 });
 
-test("parser preserves every output field declared by the independent spec", async () => {
-  const spec = JSON.parse(projectFile("spec/requirement-parser.json"));
+test("parser preserves every output field declared by runtime constants", async () => {
   const expected = Object.fromEntries(
-    spec.outputPolicy.exposedWorkflowFields.map((field) => [field, { marker: field }]),
+    DIFY_REQUIREMENT_OUTPUT_FIELDS.map((field) => [field, { marker: field }]),
   );
   const parser = createRequirementParser({
     apiKey: "test-key",

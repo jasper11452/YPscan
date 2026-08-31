@@ -21,7 +21,7 @@ const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
 const REQUIREMENT_PREFLIGHT_BLOCKED = "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED";
 const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"，且 min < max';
 const MANUAL_SOURCE_ORIGINAL_TEXT_RULE =
-  "调用默认 manual_source_creators 前先读取实际 input schema：若明确提供需求原文的可选字段，优先在该字段传当前完整、未改写的用户原始需求文本；只传原文，不传解析输出或 rawMessagesJson。schema 不支持该字段时只传 requirement_id 和 size；若仅因未知可选字段拒绝，则去掉原文字段、保留同一 requirement_id 和 size 重试一次，不得猜字段名或用该回退掩盖其他业务错误。";
+  "调用默认 manual_source_creators 前先读取实际 input schema：required 只使用 requirement_id:string 与 num:integer；若 schema 明确提供承载需求原文的可选字段，则只在该字段传当前完整、未改写的用户原始需求文本作为 demand。只传原文，不传解析输出或 rawMessagesJson；schema 不支持该字段时只传 requirement_id 和 num，不得猜字段名。";
 const SINGLE_REQUIREMENT_TYPE_RULE =
   "同平台多个达人类型只创建一个 requirement：保留用户给出的总量，合并全部类型标签与条件，不拆分子需求、不重复落库、不重复搜索；本规则覆盖任何旧的平均分配或批量子需求指令。";
 const PARSED_METRIC_REUSE_RULE =
@@ -41,6 +41,32 @@ const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
 
 const [BUSINESS_MODE_INQUIRY] = BUSINESS_MODE_VALUES;
+const PLATFORM_ALIASES = Object.freeze({
+  xiaohongshu: "xiaohongshu",
+  xhs: "xiaohongshu",
+  小红书: "xiaohongshu",
+  douyin: "douyin",
+  dy: "douyin",
+  抖音: "douyin",
+});
+
+function canonicalPlatformName(value) {
+  if (!nonemptyString(value)) return null;
+  return PLATFORM_ALIASES[value.trim().toLowerCase()] ?? PLATFORM_ALIASES[value.trim()] ?? null;
+}
+
+function shortPlatformName(value) {
+  const platform = canonicalPlatformName(value);
+  return platform === "xiaohongshu" ? "xhs" : platform === "douyin" ? "dy" : null;
+}
+
+function selectInquiryFormFieldsArgs(requirementId, platform) {
+  return requirementId && platform ? { requirement_id: String(requirementId), platform } : null;
+}
+
+function rankMcnsArgs(requirementId, platform) {
+  return requirementId && platform ? { id: String(requirementId), platform } : null;
+}
 
 function businessModeFromRawMessages(raw) {
   let value = raw;
@@ -320,22 +346,25 @@ function fieldSelectionDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL 后停止业务调用，等待用户提交并回复“好了”；不得改写、包装、用 Browser 打开或替用户选择字段。",
     `FIELD_SELECTION_URL=${url}`,
-    "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN并做发送前警示弹窗确认，手动拓展使用原 requirement_id 和 size。",
+    "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN并做发送前警示弹窗确认，手动拓展使用原 requirement_id 和 num。",
   ].join("\n");
 }
 
 function rankMcnsExcelUrl(result) {
   return firstString(
+    result?.data?.mcns_download_url,
     result?.data?.mcns_export_path,
     result?.data?.mcn_export_path,
     result?.data?.rank_mcns_export_path,
     result?.data?.excel_file_url,
     result?.data?.excel_url,
+    result?.data?.result?.mcns_download_url,
     result?.data?.result?.mcns_export_path,
     result?.data?.result?.mcn_export_path,
     result?.data?.result?.rank_mcns_export_path,
     result?.data?.result?.excel_file_url,
     result?.data?.result?.excel_url,
+    result?.mcns_download_url,
     result?.mcns_export_path,
     result?.mcn_export_path,
     result?.rank_mcns_export_path,
@@ -344,13 +373,24 @@ function rankMcnsExcelUrl(result) {
   );
 }
 
-function rankMcnsDirective(message, params = {}) {
+function rankMcnsDirective(
+  message,
+  params = {},
+  recordedPlatform = null,
+  requirementPlatform = null,
+) {
   const result = parsedToolResult(message);
   if (result?.success !== true) return flowPauseDirective("rank_mcns", message);
   const mcns = result?.data?.mcns;
   if (!Array.isArray(mcns)) return flowPauseDirective("rank_mcns", message);
   const excelFileUrl = rankMcnsExcelUrl(result);
   const artifactId = firstString(params?.id, result?.data?.requirement_id, result?.requirement_id);
+  const platform =
+    canonicalPlatformName(params?.platform) ??
+    canonicalPlatformName(result?.data?.platform) ??
+    canonicalPlatformName(result?.platform) ??
+    requirementPlatform ??
+    recordedPlatform;
   const empty = mcns.length === 0;
   const recipientNames = inquiryRecipientNames(mcns);
   const lines = [
@@ -379,9 +419,16 @@ function rankMcnsDirective(message, params = {}) {
       })}`,
     );
   } else if (artifactId && recipientNames.length > 0) {
+    const selectArgs = selectInquiryFormFieldsArgs(artifactId, platform);
+    if (!selectArgs) {
+      lines.push(
+        "当前结果缺少已确认的平台，无法安全生成 select_inquiry_form_fields 必填参数；如实说明并暂停，不得猜测 platform。",
+      );
+      return lines.join("\n");
+    }
     lines.push(
       "当前结果无法保存 MCN 排名表；表格后如实说明，再调用 ASK_USER_QUESTION_ARGS 选择收件机构。收到机构选择答案后，若当前对话中同一 requirement_id 已提交字段配置则复用，否则调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得查询、缓存或重建 columns，也不得按排名或指标自行选择。",
-      `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify({ requirement_id: artifactId })}`,
+      `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
       INQUIRY_RECIPIENT_RESPONSE_RULE,
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(mcnRankingRecipientQuestionPayload(recipientNames))}`,
     );
@@ -393,7 +440,12 @@ function rankMcnsDirective(message, params = {}) {
   return lines.join("\n");
 }
 
-function searchCreatorsDirective(message, params = {}) {
+function searchCreatorsDirective(
+  message,
+  params = {},
+  recordedPlatform = null,
+  requirementPlatform = null,
+) {
   const result = parsedToolResult(message);
   const requirementId = firstString(
     params?.id,
@@ -401,9 +453,17 @@ function searchCreatorsDirective(message, params = {}) {
     result?.requirement_id,
   );
   if (!requirementId) return flowPauseDirective("search_creators", message);
+  const platform =
+    canonicalPlatformName(params?.platform) ??
+    canonicalPlatformName(result?.data?.platform) ??
+    canonicalPlatformName(result?.platform) ??
+    requirementPlatform ??
+    recordedPlatform;
+  const nextArgs = rankMcnsArgs(requirementId, platform);
+  if (!nextArgs) return flowPauseDirective("search_creators 缺少 platform", message);
   return [
     "YPSCAN_FLOW_DIRECTIVE=search_creators 成功（包括 0 命中）。忽略 creators_export_path 等表格链接，不保存或展示，不得用 Browser、脚本或其他方式下载，也不调用保存工具；下一步使用同一 requirement ID 调用 rank_mcns。",
-    `RANK_MCNS_ARGS=${JSON.stringify({ id: requirementId })}`,
+    `RANK_MCNS_ARGS=${JSON.stringify(nextArgs)}`,
   ].join("\n");
 }
 
@@ -445,7 +505,12 @@ function positiveInteger(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function manualSourceCreatorsDirective(message, params = {}) {
+function manualSourceCreatorsDirective(
+  message,
+  params = {},
+  recordedPlatform = null,
+  requirementPlatform = null,
+) {
   const result = parsedToolResult(message);
   if (result?.success !== true) {
     if (result?.error?.code === "REQUIREMENT_COLUMNS_NOT_CONFIGURED") {
@@ -453,21 +518,36 @@ function manualSourceCreatorsDirective(message, params = {}) {
         params?.requirement_id,
         result?.error?.details?.requirement_id,
       );
+      const platform =
+        canonicalPlatformName(params?.platform) ?? requirementPlatform ?? recordedPlatform;
+      const selectArgs = selectInquiryFormFieldsArgs(requirementId, platform);
       if (!requirementId) return flowPauseDirective("手动拓展字段选择", message);
+      if (!selectArgs) return flowPauseDirective("手动拓展字段选择缺少 platform", message);
       return [
         "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 缺少字段配置。用同一 requirement_id 调用 select_inquiry_form_fields，不得原参数重试。",
-        `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify({ requirement_id: requirementId })}`,
-        "原样展示字段选择 URL；收到“好了”后再用原 requirement_id 和 size 调用 manual_source_creators。",
+        `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
+        "原样展示字段选择 URL；收到“好了”后再用原 requirement_id 和 num 调用 manual_source_creators；可选需求原文只使用 demand。",
       ].join("\n");
     }
     return flowPauseDirective("手动拓展", message);
   }
-  const batchId = manualSourceBatchId(result);
   const requirementId = firstString(
     result?.requirement_id,
     result?.data?.requirement_id,
     params?.requirement_id,
   );
+  const excelFileUrl = providerExcelUrl(result);
+  if (excelFileUrl && requirementId) {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已同步返回最终手动拓展 Excel。立即保存且不展示 Provider 下载 URL；保存后原样交付并结束本次手动拓展，不调用 manual_source_creators_status、rank_creators 或 create_submission_batch。",
+      `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
+        artifact_kind: "manual_source",
+        artifact_id: requirementId,
+        excel_file_url: excelFileUrl,
+      })}`,
+    ].join("\n");
+  }
+  const batchId = manualSourceBatchId(result);
   if (batchId == null || !requirementId) return flowPauseDirective("手动拓展", message);
   return [
     `YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已提交后台任务（仅返回 batch_id）。先告知用户“后台手动拓展耗时较长，您可以先不用管，我会继续轮询。”，再按 MANUAL_SOURCE_CREATORS_STATUS_ARGS 轮询；${MANUAL_SOURCE_POLL_RULE}。`,
@@ -665,7 +745,12 @@ function rankCreatorsDirective(message, params = {}) {
   ].join("\n");
 }
 
-function submissionBatchDirective(message, params = {}) {
+function submissionBatchDirective(
+  message,
+  params = {},
+  recordedPlatform = null,
+  requirementPlatform = null,
+) {
   const result = parsedToolResult(message);
   if (result?.success !== true) return flowPauseDirective("提报表生成", message);
   const excelFileUrl = providerExcelUrl(result);
@@ -679,14 +764,10 @@ function submissionBatchDirective(message, params = {}) {
     result?.data?.requirement_id,
     result?.requirement_id,
   );
-  const platform = {
-    xhs: "xhs",
-    xiaohongshu: "xhs",
-    小红书: "xhs",
-    dy: "dy",
-    douyin: "dy",
-    抖音: "dy",
-  }[firstString(result?.data?.platform, result?.platform)?.toLowerCase()];
+  const platform =
+    shortPlatformName(firstString(result?.data?.platform, result?.platform)) ??
+    shortPlatformName(requirementPlatform) ??
+    shortPlatformName(recordedPlatform);
   if (!excelFileUrl || !artifactId) return flowPauseDirective("提报表生成", message);
   return [
     "YPSCAN_FLOW_DIRECTIVE=create_submission_batch 已生成提报表。立即保存，不展示 Provider 下载 URL。保存 submission_batch 时必须把当前 requirement 的已确认平台以 platform=xhs 或 platform=dy 传给本地保存工具；不得猜测，平台缺失时保存结果不得提供达人信息补全入口。",
@@ -707,7 +788,12 @@ const EXCEL_SAVE_STAGES = Object.freeze({
   manual_source: "手动拓展表保存",
 });
 
-function excelArtifactSaveDirective(message, params = {}) {
+function excelArtifactSaveDirective(
+  message,
+  params = {},
+  recordedPlatform = null,
+  requirementPlatformLookup = (_requirementId) => null,
+) {
   const artifactKind = params?.artifact_kind;
   const stage = EXCEL_SAVE_STAGES[artifactKind];
   if (!stage) return null;
@@ -738,6 +824,8 @@ function excelArtifactSaveDirective(message, params = {}) {
   }
   if (artifactKind === "mcn_ranking") {
     const nextArgs = result?.delivery?.next_args;
+    const platform = requirementPlatformLookup(params.artifact_id) ?? recordedPlatform;
+    const selectArgs = selectInquiryFormFieldsArgs(params.artifact_id, platform);
     return [
       "YPSCAN_FLOW_DIRECTIVE=MCN 排名表已保存。表格已先输出；原样展示本地链接后选择询价收件机构。",
       `MCN_RANKING_LOCAL_PATH=${filePath}`,
@@ -747,8 +835,14 @@ function excelArtifactSaveDirective(message, params = {}) {
         ? [
             `ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`,
             INQUIRY_RECIPIENT_RESPONSE_RULE,
-            "收到机构选择答案后，先检查当前对话中同一 requirement_id 是否已经提交过字段配置：已提交则复用并继续发送预览，未提交才调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得查询、缓存或重建 columns。",
-            `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify({ requirement_id: params.artifact_id })}`,
+            ...(selectArgs
+              ? [
+                  "收到机构选择答案后，先检查当前对话中同一 requirement_id 是否已经提交过字段配置：已提交则复用并继续发送预览，未提交才调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得查询、缓存或重建 columns。",
+                  `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
+                ]
+              : [
+                  "当前缺少已确认的平台，无法安全生成 select_inquiry_form_fields 必填参数；暂停在机构选择之后，不得猜测 platform。",
+                ]),
           ]
         : ["当前没有可选机构；如实说明询价功能无法继续，不得自动切换功能或猜测收件机构。"]),
     ].join("\n");
@@ -757,7 +851,9 @@ function excelArtifactSaveDirective(message, params = {}) {
     const nextArgs = result?.delivery?.next_args;
     const requirementId = firstString(params?.requirement_id);
     const batchId = positiveInteger(params?.artifact_id);
-    const platform = ["xhs", "dy"].includes(params?.platform) ? params.platform : null;
+    const platform =
+      (["xhs", "dy"].includes(params?.platform) ? params.platform : null) ??
+      shortPlatformName(requirementPlatformLookup(requirementId) ?? recordedPlatform);
     let enrichmentDirective;
     if (!platform) {
       enrichmentDirective = [
@@ -839,10 +935,23 @@ function filterRangeDirective(message) {
   ].join("\n");
 }
 
-function flowDirective(toolName, message, params = {}, recordedMode = null) {
+function flowDirective(
+  toolName,
+  message,
+  params = {},
+  recordedMode = null,
+  recordedPlatform = null,
+  requirementPlatformLookup = (_requirementId) => null,
+) {
   const normalizedName = toolName.toLowerCase();
   const bare = stripHostPrefix(normalizedName);
   const result = parsedToolResult(message);
+  const requirementIdFromParams = firstString(
+    params?.requirement_id,
+    params?.id,
+    params?.artifact_id,
+  );
+  const requirementPlatform = requirementPlatformLookup(requirementIdFromParams) ?? null;
   if (
     bare === "validate_requirement" &&
     messageText(message).includes(REQUIREMENT_PREFLIGHT_BLOCKED)
@@ -853,7 +962,7 @@ function flowDirective(toolName, message, params = {}, recordedMode = null) {
     return fieldSelectionDirective(message);
   }
   if (/(?:^|__)ypscan_save_excel_artifact$/iu.test(normalizedName)) {
-    return excelArtifactSaveDirective(message, params);
+    return excelArtifactSaveDirective(message, params, recordedPlatform, requirementPlatformLookup);
   }
   if (/(?:^|__)ypscan_select_cascade$/iu.test(normalizedName)) {
     return cascadeSelectionDirective(message);
@@ -865,11 +974,15 @@ function flowDirective(toolName, message, params = {}, recordedMode = null) {
   if (bare === "sync_mcn_inquiry_status") return syncInquiryDirective(message);
   if (bare === "ingest_mcn_submissions") return ingestSubmissionsDirective(message);
   if (bare === "get_ingest_job") return getIngestJobDirective(message, params);
-  if (bare === "manual_source_creators") return manualSourceCreatorsDirective(message, params);
+  if (bare === "manual_source_creators") {
+    return manualSourceCreatorsDirective(message, params, recordedPlatform, requirementPlatform);
+  }
   if (bare === "manual_source_creators_status")
     return manualSourceCreatorsStatusDirective(message, params);
   if (bare === "rank_creators") return rankCreatorsDirective(message, params);
-  if (bare === "create_submission_batch") return submissionBatchDirective(message, params);
+  if (bare === "create_submission_batch") {
+    return submissionBatchDirective(message, params, recordedPlatform, requirementPlatform);
+  }
   if (bare === "get_workflow_state") return null;
   if (result?.success !== true) {
     if (
@@ -889,8 +1002,16 @@ function flowDirective(toolName, message, params = {}, recordedMode = null) {
     const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
     if (!requirementId) return flowPauseDirective("validate_requirement", message);
     const mode = businessModeFromParams(params) ?? recordedMode;
+    const platform =
+      canonicalPlatformName(params?.platform) ??
+      canonicalPlatformName(result?.data?.platform) ??
+      canonicalPlatformName(result?.platform) ??
+      recordedPlatform;
     if (!mode) {
       return flowPauseDirective("validate_requirement 缺少 business_mode", message);
+    }
+    if (!platform) {
+      return flowPauseDirective("validate_requirement 缺少 platform", message);
     }
     if (mode === BUSINESS_MODE_INQUIRY) {
       return [
@@ -899,16 +1020,19 @@ function flowDirective(toolName, message, params = {}, recordedMode = null) {
         `SEARCH_CREATORS_ARGS=${JSON.stringify({ id: requirementId })}`,
       ].join("\n");
     }
+    const selectArgs = selectInquiryFormFieldsArgs(requirementId, platform);
     return [
       "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。当前需求只保留一个 requirement，业务模式：手动拓展。立即使用 SELECT_INQUIRY_FORM_FIELDS_ARGS 调用 select_inquiry_form_fields，原样展示 URL 并等待用户提交后回复“好了”；不得调用 search_creators、rank_mcns 或 Browser。",
       "只使用本次返回的 data.requirement_id，缺失时兼容 data.id；严禁使用 data.demand_id。",
-      `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify({ requirement_id: requirementId })}`,
+      `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
     ].join("\n");
   }
   if (bare === "search_creators") {
-    return searchCreatorsDirective(message, params);
+    return searchCreatorsDirective(message, params, recordedPlatform, requirementPlatform);
   }
-  if (bare === "rank_mcns") return rankMcnsDirective(message, params);
+  if (bare === "rank_mcns") {
+    return rankMcnsDirective(message, params, recordedPlatform, requirementPlatform);
+  }
   return null;
 }
 
@@ -947,6 +1071,8 @@ function scopeKey(event, context) {
 export function registerFlowDirectiveHooks(api) {
   const startupScopes = new Set();
   const businessModeByScope = new Map();
+  const platformByScope = new Map();
+  const platformByRequirement = new Map();
 
   api.on(
     "before_prompt_build",
@@ -965,7 +1091,7 @@ export function registerFlowDirectiveHooks(api) {
           "当前 requirement 平台为小红书或抖音时，提报表保存后询问是否“补充更新达人信息”；该选项唯一映射到 get_creator_detail：用户一旦选择，立即使用本轮正整数 batch_id、同一 requirement_id 和已确认的平台缩写（小红书 xhs、抖音 dy）调用 get_creator_detail，随后使用同一 platform 和 batch_id 调用 get_creator_detail_export 轮询并保存新版表。平台缺失时不得展示该选项、不得调用补全工具或猜测平台；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
-          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成平台达人搜索、详情抓取和筛选。提交成功后先等待 30 秒，再用同一 requirement_id 和 batch_id 第 1 次查询 manual_source_creators_status；之后每隔 30 秒查询一次，累计最多 10 次。成功 Excel 保存并展示为最终手动拓展结果，随后结束本次手动拓展，不调用 rank_creators 或 create_submission_batch；第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
+          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成平台达人搜索、详情抓取和筛选。若同步返回 Excel 则立即保存；若返回 batch_id，先等待 30 秒，再用同一 requirement_id 和 batch_id 第 1 次查询 manual_source_creators_status，之后每隔 30 秒查询一次，累计最多 10 次。成功 Excel 保存并展示为最终手动拓展结果，随后结束本次手动拓展，不调用 rank_creators 或 create_submission_batch；第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
           MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
           "手动拓展 Excel 保存成功后原样展示 delivery.local_file_link，不再提供浏览器详细拓展分支，也不追加完成弹窗。",
           "需求澄清规则：解析返回的八个可选 Label 数组是纯解析结果，有什么就原样落库什么，保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认、不询问任何标签内容；可选 Label（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。contentTag 必须是本次解析结果中的非空数组；缺失或无效时重新解析，禁止询问用户或自行补值。数值字段先采用 Dify 唯一解析值，再与最新非空 clarification 合并；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。Dify 已给出唯一 followercount、rebate、报价、CPM、CPE 时禁止再问。只有这些必填数值仍缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。当前平台 Dify 品牌候选唯一、合法且非空时必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为 null、未知等占位值时才询问。项目名由 Agent 根据当前需求自行总结生成，不弹窗确认；调用 validate_requirement 前用一句可见正文告知用户取的项目名。禁止编造标签、默认补数值或普通文本追问。解析 Workflow 唯一合法报价、CPM、CPE 候选直接复用，不因原文单值与 Provider 区间格式差异询问；同平台多个达人类型只保留一个 requirement，总量不变并合并条件，不拆分或追问每类人数。正常成功交付不追加完成弹窗。",
@@ -975,7 +1101,7 @@ export function registerFlowDirectiveHooks(api) {
           `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
           "Dify 已给出的唯一数值直接采用，禁止再问；本地只做区间格式与粉丝技术上限截断。只有解析缺失、null、多候选或与用户明确改口冲突时才阻断。",
           "需求解析复核、结果不足后的二次复核与逐项放宽、用户修改需求后的重建规则，统一按 media-assistant Skill 执行；Hook 只提供当前工具结果和下一步动态参数。",
-          "手动拓展的 creator_count 使用用户最新指定的本轮交付数并覆盖原需求总量；即使历史轮次声称旧 schema 要求 page_url/original_brief，本轮也先按新版省略，当前验证器再次拒绝时才用当前 URL 与 original_brief='见当前对话原需求' 兼容，禁止复制完整 brief。",
+          "手动拓展调用 manual_source_creators 时只使用新版 schema：required 为 requirement_id:string 与 num:integer，可选需求原文字段只用 demand。禁止继续生成或暗示 size、creator_count、page_url、original_brief 等旧字段。",
           PARSED_METRIC_REUSE_RULE,
           SINGLE_REQUIREMENT_TYPE_RULE,
           REQUIREMENT_COMPLETENESS_RULE,
@@ -1004,7 +1130,9 @@ export function registerFlowDirectiveHooks(api) {
       }
       const providerParams = serializeProviderRawMessages(normalized);
       const mode = businessModeFromParams(providerParams);
+      const platform = canonicalPlatformName(providerParams.platform);
       if (mode) businessModeByScope.set(scopeKey(event, context), mode);
+      if (platform) platformByScope.set(scopeKey(event, context), platform);
       return providerParams === params ? undefined : { params: providerParams };
     },
     HOOK_OPTIONS,
@@ -1016,9 +1144,35 @@ export function registerFlowDirectiveHooks(api) {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
       const params = paramsFromEvent(event);
       const recordedMode = businessModeByScope.get(scopeKey(event, context));
+      const recordedPlatform = platformByScope.get(scopeKey(event, context));
+      const bare = stripHostPrefix(toolName.toLowerCase());
+      const result = parsedToolResult(event?.message);
+      if (bare === "validate_requirement" && result?.success === true) {
+        const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
+        const platform =
+          canonicalPlatformName(params?.platform) ??
+          canonicalPlatformName(result?.data?.platform) ??
+          canonicalPlatformName(result?.platform) ??
+          recordedPlatform;
+        if (requirementId && platform) platformByRequirement.set(String(requirementId), platform);
+      } else if (result?.success === true) {
+        const requirementId = firstString(params?.requirement_id, params?.id);
+        const platform = canonicalPlatformName(params?.platform);
+        if (requirementId && platform) platformByRequirement.set(String(requirementId), platform);
+      }
       return appendDirective(
         event?.message,
-        flowDirective(toolName, event?.message, params, recordedMode),
+        flowDirective(
+          toolName,
+          event?.message,
+          params,
+          recordedMode,
+          recordedPlatform,
+          (requirementId) =>
+            nonemptyString(requirementId)
+              ? (platformByRequirement.get(String(requirementId)) ?? null)
+              : null,
+        ),
       );
     },
     HOOK_OPTIONS,
@@ -1028,6 +1182,8 @@ export function registerFlowDirectiveHooks(api) {
     resetTransientState() {
       startupScopes.clear();
       businessModeByScope.clear();
+      platformByScope.clear();
+      platformByRequirement.clear();
     },
   };
 }

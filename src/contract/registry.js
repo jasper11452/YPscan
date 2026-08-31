@@ -58,7 +58,6 @@ export const TOOL_REGISTRY = Object.freeze(
 );
 
 export const VALIDATE_REQUIREMENT_PARAMS = Object.freeze([
-  "id",
   "demandId",
   "demandVersion",
   "status",

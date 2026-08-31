@@ -21,16 +21,15 @@
 ## 架构地图（当前形态）
 
 - `index.js` — 入口：注册 2 个本地工具 `ypscan_parse_requirement`、`ypscan_save_excel_artifact`；注册 5 个 Hook：`before_prompt_build`、`before_tool_call`、`tool_result_persist`、`gateway_start`、`gateway_stop`（后两个只重置瞬态状态）。
-- `openclaw.plugin.json` — 清单：Provider MCP 白名单（含 `manual_source_creators`/`manual_source_creators_status`）、测试 adapter、`contracts.tools`、`skills`。`configSchema` 只有 `testMode`/`testAdapterBaseUrl`，后者仅 `testMode=true` 时使用且必须是无凭据 loopback origin。
+- `openclaw.plugin.json` — 清单：Provider MCP 白名单（含 `manual_source_creators`/`manual_source_creators_status`、`rank_mcns`、`select_inquiry_form_fields`）、测试 adapter、`contracts.tools`、`skills`。`configSchema` 只有 `testMode`/`testAdapterBaseUrl`，后者仅 `testMode=true` 时使用且必须是无凭据 loopback origin。
 - `src/tools/` — 本地工具与辅助：
-  - `parse-requirement.js` — 直连 Dify 的需求解析代理；`data.outputs` 只返回当前 Provider 契约消费的字段，缺失字段省略。
+  - `parse-requirement.js` — 直连 Dify 的需求解析代理；`data.outputs` 只返回当前 Provider 契约消费的字段，缺失字段省略；八个 Dify Label 解析契约保持不变，`talentTypeLabel` 不是 Dify 字段。
   - `save-excel-artifact.js` — 保存 Provider 返回的 Excel 并产出可点击的本地文件链接。
   - `test-adapter.js`、`tool-result.js`、`popup-questions.js` — 测试下载、结果适配与统一弹窗载荷。
   - `manual-browser-*`、`manual-research-*`、`select-cascade.js`、`set-filter-range.js` — **遗留 native Browser 手扒工具**：保留在仓库但不在 `index.js` 注册、不在发布包 `files` 内。不要重新注册。
 - `src/contract/registry.js` — 参数归一化、平台别名、`business_mode` 常量与 `validate_requirement` 预检。
 - `src/hooks/register-flow-directives.js` — 注入双功能链路、顺序复用与交付指令；`before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或企微发送确认门禁。
 - `skills/media-assistant/` — **业务行为权威**：`SKILL.md`（固定链路、复核、放宽顺序、Provider 幂等规则）+ `references/`（工具卡）。涉及达人/询价/手扒/提报的任务，首次相关操作前必须完整读一遍。
-- `spec/*.json` — 声明式规范（含遗留 `browser-assist.json`），只读参考，不是运行时代码。
 - `docs/review-checklist.md` — 用户维护的验收清单；改业务链路后核对相关条目。
 - `benchmarks/requirement-parser/RESULTS.md` — 解析器评测记录。
 
@@ -62,7 +61,7 @@
 - **版本同步**：发布前必须让 `openclaw.plugin.json.version` 与 `package.json.version` 一致，否则 smoke 直接失败。
 - **typecheck 靠 JSDoc**：新增解构参数/对象字面量时若 tsc 报 Property/excess property，先补 `@param` 类型，不要关 `checkJs`。
 - **playwright-core 别误用**：它是遗留依赖，当前插件不注册任何 browser 工具；勿把 `manual-browser-*` 工具加回 `index.js`。
-- **`spec/`、`docs/`、`benchmarks/` 已入库**：spec 只读参考；`docs/review-checklist.md` 是用户验收清单，勿擅自删除。
+- **`docs/`、`benchmarks/` 已入库**：`docs/review-checklist.md` 是用户验收清单，勿擅自删除。
 
 ## 验证清单（改完必做）
 

@@ -10,8 +10,8 @@ Call when the current requirement needs a persisted field configuration. If the 
 
 Call the directly exposed Provider MCP `select_inquiry_form_fields` using its current published schema. In the current workflow:
 
-- Pass the exact current requirement ID using the live Provider schema's field name so the submitted selection is associated with the correct requirement. It comes from `validate_requirement.data.requirement_id`, falling back to `data.id` only when absent; never use `data.demand_id`.
-- `platform`: `xiaohongshu` or `douyin` when required by the live schema.
+- Pass the exact current requirement ID as `requirement_id` so the submitted selection is associated with the correct requirement. It comes from `validate_requirement.data.requirement_id`, falling back to `data.id` only when absent; never use `data.demand_id`.
+- `platform`: required, pass exactly `xiaohongshu` or `douyin`.
 - Pass optional link/wait parameters only when the Provider contract requires them.
 
 Do not add local-only correlation fields or substitute `runId`, `sessionKey`, institution names, or supplier names for Provider parameters. If the live Provider schema changes, follow that schema rather than this example.

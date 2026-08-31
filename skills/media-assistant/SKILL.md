@@ -37,7 +37,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 发现明显错误时，先告诉用户“原需求是什么、哪个字段错了、将按什么理解修正”，然后按完整有效需求重新解析；错误参数不得落库，这次纠正不算需求放宽。存在歧义时，用一次 `AskUserQuestion` 收集全部不确定字段，回答前不落库、不搜索、不放宽。重新解析后仍重复同一明显错误时，停止自动重试，展示原需求、错误字段和候选修正，请用户决定；不得直接覆盖解析器标签。
 
-需求参数细节按 [解析参考](references/tools/ypscan_parse_requirement.md) 和 [validate_requirement](references/tools/validate_requirement.md) 执行。解析器已有唯一合法品牌、粉丝、返点、报价、CPM 或 CPE 时直接采用；缺失、多候选、冲突或用户明确改口时才询问。抖音 L2=植入视频、L3=定制视频，不使用 L1。所有数值区间使用无空格字符串 `"[min,max]"` 且 `min < max`。同平台多个达人类型合并为一个 requirement，保留总量，不拆分人数。
+需求参数细节按 [解析参考](references/tools/ypscan_parse_requirement.md) 和 [validate_requirement](references/tools/validate_requirement.md) 执行。解析器已有唯一合法品牌、粉丝、返点、报价、CPM 或 CPE 时直接采用；缺失、多候选、冲突或用户明确改口时才询问。八个 Dify Label 解析契约保持不变，`talentTypeLabel` 不是 Dify 字段。`validate_requirement` schema 中的 `talentTypeLabel`、`refNickname`、`refUrl` 属于 Provider 可选字段：只有用户明确提供且语义唯一时才传，绝不推断。抖音 L2=植入视频、L3=定制视频，不使用 L1。所有数值区间使用无空格字符串 `"[min,max]"` 且 `min < max`。同平台多个达人类型合并为一个 requirement，保留总量，不拆分人数。
 
 需求 ID 优先取 `data.requirement_id`，缺失时兼容 `data.id`；绝不使用 `data.demand_id`。
 
@@ -60,9 +60,9 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 手动拓展分支
 
-`validate_requirement` 成功后先调用 `select_inquiry_form_fields`；用户提交并回复“好了”后，按 [manual_source_creators](references/tools/manual_source_creators.md) 使用同一 requirement ID 和交付人数提交后端任务。
+`validate_requirement` 成功后先调用 `select_inquiry_form_fields`；用户提交并回复“好了”后，按 [manual_source_creators](references/tools/manual_source_creators.md) 使用同一 `requirement_id`、正整数 `num`，以及 schema 支持时可选透传的 `demand` 提交后端任务。
 
-提交成功后先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID 和 `batch_id` 第 1 次查询。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 ID 开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
+若提交响应同步直接返回 Excel，则立即保存并交付最终手动拓展表，不进入状态轮询。若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID 和 `batch_id` 第 1 次查询。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 ID 开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
 
 成功 Excel 是后台搜索、详情抓取和筛选后的最终手动拓展结果：保存并展示后结束本次手动拓展，不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。不再提供浏览器详细拓展分支。
 
