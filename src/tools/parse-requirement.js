@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { isRecord, nonemptyString } from "../util/value.js";
-import { BUSINESS_MODE_VALUES } from "../contract/registry.js";
+import { BUSINESS_MODE_VALUES, normalizeBusinessMode } from "../contract/registry.js";
 import { hostToolResult } from "./tool-result.js";
 
 export const DIFY_WORKFLOW_URL = "https://dfi.eshypdata.com/v1/workflows/run";
@@ -156,11 +156,11 @@ export function createRequirementParser({
   return async function parseRequirement(params = {}) {
     const demand = typeof params.demand === "string" ? params.demand.trim() : "";
     if (!demand) return failure("INVALID_INPUT", "demand 必须是非空的单平台需求文本");
-    const businessMode = params.business_mode;
-    if (typeof businessMode !== "string" || !BUSINESS_MODE_VALUES.includes(businessMode)) {
+    const businessMode = normalizeBusinessMode(params.business_mode);
+    if (!businessMode) {
       return failure(
         "INVALID_BUSINESS_MODE",
-        'business_mode 必须是用户明确表达或通过模式选择确定的 "询价机构" 或 "直接手扒"',
+        'business_mode 必须是用户明确表达或通过模式选择确定的 "询价机构" 或 "手动拓展"',
       );
     }
     if (!nonemptyString(apiKey)) {

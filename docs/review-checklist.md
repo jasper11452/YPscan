@@ -6,14 +6,15 @@
 - [ ] 抖音报价、CPM、CPE 固定使用 L2=植入视频、L3=定制视频，不传 `kolOfficialPriceL1`、`cpmL1`、`cpeL1`；小红书不传任何 L3 字段，模糊档期不转换成具体日期。
 - [ ] 同平台多个达人类型只有总量时，只建立一个 requirement，保留原始总量并合并所有类型标签和条件；不得按类型拆分、重复落库或重复搜索。
 - [ ] 金额、数量、比例、范围、平台、合作形式和指标档位按当前契约正确解析；纯格式差异由本地边界一次性规范化，未知或不支持的字段省略或保留在 Brief 中。
-- [ ] Provider 检索单价只按原价向下 30%、向上 20% 扩展一次；人工拓展结果不得把这个区间回写到需求参数。
+- [ ] Provider 检索单价只按原价向下 30%、向上 20% 扩展一次；手动拓展结果不得把这个区间回写到需求参数。
 - [ ] 解析结果完整透传给本地完整预检；所有字段一次性通过后才调用 Provider。预检阻断时 Provider 未写入，先弹窗收齐全部用户值；真实 Provider 错误只根据明确错误处理，禁止逐字段或逐类型盲试。
-- [ ] 用户明确说出“询价机构”或“直接手扒”时直接采用；未明确、同时出现两种模式或语义冲突时才用 `AskUserQuestion` 选择，回答前不解析或落库。确定后以该模式作为 `ypscan_parse_requirement.business_mode` 执行 `parse → 复核 → validate`，`rawMessagesJson.business_mode` 使用同一值并进入初始功能；后续条件未变的顺序功能切换不重复落库。
+- [ ] 用户明确说出“询价机构”或“手动拓展”时直接采用，旧说法仅作为输入别名映射到“手动拓展”；未明确、同时出现两种模式或语义冲突时才用 `AskUserQuestion` 选择，回答前不解析或落库。确定后以用户侧模式作为 `ypscan_parse_requirement.business_mode` 执行 `parse → 复核 → validate`，`rawMessagesJson.business_mode` 使用同一用户侧值并进入初始功能；插件只在 Provider 出站边界映射兼容线值，后续条件未变的顺序功能切换不重复落库。
 - [ ] 仅询价分支调用 `search_creators → rank_mcns`。忽略 `search_creators` 的表格链接；`rank_mcns` 成功后按“完整机构表格 → 真实本地 `file_path` → 收件机构弹窗”输出，不再次询问业务模式。
-- [ ] 询价和直接手扒不得并行或在功能处理中切换；前一功能完成或明确停止后可按用户要求复用同一 requirement 顺序切换，且只复用 requirement 与已提交字段配置，不复用旧机构、达人、batch 或 Excel。询价机构为空时先复核原需求、解析输出和实际落库参数；确认正确后才按 Skill 固定顺序逐项放宽，每次只改一项并提前告知用户。
+- [ ] 询价和手动拓展不得并行或在功能处理中切换；前一功能完成或明确停止后可按用户要求复用同一 requirement 顺序切换，且只复用 requirement 与已提交字段配置，不复用旧机构、达人、batch 或 Excel。询价机构为空时先复核原需求、解析输出和实际落库参数；确认正确后才按 Skill 固定顺序逐项放宽，每次只改一项并提前告知用户。
 - [ ] `select_inquiry_form_fields` 必须用当前真实需求 ID 建立字段关联；用户提交后由 Provider 直接持久化。同一会话复用同一 requirement 时，已有提交证据就复用字段配置，尚未提交才重新选择。不得调用已弃用的 `get_selected_inquiry_form_fields`，不得轮询 callback，也不得在 Agent 上下文读取、重建或缓存 `columns`。
-- [ ] 直接手扒调用 `manual_source_creators`，保存并展示后台筛选后的达人详情 Excel 作为最终手扒结果；随后不得调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
+- [ ] 手动拓展调用 `manual_source_creators`，保存并展示后台筛选后的达人详情 Excel 作为最终手动拓展结果；随后不得调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
 - [ ] 默认 `manual_source_creators` 调用先读取实际 input schema；若存在需求原文可选字段，优先传当前完整原文；schema 不支持或仅因未知参数失败时，只去掉原文字段、保留同一 `requirement_id` 和 `size` 重试一次，不猜字段名、不掩盖其他业务错误。
+- [ ] `manual_source_creators` 提交成功后先等待 30 秒再第 1 次调用 `manual_source_creators_status`，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`、不自动查询第 11 次、不重复提交任务或更换 ID。
 - [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；`header`、`question`、`label`、`description` 每行最多 20 个 Unicode 字符，长机构名的展示换行在匹配前去除；不得用普通聊天问句停住流程。
 - [ ] Agent 必须自主完成所有可执行步骤并持续推进；不得随意要求用户代为操作、整理信息、输入“完成”或帮助排错。仅在缺少必要授权、必要输入、登录或真实 CAPTCHA 等无法自主完成的情况下暂停。
 - [ ] 企微发送只调用 `create_with_distributions`；发送前必须用 `AskUserQuestion` 完整展示最终机构名称列表和企微消息，选项固定为“确认发送”和“返回修改”。本地 `before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或发送内容确认门禁；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]` 且至少一侧非空。

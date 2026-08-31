@@ -1,6 +1,6 @@
 # manual_source_creators_status
 
-默认手扒任务的唯一状态查询与结果获取入口。`manual_source_creators` 提交成功后必须调用本工具轮询，直到拿到 Excel 或达到轮询上限。
+手动拓展任务的唯一状态查询与结果获取入口。`manual_source_creators` 提交成功后必须调用本工具轮询，直到拿到 Excel 或达到轮询上限。
 
 ## Remote arguments
 
@@ -13,13 +13,13 @@
 
 ## Polling
 
-- 首次查询前输出一句进度提示（如“后台手扒耗时较长，您可以先不用管，我会继续轮询。”）。这是进度通知，不是问题或确认：不得调用 `AskUserQuestion`，也不得等待回复。
-- 本工具既是就绪查询也是最终结果获取。`manual_source_creators` 提交成功后立即调用一次（计为第 1 次），结果仍是 `BATCH_NOT_READY` 时每 30 秒顺序查询一次，不需要用户请求或确认。
+- 首次查询前输出一句进度提示（如“后台手动拓展耗时较长，您可以先不用管，我会继续轮询。”）。这是进度通知，不是问题或确认：不得调用 `AskUserQuestion`，也不得等待回复。
+- 本工具既是就绪查询也是最终结果获取。`manual_source_creators` 提交成功后先等待 30 秒再调用第 1 次；结果仍是 `BATCH_NOT_READY` 且未达到上限时，再等待 30 秒顺序查询，不需要用户请求或确认。
 - 单轮最多查询 10 次，期间不得重新提交 `manual_source_creators`，不得调用 `AskUserQuestion`，也不得猜测、推导、枚举或更换 requirement ID 或 batch ID。
-- 第 10 次仍是 `BATCH_NOT_READY` 时停止，如实报告后台手扒尚未完成，并保留同一 requirement ID 和 batch ID 供后续轮次继续查询。
+- 第 10 次仍是 `BATCH_NOT_READY` 时停止，如实报告后台手动拓展尚未完成，不得自动查询第 11 次，并保留同一 requirement ID 和 batch ID 供用户以后明确要求时继续查询。
 
 ## Result
 
 - `BATCH_NOT_READY`（含远端 status `0`）表示任务仍在处理中，是预期中间态，不代表 batch ID 传错；按上面的轮询循环继续。
-- 成功要求 `success=true` 且返回 HTTPS `excel_file_url`。拿到后立即调用 `ypscan_save_excel_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 和该 URL 保存；保存成功后展示 `delivery.local_file_link` 作为最终手扒结果并结束本次手扒，不调用 `rank_creators` 或 `create_submission_batch`。不得打开下载链接、用 Browser 或其他方式下载。
+- 成功要求 `success=true` 且返回 HTTPS `excel_file_url`。拿到后立即调用 `ypscan_save_excel_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 和该 URL 保存；保存成功后展示 `delivery.local_file_link` 作为最终手动拓展结果并结束本次手动拓展，不调用 `rank_creators` 或 `create_submission_batch`。不得打开下载链接、用 Browser 或其他方式下载。
 - 其他失败：原样展示原始 code 和 message 后停止，不得换 ID 重试或重新提交任务。

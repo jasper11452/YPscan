@@ -75,6 +75,21 @@ test("validate_requirement preflight requires the pre-selected business mode", (
   );
 });
 
+test("validate_requirement maps the user-facing manual mode at the Provider boundary", () => {
+  const params = completeValidateParams();
+  params.rawMessagesJson = { ...params.rawMessagesJson, business_mode: "手动拓展" };
+
+  const normalized = normalizeToolCallParams("validate_requirement", params);
+
+  assert.equal(params.rawMessagesJson.business_mode, "手动拓展");
+  assert.equal(normalized.rawMessagesJson.business_mode, "直接手扒");
+  assert.equal(
+    validateRequirementPreflight(normalized, { now: new Date("2026-08-24T00:00:00+08:00") })
+      .some((issue) => issue.field === "business_mode"),
+    false,
+  );
+});
+
 test("missingRequiredValidateParams still reports quantityTotal when normalization drops an invalid value", () => {
   const normalized = normalizeToolCallParams("validate_requirement", {
     status: "ready",

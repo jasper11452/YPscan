@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { registerFlowDirectiveHooks } from "../src/hooks/register-flow-directives.js";
 import {
+  businessModeQuestionPayload,
   MAX_POPUP_LINE_LENGTH,
   mcnRankingRecipientQuestionPayload,
   popupQuestionPayload,
@@ -160,13 +161,13 @@ test("validated requirements route by the previously selected business mode", ()
 
   const validateManual = persist({
     toolName: "ypmcn__validate_requirement",
-    params: validateParamsWithMode("直接手扒"),
+    params: validateParamsWithMode("手动拓展"),
     message: toolMessage({
       success: true,
       data: { id: "a".repeat(32), demand_id: "1787034545923844" },
     }),
   });
-  assert.match(directiveText(validateManual), /业务模式：直接手扒/u);
+  assert.match(directiveText(validateManual), /业务模式：手动拓展/u);
   assert.deepEqual(
     namedArgsFromDirective(directiveText(validateManual), "SELECT_INQUIRY_FORM_FIELDS_ARGS"),
     { requirement_id: "a".repeat(32) },
@@ -262,7 +263,7 @@ test("completed requirements can reuse the other business function", () => {
   });
   persist({
     toolName: "validate_requirement",
-    params: validateParamsWithMode("直接手扒"),
+    params: validateParamsWithMode("手动拓展"),
     message: validateResult("req-manual"),
   });
 
@@ -382,7 +383,9 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     { requirement_id: "req-manual", batch_id: 42 },
   );
   assert.match(sourceText, /仅返回 batch_id/u);
-  assert.match(sourceText, /轮询间隔 30 秒，单轮最多查询 10 次/u);
+  assert.match(sourceText, /等待 30 秒再进行第 1 次查询/u);
+  assert.match(sourceText, /之后每隔 30 秒查询一次，单轮累计最多 10 次/u);
+  assert.match(sourceText, /第 10 次仍未完成.*不得自动查询第 11 次/u);
   assert.match(sourceText, /不得猜测或更换 requirement_id 或 batch_id/u);
   assert.doesNotMatch(sourceText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
   assert.doesNotMatch(sourceText, /ASK_USER_QUESTION_ARGS=/u);
@@ -392,7 +395,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     params: { requirement_id: "req-manual", batch_id: 42 },
     message: toolMessage({
       success: false,
-      error: { code: "BATCH_NOT_READY", message: "手扒任务处理中" },
+      error: { code: "BATCH_NOT_READY", message: "手动拓展任务处理中" },
     }),
   });
   const pendingText = directiveText(pending);
@@ -401,9 +404,12 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     { requirement_id: "req-manual", batch_id: 42 },
   );
   assert.match(pendingText, /BATCH_NOT_READY/u);
-  assert.match(pendingText, /轮询间隔 30 秒，单轮最多查询 10 次/u);
+  assert.match(pendingText, /未到第 10 次时等待 30 秒/u);
+  assert.match(pendingText, /单轮累计最多 10 次/u);
   assert.match(pendingText, /当前对话累计查询次数/u);
-  assert.match(pendingText, /第 10 次仍未完成.*继续查询\/暂时结束/u);
+  assert.match(pendingText, /第 10 次仍未完成.*如实报告并停止/u);
+  assert.match(pendingText, /不得自动查询第 11 次/u);
+  assert.doesNotMatch(pendingText, /继续查询\/暂时结束/u);
   assert.doesNotMatch(pendingText, /POLL_LIMIT_QUESTION_ARGS=/u);
   assert.doesNotMatch(pendingText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
   assert.doesNotMatch(pendingText, /ASK_USER_QUESTION_ARGS=/u);
@@ -443,7 +449,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   const savedText = directiveText(saved);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_LINK=/u);
-  assert.match(savedText, /最终手扒结果/u);
+  assert.match(savedText, /最终手动拓展结果/u);
   assert.match(savedText, /业务条件未变/u);
   assert.doesNotMatch(savedText, /RANK_CREATORS_ARGS=/u);
   assert.doesNotMatch(savedText, /CREATE_SUBMISSION_BATCH_ARGS=/u);
@@ -479,7 +485,7 @@ test("default manual sourcing pauses without a task batch and falls back to para
     message: toolMessage({ success: true, requirement_id: "req-nobatch" }),
   });
   const sourceText = directiveText(sourced);
-  assert.match(sourceText, /默认手扒 已暂停/u);
+  assert.match(sourceText, /手动拓展 已暂停/u);
   assert.doesNotMatch(sourceText, /MANUAL_SOURCE_CREATORS_STATUS_ARGS=/u);
 
   const completed = persist({
@@ -695,7 +701,7 @@ test("successful WeCom distribution waits for inquiry retrieval without switchin
   const text = directiveText(result);
   assert.match(text, /可随时回收在线表格/u);
   assert.match(text, /sync_mcn_inquiry_status/u);
-  assert.match(text, /不切换到直接手扒分支/u);
+  assert.match(text, /不切换到手动拓展分支/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
@@ -709,7 +715,7 @@ test("rank result is reserved for institutional inquiry after transient state re
   const persist = hooks.get("tool_result_persist");
   persist({
     toolName: "validate_requirement",
-    params: validateParamsWithMode("直接手扒"),
+    params: validateParamsWithMode("手动拓展"),
     message: toolMessage({ success: true, data: { requirement_id: "req-after-reset" } }),
   });
   transientState.resetTransientState();
@@ -724,7 +730,7 @@ test("rank result is reserved for institutional inquiry after transient state re
   assert.match(text, /RANKED_COUNT=8/u);
   assert.match(text, /RANK_REQUIREMENT_ID=req-after-reset/u);
   assert.match(text, /生成当前机构询价提报表/u);
-  assert.match(text, /直接手扒完成后不得调用本工具/u);
+  assert.match(text, /手动拓展完成后不得调用本工具/u);
   assert.doesNotMatch(text, /CREATE_SUBMISSION_BATCH_ARGS=|IF_SUFFICIENT/u);
 });
 
@@ -931,36 +937,49 @@ test("popup text hard-splits an overlong ASCII token without losing characters",
   assert.equal(popupPlainText(wrappedLabel), token);
 });
 
+test("business mode popup exposes the renamed user-facing option", () => {
+  const payload = businessModeQuestionPayload();
+
+  assert.deepEqual(
+    payload.questions[0].options.map((option) => popupPlainText(option.label)),
+    ["询价机构", "手动拓展"],
+  );
+  assert.doesNotMatch(JSON.stringify(payload), /直接手扒/u);
+});
+
 test("startup instruction selects and preserves one business mode", () => {
   const hooks = registeredHooks();
   const context = { runId: "startup-run" };
   const first = hooks.get("before_prompt_build")({}, context);
 
   assert.match(first.prependContext, /用户明确说.*询价机构.*直接使用/u);
-  assert.match(first.prependContext, /明确说.*直接手扒.*直接使用/u);
+  assert.match(first.prependContext, /明确说.*手动拓展.*统一使用用户侧模式“手动拓展”/u);
+  assert.match(first.prependContext, /直接手扒\/手扒\/手捞筛选/u);
   assert.match(first.prependContext, /未明确、同时出现两种模式或语义冲突/u);
   assert.match(first.prependContext, /BUSINESS_MODE_QUESTION_ARGS=/u);
   assert.match(first.prependContext, /回答前不得解析或落库/u);
+  assert.match(first.prependContext, /Provider 边界把“手动拓展”兼容映射为旧线值/u);
   assert.match(first.prependContext, /business_mode 只决定首次落库后的初始功能/u);
   assert.match(first.prependContext, /前一功能完成或明确停止后复用于另一功能/u);
   assert.match(first.prependContext, /功能切换本身不算需求修改/u);
   assert.match(first.prependContext, /已提交过字段配置时继续复用/u);
   assert.match(first.prependContext, /任何一行最多 20 个 Unicode 字符/u);
   assert.match(first.prependContext, /询价链路：解析→复核→validate_requirement/u);
-  assert.match(first.prependContext, /直接手扒：解析→复核→validate_requirement/u);
+  assert.match(first.prependContext, /手动拓展：解析→复核→validate_requirement/u);
   assert.match(first.prependContext, /rank_mcns 成功后先输出完整五列表格/u);
   assert.match(first.prependContext, /保存 MCN 排名表/u);
   assert.match(first.prependContext, /MCN 用户可见输出格式锁/u);
   assert.match(first.prependContext, /不得根据响应 schema、原始字段、旧模板或上一轮结果/u);
   assert.match(
     first.prependContext,
-    /Supplier ID\/supplier_id、候选达人、供给占比、手扒补量、推荐理由/u,
+    /Supplier ID\/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由/u,
   );
   assert.match(first.prependContext, /同一 requirement_id/u);
-  assert.match(first.prependContext, /直接手扒分支先选择字段，再调用 manual_source_creators/u);
-  assert.match(first.prependContext, /直接手扒 Excel 保存成功后原样展示 delivery\.local_file_link/u);
+  assert.match(first.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
+  assert.match(first.prependContext, /先等待 30 秒.*第 1 次查询 manual_source_creators_status/u);
+  assert.match(first.prependContext, /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u);
   assert.match(first.prependContext, /后台 API 完成平台达人搜索、详情抓取和筛选/u);
-  assert.match(first.prependContext, /不再提供浏览器详细手扒分支/u);
+  assert.match(first.prependContext, /不再提供浏览器详细拓展分支/u);
   assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
   assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);
   assert.doesNotMatch(first.prependContext, /ypscan_manual_research|YPSCAN_MANUAL_BROWSER_UNAVAILABLE|宿主 Browser/u);
@@ -1030,6 +1049,21 @@ test("validate_requirement serializes object-form rawMessagesJson exactly once f
 
   assert.equal(typeof result.params.rawMessagesJson, "string");
   assert.deepEqual(JSON.parse(result.params.rawMessagesJson), rawMessagesJson);
+});
+
+test("validate_requirement maps the user-facing manual mode before Provider serialization", () => {
+  const before = registeredHooks().get("before_tool_call");
+  const params = completeValidateParams();
+  params.rawMessagesJson = {
+    ...JSON.parse(params.rawMessagesJson),
+    business_mode: "手动拓展",
+  };
+
+  const result = before({ toolName: "validate_requirement", params });
+
+  assert.equal(result.block, undefined);
+  assert.equal(params.rawMessagesJson.business_mode, "手动拓展");
+  assert.equal(JSON.parse(result.params.rawMessagesJson).business_mode, "直接手扒");
 });
 
 test("validate_requirement forwards parsed labels without user clarification", () => {
@@ -1265,7 +1299,7 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /按原分支恢复/u);
   assert.match(text, /用户明确选中的当前 MCN/u);
   assert.match(text, /发送前确认/u);
-  assert.match(text, /直接手扒使用原 requirement_id 和 size/u);
+  assert.match(text, /手动拓展使用原 requirement_id 和 size/u);
   assert.ok(text.length < 900, `field-selection directive too long: ${text.length}`);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
@@ -1318,8 +1352,8 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /同一 requirement_id/u);
-  assert.match(startup.prependContext, /直接手扒分支先选择字段，再调用 manual_source_creators/u);
-  assert.match(startup.prependContext, /最终手扒结果/u);
+  assert.match(startup.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
+  assert.match(startup.prependContext, /最终手动拓展结果/u);
   assert.match(startup.prependContext, /不调用 rank_creators 或 create_submission_batch/u);
   assert.match(startup.prependContext, /读取.*input schema/u);
   assert.match(startup.prependContext, /需求原文.*可选字段/u);

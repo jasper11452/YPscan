@@ -44,7 +44,7 @@ test("validate_requirement card forbids same-platform child allocation", () => {
   assert.doesNotMatch(card, /remaining child calls.*same-platform type allocation/iu);
   assert.match(card, /keep one requirement with the original total/u);
   assert.match(card, /initial `询价机构` function.*search_creators/iu);
-  assert.match(card, /initial `直接手扒` function.*select_inquiry_form_fields/iu);
+  assert.match(card, /initial `手动拓展` function.*select_inquiry_form_fields/iu);
   assert.match(card, /unchanged requirement may be reused for the other function/iu);
   assert.doesNotMatch(card, /normal new-requirement flow.*immediately call `search_creators`/iu);
 });
@@ -96,7 +96,7 @@ test("parser publishes only the single-platform workflow input", () => {
   ]);
   assert.deepEqual(PARSE_REQUIREMENT_PARAMETERS.properties.business_mode.enum, [
     "询价机构",
-    "直接手扒",
+    "手动拓展",
   ]);
   assert.equal(PARSE_REQUIREMENT_PARAMETERS.additionalProperties, false);
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /任何业务条件/u);
@@ -214,7 +214,7 @@ test("parser preserves every output field declared by the independent spec", asy
       }),
   });
 
-  const parsed = payload(await parser({ demand: "抖音需求", business_mode: "直接手扒" }));
+  const parsed = payload(await parser({ demand: "抖音需求", business_mode: "手动拓展" }));
   assert.deepEqual(parsed.data.outputs, expected);
 });
 

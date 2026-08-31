@@ -88,7 +88,7 @@ export function businessModeQuestionPayload() {
     "请选择本次需求的业务模式。选择后再进行需求解析和落库。",
     [
       { label: "询价机构", description: "搜索刊例数据、推荐机构并发起企微询价" },
-      { label: "直接手扒", description: "通过后台 API 搜索、抓取并筛选达人" },
+      { label: "手动拓展", description: "通过后台 API 搜索、抓取并筛选达人" },
     ],
   );
 }

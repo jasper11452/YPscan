@@ -8,7 +8,23 @@ const MAX_FOLLOWER_COUNT = 999_999_999;
 
 export const UNRESTRICTED_FOLLOWERCOUNT_RANGE = `[0,${MAX_FOLLOWER_COUNT}]`;
 
-export const BUSINESS_MODE_VALUES = Object.freeze(["询价机构", "直接手扒"]);
+export const BUSINESS_MODE_VALUES = Object.freeze(["询价机构", "手动拓展"]);
+export const PROVIDER_MANUAL_BUSINESS_MODE = "直接手扒";
+const PROVIDER_BUSINESS_MODE_VALUES = Object.freeze([
+  BUSINESS_MODE_VALUES[0],
+  PROVIDER_MANUAL_BUSINESS_MODE,
+]);
+
+export function normalizeBusinessMode(value) {
+  if (value === PROVIDER_MANUAL_BUSINESS_MODE) return BUSINESS_MODE_VALUES[1];
+  return typeof value === "string" && BUSINESS_MODE_VALUES.includes(value) ? value : null;
+}
+
+function providerBusinessMode(value) {
+  const normalized = normalizeBusinessMode(value);
+  if (normalized === BUSINESS_MODE_VALUES[1]) return PROVIDER_MANUAL_BUSINESS_MODE;
+  return normalized;
+}
 
 export const HOST_PREFIX = "mcp__ypscan__";
 export const HOST_PREFIXES = Object.freeze([
@@ -298,15 +314,23 @@ function normalizedBrandName(value) {
 }
 
 function normalizedRawMessages(value) {
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  if (!trimmed) return value;
-  try {
-    const parsed = JSON.parse(trimmed);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : value;
-  } catch {
-    return value;
+  let normalized = value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    try {
+      const parsed = JSON.parse(trimmed);
+      normalized = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : value;
+    } catch {
+      return value;
+    }
   }
+  if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) return normalized;
+  const record = /** @type {Record<string, unknown>} */ (normalized);
+  const businessMode = providerBusinessMode(record.business_mode);
+  return businessMode && businessMode !== record.business_mode
+    ? { ...record, business_mode: businessMode }
+    : normalized;
 }
 
 function normalizedNumericRange(value, { rate = false, price = false, maximum = false } = {}) {
@@ -1160,8 +1184,8 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
       add("rawMessagesJson", "必须包含非空 original 和本次契约内 parse_outputs 对象");
     }
     const businessMode = rawRecord.business_mode;
-    if (typeof businessMode !== "string" || !BUSINESS_MODE_VALUES.includes(businessMode)) {
-      add("business_mode", '必须是解析前用户选择的 "询价机构" 或 "直接手扒"');
+    if (typeof businessMode !== "string" || !PROVIDER_BUSINESS_MODE_VALUES.includes(businessMode)) {
+      add("business_mode", '必须是解析前用户选择的 "询价机构" 或 "手动拓展"');
     }
   }
 

@@ -12,16 +12,16 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 解析需求前先确定业务模式：
 
 - 用户明确说“询价机构”“机构询价”或“MCN 询价”时，直接使用 `询价机构`。
-- 用户明确说“直接手扒”“手扒”“手动拓展”“人工拓展”或“手捞筛选”时，直接使用 `直接手扒`。
-- 未明确模式、同时出现两种模式或语义冲突时，调用 `AskUserQuestion`，选项固定为“询价机构”和“直接手扒”。用户回答前不解析、不落库。
+- 用户明确说“手动拓展”“人工拓展”“直接手扒”“手扒”或“手捞筛选”时，统一使用用户侧模式 `手动拓展`；旧说法只作为输入别名。
+- 未明确模式、同时出现两种模式或语义冲突时，调用 `AskUserQuestion`，选项固定为“询价机构”和“手动拓展”。用户回答前不解析、不落库。
 
-选定后将模式传入 `ypscan_parse_requirement.business_mode`，并写入 `validate_requirement.rawMessagesJson.business_mode`。该模式只决定首次落库后的初始功能。
+选定后将用户侧模式传入 `ypscan_parse_requirement.business_mode`，并写入 `validate_requirement.rawMessagesJson.business_mode`。插件在 Provider 边界把 `手动拓展` 规范为兼容线值 `直接手扒`；Agent 不得自行使用或展示该内部值。该模式只决定首次落库后的初始功能。
 
 询价机构：`ypscan_parse_requirement → 复核 → validate_requirement → search_creators → rank_mcns → MCN 排名表 → 选择收件机构 → 选择字段 → 发送确认 → create_with_distributions → 回收 → rank_creators → create_submission_batch`
 
-直接手扒：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators → manual_source_creators_status → 保存并交付最终手扒表`
+手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators → manual_source_creators_status → 保存并交付最终手动拓展表`
 
-同一会话、同一平台的最近成功 requirement 在业务条件未变时，可以在前一功能完成或明确停止后复用于另一功能。“改用询价机构”或“改用直接手扒”本身不算需求修改，不重新调用 `ypscan_parse_requirement` 或 `validate_requirement`；已提交过字段配置时直接复用，尚未提交时才调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。用户修改任何业务条件时仍按下文创建新 requirement。
+同一会话、同一平台的最近成功 requirement 在业务条件未变时，可以在前一功能完成或明确停止后复用于另一功能。“改用询价机构”或“改用手动拓展”本身不算需求修改，不重新调用 `ypscan_parse_requirement` 或 `validate_requirement`；已提交过字段配置时直接复用，尚未提交时才调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。用户修改任何业务条件时仍按下文创建新 requirement。
 
 ## 解析后、落库前必须复核
 
@@ -50,7 +50,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 | 排名 | 机构 | 覆盖达人 | 返点 | 综合分 |
 | ---- | ---- | -------- | ---- | ------ |
 
-覆盖达人只取当前机构自己的 `candidate_count`，缺失写“未知”。不得展示 supplier ID、候选达人、供给占比、手扒补量、推荐理由、汇总字段或历史数据。
+覆盖达人只取当前机构自己的 `candidate_count`，缺失写“未知”。不得展示 supplier ID、候选达人、供给占比、手动拓展补量、推荐理由、汇总字段或历史数据。
 
 排名表保存后展示 `delivery.local_file_link`，再让用户从本轮真实机构中选择收件机构。机构名只在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；弹窗换行只用于展示，匹配前去掉换行还原完整名称；不模糊匹配、不跨轮复用。选中机构后，若同一 requirement 已提交字段配置则直接复用，否则调用 `select_inquiry_form_fields`，原样展示 URL，等待用户提交并回复“好了”。
 
@@ -58,13 +58,13 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 回收固定执行 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → rank_creators → create_submission_batch`。机构回收后的 `rank_creators` 数量不足时，仍生成并交付当前真实结果，说明实际数量和缺口，不自动发起新一轮询价。
 
-## 直接手扒分支
+## 手动拓展分支
 
 `validate_requirement` 成功后先调用 `select_inquiry_form_fields`；用户提交并回复“好了”后，按 [manual_source_creators](references/tools/manual_source_creators.md) 使用同一 requirement ID 和交付人数提交后端任务。
 
-提交成功后按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID 和 `batch_id` 轮询。每轮最多 10 次；第 10 次仍未完成时，用 `AskUserQuestion` 提供“继续查询”和“暂时结束”。继续查询仍使用同一 ID，最多再查 10 次；不得重复创建任务或猜测、更换 ID。
+提交成功后先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID 和 `batch_id` 第 1 次查询。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 ID 开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
 
-成功 Excel 是后台搜索、详情抓取和筛选后的最终手扒结果：保存并展示后结束本次手扒，不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。不再提供浏览器详细手扒分支。
+成功 Excel 是后台搜索、详情抓取和筛选后的最终手动拓展结果：保存并展示后结束本次手动拓展，不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。不再提供浏览器详细拓展分支。
 
 ## 结果不足：先复核，再放宽
 
@@ -88,7 +88,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 自动放宽后的每轮结果仍不足时，再次复核本轮有效需求和实际落库参数，确认正确后才进入下一项。足量后，在结果前汇总全部放宽记录。
 
-全部允许项用完仍无可询价机构时，询问“手动修改需求 / 改用直接手扒 / 结束”。用户只改用另一功能且业务条件未变时复用当前 requirement；用户修改业务条件时撤销全部自动放宽，恢复用户原始需求并创建新 requirement。
+全部允许项用完仍无可询价机构时，询问“手动修改需求 / 改用手动拓展 / 结束”。用户只改用另一功能且业务条件未变时复用当前 requirement；用户修改业务条件时撤销全部自动放宽，恢复用户原始需求并创建新 requirement。
 
 ## 用户修改需求与最终交付
 
@@ -96,6 +96,6 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 业务条件未变、只是前一功能完成或明确停止后要求另一功能时，复用同一会话中最近成功的 requirement 和已提交字段配置；不重新落库，也不把前一功能的机构、达人、batch 或 Excel 当作新功能结果。
 
-MCN 排名表和机构达人预览表是询价链路中间产物；直接手扒 Excel 是手扒最终交付。询价回收后由 `create_submission_batch` 生成的提报表保存后，展示 `delivery.local_file_link`，再询问是否“补充更新达人信息”。用户选择补充时，唯一映射到 `get_creator_detail`，传当前 requirement ID 和同一正整数 batch ID，随后用同一 batch 轮询 `get_creator_detail_export` 并保存新版提报表；不得改成字段配置或再次追问补充什么。
+MCN 排名表和机构达人预览表是询价链路中间产物；手动拓展 Excel 是手动拓展最终交付。询价回收后由 `create_submission_batch` 生成的提报表保存后，展示 `delivery.local_file_link`，再询问是否“补充更新达人信息”。用户选择补充时，唯一映射到 `get_creator_detail`，传当前 requirement ID 和同一正整数 batch ID，随后用同一 batch 轮询 `get_creator_detail_export` 并保存新版提报表；不得改成字段配置或再次追问补充什么。
 
 所有结果只使用本轮真实 Provider 证据，不跨需求、平台、账号或历史 run 混用。
