@@ -1,9 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const REGISTRY_PATH = fileURLToPath(
-  new URL("./platform-cascade-routes.json", import.meta.url),
-);
+const REGISTRY_PATH = fileURLToPath(new URL("./platform-cascade-routes.json", import.meta.url));
 
 const rawRegistry = JSON.parse(readFileSync(REGISTRY_PATH, "utf8"));
 
@@ -370,9 +368,8 @@ export function compileCascadeSelectionPlan({ platform, filters }) {
   const fallbacks = [];
   for (const filter of filters) {
     if (filter.mode !== "options" || !Array.isArray(filter.values)) continue;
-    const definition = CASCADE_ROUTE_REGISTRY.platforms?.[normalizedPlatform(platform)]?.[
-      filter.control
-    ];
+    const definition =
+      CASCADE_ROUTE_REGISTRY.platforms?.[normalizedPlatform(platform)]?.[filter.control];
     if (!definition) continue;
     for (const value of filter.values) {
       const resolved = resolveCascadeRoute(platform, filter.control, value);
@@ -391,9 +388,7 @@ export function compileCascadeSelectionPlan({ platform, filters }) {
         grouped.set(groupKey, {
           control: filter.control,
           field_labels: [...definition.field_labels],
-          trigger_labels: rootTrigger
-            ? [rootTrigger]
-            : [...(definition.trigger_labels ?? [])],
+          trigger_labels: rootTrigger ? [rootTrigger] : [...(definition.trigger_labels ?? [])],
           root_as_trigger: definition.root_as_trigger === true,
           strategy: "cascade_batch",
           items: [],
@@ -401,9 +396,7 @@ export function compileCascadeSelectionPlan({ platform, filters }) {
       }
       const batch = grouped.get(groupKey);
       const pathKey = resolved.route.path.map(clean).join("\u0000");
-      const existing = batch.items.find(
-        (item) => item.path.map(clean).join("\u0000") === pathKey,
-      );
+      const existing = batch.items.find((item) => item.path.map(clean).join("\u0000") === pathKey);
       if (existing) {
         if (filter.fact_id && !existing.fact_ids.includes(filter.fact_id)) {
           existing.fact_ids.push(filter.fact_id);

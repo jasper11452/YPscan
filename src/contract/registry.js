@@ -53,9 +53,9 @@ const BUSINESS_TOOL_NAMES = Object.freeze([
   "create_submission_batch",
 ]);
 
-export const TOOL_REGISTRY = Object.freeze(Object.fromEntries(
-  BUSINESS_TOOL_NAMES.map((name) => [name, true]),
-));
+export const TOOL_REGISTRY = Object.freeze(
+  Object.fromEntries(BUSINESS_TOOL_NAMES.map((name) => [name, true])),
+);
 
 export const VALIDATE_REQUIREMENT_PARAMS = Object.freeze([
   "id",
@@ -155,11 +155,7 @@ const STRING_VALIDATE_PARAMS = new Set(
   ),
 );
 
-const STRING_BOOLEAN_PARAMS = new Set([
-  "hasOrganization",
-  "hasOrder30day",
-  "hasSocial30day",
-]);
+const STRING_BOOLEAN_PARAMS = new Set(["hasOrganization", "hasOrder30day", "hasSocial30day"]);
 
 export const VALIDATE_REQUIREMENT_RANGE_PARAMS = Object.freeze([
   "rebate",
@@ -214,14 +210,7 @@ const PRICE_RANGE_PARAMS = new Set([
   "kolOfficialPriceL3",
 ]);
 
-const MAXIMUM_METRIC_RANGE_PARAMS = new Set([
-  "cpeL1",
-  "cpeL2",
-  "cpeL3",
-  "cpmL1",
-  "cpmL2",
-  "cpmL3",
-]);
+const MAXIMUM_METRIC_RANGE_PARAMS = new Set(["cpeL1", "cpeL2", "cpeL3", "cpmL1", "cpmL2", "cpmL3"]);
 
 const PLATFORM_TAG_FIELDS = Object.freeze({
   xiaohongshu: [
@@ -230,12 +219,7 @@ const PLATFORM_TAG_FIELDS = Object.freeze({
     "kolPersonaLabel",
     "pgyBloggerTypeLabel",
   ],
-  douyin: [
-    "contentThemeLabel",
-    "growTalentTypeLabel",
-    "industryTagLabel",
-    "xtTalentTypeLabel",
-  ],
+  douyin: ["contentThemeLabel", "growTalentTypeLabel", "industryTagLabel", "xtTalentTypeLabel"],
 });
 
 const PLATFORM_ARRAY_FIELD_PARAMS = Object.freeze({
@@ -265,10 +249,10 @@ const DOUYIN_VIDEO_TYPE_METRIC_FIELDS = Object.freeze([
 const PLATFORM_ALIASES = Object.freeze({
   xiaohongshu: "xiaohongshu",
   xhs: "xiaohongshu",
-  "小红书": "xiaohongshu",
+  小红书: "xiaohongshu",
   douyin: "douyin",
   dy: "douyin",
-  "抖音": "douyin",
+  抖音: "douyin",
 });
 
 const POSITIVE_INTEGER_STRING = /^([1-9]\d*)$/u;
@@ -382,10 +366,7 @@ function normalizedNumericRange(value, { rate = false, price = false, maximum = 
     return normalized[1] >= 0 ? JSON.stringify([0, normalized[1]]) : value;
   }
   if (price && inputKind !== "structured") {
-    return JSON.stringify([
-      Math.floor(normalized[0] * 0.7),
-      Math.ceil(normalized[1] * 1.2),
-    ]);
+    return JSON.stringify([Math.floor(normalized[0] * 0.7), Math.ceil(normalized[1] * 1.2)]);
   }
   return JSON.stringify(normalized);
 }
@@ -410,15 +391,11 @@ function normalizedFollowerRange(value) {
   if (normalized !== value || typeof value !== "string") {
     return clampFollowerCountRange(normalized);
   }
-  const match = value.trim().match(
-    /^(\d+(?:\.\d+)?)\s*(?:-|~|～|至|到)\s*(\d+(?:\.\d+)?)$/u,
-  );
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(?:-|~|～|至|到)\s*(\d+(?:\.\d+)?)$/u);
   if (!match) return clampFollowerCountRange(value);
   const lower = Number(match[1]);
   const upper = Number(match[2]);
-  return lower <= upper
-    ? clampFollowerCountRange(JSON.stringify([lower, upper]))
-    : value;
+  return lower <= upper ? clampFollowerCountRange(JSON.stringify([lower, upper])) : value;
 }
 
 function normalizedRebateRange(value) {
@@ -457,7 +434,8 @@ function normalizedRebateRange(value) {
       try {
         const parsed = JSON.parse(trimmed);
         if (
-          Array.isArray(parsed) && parsed.length === 2 &&
+          Array.isArray(parsed) &&
+          parsed.length === 2 &&
           parsed.every((item) => typeof item === "number" && Number.isFinite(item))
         ) {
           [minimum, maximum] = parsed;
@@ -474,33 +452,24 @@ function normalizedRebateRange(value) {
     if (maximum > 1 && maximum <= 100) maximum /= 100;
     if (maximum !== 1) return value;
   }
-  return minimum >= 0 && minimum <= 1
-    ? JSON.stringify([minimum, 1])
-    : value;
+  return minimum >= 0 && minimum <= 1 ? JSON.stringify([minimum, 1]) : value;
 }
 
 function briefUnrestrictsFollowers(value) {
   if (typeof value !== "string" || !value.trim()) return false;
   const compact = value.replace(/[ \t]/gu, "");
-  return /粉丝(?:数|量|量级)?[^\n。；;]{0,20}要求[:：]?(?:无(?:要求)?|不限|不限制|无限制)(?=$|[\n，,。；;])/u.test(compact) ||
-    /(?:无|没有|不限|不限制)(?:任何)?粉丝(?:数|量|量级)?要求/u.test(compact);
+  return (
+    /粉丝(?:数|量|量级)?[^\n。；;]{0,20}要求[:：]?(?:无(?:要求)?|不限|不限制|无限制)(?=$|[\n，,。；;])/u.test(
+      compact,
+    ) || /(?:无|没有|不限|不限制)(?:任何)?粉丝(?:数|量|量级)?要求/u.test(compact)
+  );
 }
 
 function parseLocalDateTime(value) {
   if (typeof value !== "string") return Number.NaN;
-  const match = value.match(
-    /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/u,
-  );
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/u);
   if (!match) return Number.NaN;
-  const [
-    ,
-    year,
-    month,
-    day,
-    hour,
-    minute,
-    second,
-  ] = match;
+  const [, year, month, day, hour, minute, second] = match;
   if (
     !validLocalDateParts(year, month, day) ||
     Number(hour) > 23 ||
@@ -522,9 +491,7 @@ function parseLocalDateTime(value) {
 function normalizedDateTime(value, { now = new Date() } = {}) {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
-  const match = trimmed.match(
-    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/u,
-  );
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/u);
   if (!match) return trimmed;
   const normalized = `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6] ?? "00"}`;
   const timestamp = parseLocalDateTime(normalized);
@@ -568,7 +535,8 @@ export function normalizeValidateRequirementTagArrays(params) {
     try {
       const parsed = JSON.parse(value);
       if (
-        Array.isArray(parsed) && parsed.length > 0 &&
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
         parsed.every((item) => typeof item === "string" && item.trim())
       ) {
         normalized ??= { ...params };
@@ -639,7 +607,11 @@ function normalizedPlatformName(value) {
 }
 
 function tagArrayValue(value) {
-  if (Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item.trim())) {
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => typeof item === "string" && item.trim())
+  ) {
     return value;
   }
   if (typeof value !== "string") return null;
@@ -647,7 +619,9 @@ function tagArrayValue(value) {
   if (!trimmed) return null;
   try {
     const parsed = JSON.parse(trimmed);
-    return Array.isArray(parsed) && parsed.length > 0 && parsed.every((item) => typeof item === "string" && item.trim())
+    return Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      parsed.every((item) => typeof item === "string" && item.trim())
       ? parsed
       : null;
   } catch {
@@ -699,7 +673,9 @@ export function missingRequiredValidateParams(params) {
   if (!params || typeof params !== "object" || Array.isArray(params)) return [];
   const missing = [...REQUIRED_VALIDATE_PARAMS].filter((name) => {
     const value = params[name];
-    return value === undefined || value === null || (typeof value === "string" && value.trim() === "");
+    return (
+      value === undefined || value === null || (typeof value === "string" && value.trim() === "")
+    );
   });
 
   return missing;
@@ -821,13 +797,7 @@ function uniqueParsedBrand(value, platform) {
     }
     return Array.isArray(source) ? source : [source];
   });
-  const candidates = [
-    ...new Set(
-      values
-        .map(normalizedBrandCandidate)
-        .filter(Boolean),
-    ),
-  ];
+  const candidates = [...new Set(values.map(normalizedBrandCandidate).filter(Boolean))];
   return candidates.length === 1 ? candidates[0] : null;
 }
 
@@ -875,26 +845,23 @@ function hasQuantityEvidence(evidence, value) {
 
 function hasSubmissionDeadlineEvidence(evidence, value, now) {
   if (typeof value !== "string" || !Number.isFinite(parseLocalDateTime(value))) return false;
-  const match = value.match(
-    /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/u,
-  );
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/u);
   if (!match) return false;
   const [, year, month, day, hour, minute, second] = match;
   if (new RegExp(`(?<!\\d)${regexLiteral(value)}(?!\\d)`, "u").test(evidence)) return true;
   const minutePrecision = `${year}-${month}-${day} ${hour}:${minute}`;
-  if (Number(second) === 0 && new RegExp(`${regexLiteral(minutePrecision)}(?![:\\d])`, "u").test(evidence)) {
+  if (
+    Number(second) === 0 &&
+    new RegExp(`${regexLiteral(minutePrecision)}(?![:\\d])`, "u").test(evidence)
+  ) {
     return true;
   }
   const numericHour = Number(hour);
   const numericMinute = Number(minute);
   const numericSecond = Number(second);
   const chineseDateTime = `${Number(year)}年\\s*${Number(month)}月\\s*${Number(day)}日\\s*${numericHour}\\s*点`;
-  const chineseMinute = numericMinute === 0
-    ? "(?:\\s*0+\\s*分)?"
-    : `\\s*0?${numericMinute}\\s*分`;
-  const chineseSecond = numericSecond === 0
-    ? "(?:\\s*0+\\s*秒)?"
-    : `\\s*0?${numericSecond}\\s*秒`;
+  const chineseMinute = numericMinute === 0 ? "(?:\\s*0+\\s*分)?" : `\\s*0?${numericMinute}\\s*分`;
+  const chineseSecond = numericSecond === 0 ? "(?:\\s*0+\\s*秒)?" : `\\s*0?${numericSecond}\\s*秒`;
   const chinesePattern = `${chineseDateTime}${chineseMinute}${chineseSecond}(?![\\d分秒])`;
   if (new RegExp(chinesePattern, "u").test(evidence)) return true;
 
@@ -906,9 +873,7 @@ function hasSubmissionDeadlineEvidence(evidence, value, now) {
   const hourPattern = numericHour < 10 ? `0?${numericHour}` : String(numericHour);
   const minutePattern = numericMinute < 10 ? `0?${numericMinute}` : String(numericMinute);
   const clockHour = `(?<!\\d)${hourPattern}`;
-  const sameDayChineseMinute = numericMinute
-    ? `\\s*${minutePattern}\\s*分`
-    : "(?:\\s*0+\\s*分)?";
+  const sameDayChineseMinute = numericMinute ? `\\s*${minutePattern}\\s*分` : "(?:\\s*0+\\s*分)?";
   const sameDayChineseClock = `${clockHour}\\s*(?:点|时)${sameDayChineseMinute}(?:\\s*0+\\s*秒)?(?![\\d分秒])`;
   const colonClock = `${clockHour}\\s*[:：]\\s*${String(numericMinute).padStart(2, "0")}(?:\\s*[:：]\\s*00)?(?!\\d|\\s*[:：]\\s*\\d)`;
   const dayClock = `(?:今天|今日)[^。；;\\n]{0,20}(?:${sameDayChineseClock}|${colonClock})`;
@@ -973,8 +938,11 @@ function metricOutputRecord(rawMessages, field) {
 }
 
 function usableMetricValue(value) {
-  return value !== null && value !== undefined &&
-    !(typeof value === "string" && (!value.trim() || value.trim().toLowerCase() === "null"));
+  return (
+    value !== null &&
+    value !== undefined &&
+    !(typeof value === "string" && (!value.trim() || value.trim().toLowerCase() === "null"))
+  );
 }
 
 const PARSED_RANGE_FIELDS = Object.freeze([
@@ -1097,9 +1065,10 @@ function normalizeParsedDouyinMetrics(params, rawMessages) {
     if (candidates.length !== 1) continue;
     const targetField = `${metric}${targetTier}`;
     if (Object.hasOwn(normalized, targetField)) continue;
-    const source = candidates.find(({ tier, value }) =>
-      Object.hasOwn(normalized, `${metric}${tier}`) &&
-      equivalentMetricValues(normalized[`${metric}${tier}`], value),
+    const source = candidates.find(
+      ({ tier, value }) =>
+        Object.hasOwn(normalized, `${metric}${tier}`) &&
+        equivalentMetricValues(normalized[`${metric}${tier}`], value),
     );
     if (normalized === params) normalized = { ...params };
     if (source && source.tier !== targetTier) delete normalized[`${metric}${source.tier}`];
@@ -1235,7 +1204,10 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   );
   const parsedBrandMatches = Boolean(submittedBrand && submittedBrand === parsedBrand);
   if (!parsedBrandMatches && !clarifiedBrandMatches) {
-    add("brandName", "必须原样使用当前平台唯一 Dify 解析品牌；仅在解析缺失或多候选时使用最新弹窗答案");
+    add(
+      "brandName",
+      "必须原样使用当前平台唯一 Dify 解析品牌；仅在解析缺失或多候选时使用最新弹窗答案",
+    );
   }
   const quantityEvidence =
     latestFieldEvidence(rawMessages, [
@@ -1261,12 +1233,16 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   ) {
     add("rebate", "原始需求或弹窗澄清记录中没有返点证据，且 Dify 未给出唯一返点区间");
   }
-  const hasParsedPrice = PRICE_FIELDS.some((field) =>
-    Object.hasOwn(payload, field) &&
-    hasUniqueParsedRangeEvidence(rawMessages, field, payload[field]),
+  const hasParsedPrice = PRICE_FIELDS.some(
+    (field) =>
+      Object.hasOwn(payload, field) &&
+      hasUniqueParsedRangeEvidence(rawMessages, field, payload[field]),
   );
   if (!hasParsedPrice && !/(?:单价|报价|预算|费用|价格|kolOfficialPrice)/iu.test(evidence)) {
-    add("kolOfficialPriceL1/L2/L3", "原始需求或弹窗澄清记录中没有报价证据，且 Dify 未给出唯一报价区间");
+    add(
+      "kolOfficialPriceL1/L2/L3",
+      "原始需求或弹窗澄清记录中没有报价证据，且 Dify 未给出唯一报价区间",
+    );
   }
   const deadlineEvidence =
     latestFieldEvidence(rawMessages, [
@@ -1360,9 +1336,10 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
   const bare = stripHostPrefix(typeof toolName === "string" ? toolName.toLowerCase() : toolName);
   if (!bare) return params;
 
-  let normalized = bare === "validate_requirement"
-    ? normalizePlatformArrayFields(normalizeValidateRequirementTagArrays(params))
-    : params;
+  let normalized =
+    bare === "validate_requirement"
+      ? normalizePlatformArrayFields(normalizeValidateRequirementTagArrays(params))
+      : params;
   const set = (name, value) => {
     if (normalized[name] === value) return;
     if (normalized === params) normalized = { ...params };
@@ -1384,12 +1361,16 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
 
   if (typeof normalized.platform === "string") {
     const platform = normalized.platform.trim();
-    const alias = bare === "validate_requirement"
-      ? (["xiaohongshu", "douyin"].includes(platform) ? platform : null)
-      : bare === "get_creator_detail"
-        ? ({ xiaohongshu: "xhs", xhs: "xhs", douyin: "dy", dy: "dy", "小红书": "xhs", "抖音": "dy" }[platform.toLowerCase()] ??
-          { "小红书": "xhs", "抖音": "dy" }[platform])
-        : PLATFORM_ALIASES[platform.toLowerCase()] ?? PLATFORM_ALIASES[platform];
+    const alias =
+      bare === "validate_requirement"
+        ? ["xiaohongshu", "douyin"].includes(platform)
+          ? platform
+          : null
+        : bare === "get_creator_detail"
+          ? ({ xiaohongshu: "xhs", xhs: "xhs", douyin: "dy", dy: "dy", 小红书: "xhs", 抖音: "dy" }[
+              platform.toLowerCase()
+            ] ?? { 小红书: "xhs", 抖音: "dy" }[platform])
+          : (PLATFORM_ALIASES[platform.toLowerCase()] ?? PLATFORM_ALIASES[platform]);
     if (alias) set("platform", alias);
   }
 
@@ -1407,7 +1388,10 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
         if (!Object.hasOwn(normalized, field)) set(field, value);
       }
       if (rawMessages && typeof rawMessages === "object" && !Array.isArray(rawMessages)) {
-        const parsedBrand = uniqueParsedBrand(rawMessages, normalizedPlatformName(normalized.platform));
+        const parsedBrand = uniqueParsedBrand(
+          rawMessages,
+          normalizedPlatformName(normalized.platform),
+        );
         if (parsedBrand) set("brandName", parsedBrand);
         for (const field of PARSED_RANGE_FIELDS) {
           if (
@@ -1425,7 +1409,9 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
       }
     }
     if (
-      (normalized.followercount === undefined || normalized.followercount === null || normalized.followercount === "") &&
+      (normalized.followercount === undefined ||
+        normalized.followercount === null ||
+        normalized.followercount === "") &&
       briefUnrestrictsFollowers(normalized.originalBrief)
     ) {
       set("followercount", UNRESTRICTED_FOLLOWERCOUNT_RANGE);
@@ -1439,15 +1425,18 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
     }
     for (const name of RANGE_PARAMS) {
       if (!Object.hasOwn(normalized, name)) continue;
-      set(name, name === "rebate"
-        ? normalizedRebateRange(normalized[name])
-        : name === "followercount"
-          ? normalizedFollowerRange(normalized[name])
-          : normalizedNumericRange(normalized[name], {
-            rate: RATE_RANGE_PARAMS.has(name),
-            price: PRICE_RANGE_PARAMS.has(name),
-            maximum: MAXIMUM_METRIC_RANGE_PARAMS.has(name),
-          }));
+      set(
+        name,
+        name === "rebate"
+          ? normalizedRebateRange(normalized[name])
+          : name === "followercount"
+            ? normalizedFollowerRange(normalized[name])
+            : normalizedNumericRange(normalized[name], {
+                rate: RATE_RANGE_PARAMS.has(name),
+                price: PRICE_RANGE_PARAMS.has(name),
+                maximum: MAXIMUM_METRIC_RANGE_PARAMS.has(name),
+              }),
+      );
     }
     if (Object.hasOwn(normalized, "submissionDeadlineAt")) {
       const normalizedDeadline = normalizedDateTime(normalized.submissionDeadlineAt, { now });

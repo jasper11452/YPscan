@@ -21,6 +21,16 @@ assert.equal(
 );
 assert.equal(packageJson.files.includes("skills"), true, "published package must include skills");
 assert.equal(
+  manifest.mcpServers.ypscan.url,
+  "https://mcp.eshypdata.com/mcp",
+  "Provider MCP must use the current HTTP endpoint",
+);
+assert.equal(
+  manifest.mcpServers.ypscan.transport,
+  "streamable-http",
+  "Provider MCP must use OpenClaw's canonical Streamable HTTP transport",
+);
+assert.equal(
   manifest.mcpServers.ypscan.toolFilter.include.includes("manual_source_creators"),
   true,
   "default backend manual sourcing must be exposed by this plugin",
@@ -70,7 +80,10 @@ try {
   assert.equal(toolNames.includes("ypscan_manual_browser_action"), false);
   assert.equal(toolNames.includes("ypscan_manual_select_filters"), false);
   const excelSaver = registered.tools.find((tool) => tool.name === "ypscan_save_excel_artifact");
-  assert.equal(excelSaver.parameters.properties.artifact_kind.enum.includes("creator_preview"), false);
+  assert.equal(
+    excelSaver.parameters.properties.artifact_kind.enum.includes("creator_preview"),
+    false,
+  );
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_ranking"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_creator_preview"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("manual_source"));

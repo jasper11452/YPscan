@@ -1,10 +1,6 @@
 import { chromium } from "playwright-core";
 import { inspectManualBrowser } from "./manual-browser-state.js";
-import {
-  cleanText,
-  openFilterMenu,
-  selectMenuValues,
-} from "./manual-research/common.js";
+import { cleanText, openFilterMenu, selectMenuValues } from "./manual-research/common.js";
 import { hostToolResult } from "./tool-result.js";
 
 const DEFAULT_CDP_URL = "http://127.0.0.1:18800";
@@ -33,7 +29,7 @@ export const SELECT_CASCADE_PARAMETERS = Object.freeze({
       minItems: 1,
       maxItems: 4,
       items: { type: "string", minLength: 1 },
-      description: "按页面实际层级排列的可见文字，例如 [\"美食\", \"烘焙\"]。",
+      description: '按页面实际层级排列的可见文字，例如 ["美食", "烘焙"]。',
     },
   },
 });

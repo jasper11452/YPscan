@@ -197,6 +197,82 @@ test("Provider idempotency errors are terminal for the repeated institution", ()
   assert.doesNotMatch(directiveText(result), /发送确认|sync_mcn_inquiry_status/u);
 });
 
+// The hard enforcement for these keys is validateRequirementPreflight in
+// src/contract/registry.js, pinned by tests/registry.test.mjs
+// "validate_requirement preflight blocks a renamed rawMessagesJson original key".
+test("parse success pins the rawMessagesJson key contract for validate_requirement", () => {
+  const { hooks } = registeredPlugin();
+  const directive = directiveText(
+    hooks.get("tool_result_persist")({
+      toolName: "ypscan_parse_requirement",
+      message: toolMessage({ success: true, data: { outputs: { dybrandName: ["测试品牌"] } } }),
+    }),
+  );
+
+  assert.match(directive, /严格按 validate_requirement 工具卡 rawMessagesJson 契约执行/u);
+  assert.match(directive, /禁止写成 original_demand 或 demand/u);
+  assert.match(directive, /key 写错会被本地预检当成缺失原文阻断/u);
+});
+
+test("validate_requirement success reuses the business mode recorded by the preflight", () => {
+  const { hooks } = registeredPlugin();
+  const before = hooks.get("before_tool_call");
+  const persist = hooks.get("tool_result_persist");
+  const requirementId = "a".repeat(32);
+  const validateParams = (businessMode) => ({
+    platform: "douyin",
+    brandName: ["测试品牌"],
+    projectName: "测试项目",
+    quantityTotal: 30,
+    submissionDeadlineAt: "2099-08-25 12:00:00",
+    rebate: "25%以上",
+    followercount: [0, 999999999],
+    contentTag: ["科技", "耳机"],
+    rawMessagesJson: JSON.stringify({
+      original:
+        "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；科技耳机方向。",
+      parse_outputs: { dybrandName: ["测试品牌"] },
+      business_mode: businessMode,
+    }),
+    kolOfficialPriceL3: 50000,
+  });
+  // The persist event omits params, matching the reported production failure.
+  const persistResult = () =>
+    directiveText(
+      persist({
+        toolName: "mcp__ypscan__validate_requirement",
+        message: toolMessage({ success: true, data: { requirement_id: requirementId } }),
+      }),
+    );
+
+  // Without a recorded mode the flow still pauses conservatively.
+  assert.match(persistResult(), /缺少 business_mode/u);
+
+  assert.equal(
+    before({ toolName: "mcp__ypscan__validate_requirement", params: validateParams("手动拓展") })
+      .block,
+    undefined,
+  );
+  const manual = persistResult();
+  assert.doesNotMatch(manual, /已暂停|缺少 business_mode/u);
+  assert.match(manual, /业务模式：手动拓展/u);
+  assert.deepEqual(namedArgsFromDirective(manual, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
+    requirement_id: requirementId,
+  });
+  assert.doesNotMatch(manual, /SEARCH_CREATORS_ARGS=/u);
+
+  assert.equal(
+    before({ toolName: "mcp__ypscan__validate_requirement", params: validateParams("询价机构") })
+      .block,
+    undefined,
+  );
+  const inquiry = persistResult();
+  assert.doesNotMatch(inquiry, /已暂停|缺少 business_mode/u);
+  assert.match(inquiry, /业务模式：询价机构/u);
+  assert.deepEqual(namedArgsFromDirective(inquiry, "SEARCH_CREATORS_ARGS"), { id: requirementId });
+  assert.doesNotMatch(inquiry, /SELECT_INQUIRY_FORM_FIELDS_ARGS=/u);
+});
+
 test("reset only re-enables the per-gateway startup instruction", () => {
   const { hooks, transientState } = registeredPlugin();
   const context = { sessionKey: "reset-startup" };

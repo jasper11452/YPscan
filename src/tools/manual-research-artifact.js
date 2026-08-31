@@ -762,7 +762,9 @@ export function buildManualResearchWorkbook({
   const finalRows = qualifiedRows.slice(0, targetCount ?? qualifiedRows.length);
   const remainingQualifiedRows = qualifiedRows.slice(targetCount ?? qualifiedRows.length);
   const candidateRows =
-    targetCount != null && qualifiedRows.length >= targetCount ? remainingQualifiedRows : checkedCandidates;
+    targetCount != null && qualifiedRows.length >= targetCount
+      ? remainingQualifiedRows
+      : checkedCandidates;
   const selectedRows = talentRows(plan, finalRows, details, reviews, finalRows, timestamp);
   const candidateSheetRows = talentRows(
     plan,
@@ -1111,9 +1113,8 @@ export async function createManualResearchStore({ workspaceDir, params, plan, no
       (candidate) => candidate.list_hard_evaluation.status === "unknown",
     ).length;
     const selectedCandidates = finalCandidates(candidates, details, reviews, plan.target_count);
-    const deliveryShortfall = plan.target_count == null
-      ? null
-      : Math.max(plan.target_count - selectedCandidates.length, 0);
+    const deliveryShortfall =
+      plan.target_count == null ? null : Math.max(plan.target_count - selectedCandidates.length, 0);
     const artifact = createArtifactMetadata({
       runId: runName,
       checkpointPath,
@@ -1580,9 +1581,10 @@ export async function createManualResearchSubmission({
     submission_path: submissionPath,
     row_count: selected.length,
     target_count: loaded.plan.target_count ?? null,
-    delivery_shortfall: loaded.plan.target_count == null
-      ? null
-      : Math.max(loaded.plan.target_count - selected.length, 0),
+    delivery_shortfall:
+      loaded.plan.target_count == null
+        ? null
+        : Math.max(loaded.plan.target_count - selected.length, 0),
     byte_count: workbook.length,
     sha256: createHash("sha256").update(workbook).digest("hex"),
     generated_at: generatedAt,
@@ -1912,9 +1914,8 @@ export async function applyManualResearchReviews({
     reviews: mergedReviews,
     detailPlannedCount: detailQueueLimit(plan),
     targetRowCount: selected.length,
-    deliveryShortfall: plan.target_count == null
-      ? null
-      : Math.max(plan.target_count - selected.length, 0),
+    deliveryShortfall:
+      plan.target_count == null ? null : Math.max(plan.target_count - selected.length, 0),
     checkpointEventCount: events.length + updatedDetails.length + reviews.length + 1,
     generatedAt: capturedAt,
     deliveryMessage: "复核结果已写回同一 Excel；请向用户展示 excel_path。",

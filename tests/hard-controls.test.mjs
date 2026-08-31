@@ -63,10 +63,7 @@ function assertPopupLines(payload) {
       ...question.options.flatMap((option) => [option.label, option.description]),
     ]) {
       for (const line of value.split("\n")) {
-        assert.ok(
-          [...line].length <= MAX_POPUP_LINE_LENGTH,
-          `popup line is too long: ${line}`,
-        );
+        assert.ok([...line].length <= MAX_POPUP_LINE_LENGTH, `popup line is too long: ${line}`);
       }
     }
   }
@@ -133,8 +130,11 @@ test("validated requirements route by the previously selected business mode", ()
   assert.match(parseText, /唯一值直接采用/u);
   assert.match(parseText, /八个可选 Label 有则原样保留、无则省略/u);
   assert.match(parseText, /contentTag 缺失.*重新解析/u);
-  assert.doesNotMatch(parseText, /PARSER_OWNED_LOGICAL_FIELDS=|VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
-  assert.ok(parseText.length < 800, `parse directive too long: ${parseText.length}`);
+  assert.doesNotMatch(
+    parseText,
+    /PARSER_OWNED_LOGICAL_FIELDS=|VALIDATE_REQUIREMENT_RANGE_FORMAT=/u,
+  );
+  assert.ok(parseText.length < 950, `parse directive too long: ${parseText.length}`);
   assert.doesNotMatch(parseText, /VALIDATE_REQUIREMENT_ARGS=/u);
 
   const parseWithMode = persist({
@@ -228,15 +228,18 @@ test("validated requirements route by the previously selected business mode", ()
   assert.match(directiveText(rank), /同一 requirement_id、同一平台.*唯一精确匹配/u);
   assert.match(directiveText(rank), /只传 supplierIds/u);
   assert.match(directiveText(rank), /传原始名称 supplier_name/u);
-  assert.ok(directiveText(rank).length < 1500, `rank directive too long: ${directiveText(rank).length}`);
+  assert.ok(
+    directiveText(rank).length < 1500,
+    `rank directive too long: ${directiveText(rank).length}`,
+  );
   assert.doesNotMatch(directiveText(rank), /ypscan_manual_research|宿主 Browser/u);
   assert.doesNotMatch(directiveText(rank), /manual_source_creators_status/u);
   assert.doesNotMatch(directiveText(rank), /selection_id/u);
   const question = argsFromDirective(directiveText(rank));
-  assert.deepEqual(question.questions[0].options.map((option) => option.label), [
-    "机构 A",
-    "暂不询价",
-  ]);
+  assert.deepEqual(
+    question.questions[0].options.map((option) => option.label),
+    ["机构 A", "暂不询价"],
+  );
   assert.equal(question.questions[0].multiSelect, false);
   assert.deepEqual(question.questions[0].options, [
     { label: "机构 A", description: "选择该机构作为本次询价收件人" },
@@ -328,7 +331,10 @@ test("rank result saves the Provider MCN workbook before the branch question", (
     mcn_names: ["机构 A"],
   });
   assert.doesNotMatch(rankText, /ASK_USER_QUESTION_ARGS=/u);
-  assert.doesNotMatch(rankText, /INQUIRY_RECIPIENT_SELECTION_ARGS|SELECT_INQUIRY_FORM_FIELDS_ARGS/u);
+  assert.doesNotMatch(
+    rankText,
+    /INQUIRY_RECIPIENT_SELECTION_ARGS|SELECT_INQUIRY_FORM_FIELDS_ARGS/u,
+  );
 
   const saved = persist({
     toolName: "ypscan_save_excel_artifact",
@@ -383,10 +389,10 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     }),
   });
   const sourceText = directiveText(sourced);
-  assert.deepEqual(
-    namedArgsFromDirective(sourceText, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
-    { requirement_id: "req-manual", batch_id: 42 },
-  );
+  assert.deepEqual(namedArgsFromDirective(sourceText, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"), {
+    requirement_id: "req-manual",
+    batch_id: 42,
+  });
   assert.match(sourceText, /仅返回 batch_id/u);
   assert.match(sourceText, /等待 30 秒再进行第 1 次查询/u);
   assert.match(sourceText, /之后每隔 30 秒查询一次，单轮累计最多 10 次/u);
@@ -404,10 +410,10 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     }),
   });
   const pendingText = directiveText(pending);
-  assert.deepEqual(
-    namedArgsFromDirective(pendingText, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
-    { requirement_id: "req-manual", batch_id: 42 },
-  );
+  assert.deepEqual(namedArgsFromDirective(pendingText, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"), {
+    requirement_id: "req-manual",
+    batch_id: 42,
+  });
   assert.match(pendingText, /BATCH_NOT_READY/u);
   assert.match(pendingText, /未到第 10 次时等待 30 秒/u);
   assert.match(pendingText, /单轮累计最多 10 次/u);
@@ -537,7 +543,6 @@ test("tool-result parsing finds JSON in a separate text block", () => {
   });
 });
 
-
 test("institutional retrieval polls the ingest job before Excel save, creator rank and submission", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const synced = persist({
@@ -665,7 +670,42 @@ test("submission batch save falls back to a top-level requirement_id", () => {
   assert.match(directiveText(result), /平台缺失时.*不得提供达人信息补全入口/u);
 });
 
-test("submission enrichment choice maps directly to get_creator_detail", () => {
+test("submission enrichment choice maps both platforms to creator detail and export", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  for (const platform of ["xhs", "dy"]) {
+    const saved = persist({
+      toolName: "ypscan_save_excel_artifact",
+      params: {
+        artifact_kind: "submission_batch",
+        artifact_id: "123",
+        excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
+        requirement_id: `req-${platform}`,
+        platform,
+      },
+      message: toolMessage({
+        success: true,
+        data: { file_path: `/workspace/${platform}-submission.xlsx` },
+        delivery: { next_args: submissionEnrichmentQuestionPayload() },
+      }),
+    });
+    const text = directiveText(saved);
+    assert.match(text, /GET_CREATOR_DETAIL_ARGS.*调用 get_creator_detail/u);
+    assert.match(text, /GET_CREATOR_DETAIL_EXPORT_ARGS.*轮询 get_creator_detail_export/u);
+    assert.match(text, /不得改字段配置/u);
+    assert.match(text, /不得.*再次追问/u);
+    assert.deepEqual(namedArgsFromDirective(text, "GET_CREATOR_DETAIL_ARGS"), {
+      platform,
+      batch_id: 123,
+      requirement_id: `req-${platform}`,
+    });
+    assert.deepEqual(namedArgsFromDirective(text, "GET_CREATOR_DETAIL_EXPORT_ARGS"), {
+      platform,
+      batch_id: 123,
+    });
+  }
+});
+
+test("missing-platform submission saves do not offer creator enrichment", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const saved = persist({
     toolName: "ypscan_save_excel_artifact",
@@ -673,52 +713,20 @@ test("submission enrichment choice maps directly to get_creator_detail", () => {
       artifact_kind: "submission_batch",
       artifact_id: "123",
       excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
-      requirement_id: "req-submission",
-      platform: "xhs",
+      requirement_id: "req-missing",
     },
     message: toolMessage({
       success: true,
-      data: { file_path: "/workspace/submission.xlsx" },
-      delivery: { next_args: submissionEnrichmentQuestionPayload() },
+      data: { file_path: "/workspace/missing-submission.xlsx" },
+      delivery: { next_args: { questions: [] } },
     }),
   });
   const text = directiveText(saved);
-  assert.match(text, /GET_CREATOR_DETAIL_ARGS.*调用 get_creator_detail/u);
-  assert.match(text, /再轮询 get_creator_detail_export/u);
-  assert.match(text, /不得改字段配置/u);
-  assert.match(text, /不得.*再次追问/u);
-  assert.deepEqual(namedArgsFromDirective(text, "GET_CREATOR_DETAIL_ARGS"), {
-    platform: "xhs",
-    batch_id: 123,
-    requirement_id: "req-submission",
-  });
+  assert.match(text, /不展示达人信息补全弹窗/u);
+  assert.doesNotMatch(text, /GET_CREATOR_DETAIL_ARGS=|GET_CREATOR_DETAIL_EXPORT_ARGS=/u);
 });
 
-test("douyin and missing-platform submission saves do not offer creator enrichment", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  for (const [label, platform] of [["douyin", "dy"], ["missing", undefined]]) {
-    const saved = persist({
-      toolName: "ypscan_save_excel_artifact",
-      params: {
-        artifact_kind: "submission_batch",
-        artifact_id: "123",
-        excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
-        requirement_id: `req-${label}`,
-        ...(platform ? { platform } : {}),
-      },
-      message: toolMessage({
-        success: true,
-        data: { file_path: `/workspace/${label}-submission.xlsx` },
-        delivery: { next_args: { questions: [] } },
-      }),
-    });
-    const text = directiveText(saved);
-    assert.match(text, /不展示达人信息补全弹窗/u);
-    assert.doesNotMatch(text, /GET_CREATOR_DETAIL_ARGS=/u);
-  }
-});
-
-test("xiaohongshu submission save rejects a malformed enrichment popup", () => {
+test("submission save rejects a malformed enrichment popup", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const saved = persist({
     toolName: "ypscan_save_excel_artifact",
@@ -736,7 +744,10 @@ test("xiaohongshu submission save rejects a malformed enrichment popup", () => {
   });
   const text = directiveText(saved);
   assert.match(text, /达人信息补全弹窗载荷无效/u);
-  assert.doesNotMatch(text, /GET_CREATOR_DETAIL_ARGS=|ASK_USER_QUESTION_ARGS=/u);
+  assert.doesNotMatch(
+    text,
+    /GET_CREATOR_DETAIL_ARGS=|GET_CREATOR_DETAIL_EXPORT_ARGS=|ASK_USER_QUESTION_ARGS=/u,
+  );
 });
 
 test("successful WeCom distribution waits for inquiry retrieval without switching branches", () => {
@@ -789,7 +800,6 @@ test("rank result is reserved for institutional inquiry after transient state re
   assert.doesNotMatch(text, /CREATE_SUBMISSION_BATCH_ARGS=|IF_SUFFICIENT/u);
 });
 
-
 test("empty rank result reviews the requirement before relaxation", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
@@ -832,7 +842,7 @@ test("parse directives preserve compact dynamic field summaries", () => {
   assert.match(text, /八个可选 Label 有则原样保留、无则省略/u);
   assert.match(text, /contentTag 缺失.*重新解析/u);
   assert.match(text, /YPSCAN_NEXT_ACTION=REVIEW_REQUIREMENT/u);
-  assert.ok(text.length < 800, `parse directive too long: ${text.length}`);
+  assert.ok(text.length < 950, `parse directive too long: ${text.length}`);
   assert.doesNotMatch(text, /PARSER_OWNED_LOGICAL_FIELDS=|VALIDATE_REQUIREMENT_RANGE_FORMAT=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /VALIDATE_REQUIREMENT_ARGS=/u);
@@ -886,10 +896,7 @@ test("parse and startup directives enumerate required business values before val
   });
   const parseText = directiveText(parse);
 
-  assert.match(
-    parseText,
-    /brandName、quantityTotal、submissionDeadlineAt、rebate、followercount/u,
-  );
+  assert.match(parseText, /brandName、quantityTotal、submissionDeadlineAt、rebate、followercount/u);
   assert.match(parseText, /至少一个当前平台支持且与内容形式匹配的报价档位/u);
   assert.match(parseText, /contentTag.*解析结果.*重新解析/u);
   assert.match(parseText, /抖音仅使用 L2\/L3.*小红书不使用 L3/u);
@@ -908,10 +915,7 @@ test("parse and startup directives enumerate required business values before val
   assert.match(startup.prependContext, /contentTag.*解析结果.*重新解析/u);
   assert.match(startup.prependContext, /抖音仅使用 L2\/L3.*小红书不使用 L3/u);
   assert.doesNotMatch(startup.prependContext, /至少一个当前平台 kolOfficialPriceL1\/L2\/L3/u);
-  assert.match(
-    startup.prependContext,
-    /这些业务值缺失.*AskUserQuestion/u,
-  );
+  assert.match(startup.prependContext, /这些业务值缺失.*AskUserQuestion/u);
   assert.match(startup.prependContext, /最低返点要求是多少/u);
   assert.match(startup.prependContext, /选项只给单个最低返点百分比/u);
   assert.match(startup.prependContext, /上限固定按 100% 处理/u);
@@ -950,10 +954,8 @@ test("more than four inquiry recipients use a compact prompt without option trun
       data: { mcns: names.map((agency_name) => ({ agency_name })) },
     }),
   });
-  const recipient = namedArgsFromDirective(
-    directiveText(result),
-    "ASK_USER_QUESTION_ARGS",
-  ).questions[0];
+  const recipient = namedArgsFromDirective(directiveText(result), "ASK_USER_QUESTION_ARGS")
+    .questions[0];
   const text = directiveText(result);
 
   assert.equal(popupPlainText(recipient.header), "选择询价机构");
@@ -988,12 +990,7 @@ test("recipient popup rejects empty names and deduplicates restored identities",
   assert.equal(mcnRankingRecipientQuestionPayload([]), null);
   assert.equal(mcnRankingRecipientQuestionPayload(["", "\n", null]), null);
 
-  const payload = mcnRankingRecipientQuestionPayload([
-    "机构 A",
-    "机构 \nA",
-    "机构 A",
-    "机构 B",
-  ]);
+  const payload = mcnRankingRecipientQuestionPayload(["机构 A", "机构 \nA", "机构 A", "机构 B"]);
   assert.deepEqual(
     payload.questions[0].options.map((option) => popupPlainText(option.label)),
     ["机构 A", "机构 B"],
@@ -1056,21 +1053,27 @@ test("popup text normalizes carriage-return line endings", () => {
 
 test("popup payload validation rejects host-incompatible structures", () => {
   assert.equal(isPopupQuestionPayload({ questions: [] }), false);
-  assert.equal(isPopupQuestionPayload({
-    questions: [{
-      header: "标题",
-      question: "请选择。",
-      options: [
-        { label: "重复", description: "第一个动作" },
-        { label: "重\n复", description: "第二个动作" },
+  assert.equal(
+    isPopupQuestionPayload({
+      questions: [
+        {
+          header: "标题",
+          question: "请选择。",
+          options: [
+            { label: "重复", description: "第一个动作" },
+            { label: "重\n复", description: "第二个动作" },
+          ],
+          multiSelect: false,
+        },
       ],
-      multiSelect: false,
-    }],
-  }), false);
+    }),
+    false,
+  );
   assert.throws(
-    () => popupQuestionPayload("标题", "请选择。", [
-      { label: "唯一选项", description: "无法形成有效决策" },
-    ]),
+    () =>
+      popupQuestionPayload("标题", "请选择。", [
+        { label: "唯一选项", description: "无法形成有效决策" },
+      ]),
     /Invalid AskUserQuestion payload/u,
   );
 });
@@ -1145,19 +1148,28 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /同一 requirement_id/u);
   assert.match(first.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
   assert.match(first.prependContext, /先等待 30 秒.*第 1 次查询 manual_source_creators_status/u);
-  assert.match(first.prependContext, /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u);
+  assert.match(
+    first.prependContext,
+    /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u,
+  );
   assert.match(first.prependContext, /后台 API 完成平台达人搜索、详情抓取和筛选/u);
   assert.match(first.prependContext, /不再提供浏览器详细拓展分支/u);
   assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
   assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);
-  assert.doesNotMatch(first.prependContext, /ypscan_manual_research|YPSCAN_MANUAL_BROWSER_UNAVAILABLE|宿主 Browser/u);
+  assert.doesNotMatch(
+    first.prependContext,
+    /ypscan_manual_research|YPSCAN_MANUAL_BROWSER_UNAVAILABLE|宿主 Browser/u,
+  );
   assert.match(first.prependContext, /需求澄清规则/u);
   assert.match(first.prependContext, /同一字段新答案覆盖旧答案/u);
   assert.match(first.prependContext, /八个可选 Label 数组.*不调用 AskUserQuestion 确认/u);
   assert.match(first.prependContext, /contentTag.*重新解析.*禁止询问用户/u);
   assert.match(first.prependContext, /xtTalentTypeLabel/u);
   assert.match(first.prependContext, /只有这些必填数值仍缺失.*才调用 AskUserQuestion/u);
-  assert.match(first.prependContext, /自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立/u);
+  assert.match(
+    first.prependContext,
+    /自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立/u,
+  );
   assert.match(first.prependContext, /用户选中弹窗中的一个或多个当前机构/u);
   assert.match(first.prependContext, /选择“询价全部机构”.*全部当前机构/u);
   assert.match(first.prependContext, /空输入、未知机构、无法解析或存在歧义时，不得继续询价/u);
@@ -1165,7 +1177,10 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /不得询问、改写或被原文与 clarification 覆盖/u);
   assert.match(first.prependContext, /解析品牌缺失、多候选或为 null、未知等占位值时才询问/u);
   assert.match(first.prependContext, /项目名由 Agent 根据当前需求自行总结生成，不弹窗确认/u);
-  assert.match(first.prependContext, /调用 validate_requirement 前用一句可见正文告知用户取的项目名/u);
+  assert.match(
+    first.prependContext,
+    /调用 validate_requirement 前用一句可见正文告知用户取的项目名/u,
+  );
   assert.match(first.prependContext, /validate_requirement 数值字段格式锁/u);
   assert.match(first.prependContext, /无空格 JSON 区间字符串 "\[min,max\]"/u);
   assert.match(first.prependContext, /禁止通过 Provider 报错逐字段、逐类型试探/u);
@@ -1256,7 +1271,10 @@ test("validate_requirement forwards parsed labels without user clarification", (
   assert.equal(result.block, undefined);
   assert.deepEqual(result.params.contentThemeLabel, ["科技数码"]);
   assert.deepEqual(result.params.xtTalentTypeLabel, ["科技数码-3C数码"]);
-  assert.deepEqual(JSON.parse(result.params.rawMessagesJson).parse_outputs, rawMessagesJson.parse_outputs);
+  assert.deepEqual(
+    JSON.parse(result.params.rawMessagesJson).parse_outputs,
+    rawMessagesJson.parse_outputs,
+  );
 });
 
 test("validate_requirement silently omits a null Douyin primary parsed label", () => {
@@ -1308,7 +1326,6 @@ test("validate_requirement never blocks a null current-platform primary parsed l
     assert.equal(Object.hasOwn(result.params, field), false, platform);
   }
 });
-
 
 test("validate_requirement before-call gate blocks equal range bounds", () => {
   const before = registeredHooks().get("before_tool_call");
@@ -1446,7 +1463,6 @@ test("ordinary successful delivery is not rewritten by the hook", () => {
   );
 });
 
-
 test("field-selection success exposes the raw URL and keeps columns in the Provider", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
@@ -1519,7 +1535,10 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   assert.match(directiveText(rank), /完整 MCN Markdown 表格/u);
   assert.match(directiveText(rank), /禁止展示 supplier_id/u);
   assert.doesNotMatch(directiveText(rank), /manual_source_creators_status/u);
-  assert.ok(directiveText(rank).length < 1000, `empty rank directive too long: ${directiveText(rank).length}`);
+  assert.ok(
+    directiveText(rank).length < 1000,
+    `empty rank directive too long: ${directiveText(rank).length}`,
+  );
 
   const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });

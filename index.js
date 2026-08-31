@@ -75,12 +75,13 @@ export default {
                 type: "string",
                 enum: ["xhs", "dy"],
                 description:
-                  "submission_batch 使用；当前 requirement 的平台，仅 xhs 提供后续达人信息补全",
+                  "submission_batch 使用；当前 requirement 的平台，xhs 和 dy 均提供后续达人信息补全",
               },
               mcn_names: {
                 type: "array",
                 items: { type: "string", minLength: 1 },
-                description: "仅 mcn_ranking 使用；当前排序结果中的机构名称，用于保存后选择询价收件机构",
+                description:
+                  "仅 mcn_ranking 使用；当前排序结果中的机构名称，用于保存后选择询价收件机构",
               },
             },
           },

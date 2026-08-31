@@ -23,7 +23,7 @@
 - [ ] `rank_mcns` 每行覆盖人数只取当前机构自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，不得用作本机构人数，不得与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。
 - [ ] `supplier_id` 是企微收件机构的第一优先级：用户提供或提名机构名时，先在本轮同一 requirement ID、同一平台的 `rank_mcns` 结果中做唯一精确匹配；有非空 ID 就放入 `supplierIds` 且不再传同名 `supplier_name`，未匹配或无 ID 才把原名放入 `supplier_name`。不做本地模糊匹配，不跨需求、平台或 run 复用 ID；模糊候选选择后只使用 Provider 返回的真实 ID。
 - [ ] 所有结果、链接、文件和状态来自真实返回值，并归属于当前需求和平台；同一需求多批结果按平台稳定 ID 去重，不混入其他数据。粗召回、复核候选和最终名单须明确区分，自有 Excel 遵循客户模板。
-- [ ] 工具卡、Skill、Hook、MCP schema、数据库字段和实际流程保持一致；仅小红书提报表展示“补充更新达人信息”，`get_creator_detail` 必须同时收到 `platform=xhs`、当前正整数 `batch_id` 和同一 `requirement_id`；抖音或平台缺失时不得展示补全选项、调用该工具或猜成 `xhs`，错误需分类并用用户能理解的话说明影响与下一步。
+- [ ] 工具卡、Skill、Hook、MCP schema、数据库字段和实际流程保持一致；小红书和抖音提报表都展示“补充更新达人信息”，`get_creator_detail` 必须同时收到当前平台缩写（`xhs`/`dy`）、当前正整数 `batch_id` 和同一 `requirement_id`，`get_creator_detail_export` 必须持续使用相同的 `platform` 与 `batch_id`；平台缺失时不得展示补全选项、调用补全工具或猜测平台，错误需分类并用用户能理解的话说明影响与下一步。
 - [ ] 修改前定位真实原因，只做最小改动；不新增无必要的状态、缓存、账本、校验实体或权限门禁，共同逻辑保持共享。
 - [ ] 测试覆盖核心流程、导出、Provider 发送结果透传和失败路径；mock 不替代真实样本与平台验收。
 - [ ] 修改后执行 lint、typecheck、test 和 smoke；不跳过失败、不降低断言、不修改测试制造成功。

@@ -58,24 +58,30 @@ test("save artifact card binds manual_source saves to the requirement ID", () =>
     /`get_ingest_job`, or `manual_source_creators` returns a Provider Excel/iu,
   );
   assert.match(card, /`manual_source`.*requirement ID/iu);
-  assert.match(
-    card,
-    /`artifact_id`.*`manual_source`.*requirement ID/isu,
-  );
+  assert.match(card, /`artifact_id`.*`manual_source`.*requirement ID/isu);
   assert.match(card, /`requirement_id`.*`submission_batch`/isu);
 });
 
 test("creator enrichment card requires the current requirement association", () => {
   const card = projectFile("skills/media-assistant/references/tools/get_creator_detail.md");
+  const exportCard = projectFile(
+    "skills/media-assistant/references/tools/get_creator_detail_export.md",
+  );
 
   assert.match(card, /exact string `requirement_id`/iu);
   assert.match(card, /exact positive integer `batch_id`/iu);
+  assert.match(card, /`platform="xhs"`.*`platform="dy"`/iu);
   assert.doesNotMatch(card, /Do not pass.*`requirement_id`/iu);
+  assert.match(exportCard, /\| `platform` \|/u);
+  assert.match(exportCard, /same `platform` and integer `batch_id`/iu);
+  assert.doesNotMatch(exportCard, /Do not send `columns`, platform/iu);
 });
 
 test("parser card keeps required contentTag distinct from optional labels", () => {
   const card = projectFile("skills/media-assistant/references/tools/ypscan_parse_requirement.md");
-  const validateCard = projectFile("skills/media-assistant/references/tools/validate_requirement.md");
+  const validateCard = projectFile(
+    "skills/media-assistant/references/tools/validate_requirement.md",
+  );
 
   assert.match(card, /八个可选 Label 数组/u);
   assert.match(card, /`contentTag` 必须是非空字符串数组/u);
@@ -103,7 +109,10 @@ test("parser publishes only the single-platform workflow input", () => {
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /用户原始表述/u);
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.demand.description, /禁止回填历史解析输出/u);
   assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.business_mode.description, /用户明确表达/u);
-  assert.match(PARSE_REQUIREMENT_PARAMETERS.properties.business_mode.description, /未明确.*AskUserQuestion/u);
+  assert.match(
+    PARSE_REQUIREMENT_PARAMETERS.properties.business_mode.description,
+    /未明确.*AskUserQuestion/u,
+  );
   assert.doesNotMatch(
     PARSE_REQUIREMENT_PARAMETERS.properties.business_mode.description,
     /必须与弹窗答案一致/u,

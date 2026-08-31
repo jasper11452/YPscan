@@ -61,9 +61,7 @@ export function branchInteractionPlan(plan, branch, selections = []) {
     mode: baseSelection ? "keyword_only" : "establish_filter_set",
     keyword_must_be_last: true,
     preserve_filters: Boolean(baseSelection),
-    filter_order: baseSelection
-      ? ["keyword"]
-      : ["price_view", "options", "ranges", "keyword"],
+    filter_order: baseSelection ? ["keyword"] : ["price_view", "options", "ranges", "keyword"],
     filter_set_id: baseSelection?.filter_set_id ?? null,
     hard_requirements: browserRequirementsForPlan(plan),
     detail_requirements: plan.detail_filters ?? [],

@@ -10,7 +10,7 @@ Use this tool after `rank_mcns`, `create_submission_batch`, `get_creator_detail_
 - `artifact_id`: caller correlation metadata. Use the current requirement ID for `mcn_ranking`, `mcn_creator_preview`, and `manual_source` — the direct-sourcing save must carry the same requirement ID that the following `rank_creators` call will use. Use the non-empty batch/task identifier for `submission_batch` and `creator_detail_export`.
 - `excel_file_url`: exact Provider download URL.
 - `requirement_id`: pass the exact current requirement ID for `submission_batch` so the later `get_creator_detail` call can use the same association; omit it for other artifact kinds.
-- `platform`: for `submission_batch`, pass the current requirement platform as `"xhs"` or `"dy"`. Only `"xhs"` may produce the creator-enrichment question; `"dy"` or a missing platform must not produce it or default to Xiaohongshu.
+- `platform`: for `submission_batch`, pass the current requirement platform as `"xhs"` or `"dy"`. Either verified platform may produce the creator-enrichment question; a missing platform must not produce it or default to either platform.
 - `mcn_names`: only for `mcn_ranking`; pass the exact current institution names so the save result can return the recipient-selection dialog.
 
 The caller cannot choose a destination or filename. The tool derives a safe `.xlsx` name from the URL and publishes it in the trusted current project.
@@ -25,6 +25,6 @@ The caller cannot choose a destination or filename. The tool derives a safe `.xl
 
 ## Result
 
-On success, show the returned absolute `data.file_path` to the user at the point required by the flow. With non-empty `mcn_names`, `mcn_ranking` returns `delivery.next_tool="AskUserQuestion"` and the exact recipient-selection question in `delivery.next_args`; call it after showing the local link. `submission_batch` returns the optional enrichment question only when it has `platform="xhs"`, a positive integer batch ID, and the exact current requirement ID. Douyin or missing-platform saves end after file delivery. Follow only returned delivery data and do not invent recovery state.
+On success, show the returned absolute `data.file_path` to the user at the point required by the flow. With non-empty `mcn_names`, `mcn_ranking` returns `delivery.next_tool="AskUserQuestion"` and the exact recipient-selection question in `delivery.next_args`; call it after showing the local link. `submission_batch` returns the optional enrichment question only when it has `platform="xhs"` or `platform="dy"`, a positive integer batch ID, and the exact current requirement ID. Missing-platform saves end after file delivery. Follow only returned delivery data and do not invent recovery state.
 
 Stop on URL, size, response, path, symlink, or content-conflict errors. Do not fall back to Browser, shell, curl, `web_fetch`, Python, or a generic file writer.

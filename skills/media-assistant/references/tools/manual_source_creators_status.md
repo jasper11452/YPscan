@@ -4,10 +4,10 @@
 
 ## Remote arguments
 
-| Argument | Constraint |
-| --- | --- |
+| Argument         | Constraint                                                                          |
+| ---------------- | ----------------------------------------------------------------------------------- |
 | `requirement_id` | Provider-required string；只传本轮 `manual_source_creators` 同一真实 requirement ID |
-| `batch_id` | Provider-required integer；只传本轮 `manual_source_creators` 返回的任务 batch ID |
+| `batch_id`       | Provider-required integer；只传本轮 `manual_source_creators` 返回的任务 batch ID    |
 
 不得传 `size`、平台、达人 ID 或任何猜测字段；`batch_id` 是任务 ID，不需要任何转换或推导。
 

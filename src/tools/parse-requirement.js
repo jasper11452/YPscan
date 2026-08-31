@@ -75,8 +75,7 @@ export const PARSE_REQUIREMENT_PARAMETERS = Object.freeze({
     business_mode: {
       type: "string",
       enum: [...BUSINESS_MODE_VALUES],
-      description:
-        "用户明确表达的初始业务功能；未明确或语义冲突时通过 AskUserQuestion 选择",
+      description: "用户明确表达的初始业务功能；未明确或语义冲突时通过 AskUserQuestion 选择",
     },
   },
 });

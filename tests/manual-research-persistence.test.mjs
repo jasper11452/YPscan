@@ -84,7 +84,9 @@ test("create_submission keeps target count and shortfall unknown when creator co
           evidence: ["详情证据"],
         },
       },
-    ].map((line) => JSON.stringify(line)).join("\n") + "\n",
+    ]
+      .map((line) => JSON.stringify(line))
+      .join("\n") + "\n",
   );
 
   const run = createManualResearch({

@@ -30,6 +30,8 @@ const REBATE_MINIMUM_QUESTION_RULE =
   '需要澄清返点时只问最低返点：AskUserQuestion 的问题写“最低返点要求是多少”，选项只给单个最低返点百分比（如 20%、25%、30%），禁止给返点区间、上限或“不限”类选项；上限固定按 100% 处理，落库仍为 "[min,1]"。';
 const REQUIREMENT_COMPLETENESS_RULE =
   "进入 validate_requirement 前必须检查 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3 且必须匹配视频类型，小红书不使用 L3。这些业务值缺失、无效或需要选择时，必须在调用前一次性通过 AskUserQuestion 收集，禁止默认补值。contentTag 必须是解析结果中的非空数组；缺失或无效时重新解析，禁止向用户询问或自行补值；本规则覆盖任何“contentTag 缺失时直接省略”的旧指令。status=ready、projectName 和 rawMessagesJson（当前原文+parse_outputs）由 Agent 构造。";
+const RAW_MESSAGES_JSON_KEY_CONTRACT =
+  "rawMessagesJson key 与取值严格按 validate_requirement 工具卡 rawMessagesJson 契约执行，禁止写成 original_demand 或 demand；key 写错会被本地预检当成缺失原文阻断。";
 const INQUIRY_RECIPIENT_RESPONSE_RULE =
   "机构选择仅在用户选中弹窗中的一个或多个当前机构、选择“询价全部机构”，或自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立；弹窗机构标签中的换行仅用于展示，匹配前必须移除换行并还原完整机构名；选择“询价全部机构”表示选择全部当前机构。空输入、未知机构、无法解析或存在歧义时，不得继续询价，应重新调用本提示或结束本轮。";
 const REQUIREMENT_REUSE_RULE =
@@ -40,10 +42,7 @@ const MANUAL_SOURCE_POLL_RULE =
 
 const [BUSINESS_MODE_INQUIRY] = BUSINESS_MODE_VALUES;
 
-function businessModeFromParams(params) {
-  const direct = normalizeBusinessMode(params?.business_mode);
-  if (direct) return direct;
-  const raw = params?.rawMessagesJson;
+function businessModeFromRawMessages(raw) {
   let value = raw;
   if (typeof raw === "string") {
     try {
@@ -53,6 +52,13 @@ function businessModeFromParams(params) {
     }
   }
   return normalizeBusinessMode(isRecord(value) ? value.business_mode : undefined);
+}
+
+function businessModeFromParams(params) {
+  return (
+    normalizeBusinessMode(params?.business_mode) ??
+    businessModeFromRawMessages(params?.rawMessagesJson)
+  );
 }
 
 function paramsFromEvent(event) {
@@ -170,9 +176,7 @@ function classifyDifyOutputs(outputs) {
         .filter(
           (item) =>
             item &&
-            !/^(?:null|undefined|未知|未明确|未提及|未提供|暂无|无|不详|待确认|待定)$/iu.test(
-              item,
-            ),
+            !/^(?:null|undefined|未知|未明确|未提及|未提供|暂无|无|不详|待确认|待定)$/iu.test(item),
         ),
     ),
   ];
@@ -195,16 +199,26 @@ function classifyDifyOutputs(outputs) {
     resolved.push("kolOfficialPrice");
   } else missing.push("kolOfficialPrice");
   if (
-    [outputs.cpm, outputs.cpmL1, outputs.cpmL2, outputs.cpmL3, outputs.dy_cpm, outputs.xhs_cpm].some(
-      isUsableDifyValue,
-    )
+    [
+      outputs.cpm,
+      outputs.cpmL1,
+      outputs.cpmL2,
+      outputs.cpmL3,
+      outputs.dy_cpm,
+      outputs.xhs_cpm,
+    ].some(isUsableDifyValue)
   ) {
     resolved.push("cpm");
   } else missing.push("cpm");
   if (
-    [outputs.cpe, outputs.cpeL1, outputs.cpeL2, outputs.cpeL3, outputs.dy_cpe, outputs.xhs_cpe].some(
-      isUsableDifyValue,
-    )
+    [
+      outputs.cpe,
+      outputs.cpeL1,
+      outputs.cpeL2,
+      outputs.cpeL3,
+      outputs.dy_cpe,
+      outputs.xhs_cpe,
+    ].some(isUsableDifyValue)
   ) {
     resolved.push("cpe");
   } else missing.push("cpe");
@@ -248,6 +262,7 @@ function requirementParseSuccessDirective(message, params = {}) {
     "DIFY_RESOLVED_FIELDS 中的唯一值直接采用；DIFY_MISSING_FIELDS 与非解析必填项按启动规则收集确认。八个可选 Label 有则原样保留、无则省略；contentTag 缺失时按下方规则重新解析。不要把解析输出整体塞入 Provider 参数。",
     "YPSCAN_POLICY=按 media-assistant Skill 的“解析后、落库前必须复核”执行；复核通过后才调用 validate_requirement。",
     "复核时必须确认 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount、contentTag 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3，小红书不使用 L3。缺失或有歧义时按 Skill 一次性询问；contentTag 必须来自解析结果，缺失时重新解析。",
+    RAW_MESSAGES_JSON_KEY_CONTRACT,
     REBATE_MINIMUM_QUESTION_RULE,
   ].join("\n");
 }
@@ -282,7 +297,12 @@ const FIELD_SELECTION_AUTO_OPEN_FAILED = "浏览器打开请求未成功";
 function inquiryRecipientNames(mcns) {
   const seen = new Set();
   return mcns.flatMap((mcn) => {
-    const name = firstString(mcn?.agency_name, mcn?.supplier_name, mcn?.mcn_name, mcn?.name)?.trim();
+    const name = firstString(
+      mcn?.agency_name,
+      mcn?.supplier_name,
+      mcn?.mcn_name,
+      mcn?.name,
+    )?.trim();
     if (!name || seen.has(name)) return [];
     seen.add(name);
     return [name];
@@ -503,9 +523,7 @@ function distributionDirective(message, params = {}) {
         /supplier_name and supplierIds cannot both be empty|supplierIds.*supplier_name.*empty/iu,
       )
     ) {
-      lines.push(
-        "无收件机构：回到本轮真实 MCN 的机构选择，不能按排名自动选或重发空数组。",
-      );
+      lines.push("无收件机构：回到本轮真实 MCN 的机构选择，不能按排名自动选或重发空数组。");
     }
     if (hasError(/只有进行中的项目才能创建供应商分发/u)) {
       const requirementId = firstString(
@@ -544,9 +562,7 @@ function distributionDirective(message, params = {}) {
     `企微发送摘要：成功 ${sent.length} 家，失败 ${failed.length} 家。`,
   ];
   if (failed.length > 0) {
-    lines.push(
-      "原样展示失败原因和候选，不自动重发；候选确认后排除本次已成功机构。",
-    );
+    lines.push("原样展示失败原因和候选，不自动重发；候选确认后排除本次已成功机构。");
     return lines.join("\n");
   }
   lines.push(
@@ -654,22 +670,23 @@ function submissionBatchDirective(message, params = {}) {
   if (result?.success !== true) return flowPauseDirective("提报表生成", message);
   const excelFileUrl = providerExcelUrl(result);
   const rawBatchId = result?.data?.batch_id ?? result?.batch_id;
-  const artifactId = Number.isSafeInteger(rawBatchId) && rawBatchId > 0
-    ? String(rawBatchId)
-    : firstString(rawBatchId, params?.requirement_id);
+  const artifactId =
+    Number.isSafeInteger(rawBatchId) && rawBatchId > 0
+      ? String(rawBatchId)
+      : firstString(rawBatchId, params?.requirement_id);
   const requirementId = firstString(
     params?.requirement_id,
     result?.data?.requirement_id,
     result?.requirement_id,
   );
-  const platform = ({
+  const platform = {
     xhs: "xhs",
     xiaohongshu: "xhs",
-    "小红书": "xhs",
+    小红书: "xhs",
     dy: "dy",
     douyin: "dy",
-    "抖音": "dy",
-  })[firstString(result?.data?.platform, result?.platform)?.toLowerCase()];
+    抖音: "dy",
+  }[firstString(result?.data?.platform, result?.platform)?.toLowerCase()];
   if (!excelFileUrl || !artifactId) return flowPauseDirective("提报表生成", message);
   return [
     "YPSCAN_FLOW_DIRECTIVE=create_submission_batch 已生成提报表。立即保存，不展示 Provider 下载 URL。保存 submission_batch 时必须把当前 requirement 的已确认平台以 platform=xhs 或 platform=dy 传给本地保存工具；不得猜测，平台缺失时保存结果不得提供达人信息补全入口。",
@@ -740,28 +757,32 @@ function excelArtifactSaveDirective(message, params = {}) {
     const nextArgs = result?.delivery?.next_args;
     const requirementId = firstString(params?.requirement_id);
     const batchId = positiveInteger(params?.artifact_id);
-    const isXiaohongshu = params?.platform === "xhs";
+    const platform = ["xhs", "dy"].includes(params?.platform) ? params.platform : null;
     let enrichmentDirective;
-    if (!isXiaohongshu) {
+    if (!platform) {
       enrichmentDirective = [
-        "当前提报表不是已确认的小红书批次；保留并交付当前文件，不展示达人信息补全弹窗，不调用 get_creator_detail，也不把平台猜成 xhs。",
+        "当前提报表缺少已确认的平台；保留并交付当前文件，不展示达人信息补全弹窗，不调用 get_creator_detail，也不猜测平台。",
       ];
     } else if (!requirementId || !batchId) {
       enrichmentDirective = [
-        "当前小红书提报表缺少可信的正整数 batch_id 或 requirement_id；保留并交付当前文件，不调用 get_creator_detail，也不猜测关联 ID。",
+        "当前提报表缺少可信的正整数 batch_id 或 requirement_id；保留并交付当前文件，不调用 get_creator_detail，也不猜测关联 ID。",
       ];
     } else if (!isPopupQuestionPayload(nextArgs)) {
       enrichmentDirective = [
-        "当前小红书提报表的达人信息补全弹窗载荷无效；保留并交付当前文件，不展示损坏弹窗或调用 get_creator_detail。",
+        "当前提报表的达人信息补全弹窗载荷无效；保留并交付当前文件，不展示损坏弹窗或调用 get_creator_detail。",
       ];
     } else {
       enrichmentDirective = [
-        "随后逐字调用 ASK_USER_QUESTION_ARGS；选择补充更新时逐字使用 GET_CREATOR_DETAIL_ARGS 调用 get_creator_detail，再轮询 get_creator_detail_export，不得改字段配置或再次追问。",
+        "随后逐字调用 ASK_USER_QUESTION_ARGS；选择补充更新时逐字使用 GET_CREATOR_DETAIL_ARGS 调用 get_creator_detail，再逐字使用 GET_CREATOR_DETAIL_EXPORT_ARGS 轮询 get_creator_detail_export，不得改字段配置或再次追问。",
         `ASK_USER_QUESTION_ARGS=${JSON.stringify(nextArgs)}`,
         `GET_CREATOR_DETAIL_ARGS=${JSON.stringify({
-          platform: "xhs",
+          platform,
           batch_id: batchId,
           requirement_id: requirementId,
+        })}`,
+        `GET_CREATOR_DETAIL_EXPORT_ARGS=${JSON.stringify({
+          platform,
+          batch_id: batchId,
         })}`,
       ];
     }
@@ -818,8 +839,7 @@ function filterRangeDirective(message) {
   ].join("\n");
 }
 
-
-function flowDirective(toolName, message, params = {}) {
+function flowDirective(toolName, message, params = {}, recordedMode = null) {
   const normalizedName = toolName.toLowerCase();
   const bare = stripHostPrefix(normalizedName);
   const result = parsedToolResult(message);
@@ -868,7 +888,7 @@ function flowDirective(toolName, message, params = {}) {
   if (bare === "validate_requirement") {
     const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
     if (!requirementId) return flowPauseDirective("validate_requirement", message);
-    const mode = businessModeFromParams(params);
+    const mode = businessModeFromParams(params) ?? recordedMode;
     if (!mode) {
       return flowPauseDirective("validate_requirement 缺少 business_mode", message);
     }
@@ -915,9 +935,18 @@ function scopeKey(event, context) {
   );
 }
 
-/** Register fixed-flow prompt and result directives. */
+/**
+ * Register fixed-flow prompt and result directives.
+ *
+ * The preflight gate in before_tool_call records the validated business_mode
+ * per scope so tool_result_persist can route the success directive even when
+ * its event omits the call params. The mode is always derivable from params
+ * whenever the preflight passes, so the record is deterministic and never
+ * relies on a Provider response echo.
+ */
 export function registerFlowDirectiveHooks(api) {
   const startupScopes = new Set();
+  const businessModeByScope = new Map();
 
   api.on(
     "before_prompt_build",
@@ -933,7 +962,7 @@ export function registerFlowDirectiveHooks(api) {
           `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 只决定首次落库后的初始功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→回收→rank_creators→create_submission_batch。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→保存并交付最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。`,
           REQUIREMENT_REUSE_RULE,
           "所有 AskUserQuestion 弹窗的 header、question、label 和 description 均主动换行，任何一行最多 20 个 Unicode 字符；长机构名可为展示插入换行，匹配前移除换行还原原名。",
-          "仅当前 requirement 平台为小红书时，提报表保存后才询问是否“补充更新达人信息”；该选项唯一映射到 get_creator_detail：用户一旦选择，立即使用本轮正整数 batch_id、同一 requirement_id 和 platform=xhs 调用 get_creator_detail，随后调用 get_creator_detail_export 轮询并保存新版表。抖音或平台缺失时不得展示该选项、不得调用 get_creator_detail，也不得把平台猜成 xhs；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
+          "当前 requirement 平台为小红书或抖音时，提报表保存后询问是否“补充更新达人信息”；该选项唯一映射到 get_creator_detail：用户一旦选择，立即使用本轮正整数 batch_id、同一 requirement_id 和已确认的平台缩写（小红书 xhs、抖音 dy）调用 get_creator_detail，随后使用同一 platform 和 batch_id 调用 get_creator_detail_export 轮询并保存新版表。平台缺失时不得展示该选项、不得调用补全工具或猜测平台；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
           "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成平台达人搜索、详情抓取和筛选。提交成功后先等待 30 秒，再用同一 requirement_id 和 batch_id 第 1 次查询 manual_source_creators_status；之后每隔 30 秒查询一次，累计最多 10 次。成功 Excel 保存并展示为最终手动拓展结果，随后结束本次手动拓展，不调用 rank_creators 或 create_submission_batch；第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
@@ -960,7 +989,7 @@ export function registerFlowDirectiveHooks(api) {
 
   api.on(
     "before_tool_call",
-    (event) => {
+    (event, context) => {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
       const bare = stripHostPrefix(toolName.toLowerCase());
       const params = paramsFromEvent(event);
@@ -974,6 +1003,8 @@ export function registerFlowDirectiveHooks(api) {
         };
       }
       const providerParams = serializeProviderRawMessages(normalized);
+      const mode = businessModeFromParams(providerParams);
+      if (mode) businessModeByScope.set(scopeKey(event, context), mode);
       return providerParams === params ? undefined : { params: providerParams };
     },
     HOOK_OPTIONS,
@@ -981,10 +1012,14 @@ export function registerFlowDirectiveHooks(api) {
 
   api.on(
     "tool_result_persist",
-    (event) => {
+    (event, context) => {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
       const params = paramsFromEvent(event);
-      return appendDirective(event?.message, flowDirective(toolName, event?.message, params));
+      const recordedMode = businessModeByScope.get(scopeKey(event, context));
+      return appendDirective(
+        event?.message,
+        flowDirective(toolName, event?.message, params, recordedMode),
+      );
     },
     HOOK_OPTIONS,
   );
@@ -992,6 +1027,7 @@ export function registerFlowDirectiveHooks(api) {
   return {
     resetTransientState() {
       startupScopes.clear();
+      businessModeByScope.clear();
     },
   };
 }

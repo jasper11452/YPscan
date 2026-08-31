@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-- `ypscan`（悦普识星）是 OpenClaw 插件（`id: ypscan`，`private: true`）：客户端集成层，注册 2 个本地工具，通过 SSE 连接远端 Provider MCP（`https://mcp.eshypdata.com/sse`）。
+- `ypscan`（悦普识星）是 OpenClaw 插件（`id: ypscan`，`private: true`）：客户端集成层，注册 2 个本地工具，通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`）。
 - 当前主线形态（`feat/dual`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成）。初次落库按所选功能进入链路；同会话需求未变、前一功能完成或明确停止后可复用同一 requirement 顺序执行另一功能。native Browser 拓展分支已废弃。
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type": "module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。运行时依赖仅 `playwright-core`（为遗留 browser 工具保留，当前插件未注册任何 browser 工具）。
 

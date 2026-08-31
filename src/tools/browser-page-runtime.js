@@ -137,9 +137,7 @@ export async function readResultsPage(input) {
       followers_raw: followers,
       content_type: tags[0] ?? null,
       related_posts: firstMatch(raw, /(?:相关|匹配)[^\d]{0,8}(\d+)/u),
-      format:
-        priceTier ||
-        (platform === "xingtu" ? firstMatch(raw, /(植入视频|定制视频)/u) : null),
+      format: priceTier || (platform === "xingtu" ? firstMatch(raw, /(植入视频|定制视频)/u) : null),
       minimum_price_raw: platform === "pgy" ? price : null,
       price_evidence:
         platform === "xingtu" && priceTier && price

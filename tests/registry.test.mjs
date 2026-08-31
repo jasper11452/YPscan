@@ -37,23 +37,41 @@ function completeValidateParams() {
 
 test("validate_requirement drops non-positive or malformed quantityTotal values", () => {
   assert.equal(
-    Object.hasOwn(normalizeToolCallParams("validate_requirement", { quantityTotal: 0 }), "quantityTotal"),
+    Object.hasOwn(
+      normalizeToolCallParams("validate_requirement", { quantityTotal: 0 }),
+      "quantityTotal",
+    ),
     false,
   );
   assert.equal(
-    Object.hasOwn(normalizeToolCallParams("validate_requirement", { quantityTotal: "0" }), "quantityTotal"),
+    Object.hasOwn(
+      normalizeToolCallParams("validate_requirement", { quantityTotal: "0" }),
+      "quantityTotal",
+    ),
     false,
   );
   assert.equal(
-    Object.hasOwn(normalizeToolCallParams("validate_requirement", { quantityTotal: "  " }), "quantityTotal"),
+    Object.hasOwn(
+      normalizeToolCallParams("validate_requirement", { quantityTotal: "  " }),
+      "quantityTotal",
+    ),
     false,
   );
   assert.equal(
-    Object.hasOwn(normalizeToolCallParams("validate_requirement", { quantityTotal: -1 }), "quantityTotal"),
+    Object.hasOwn(
+      normalizeToolCallParams("validate_requirement", { quantityTotal: -1 }),
+      "quantityTotal",
+    ),
     false,
   );
-  assert.equal(normalizeToolCallParams("validate_requirement", { quantityTotal: 1 }).quantityTotal, "1");
-  assert.equal(normalizeToolCallParams("validate_requirement", { quantityTotal: "10" }).quantityTotal, "10");
+  assert.equal(
+    normalizeToolCallParams("validate_requirement", { quantityTotal: 1 }).quantityTotal,
+    "1",
+  );
+  assert.equal(
+    normalizeToolCallParams("validate_requirement", { quantityTotal: "10" }).quantityTotal,
+    "10",
+  );
 });
 
 test("validate_requirement preflight requires the pre-selected business mode", () => {
@@ -84,8 +102,9 @@ test("validate_requirement maps the user-facing manual mode at the Provider boun
   assert.equal(params.rawMessagesJson.business_mode, "手动拓展");
   assert.equal(normalized.rawMessagesJson.business_mode, "直接手扒");
   assert.equal(
-    validateRequirementPreflight(normalized, { now: new Date("2026-08-24T00:00:00+08:00") })
-      .some((issue) => issue.field === "business_mode"),
+    validateRequirementPreflight(normalized, { now: new Date("2026-08-24T00:00:00+08:00") }).some(
+      (issue) => issue.field === "business_mode",
+    ),
     false,
   );
 });
@@ -241,6 +260,32 @@ test("validate_requirement rejects prebuilt CPM and CPE ranges with a nonzero lo
 test("complete canonical validate_requirement params pass the local preflight", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   assert.deepEqual(validateRequirementPreflight(completeValidateParams(), { now }), []);
+});
+
+// Hard gate behind the Agent-facing key contract injected by the parse-success
+// directive; the instruction side is pinned by tests/flow-directives.test.mjs
+// "parse success pins the rawMessagesJson key contract for validate_requirement".
+test("validate_requirement preflight blocks a renamed rawMessagesJson original key", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const renamed = completeValidateParams();
+  const { original, ...rest } = renamed.rawMessagesJson;
+  renamed.rawMessagesJson = { ...rest, original_demand: original };
+
+  assert.deepEqual(
+    validateRequirementPreflight(renamed, { now }).map((issue) => issue.field),
+    [
+      "rawMessagesJson",
+      "quantityTotal",
+      "followercount",
+      "rebate",
+      "kolOfficialPriceL1/L2/L3",
+      "submissionDeadlineAt",
+      "douyinVideoType",
+    ],
+  );
+
+  const restored = { ...renamed, rawMessagesJson: { ...rest, original } };
+  assert.deepEqual(validateRequirementPreflight(restored, { now }), []);
 });
 
 test("validate_requirement rejects non-string values for every scalar parameter", () => {
@@ -504,7 +549,7 @@ test("normalizeRequirement never fills a null parsed primary label from clarific
       xtTalentTypeLabel: null,
     },
     clarifications: {
-      "达人类型": "家居电器",
+      达人类型: "家居电器",
     },
   };
 
@@ -527,7 +572,9 @@ test("preflight no longer blocks a null Douyin primary tag", () => {
   const normalized = normalizeToolCallParams("validate_requirement", params, { now });
 
   assert.equal(
-    validateRequirementPreflight(normalized, { now }).some((issue) => issue.field === "xtTalentTypeLabel"),
+    validateRequirementPreflight(normalized, { now }).some(
+      (issue) => issue.field === "xtTalentTypeLabel",
+    ),
     false,
   );
 });
@@ -833,18 +880,14 @@ test("preflight uses only the latest scalar clarification for an overridden fiel
     ...completeValidateParams().rawMessagesJson,
     clarifications: {
       quantityTotal: ["达人数量：30位", "达人数量改为：50位"],
-      submissionDeadlineAt: [
-        "提报截止：2026-08-25 12:00:00",
-        "提报截止改为：2026-08-26 12:00:00",
-      ],
+      submissionDeadlineAt: ["提报截止：2026-08-25 12:00:00", "提报截止改为：2026-08-26 12:00:00"],
     },
   };
 
   assert.deepEqual(
-    validateRequirementPreflight(
-      { ...completeValidateParams(), rawMessagesJson },
-      { now },
-    ).map((issue) => issue.field),
+    validateRequirementPreflight({ ...completeValidateParams(), rawMessagesJson }, { now }).map(
+      (issue) => issue.field,
+    ),
     ["quantityTotal", "submissionDeadlineAt"],
   );
   assert.deepEqual(
@@ -873,10 +916,9 @@ test("Dify brand stays authoritative while the Agent-summarized project name nee
   };
 
   assert.deepEqual(
-    validateRequirementPreflight(
-      { ...completeValidateParams(), rawMessagesJson },
-      { now },
-    ).map((issue) => issue.field),
+    validateRequirementPreflight({ ...completeValidateParams(), rawMessagesJson }, { now }).map(
+      (issue) => issue.field,
+    ),
     [],
   );
   assert.deepEqual(
@@ -1399,7 +1441,9 @@ test("optional platform labels do not enter the required-field list", () => {
   );
 
   assert.equal(
-    missingRequiredValidateParams({ platform: "douyin", xtTalentTypeLabel: ["剧情"] }).includes("xtTalentTypeLabel"),
+    missingRequiredValidateParams({ platform: "douyin", xtTalentTypeLabel: ["剧情"] }).includes(
+      "xtTalentTypeLabel",
+    ),
     false,
   );
 });

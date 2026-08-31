@@ -202,7 +202,8 @@ test("detail collection falls back to visible DOM when no structured response is
 });
 
 test("detail collection hands the original full-page HTML to the evidence store", async () => {
-  const html = "<html><head><script>window.unmapped='保留'</script></head><body>粉丝数：12.5万</body></html>";
+  const html =
+    "<html><head><script>window.unmapped='保留'</script></head><body>粉丝数：12.5万</body></html>";
   const harness = detailHarness(
     "粉丝数：12.5万",
     "https://www.xingtu.cn/ad/creator/detail/star-html",

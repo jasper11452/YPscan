@@ -3,14 +3,7 @@ import globals from "globals";
 
 export default [
   {
-    ignores: [
-      "node_modules/**",
-      ".ua/**",
-      "docs/**",
-      "skills/**",
-      "benchmarks/**",
-      "*.tgz",
-    ],
+    ignores: ["node_modules/**", ".ua/**", "docs/**", "skills/**", "benchmarks/**", "*.tgz"],
   },
   js.configs.recommended,
   {
@@ -23,10 +16,7 @@ export default [
       },
     },
     rules: {
-      "no-unused-vars": [
-        "error",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
-      ],
+      "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
     },
   },
 ];

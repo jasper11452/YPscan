@@ -96,7 +96,10 @@ async function readEvidence(page, row) {
   const rowText = cleanText(await row?.innerText?.().catch(() => ""));
   const bodyText =
     typeof page?.locator === "function"
-      ? await page.locator("body").innerText().catch(() => "")
+      ? await page
+          .locator("body")
+          .innerText()
+          .catch(() => "")
       : "";
   return { row: rowText, selected_filters: selectedFilterSummary(bodyText) };
 }
@@ -183,8 +186,10 @@ export function createFilterRangeSetter({
       await page.waitForTimeout?.(1_000).catch(() => {});
       const after = await readFilterEvidence(page, opened.row);
       const menuClosed = !(await opened.menu?.isVisible?.().catch(() => false));
-      const changed = after.row !== before.row || after.selected_filters !== before.selected_filters;
-      const verified = filled && menuClosed && (changed || evidenceMentionsField(after, params.field_label));
+      const changed =
+        after.row !== before.row || after.selected_filters !== before.selected_filters;
+      const verified =
+        filled && menuClosed && (changed || evidenceMentionsField(after, params.field_label));
       return result({
         success: true,
         status: verified ? "applied" : "not_applied",
@@ -193,7 +198,12 @@ export function createFilterRangeSetter({
         field_label: params.field_label,
         trigger_label: params.trigger_label,
         range: { min: params.min, max: params.max, unit: params.unit },
-        readback: { before, after, menu_closed: menuClosed, adopted_open_menu: opened.adopted === true },
+        readback: {
+          before,
+          after,
+          menu_closed: menuClosed,
+          adopted_open_menu: opened.adopted === true,
+        },
         ...(verified
           ? {}
           : {

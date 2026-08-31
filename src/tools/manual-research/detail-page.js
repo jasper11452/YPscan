@@ -194,9 +194,7 @@ async function readDetailDom(page, candidate, platform) {
       /([\d.,]+\s*[万wWkK亿]?)\s*粉丝/u,
     ]),
     city: firstMatch(body, [/(?:所在地|所在地域|城市|地区)\s*[:：]?\s*([^\s|｜]{2,16})/u]),
-    agency: firstMatch(rawBody, [
-      /(?:所属机构|MCN机构)\s*(?::|：|\r?\n)\s*([^\r\n|｜]{2,40})/u,
-    ]),
+    agency: firstMatch(rawBody, [/(?:所属机构|MCN机构)\s*(?::|：|\r?\n)\s*([^\r\n|｜]{2,40})/u]),
     account_type: firstMatch(body, [/(?:账号类型|达人类型)\s*[:：]?\s*([^\n|｜]{2,40})/u]),
     cpm_raw: firstMatch(body, [/(?:预期\s*)?CPM\s*[:：¥￥]?\s*([\d.]+)/iu]),
     cpe_raw: firstMatch(body, [/(?:预期\s*)?CPE\s*[:：¥￥]?\s*([\d.]+)/iu]),
@@ -691,12 +689,7 @@ export async function collectCreatorDetail(
       return { ...base, status: "blocked", reason: "detail_not_accessible", fields: {} };
     }
     mergeFields(fields, await waitForInitialDetailFields(detailPage, candidate, platform, groups));
-    const summarySnapshot = await captureRawHtml(
-      detailPage,
-      "summary",
-      capturedAt,
-      onHtmlSnapshot,
-    );
+    const summarySnapshot = await captureRawHtml(detailPage, "summary", capturedAt, onHtmlSnapshot);
     if (summarySnapshot) htmlSnapshots.push(summarySnapshot);
     try {
       await assertNoManualChallenge(detailPage);
@@ -760,12 +753,7 @@ export async function collectCreatorDetail(
           observed_controls: explored.observed_controls,
         });
       }
-      const groupSnapshot = await captureRawHtml(
-        detailPage,
-        group,
-        capturedAt,
-        onHtmlSnapshot,
-      );
+      const groupSnapshot = await captureRawHtml(detailPage, group, capturedAt, onHtmlSnapshot);
       if (groupSnapshot) htmlSnapshots.push(groupSnapshot);
       if (groupHasEvidence(group, fields)) completedGroups.add(group);
     }

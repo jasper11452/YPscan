@@ -202,7 +202,7 @@ function candidateFromRow(row, source) {
     source_url: row.source_url ?? source.sourceUrl,
     source_branches: [source.branchId],
     source_pages: [source.pageNumber],
-    quote_tier: exactPrice ? row.format ?? source.priceTier : null,
+    quote_tier: exactPrice ? (row.format ?? source.priceTier) : null,
     price_raw: exactPrice,
     minimum_price_raw: row.minimum_price_raw ?? null,
     price_by_tier: row.price_by_tier ?? {},

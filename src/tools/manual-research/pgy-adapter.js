@@ -273,12 +273,7 @@ export function createPgyAdapter(page, { workspaceDir, now }) {
       if (nestedRange) {
         let nestedFailure = null;
         const observed = await captureListResponseDuring(page, "pgy", async () => {
-          const result = await fillPgyNestedRangeMenu(
-            page,
-            opened,
-            filter,
-            nestedRange.item_label,
-          );
+          const result = await fillPgyNestedRangeMenu(page, opened, filter, nestedRange.item_label);
           nestedFailure = result.reason;
           await settleAfterAction(page);
           await waitForPgyTableReady(page);

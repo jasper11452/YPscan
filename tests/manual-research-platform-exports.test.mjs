@@ -59,13 +59,10 @@ test("PGY nested range controls target the correct picture or video item", () =>
     item_label: "图文笔记",
     opposite_item_label: "视频笔记",
   });
-  assert.deepEqual(
-    pgyNestedRangeConfig({ control: "cpm", qualifier: "picture" }, "视频"),
-    {
-      item_label: "预估图文CPM",
-      opposite_item_label: "预估视频CPM",
-    },
-  );
+  assert.deepEqual(pgyNestedRangeConfig({ control: "cpm", qualifier: "picture" }, "视频"), {
+    item_label: "预估图文CPM",
+    opposite_item_label: "预估视频CPM",
+  });
   assert.deepEqual(pgyNestedRangeConfig({ control: "cpe", qualifier: "video" }, "图文"), {
     item_label: "预估视频互动单价",
     opposite_item_label: "预估图文互动单价",
