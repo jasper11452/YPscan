@@ -1179,6 +1179,10 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
   assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /明确无条件回复“可以发\/发吧\/按这个发\/就这样发送”/u);
+  assert.match(first.prependContext, /发送前必须用警示弹窗确认/u);
+  assert.match(first.prependContext, /恰好两个选项/u);
+  assert.match(first.prependContext, /不得把机构或消息列为选项/u);
+  assert.match(first.prependContext, /description 与 wechat_notification_message 内容一致/u);
 
   assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
 });
@@ -1466,7 +1470,7 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /等待用户提交并回复“好了”/u);
   assert.match(text, /按原分支恢复/u);
   assert.match(text, /用户明确选中的当前 MCN/u);
-  assert.match(text, /发送前确认/u);
+  assert.match(text, /发送前警示弹窗确认/u);
   assert.match(text, /手动拓展使用原 requirement_id 和 size/u);
   assert.ok(text.length < 900, `field-selection directive too long: ${text.length}`);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);

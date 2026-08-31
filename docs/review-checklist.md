@@ -17,7 +17,7 @@
 - [ ] `manual_source_creators` 提交成功后先等待 30 秒再第 1 次调用 `manual_source_creators_status`，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`、不自动查询第 11 次、不重复提交任务或更换 ID。
 - [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；`header`、`question`、`label`、`description` 每行最多 20 个 Unicode 字符，长机构名的展示换行在匹配前去除；不得用普通聊天问句停住流程。
 - [ ] Agent 必须自主完成所有可执行步骤并持续推进；不得随意要求用户代为操作、整理信息、输入“完成”或帮助排错。仅在缺少必要授权、必要输入、登录或真实 CAPTCHA 等无法自主完成的情况下暂停。
-- [ ] 企微发送只调用 `create_with_distributions`；发送前必须用 `AskUserQuestion` 完整展示最终机构名称列表和企微消息，选项固定为“确认发送”和“返回修改”。本地 `before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或发送内容确认门禁；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]` 且至少一侧非空。
+- [ ] 企微发送只调用 `create_with_distributions`；发送前必须用警示弹窗确认（一次 `AskUserQuestion` 只含一个问题、恰好两个选项“确认发送/返回修改”、不设 `multiSelect`），最终机构名称列表和完整企微消息写入问题正文，不得把机构或消息拆成选项；`description` 与 `wechat_notification_message` 内容一致。本地 `before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或发送内容确认门禁；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]` 且至少一侧非空。
 - [ ] 机构名匹配、合并去重和同一 requirement_id/机构幂等由 Provider 负责；模糊、不唯一、部分成功和重复发送结果原样展示，不重发已成功机构。
 - [ ] `rank_mcns` 机构表格严格只展示排名、机构、覆盖达人、返点、综合分；排名按响应顺序从 1 开始，缺失写“未知”，不得另行展示匹配机构数、推荐数量或其他汇总。
 - [ ] `rank_mcns` 每行覆盖人数只取当前机构自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，不得用作本机构人数，不得与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。

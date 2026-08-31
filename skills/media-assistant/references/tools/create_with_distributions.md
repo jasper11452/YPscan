@@ -6,7 +6,7 @@ This is the institutional inquiry creation entry point.
 
 ## When to call
 
-Call once after the user has chosen the inquiry branch, field selection has been submitted, recipients and the complete message are available, and the user has approved the final preview. Immediately before the call, show the final institution-name list and complete `wechat_notification_message` with `AskUserQuestion` options `确认发送` and `返回修改`. A selected `确认发送`, or an unambiguous unconditional reply such as `可以发`, `发吧`, `按这个发`, or `就这样发送` after that preview, authorizes this one call. Closing, cancelling, missing an answer, requesting a change, negating the send, or giving only a conditional approval does not.
+Call once after the user has chosen the inquiry branch, field selection has been submitted, recipients and the complete message are available, and the user has approved the final preview. Immediately before the call, confirm with the host alert dialog: one `AskUserQuestion` call with exactly one question, exactly two options `确认发送` and `返回修改`, and no `multiSelect`; the final institution-name list and the complete `wechat_notification_message` go into the question body with preserved line breaks — never list institutions or message parts as options. A selected `确认发送`, or an unambiguous unconditional reply such as `可以发`, `发吧`, `按这个发`, or `就这样发送` after that preview, authorizes this one call. Closing, cancelling, missing an answer, requesting a change, negating the send, or giving only a conditional approval does not.
 
 ## Recipient and field preparation
 
@@ -26,7 +26,7 @@ One complete invocation is the real Provider attempt. `MCP_INVALID_PARAMS` prove
 
 ## Remote arguments
 
-- Required: `requirement_id` (string), `supplierIds` (string[]), `supplier_name` (string[]), `description` (non-empty string), `wechat_notification_message` (non-empty string).
+- Required: `requirement_id` (string), `supplierIds` (string[]), `supplier_name` (string[]), `description` (non-empty string), `wechat_notification_message` (non-empty string). `description` must carry the same content as `wechat_notification_message`.
 - Do not pass `columns`; the Provider resolves the persisted selection from `requirement_id`.
 - Pass all five arguments directly at the top level, never under `payload`. Both recipient arrays must be present, an empty side is `[]`, and at least one side must contain a real value. Complete and cross-check the call once; do not use repeated calls as a form validator.
 
@@ -36,9 +36,10 @@ One complete invocation is the real Provider attempt. `MCP_INVALID_PARAMS` prove
 - In a multi-platform case, use only the current child workflow's bound requirement ID, suppliers, and body. The Provider must resolve that requirement's persisted field configuration; never consume another platform's evidence.
 - The Agent performs only the exact current-rank name-to-`supplier_id` reuse described above. The final recipient-name list and complete WeCom message are previewed in the user confirmation dialog, but the plugin keeps no transient send ledger. The Provider remains the sole authority for unresolved institution-name matching and `(requirement_id, supplier)` idempotency.
 - Both `description` and `wechat_notification_message` are required. Never pass `null`, a blank string, or placeholders such as `询价` or `请报价` that do not explain the requirement.
-- Both fields use the same confirmed customer requirements and remain semantically consistent. Include every applicable confirmed project, brand/product, platform/content, creator quantity, price, creator filter, submission deadline, project schedule, and special requirement. Omit absent optional facts; never invent them. Never include the rebate requirement in either field; it stays internal.
-- When the requirement manifest derives a reference creator from labeled `originalBrief`/`description` text, the WeCom body must include the exact `参考达人：...` and/or `参考达人链接：...` lines immediately after `合作内容`. Omit an absent value and never infer one reference value from the other.
-- `description` is a structured Chinese description suitable for project-detail display. `wechat_notification_message` uses this fixed Chinese skeleton and changes field values only:
+- `description` and `wechat_notification_message` must carry identical content: use the same fixed Chinese skeleton below for both fields and change field values only.
+- Include every applicable confirmed project, brand/product, platform/content, creator quantity, price, creator filter, submission deadline, project schedule, and special requirement. Omit absent optional facts; never invent them. Never include the rebate requirement in either field; it stays internal.
+- When the requirement manifest derives a reference creator from labeled `originalBrief`/`description` text, the body must include the exact `参考达人：...` and/or `参考达人链接：...` lines immediately after `合作内容`. Omit an absent value and never infer one reference value from the other.
+- The shared body for both fields uses this fixed Chinese skeleton:
 
   ```text
   【达人询价｜{项目名称}】
@@ -67,7 +68,6 @@ One complete invocation is the real Provider attempt. `MCP_INVALID_PARAMS` prove
 - Title, salutation, field order, and closing are fixed. Never add freeform copy. The optional brand line accepts `品牌 / 产品：`, `品牌/产品：`, or `品牌：`; delete the entire line when absent. Delete the entire corresponding block when `达人要求`, `项目档期`, or `其他要求` is absent; do not write an empty-value placeholder such as `待定` or `未指定`. When both brand and product are supplied, use `品牌名 / 产品名`; when only one exists, use it directly without an empty slash. Number creator requirements continuously from `1. ` for the actual count.
 - Validation supports CRLF/LF, line-edge whitespace, and blank-line-count differences. Preserve the user's original wording and units in field content; never polish, infer, convert, or supplement requirements.
 - Before the call, verify the requirement facts covered by both fields item by item. Complete a missing confirmed requirement before calling.
-- Put platform budget text only in current-platform `description`. The production schema has no budget field; never construct a legacy field.
 
 ## Matching and idempotency results
 

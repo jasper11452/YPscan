@@ -46,7 +46,10 @@ test("startup requires a visible recipient and WeCom preview before sending", ()
   assert.match(prompt.prependContext, /同一 requirement ID、同一平台的 rank_mcns\.data\.mcns/u);
   assert.match(prompt.prependContext, /不模糊匹配或跨轮复用/u);
   assert.doesNotMatch(prompt.prependContext, /单独提名的机构使用 supplier_name/u);
-  assert.match(prompt.prependContext, /发送前确认/u);
+  assert.match(prompt.prependContext, /发送前必须用警示弹窗确认/u);
+  assert.match(prompt.prependContext, /恰好两个选项/u);
+  assert.match(prompt.prependContext, /不得把机构或消息列为选项/u);
+  assert.match(prompt.prependContext, /description 与 wechat_notification_message 内容一致/u);
   assert.match(prompt.prependContext, /完整企微消息/u);
   assert.match(prompt.prependContext, /确认发送/u);
   assert.match(prompt.prependContext, /返回修改/u);
