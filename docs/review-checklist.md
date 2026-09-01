@@ -1,6 +1,6 @@
 # 用户要求 Review Checklist
 
-- [ ] 每次开始询价机构或手动拓展都重新解析、复核并创建独立的新 requirement；同一会话、同一平台、条件未变且前一功能完成或明确停止后只要求另一功能时，也不复用旧 requirement 或已提交字段配置。用户主动修改任何业务条件时，回到用户原始需求并合并最新人工修改，撤销自动放宽后再建需。解析复核发现错误时先按原需求纠正，纠正不算自动放宽。解析返回的合法标签数组直接采用，不向用户确认；可选标签（包括小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel`）缺失或为 `null` 时直接省略，不做映射、不推断、不询问。数值字段缺失、模糊、冲突或需要选择映射时才调用 `AskUserQuestion`，不从历史数据推断，也不要求确认整份 Brief；同平台多达人类型保留一个 requirement、原始总量和合并标签，不拆分或重复落库。
+- [ ] 每次真正开始新的询价机构或手动拓展都重新解析、复核并创建独立的新 requirement；同一会话、同一平台、条件未变且前一功能完成或明确停止后只要求另一功能时，也不复用旧 requirement 或已提交字段配置。当前 `rank_mcns` 机构列表后的“暂不询价”、关闭/取消弹窗或当轮未回答仅暂停发送；后续明确选择该列表机构且需求、平台未变、没有更新的功能或 requirement 时，沿用原 requirement 和机构映射，不重新解析、落库、搜索或排名。用户主动修改任何业务条件时，回到用户原始需求并合并最新人工修改，撤销自动放宽后再建需。解析复核发现错误时先按原需求纠正，纠正不算自动放宽。解析返回的合法标签数组直接采用，不向用户确认；可选标签（包括小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel`）缺失或为 `null` 时直接省略，不做映射、不推断、不询问。数值字段缺失、模糊、冲突或需要选择映射时才调用 `AskUserQuestion`，不从历史数据推断，也不要求确认整份 Brief；同平台多达人类型保留一个 requirement、原始总量和合并标签，不拆分或重复落库。
 - [ ] `rebate`、`followercount`、报价、CPM、CPE 及其他数值筛选字段在第一次 `validate_requirement` 调用前全部规范成无空格 JSON 区间字符串 `"[min,max]"` 且 `min < max`，返点固定为 `"[min,1]"`；禁止 `[v,v]`，也禁止向 Provider 传数组、对象、单值、百分号文本或自然语言并来回试类型。
 - [ ] 品牌、项目名、达人数量、截止时间和可选项目日期与 `rawMessagesJson.original` 或非空 `clarifications` 中的明确值一致；空澄清键、解析数值默认值和 Agent 推断不算用户证据。解析标签不适用这条证据门禁。
 - [ ] 抖音报价、CPM、CPE 固定使用 L2=植入视频、L3=定制视频，不传 `kolOfficialPriceL1`、`cpmL1`、`cpeL1`；小红书不传任何 L3 字段，模糊档期不转换成具体日期。
@@ -8,14 +8,14 @@
 - [ ] 金额、数量、比例、范围、平台、合作形式和指标档位按当前契约正确解析；纯格式差异由本地边界一次性规范化，未知或不支持的字段省略或保留在 Brief 中。
 - [ ] Provider 检索单价只按原价向下 30%、向上 20% 扩展一次；手动拓展结果不得把这个区间回写到需求参数。
 - [ ] 解析结果完整透传给本地完整预检；所有字段一次性通过后才调用 Provider。预检阻断时 Provider 未写入，先弹窗收齐全部用户值；真实 Provider 错误只根据明确错误处理，禁止逐字段或逐类型盲试。
-- [ ] 用户明确说出“询价机构”或“手动拓展”时直接采用，旧说法仅作为输入别名映射到“手动拓展”；未明确、同时出现两种模式或语义冲突时才用 `AskUserQuestion` 选择，回答前不解析或落库。确定后以用户侧模式作为 `ypscan_parse_requirement.business_mode` 执行 `parse → 复核 → validate`，`rawMessagesJson.business_mode` 使用同一用户侧值并进入当前功能；插件只在 Provider 出站边界映射兼容线值。后续即使条件未变，开始任一功能仍重复这套建需流程。
+- [ ] 用户明确说出“询价机构”或“手动拓展”时直接采用，旧说法仅作为输入别名映射到“手动拓展”；未明确、同时出现两种模式或语义冲突时才用 `AskUserQuestion` 选择，回答前不解析或落库。确定后以用户侧模式作为 `ypscan_parse_requirement.business_mode` 执行 `parse → 复核 → validate`，`rawMessagesJson.business_mode` 使用同一用户侧值并进入当前功能；插件只在 Provider 出站边界映射兼容线值。后续即使条件未变，真正开始任一新功能仍重复这套建需流程；当前机构列表后的暂不发送再续办不属于新功能开始。
 - [ ] 仅询价分支调用 `search_creators → rank_mcns`。忽略 `search_creators` 的表格链接；`rank_mcns` 成功后按“完整机构表格 → 真实本地 `file_path` → 收件机构弹窗”输出，不再次询问业务模式。
-- [ ] 询价和手动拓展不得并行或在功能处理中切换；前一功能完成或明确停止后可按用户要求顺序切换，但必须为新功能创建新 requirement，并重新提交字段配置，不复用旧机构、达人、batch 或 Excel。询价机构为空时先复核原需求、解析输出和实际落库参数；确认正确后才按 Skill 固定顺序逐项放宽，每次只改一项并提前告知用户。
+- [ ] 询价和手动拓展不得并行或在功能处理中切换；前一功能完成或明确停止后可按用户要求顺序切换，但必须为新功能创建新 requirement，并重新提交字段配置，不复用旧机构、达人、batch 或 Excel。“暂不询价”不算明确停止：用户后来要求“给前 5 家发询价”等可由当前列表唯一确定的机构选择时，直接恢复该 requirement 的收件机构选择与后续发送流程。询价机构为空时先复核原需求、解析输出和实际落库参数；确认正确后才按 Skill 固定顺序逐项放宽，每次只改一项并提前告知用户。
 - [ ] `select_inquiry_form_fields` 必须按当前 live schema 传 `platform` 和当前真实 `requirement_id` 建立字段关联；用户提交后由 Provider 直接持久化。只有当前同一 requirement 已有提交证据时才复用字段配置；新建 requirement（包括跨功能切换）必须重新选择。不得调用已弃用的 `get_selected_inquiry_form_fields`，不得轮询 callback，也不得在 Agent 上下文读取、重建或缓存 `columns`。
 - [ ] 手动拓展调用 `manual_source_creators` 时必须使用当前真实 `requirement_id` 和正整数 `num`；`demand` 仅在 live schema 支持且用户原文可直接透传时才作为可选字段传入。工具可能同步直接返回 Excel，也可能异步返回抖音任务批次；无论哪种都先保存并展示当前真实结果作为最终手动拓展结果。只有当前 Provider 响应明确给出可信实际数量时才与 `num` 比较；实际为 0 或不足时说明实际数量、目标数量和缺口并建议用户放宽条件，但不猜测数量、不解析 Excel、不自动放宽或重跑。用户明确修改条件后重建独立 requirement；随后不得调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
 - [ ] 默认 `manual_source_creators` 调用先读取实际 input schema；若存在需求原文可选字段，优先传当前完整原文到 `demand`；schema 不支持或仅因未知参数失败时，只去掉原文字段、保留同一 `requirement_id` 和 `num` 重试一次，不猜字段名、不掩盖其他业务错误。
 - [ ] `manual_source_creators` 若返回异步批次，先等待 30 秒再第 1 次调用 `manual_source_creators_status`，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`、不自动查询第 11 次、不重复提交任务或更换 ID。若同步直接返回 Excel，则跳过状态轮询并直接保存交付。
-- [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；`header`、`question`、`label`、`description` 每行最多 20 个 Unicode 字符，长机构名的展示换行在匹配前去除；不得用普通聊天问句停住流程。
+- [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；数值字段澄清正文先说明原需求为何无法确定该值，再提示“请选择或自定义输入”，不得只问“报价上限是多少”或展示“落库”等内部术语；每题使用 3 个互斥的具体值并显式设置 `multiSelect: false`，所有选项都必须能直接回答该字段，不得用“1 个数值 + 返回修改/取消”等二按钮结构，以免宿主隐藏自定义输入入口；`header`、`question`、`label`、`description` 每行最多 20 个 Unicode 字符，长机构名的展示换行在匹配前去除；不得用普通聊天问句停住流程。
 - [ ] Agent 必须自主完成所有可执行步骤并持续推进；不得随意要求用户代为操作、整理信息、输入“完成”或帮助排错。仅在缺少必要授权、必要输入、登录或真实 CAPTCHA 等无法自主完成的情况下暂停。
 - [ ] 企微发送只调用 `create_with_distributions`；发送前必须用警示弹窗确认（一次 `AskUserQuestion` 只含一个问题、恰好两个选项“确认发送/返回修改”、不设 `multiSelect`），最终机构名称列表和完整企微消息写入问题正文，不得把机构或消息拆成选项；`description` 与 `wechat_notification_message` 内容一致。本地 `before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或发送内容确认门禁；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]` 且至少一侧非空。
 - [ ] 机构名匹配、合并去重和同一 requirement_id/机构幂等由 Provider 负责；模糊、不唯一、部分成功和重复发送结果原样展示，不重发已成功机构。

@@ -257,7 +257,7 @@ test("validated requirements route by the previously selected business mode", ()
   assert.equal(question.questions[0].multiSelect, false);
   assert.deepEqual(question.questions[0].options, [
     { label: "机构 A", description: "选择该机构作为本次询价收件人" },
-    { label: "暂不询价", description: "结束本次询价分支，不发送消息" },
+    { label: "暂不询价", description: "本轮不发送，可按当前列表继续" },
   ]);
   assert.doesNotMatch(JSON.stringify(question), /supplier-a/u);
   assert.match(directiveText(rank), /当前已处于询价机构分支/u);
@@ -358,6 +358,7 @@ test("rank result saves the Provider MCN workbook before the branch question", (
     rankText,
     /INQUIRY_RECIPIENT_SELECTION_ARGS|SELECT_INQUIRY_FORM_FIELDS_ARGS/u,
   );
+  assert.doesNotMatch(rankText, /属于恢复当前询价分支/u);
 
   const saved = persist({
     toolName: "ypscan_save_excel_artifact",
@@ -383,6 +384,7 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   assert.match(savedText, /选择询价收件机构/u);
   assert.match(savedText, /不得按排名或指标自行选择/u);
   assert.match(savedText, /用户选中弹窗中的一个或多个当前机构/u);
+  assert.match(savedText, /属于恢复当前询价分支/u);
   assert.deepEqual(
     argsFromDirective(savedText).questions[0].options.map((option) => option.label),
     ["机构 A", "暂不询价"],
@@ -512,7 +514,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   assert.match(savedText, /最终手动拓展结果/u);
   assert.match(savedText, /实际数量为 0 或少于 num.*建议用户放宽条件/u);
   assert.match(savedText, /用户明确修改条件后.*独立的新 requirement/u);
-  assert.match(savedText, /每次开始询价机构或手动拓展都必须先创建独立的新 requirement/u);
+  assert.match(savedText, /每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement/u);
   assert.doesNotMatch(savedText, /RANK_CREATORS_ARGS=/u);
   assert.doesNotMatch(savedText, /CREATE_SUBMISSION_BATCH_ARGS=/u);
   assert.doesNotMatch(savedText, /ASK_USER_QUESTION_ARGS=/u);
@@ -939,6 +941,7 @@ test("empty rank result reviews the requirement before relaxation", () => {
   assert.match(text, /media-assistant Skill.*结果不足：先复核，再放宽/u);
   assert.match(text, /不得保存空排名表/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
+  assert.doesNotMatch(text, /恢复当前询价分支|前 5 家/u);
 });
 
 test("parse directives preserve compact dynamic field summaries", () => {
@@ -1041,6 +1044,23 @@ test("parse and startup directives enumerate required business values before val
   assert.match(startup.prependContext, /最低返点要求是多少/u);
   assert.match(startup.prependContext, /选项只给单个最低返点百分比/u);
   assert.match(startup.prependContext, /上限固定按 100% 处理/u);
+  assert.match(startup.prependContext, /数值澄清正文须先解释.*请选择或自定义输入/u);
+  assert.match(
+    startup.prependContext,
+    /未提及则明确缺失字段.*“行业头部达人”等定性描述.*无法确定粉丝数范围/u,
+  );
+  assert.match(
+    startup.prependContext,
+    /不得只写“确认报价\/报价上限是多少”.*不得展示“落库\/Provider 参数”等内部术语/u,
+  );
+  assert.match(
+    startup.prependContext,
+    /每题设置 multiSelect=false.*恰好 3 个互斥且可直接回答该字段的具体值/u,
+  );
+  assert.match(
+    startup.prependContext,
+    /禁用“1 个数值\+返回修改\/取消”的二按钮结构.*自建“其他”选项.*宿主自定义输入/u,
+  );
 });
 
 test("recipient selection reuses submitted fields or hands off to field selection", () => {
@@ -1089,14 +1109,21 @@ test("more than four inquiry recipients use a compact prompt without option trun
   assert.equal(recipient.multiSelect, false);
   assert.deepEqual(recipient.options, [
     { label: "询价全部机构", description: "选择本轮全部候选机构并进入字段选择" },
-    { label: "暂不询价", description: "结束本次询价分支，不发送消息" },
+    { label: "暂不询价", description: "本轮不发送，可按当前列表继续" },
   ]);
   assert.doesNotMatch(JSON.stringify(recipient.options), /机构 [A-E]/u);
-  assert.match(text, /自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立/u);
+  assert.match(text, /满足续办规则的后续消息/u);
   assert.match(text, /用户选中弹窗中的一个或多个当前机构/u);
   assert.match(text, /选择“询价全部机构”.*全部当前机构/u);
   assert.match(text, /空输入、未知机构、无法解析或存在歧义时，不得继续询价/u);
   assert.match(text, /重新调用本提示或结束本轮/u);
+  assert.match(text, /“前 5 家”等可按当前排名唯一确定的表达/u);
+  assert.match(text, /属于恢复当前询价分支/u);
+  assert.match(
+    text,
+    /不得重新调用 ypscan_parse_requirement、validate_requirement、search_creators 或 rank_mcns/u,
+  );
+  assert.match(text, /“暂不询价”只暂停发送，不算明确停止整个询价功能/u);
 });
 
 test("long institution names wrap without changing their matching identity", () => {
@@ -1254,13 +1281,19 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /回答前不得解析或落库/u);
   assert.match(first.prependContext, /Provider 边界把“手动拓展”兼容映射为旧线值/u);
   assert.match(first.prependContext, /business_mode 决定本次新建 requirement 进入的功能/u);
-  assert.match(first.prependContext, /每次开始询价机构或手动拓展都必须先创建独立的新 requirement/u);
+  assert.match(
+    first.prependContext,
+    /每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement/u,
+  );
   assert.match(
     first.prependContext,
     /必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement/u,
   );
   assert.match(first.prependContext, /不得跨功能复用 requirement 或已提交字段配置/u);
   assert.match(first.prependContext, /新 requirement 必须重新调用 select_inquiry_form_fields/u);
+  assert.match(first.prependContext, /当前 rank_mcns 列表后的暂不发送再续办/u);
+  assert.match(first.prependContext, /属于恢复当前询价分支/u);
+  assert.match(first.prependContext, /继续使用该列表所属 requirement、平台和 rank_mcns 机构映射/u);
   assert.match(first.prependContext, /任何一行最多 20 个 Unicode 字符/u);
   assert.match(first.prependContext, /询价链路：解析→复核→validate_requirement/u);
   assert.match(first.prependContext, /手动拓展：解析→复核→validate_requirement/u);
@@ -1295,10 +1328,7 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /contentTag.*重新解析.*禁止询问用户/u);
   assert.match(first.prependContext, /xtTalentTypeLabel/u);
   assert.match(first.prependContext, /只有这些必填数值仍缺失.*才调用 AskUserQuestion/u);
-  assert.match(
-    first.prependContext,
-    /自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立/u,
-  );
+  assert.match(first.prependContext, /满足续办规则的后续消息/u);
   assert.match(first.prependContext, /用户选中弹窗中的一个或多个当前机构/u);
   assert.match(first.prependContext, /选择“询价全部机构”.*全部当前机构/u);
   assert.match(first.prependContext, /空输入、未知机构、无法解析或存在歧义时，不得继续询价/u);

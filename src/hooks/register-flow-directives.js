@@ -28,14 +28,18 @@ const PARSED_METRIC_REUSE_RULE =
   "解析 Workflow 已给出的唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值，必须直接采用，禁止再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。粉丝技术上限溢出由本地截断到 999999999，不弹窗。只有这些字段缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。";
 const REBATE_MINIMUM_QUESTION_RULE =
   '需要澄清返点时只问最低返点：AskUserQuestion 的问题写“最低返点要求是多少”，选项只给单个最低返点百分比（如 20%、25%、30%），禁止给返点区间、上限或“不限”类选项；上限固定按 100% 处理，落库仍为 "[min,1]"。';
+const NUMERIC_CLARIFICATION_QUESTION_RULE =
+  "数值澄清正文须先解释原需求为何不能确定该值，再提示“请选择或自定义输入”：未提及则明确缺失字段；只有“行业头部达人”等定性描述则说明无法确定粉丝数范围。不得只写“确认报价/报价上限是多少”，不得展示“落库/Provider 参数”等内部术语。每题设置 multiSelect=false，提供恰好 3 个互斥且可直接回答该字段的具体值；禁用“1 个数值+返回修改/取消”的二按钮结构及自建“其他”选项，保留宿主自定义输入。";
 const REQUIREMENT_COMPLETENESS_RULE =
   "进入 validate_requirement 前必须检查 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3 且必须匹配视频类型，小红书不使用 L3。这些业务值缺失、无效或需要选择时，必须在调用前一次性通过 AskUserQuestion 收集，禁止默认补值。contentTag 必须是解析结果中的非空数组；缺失或无效时重新解析，禁止向用户询问或自行补值；本规则覆盖任何“contentTag 缺失时直接省略”的旧指令。status=ready、projectName 和 rawMessagesJson（当前原文+parse_outputs）由 Agent 构造。";
 const RAW_MESSAGES_JSON_KEY_CONTRACT =
   "rawMessagesJson key 与取值严格按 validate_requirement 工具卡 rawMessagesJson 契约执行，禁止写成 original_demand 或 demand；key 写错会被本地预检当成缺失原文阻断。";
 const INQUIRY_RECIPIENT_RESPONSE_RULE =
-  "机构选择仅在用户选中弹窗中的一个或多个当前机构、选择“询价全部机构”，或自定义输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立；弹窗机构标签中的换行仅用于展示，匹配前必须移除换行并还原完整机构名；选择“询价全部机构”表示选择全部当前机构。空输入、未知机构、无法解析或存在歧义时，不得继续询价，应重新调用本提示或结束本轮。";
+  "机构选择仅在用户选中弹窗中的一个或多个当前机构、选择“询价全部机构”，或用户输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立；用户输入包括弹窗自定义输入和满足续办规则的后续消息。弹窗机构标签中的换行仅用于展示，匹配前必须移除换行并还原完整机构名；选择“询价全部机构”表示选择全部当前机构。空输入、未知机构、无法解析或存在歧义时，不得继续询价，应重新调用本提示或结束本轮。";
+const INQUIRY_RECIPIENT_RESUME_RULE =
+  "用户在当前 requirement 的 rank_mcns 机构列表后选择“暂不询价”、关闭/取消弹窗或当轮未回答，之后在同一会话明确要求给该列表中的机构发询价（包括“前 5 家”等可按当前排名唯一确定的表达），且期间未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，属于恢复当前询价分支。继续使用该列表所属 requirement、平台和 rank_mcns 机构映射；不得重新调用 ypscan_parse_requirement、validate_requirement、search_creators 或 rank_mcns。已提交当前 requirement 字段配置则复用，否则再调用 select_inquiry_form_fields。“暂不询价”只暂停发送，不算明确停止整个询价功能。";
 const REQUIREMENT_CREATION_RULE =
-  "每次开始询价机构或手动拓展都必须先创建独立的新 requirement：即使同一会话、同一平台、业务条件未变，或刚完成/停止另一功能，也必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement。不得跨功能复用 requirement 或已提交字段配置；新 requirement 必须重新调用 select_inquiry_form_fields。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。";
+  "每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement：即使同一会话、同一平台、业务条件未变，或刚完成/停止另一功能，也必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement。不得跨功能复用 requirement 或已提交字段配置；新 requirement 必须重新调用 select_inquiry_form_fields。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。当前 rank_mcns 列表后的暂不发送再续办按询价恢复规则处理，不属于新功能开始。";
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
@@ -311,6 +315,7 @@ function requirementPreflightBlockReason(issues) {
     `一次性修正项：${details}`,
     `格式契约：rebate、followercount、kolOfficialPriceL1/L2/L3、cpmL1/L2/L3、cpeL1/L2/L3 以及其他数值筛选字段全部使用${REQUIREMENT_RANGE_FORMAT}；返点固定为 "[min,1]"。`,
     "只允许对当前有效用户证据中的唯一明确值做确定性格式归一化。先检查当前对话是否已有该字段的有效弹窗答案：数值字段答案写回 rawMessagesJson.clarifications；同一字段新答案覆盖旧答案，不得再次询问。只有仍缺失、模糊、冲突、多候选或需要选择的业务值才调用 AskUserQuestion。八个可选 Label 有什么原样落库，null 或缺失就省略；contentTag 必须来自本次解析的非空数组，缺失时重新解析。所有标签都不做映射、不推断、不询问。不得自主补值或改变一种类型后继续盲试。",
+    NUMERIC_CLARIFICATION_QUESTION_RULE,
   ].join("\n");
 }
 
@@ -319,6 +324,7 @@ function requirementPreflightBlockedDirective() {
     "YPSCAN_FLOW_DIRECTIVE=validate_requirement 已被本地预检阻断，Provider 未执行写入。一次处理工具错误列出的全部字段，不得把阻断说成 Provider 报错。",
     `REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。禁止数组、对象、单值和百分号文本直接进入数值筛选字段。`,
     "先把当前对话中已经回答但漏传的字段补回 rawMessagesJson.clarifications；只对仍未回答、无效、冲突或需选择的字段在同一次 AskUserQuestion 中成组收集（最多四题）。八个可选 Label 缺失时省略；contentTag 缺失时重新解析，不向用户询问或自行补值。projectName 由 Agent 根据当前需求自行总结生成。禁止自主选择、默认补值或重试探测。",
+    NUMERIC_CLARIFICATION_QUESTION_RULE,
   ].join("\n");
 }
 
@@ -438,6 +444,7 @@ function rankMcnsDirective(
       return lines.join("\n");
     }
     lines.push(
+      INQUIRY_RECIPIENT_RESUME_RULE,
       "当前结果无法保存 MCN 排名表；表格后如实说明，再调用 ASK_USER_QUESTION_ARGS 选择收件机构。收到机构选择答案后，若当前对话中同一 requirement_id 已提交字段配置则复用，否则调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得查询、缓存或重建 columns，也不得按排名或指标自行选择。",
       `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
       INQUIRY_RECIPIENT_RESPONSE_RULE,
@@ -852,6 +859,7 @@ function excelArtifactSaveDirective(
             INQUIRY_RECIPIENT_RESPONSE_RULE,
             ...(selectArgs
               ? [
+                  INQUIRY_RECIPIENT_RESUME_RULE,
                   "收到机构选择答案后，先检查当前对话中同一 requirement_id 是否已经提交过字段配置：已提交则复用并继续发送预览，未提交才调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得查询、缓存或重建 columns。",
                   `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
                 ]
@@ -1103,6 +1111,7 @@ export function registerFlowDirectiveHooks(api) {
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
           `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→回收→rank_creators→create_submission_batch。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→保存并交付最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。`,
           REQUIREMENT_CREATION_RULE,
+          INQUIRY_RECIPIENT_RESUME_RULE,
           "所有 AskUserQuestion 弹窗的 header、question、label 和 description 均主动换行，任何一行最多 20 个 Unicode 字符；长机构名可为展示插入换行，匹配前移除换行还原原名。",
           "当前 requirement 平台为小红书或抖音时，提报表保存后询问是否“补充更新达人信息”；该选项唯一映射到 get_creator_detail：用户一旦选择，立即使用本轮正整数 batch_id、同一 requirement_id 和已确认的平台缩写（小红书 xhs、抖音 dy）调用 get_creator_detail，随后使用同一 platform 和 batch_id 调用 get_creator_detail_export 轮询并保存新版表。平台缺失时不得展示该选项、不得调用补全工具或猜测平台；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
@@ -1114,6 +1123,7 @@ export function registerFlowDirectiveHooks(api) {
           "需求澄清规则：解析返回的八个可选 Label 数组是纯解析结果，有什么就原样落库什么，保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认、不询问任何标签内容；可选 Label（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。contentTag 必须是本次解析结果中的非空数组；缺失或无效时重新解析，禁止询问用户或自行补值。数值字段先采用 Dify 唯一解析值，再与最新非空 clarification 合并；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。Dify 已给出唯一 followercount、rebate、报价、CPM、CPE 时禁止再问。只有这些必填数值仍缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。当前平台 Dify 品牌候选唯一、合法且非空时必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为 null、未知等占位值时才询问。项目名由 Agent 根据当前需求自行总结生成，不弹窗确认；调用 validate_requirement 前用一句可见正文告知用户取的项目名。禁止编造标签、默认补数值或普通文本追问。解析 Workflow 唯一合法报价、CPM、CPE 候选直接复用，不因原文单值与 Provider 区间格式差异询问；同平台多个达人类型只保留一个 requirement，总量不变并合并条件，不拆分或追问每类人数。正常成功交付不追加完成弹窗。",
           REQUIREMENT_COMPLETENESS_RULE,
           REBATE_MINIMUM_QUESTION_RULE,
+          NUMERIC_CLARIFICATION_QUESTION_RULE,
           INQUIRY_RECIPIENT_RESPONSE_RULE,
           `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
           "Dify 已给出的唯一数值直接采用，禁止再问；本地只做区间格式与粉丝技术上限截断。只有解析缺失、null、多候选或与用户明确改口冲突时才阻断。",

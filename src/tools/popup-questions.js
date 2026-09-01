@@ -171,7 +171,7 @@ function compactMcnRecipientQuestionPayload(count) {
     ].join("\n"),
     [
       { label: "询价全部机构", description: "选择本轮全部候选机构并进入字段选择" },
-      { label: "暂不询价", description: "结束本次询价分支，不发送消息" },
+      { label: "暂不询价", description: "本轮不发送，可按当前列表继续" },
     ],
   );
 }
@@ -197,7 +197,7 @@ export function mcnRankingRecipientQuestionPayload(names) {
     if (recipientNames[0] === "暂不询价") {
       return compactMcnRecipientQuestionPayload(1);
     }
-    options.push({ label: "暂不询价", description: "结束本次询价分支，不发送消息" });
+    options.push({ label: "暂不询价", description: "本轮不发送，可按当前列表继续" });
   }
   if (options.length <= 4) {
     return popupQuestionPayload(

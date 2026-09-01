@@ -5,7 +5,7 @@
 ## 这是什么
 
 - `ypscan`（悦普识星）是 OpenClaw 插件（`id: ypscan`，`private: true`）：客户端集成层，注册 2 个本地工具，通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`）。
-- 当前主线形态（`feat/dual`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成）。每次开始任一功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。native Browser 拓展分支已废弃。
+- 当前主线形态（`feat/dual`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成）。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type": "module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。运行时依赖仅 `playwright-core`（为遗留 browser 工具保留，当前插件未注册任何 browser 工具）。
 
 ## 常用命令（仓库根执行）
@@ -36,7 +36,7 @@
 ## 关键不变量
 
 1. **SKILL.md 优先**：业务行为（模式判定、复核、放宽、交付）一律以 `skills/media-assistant/SKILL.md` 及其 references 为准，本文件只补充工程约束。
-2. **双功能独立建需**：询价机构与手动拓展不得并行或在功能处理中切换；每次开始任一功能都必须重新解析、复核并创建 requirement。即使同会话、同平台、业务条件未变且前一功能完成或明确停止，也不得跨功能复用 requirement 或已提交字段配置；不得复用旧机构、达人、batch 或 Excel。
+2. **双功能独立建需**：询价机构与手动拓展不得并行或在功能处理中切换；每次真正开始任一新功能都必须重新解析、复核并创建 requirement。即使同会话、同平台、业务条件未变且前一功能完成或明确停止，也不得跨功能复用 requirement 或已提交字段配置；不得复用旧机构、达人、batch 或 Excel。例外仅限当前 `rank_mcns` 列表后的“暂不询价”续办：需求、平台未变且没有更新的功能或 requirement 时，继续原 requirement 和当前机构映射，不重新解析、落库、搜索或排名。
 3. **复核先于放宽**：询价机构不足禁止直接放宽，先复核当前有效需求、解析输出与实际落库参数；确认正确后才按 SKILL 固定顺序逐项放宽，每项只调一次并提前告知。平台、品牌、数量、截止时间、内容形式等永不自动放宽。手动拓展 Excel 保存后即为最终手动拓展结果，不再精排、生成提报表或触发放宽。
 4. **Provider 边界**：企微发送确认、机构名匹配、合并去重、同 requirement/机构幂等全部由 Provider 负责；插件不预检发送、不缓存发送状态、不暴露已弃用的查询工具。
 5. **结果归属**：所有结果、链接、文件只用当前 requirement、当前平台、本轮真实 Provider 证据；不跨需求/平台/账号/历史 run 混用或补齐。

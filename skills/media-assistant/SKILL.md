@@ -21,7 +21,9 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators → manual_source_creators_status → 保存并交付最终手动拓展表`
 
-每次开始询价机构或手动拓展都必须先创建独立的新 requirement。即使同一会话、同一平台、业务条件未变，或询价完成/停止后改用手动拓展（反之亦然），也必须重新调用 `ypscan_parse_requirement`、按下文复核并调用 `validate_requirement`；不得跨功能复用 requirement 或已提交字段配置，新 requirement 必须重新调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。
+每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement。即使同一会话、同一平台、业务条件未变，或询价完成/停止后改用手动拓展（反之亦然），也必须重新调用 `ypscan_parse_requirement`、按下文复核并调用 `validate_requirement`；不得跨功能复用 requirement 或已提交字段配置，新 requirement 必须重新调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。
+
+机构列表展示后的“暂不询价”是唯一的续办例外：用户选择“暂不询价”、关闭/取消机构选择弹窗或当轮未回答后，只要仍在同一会话，之后明确要求给该列表中的机构发询价（包括“前 5 家”等可按当前排名唯一确定的表达），且期间未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，就视为恢复当前询价分支，而不是开始新询价。继续使用该列表所属 requirement、平台和 `rank_mcns` 机构映射，不重新解析、落库、搜索或排名；当前 requirement 已提交字段配置时复用，否则再调用 `select_inquiry_form_fields`。“暂不询价”只暂停发送，不算明确停止整个询价功能。任一条件不满足时不得把历史列表当作当前证据，按真正的新功能开始处理。
 
 ## 解析后、落库前必须复核
 
@@ -52,7 +54,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 覆盖达人只取当前机构自己的 `candidate_count`，缺失写“未知”。不得展示 supplier ID、候选达人、供给占比、手动拓展补量、推荐理由、汇总字段或历史数据。
 
-排名表保存后展示 `delivery.local_file_link`，再让用户从本轮真实机构中选择收件机构。机构名只在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；弹窗换行只用于展示，匹配前去掉换行还原完整名称；不模糊匹配、不跨轮复用。选中机构后，若同一 requirement 已提交字段配置则直接复用，否则调用 `select_inquiry_form_fields`，原样展示 URL，等待用户提交并回复“好了”。
+排名表保存后展示 `delivery.local_file_link`，再让用户从本轮真实机构中选择收件机构。机构名只在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；弹窗换行只用于展示，匹配前去掉换行还原完整名称；不模糊匹配、不跨轮复用。用户当轮暂不询价、关闭/取消弹窗或未回答，之后仍可按上文续办例外从这份当前列表明确选择机构。选中机构后，若同一 requirement 已提交字段配置则直接复用，否则调用 `select_inquiry_form_fields`，原样展示 URL，等待用户提交并回复“好了”。
 
 收到“好了”后立即恢复询价分支。发送前必须用警示弹窗确认：一次 `AskUserQuestion` 只含一个问题、恰好两个选项 `确认发送`/`返回修改`、不设 `multiSelect`；最终机构名单和完整企微消息写在问题正文里，不得把机构或消息拆成选项。用户点击“确认发送”，或明确回复“可以发”“发吧”“按这个发”“就这样发送”等无条件肯定表达时，调用一次 `create_with_distributions`，`description` 与 `wechat_notification_message` 内容一致；否定、要求修改或带条件的表达不算确认。Provider 负责机构匹配、去重和发送幂等，插件不控制在线表格是否预填或 Provider 如何处理机构回填达人。
 
@@ -95,7 +97,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 用户主动修改任何业务条件时，无论是否已生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销全部自动放宽，重新解析、复核、创建新 requirement，并沿原业务模式重跑。不得复用旧 requirement、机构、询价、达人、batch 或 Excel。
 
-业务条件未变、只是前一功能完成或明确停止后要求另一功能时，也必须按当前功能重新解析、复核并创建新 requirement，重新提交字段配置；不得复用前一功能的 requirement、字段配置、机构、达人、batch 或 Excel。
+业务条件未变、只是前一功能完成或明确停止后要求另一功能时，也必须按当前功能重新解析、复核并创建新 requirement，重新提交字段配置；不得复用前一功能的 requirement、字段配置、机构、达人、batch 或 Excel。机构列表后的“暂不询价”、弹窗关闭/取消或当轮未回答不属于这里的“明确停止”；满足上文续办条件时继续原询价 requirement。
 
 MCN 排名表和机构达人预览表是询价链路中间产物；手动拓展 Excel 是手动拓展最终交付。询价回收后由 `create_submission_batch` 生成的提报表保存时，把当前 requirement 的已确认平台传给本地保存工具并展示 `delivery.local_file_link`。小红书和抖音提报表都询问是否“补充更新达人信息”；用户选择补充时，唯一映射到 `get_creator_detail`，传当前平台缩写（小红书 `xhs`、抖音 `dy`）、当前 requirement ID 和同一正整数 batch ID，随后用相同的 `platform` 和 `batch_id` 轮询 `get_creator_detail_export` 并保存新版提报表。平台缺失时不得展示补全选项、调用补全工具或猜测平台；不得把补全改成字段配置或再次追问补充什么。
 

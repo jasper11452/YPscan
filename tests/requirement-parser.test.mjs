@@ -48,25 +48,39 @@ test("validate_requirement card forbids same-platform child allocation", () => {
   assert.match(card, /keep one requirement with the original total/u);
   assert.match(card, /for `询价机构`.*search_creators/iu);
   assert.match(card, /for `手动拓展`.*select_inquiry_form_fields/iu);
-  assert.match(card, /Every later start of either function requires a new parse/iu);
+  assert.match(card, /Every genuinely new later start of either function requires a new parse/iu);
   assert.match(card, /never reuse the previous function's requirement/iu);
   assert.doesNotMatch(card, /normal new-requirement flow.*immediately call `search_creators`/iu);
 });
 
-test("business contracts require a fresh requirement for every function start", () => {
+test("business contracts distinguish a new function start from resumed inquiry recipients", () => {
   const contracts = {
     skill: projectFile("skills/media-assistant/SKILL.md"),
     parse: projectFile("skills/media-assistant/references/tools/ypscan_parse_requirement.md"),
     validate: projectFile("skills/media-assistant/references/tools/validate_requirement.md"),
     manual: projectFile("skills/media-assistant/references/tools/manual_source_creators.md"),
     question: projectFile("skills/media-assistant/references/tools/askuserquestion.md"),
+    distribution: projectFile(
+      "skills/media-assistant/references/tools/create_with_distributions.md",
+    ),
   };
 
-  assert.match(contracts.skill, /每次开始询价机构或手动拓展都必须先创建独立的新 requirement/u);
-  assert.match(contracts.parse, /每次开始询价机构或手动拓展都重新调用本工具/u);
-  assert.match(contracts.validate, /Every later start of either function requires a new parse/iu);
+  assert.match(
+    contracts.skill,
+    /每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement/u,
+  );
+  assert.match(contracts.skill, /“暂不询价”是唯一的续办例外/u);
+  assert.match(contracts.parse, /每次真正开始新的询价机构或手动拓展都重新调用本工具/u);
+  assert.match(contracts.parse, /属于恢复原询价分支/u);
+  assert.match(
+    contracts.validate,
+    /Every genuinely new later start of either function requires a new parse/iu,
+  );
+  assert.match(contracts.validate, /Resuming recipient selection.*is not a new start/iu);
   assert.match(contracts.manual, /每次开始手动拓展都先解析、复核并创建独立的新 requirement/u);
   assert.match(contracts.question, /改用另一功能时，也必须重新解析、复核并创建新 requirement/u);
+  assert.match(contracts.question, /沿用原 requirement 与机构映射/u);
+  assert.match(contracts.distribution, /explicit.*`前 5 家`.*recipient selection/iu);
 
   for (const contract of Object.values(contracts)) {
     assert.doesNotMatch(contract, /unchanged requirement may be reused for the other function/iu);
