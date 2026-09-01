@@ -7,7 +7,7 @@ Call when the user asks for an institutional submission table and [field selecti
 ## Arguments
 
 - `requirement_id`: exact current requirement ID.
-- `submission_batche_page`: positive integer; use the requested page or `1` by default.
+- `submission_batche_page`: one-based positive integer page number. The first/final submission-table call uses literal `1`. Only a later explicit request for page N uses that positive integer N. This field is never the `rank_creators.run_id`, even when that run ID is numeric; do not derive it from `ranked_count`, target count, shortfall, batch ID, or any other business value.
 
 Do not pass `columns`, `size`, `demand_id`, `demand_version`, `platform`, or local state coordinates. Do not claim that Browser hand-pick data or historical batches are automatically merged.
 

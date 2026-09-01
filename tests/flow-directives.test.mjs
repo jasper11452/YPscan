@@ -44,6 +44,7 @@ test("startup requires a visible recipient and WeCom preview before sending", ()
   const prompt = hooks.get("before_prompt_build")({}, { runId: "recipient-contract" });
   assert.match(prompt.prependContext, /supplierIds 和 supplier_name 始终为数组/u);
   assert.match(prompt.prependContext, /同一 requirement ID、同一平台的 rank_mcns\.data\.mcns/u);
+  assert.match(prompt.prependContext, /未命中或无 ID 的原名放 supplier_name/u);
   assert.match(prompt.prependContext, /不模糊匹配或跨轮复用/u);
   assert.doesNotMatch(prompt.prependContext, /单独提名的机构使用 supplier_name/u);
   assert.match(prompt.prependContext, /发送前必须用警示弹窗确认/u);

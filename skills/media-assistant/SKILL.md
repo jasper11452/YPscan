@@ -54,11 +54,13 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 覆盖达人只取当前机构自己的 `candidate_count`，缺失写“未知”。不得展示 supplier ID、候选达人、供给占比、手动拓展补量、推荐理由、汇总字段或历史数据。
 
-排名表保存后展示 `delivery.local_file_link`，再让用户从本轮真实机构中选择收件机构。机构名只在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；弹窗换行只用于展示，匹配前去掉换行还原完整名称；不模糊匹配、不跨轮复用。用户当轮暂不询价、关闭/取消弹窗或未回答，之后仍可按上文续办例外从这份当前列表明确选择机构。选中机构后，若同一 requirement 已提交字段配置则直接复用，否则调用 `select_inquiry_form_fields`，原样展示 URL，等待用户提交并回复“好了”。
+排名表保存后展示 `delivery.local_file_link`，再让用户从本轮真实机构中选择收件机构，或明确提供需要发送的自定义机构名称。机构名只在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；弹窗换行只用于展示，匹配前去掉换行还原完整名称；命中非空 `supplier_id` 就放入 `supplierIds`，未匹配或无 ID 的原始名称保留在 `supplier_name` 交给 Provider；不模糊匹配、不跨轮复用。用户当轮暂不询价、关闭/取消弹窗或未回答，之后仍可按上文续办例外从这份当前列表明确选择机构。选中机构后，若同一 requirement 已提交字段配置则直接复用，否则调用 `select_inquiry_form_fields`，原样展示 URL，等待用户提交并回复“好了”。
 
 收到“好了”后立即恢复询价分支。发送前必须用警示弹窗确认：一次 `AskUserQuestion` 只含一个问题、恰好两个选项 `确认发送`/`返回修改`、不设 `multiSelect`；最终机构名单和完整企微消息写在问题正文里，不得把机构或消息拆成选项。用户点击“确认发送”，或明确回复“可以发”“发吧”“按这个发”“就这样发送”等无条件肯定表达时，调用一次 `create_with_distributions`，`description` 与 `wechat_notification_message` 内容一致；否定、要求修改或带条件的表达不算确认。Provider 负责机构匹配、去重和发送幂等，插件不控制在线表格是否预填或 Provider 如何处理机构回填达人。
 
 回收固定执行 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → rank_creators → create_submission_batch`。机构回收后的 `rank_creators` 数量不足时，仍生成并交付当前真实结果，说明实际数量和缺口，不自动发起新一轮询价。
+
+调用 [create_submission_batch](references/tools/create_submission_batch.md) 生成本轮首份最终提报表时，`submission_batche_page` 固定传页码 `1`。它只表示从 1 开始的提报表页码，不是 `rank_creators` 返回的 `run_id`；即使 `run_id` 是正整数也绝不复制到该参数。达人数量、缺口、batch ID 或其他业务数字同样不得作为页码。只有用户之后明确要求生成第 N 页时，才把明确的正整数页码 N 传入。
 
 ## 手动拓展分支
 
@@ -66,7 +68,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 若提交响应同步直接返回 Excel，则立即保存并交付最终手动拓展表，不进入状态轮询。若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID 和 `batch_id` 第 1 次查询。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 ID 开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
 
-成功 Excel 是后台搜索、详情抓取和筛选后的最终手动拓展结果：无论数量是否足够都先保存并展示，然后结束本次手动拓展，不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。只有当前 Provider 响应明确给出可信实际数量时，才与本轮 `num` 比较；实际数量为 0 或少于 `num` 时，必须说明实际数量、目标数量和缺口，并建议用户放宽条件。Provider 未给出可信数量时不得猜测、解析 Excel 或宣称不足。这里只建议，不自动放宽或重跑；用户明确修改条件后，按“用户修改需求”规则重新解析、复核并创建独立的新 requirement。不再提供浏览器详细拓展分支。
+成功 Excel 是后台搜索、详情抓取和筛选后的本轮真实手动拓展结果：无论数量是否足够都先保存并展示，不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。只有当前 Provider 响应明确给出可信实际数量时，才与本轮 `num` 比较；Provider 未给出可信数量时不得猜测、解析 Excel 或宣称不足，保存后把当前 Excel 作为最终结果交付并结束。实际数量达到 `num` 时结束；如果此前发生过自动放宽，必须在最终结果前汇总本次累计放宽的全部条件。实际数量为 0 或少于 `num` 时，说明实际数量、目标数量和缺口，然后进入下文与询价机构共享的“先复核、再逐项自动放宽”流程，不只给建议。每次放宽重跑都重新解析、复核、创建独立的新 requirement 并重新调用 `select_inquiry_form_fields`，不得复用或合并不同轮次的 requirement、字段配置、batch 或 Excel。不再提供浏览器详细拓展分支。
 
 ## 结果不足：先复核，再放宽
 
@@ -76,7 +78,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 - 询价分支：`search_creators` 为 0 仍先执行 `rank_mcns`；只有 `rank_mcns` 为空时进入复核和放宽。
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
-- 手动拓展实际数量为 0 或少于 `num` 时仍交付当前真实结果，只建议用户放宽；不得套用询价分支的自动放宽顺序。用户明确修改条件后按新需求重建独立 requirement。
+- 手动拓展只有在当前 Provider 响应明确给出可信实际数量为 0 或少于 `num` 时，才在交付当前真实 Excel 后进入同一复核和自动放宽顺序；数量未知时不猜测、不自动放宽，当前 Excel 即最终结果。
 
 每轮放宽前先可见地告诉用户本轮修改的唯一条件，再以“用户原始需求 + 已公开的累计放宽”重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
 
@@ -91,7 +93,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 自动放宽后的每轮结果仍不足时，再次复核本轮有效需求和实际落库参数，确认正确后才进入下一项。足量后，在结果前汇总全部放宽记录。
 
-全部允许项用完仍无可询价机构时，询问“手动修改需求 / 改用手动拓展 / 结束”。用户改用手动拓展时，无论业务条件是否变化，都恢复用户当前完整有效需求，重新解析、复核并创建新 requirement；不得把询价阶段的自动放宽带入手动拓展。用户修改业务条件时撤销全部自动放宽，恢复用户原始需求并合并最新人工修改后创建新 requirement。
+全部允许项用完仍不足时停止自动重跑：询价机构仍为空则询问“手动修改需求 / 改用手动拓展 / 结束”，手动拓展仍不足则询问“手动修改需求 / 改用询价机构 / 结束”。切换功能时无论业务条件是否变化，都撤销本轮全部自动放宽，恢复用户当前真实需求，重新解析、复核并创建新 requirement；不得把前一功能的自动放宽带入新功能。用户修改业务条件时同样撤销全部自动放宽，恢复用户原始需求并合并最新人工修改后创建新 requirement。
 
 ## 用户修改需求与最终交付
 

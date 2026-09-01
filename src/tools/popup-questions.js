@@ -167,12 +167,13 @@ function compactMcnRecipientQuestionPayload(count) {
     [
       `候选机构共 ${count} 家。`,
       "完整机构名单已在弹窗前的 MCN 表格中展示。",
-      "询价全部机构可直接选择；只询价部分机构时，请在自定义输入中填写表格编号或完整名称，可多选。",
+      "询价全部机构可直接选择；只询价部分机构或榜单外机构时，请在自定义输入中填写表格编号、完整名称或机构名，可多选。",
     ].join("\n"),
     [
       { label: "询价全部机构", description: "选择本轮全部候选机构并进入字段选择" },
       { label: "暂不询价", description: "本轮不发送，可按当前列表继续" },
     ],
+    true,
   );
 }
 
@@ -203,10 +204,10 @@ export function mcnRankingRecipientQuestionPayload(names) {
     return popupQuestionPayload(
       "选择询价机构",
       singleInstitution
-        ? "当前仅有 1 家候选机构，请选择是否进入询价。"
-        : "请选择本次需要询价的机构，可多选。",
+        ? "当前仅有 1 家候选机构；如需改为其他机构，请在自定义输入中填写完整名称。"
+        : "请选择本次需要询价的机构；如需补充榜单外机构，请在自定义输入中填写完整名称。",
       options,
-      !singleInstitution,
+      true,
     );
   }
   return compactMcnRecipientQuestionPayload(options.length);

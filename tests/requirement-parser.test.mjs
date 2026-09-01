@@ -88,6 +88,25 @@ test("business contracts distinguish a new function start from resumed inquiry r
   }
 });
 
+test("manual sourcing shares the reviewed relaxation policy and recreates requirements", () => {
+  const skill = projectFile("skills/media-assistant/SKILL.md");
+  const manual = projectFile("skills/media-assistant/references/tools/manual_source_creators.md");
+  const status = projectFile(
+    "skills/media-assistant/references/tools/manual_source_creators_status.md",
+  );
+
+  for (const contract of [skill, manual, status]) {
+    assert.match(contract, /实际数量.*(?:0|不足|少于)/su);
+    assert.match(contract, /自动放宽/u);
+    assert.match(contract, /新 requirement|独立的新 requirement/u);
+    assert.match(contract, /重新.*字段/u);
+  }
+  assert.match(skill, /与询价机构共享的“先复核、再逐项自动放宽”流程/u);
+  assert.match(skill, /最终结果前汇总本次累计放宽的全部条件/u);
+  assert.match(skill, /手动修改需求 \/ 改用询价机构 \/ 结束/u);
+  assert.match(manual, /不得合并不同轮次结果/u);
+});
+
 test("save artifact card binds manual_source saves to the requirement ID", () => {
   const card = projectFile("skills/media-assistant/references/tools/ypscan_save_excel_artifact.md");
 
@@ -100,6 +119,21 @@ test("save artifact card binds manual_source saves to the requirement ID", () =>
   );
   assert.match(card, /`artifact_id`.*current requirement ID.*`manual_source`/isu);
   assert.match(card, /`requirement_id`.*`submission_batch`/isu);
+});
+
+test("submission batch contracts keep the page number separate from ranking IDs", () => {
+  const skill = projectFile("skills/media-assistant/SKILL.md");
+  const batchCard = projectFile(
+    "skills/media-assistant/references/tools/create_submission_batch.md",
+  );
+  const rankCard = projectFile("skills/media-assistant/references/tools/rank_creators.md");
+
+  assert.match(skill, /`submission_batche_page` 固定传页码 `1`/u);
+  assert.match(skill, /不是 `rank_creators` 返回的 `run_id`/u);
+  assert.match(batchCard, /first\/final submission-table call uses literal `1`/iu);
+  assert.match(batchCard, /never the `rank_creators\.run_id`/iu);
+  assert.match(rankCard, /never copy it into `create_submission_batch\.submission_batche_page`/iu);
+  assert.match(rankCard, /literal page number `1`/iu);
 });
 
 test("parser and validation cards agree on explicit reference creator fields", () => {

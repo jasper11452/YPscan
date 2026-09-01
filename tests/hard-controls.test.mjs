@@ -254,7 +254,7 @@ test("validated requirements route by the previously selected business mode", ()
     question.questions[0].options.map((option) => option.label),
     ["机构 A", "暂不询价"],
   );
-  assert.equal(question.questions[0].multiSelect, false);
+  assert.equal(question.questions[0].multiSelect, true);
   assert.deepEqual(question.questions[0].options, [
     { label: "机构 A", description: "选择该机构作为本次询价收件人" },
     { label: "暂不询价", description: "本轮不发送，可按当前列表继续" },
@@ -267,6 +267,7 @@ test("validated requirements route by the previously selected business mode", ()
     platform: "douyin",
   });
   assert.match(question.questions[0].question, /当前仅有 1 家候选机构/u);
+  assert.match(question.questions[0].question, /自定义输入中填写完整名称/u);
   assert.doesNotMatch(question.questions[0].question, /下载链接/u);
   assert.doesNotMatch(question.questions[0].question, /\| 排名 \|/u);
   assert.doesNotMatch(question.questions[0].question, /匹配机构：/u);
@@ -441,8 +442,10 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   });
   const immediateText = directiveText(immediate);
   assert.match(immediateText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
-  assert.match(immediateText, /实际数量为 0 或少于 num.*建议用户放宽条件/u);
-  assert.match(immediateText, /不得猜测数量、解析 Excel、自动放宽或自动重跑/u);
+  assert.match(immediateText, /YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
+  assert.match(immediateText, /数量未知时交付当前 Excel 并结束/u);
+  assert.match(immediateText, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
+  assert.match(immediateText, /创建独立的新 requirement 并重新选择字段/u);
   assert.deepEqual(saveExcelArgsFromDirective(immediateText), {
     artifact_kind: "manual_source",
     artifact_id: "req-manual",
@@ -493,7 +496,8 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
   });
   assert.match(completedText, /不展示 Provider 下载 URL/u);
-  assert.match(completedText, /实际数量为 0 或少于 num.*建议用户放宽条件/u);
+  assert.match(completedText, /YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
+  assert.match(completedText, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
   assert.doesNotMatch(completedText, /ASK_USER_QUESTION_ARGS=/u);
 
   const saved = persist({
@@ -511,9 +515,11 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   const savedText = directiveText(saved);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_LINK=/u);
-  assert.match(savedText, /最终手动拓展结果/u);
-  assert.match(savedText, /实际数量为 0 或少于 num.*建议用户放宽条件/u);
-  assert.match(savedText, /用户明确修改条件后.*独立的新 requirement/u);
+  assert.match(savedText, /本轮真实手动拓展结果/u);
+  assert.match(savedText, /YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
+  assert.match(savedText, /达到 num 时结束.*汇总累计放宽的全部条件/u);
+  assert.match(savedText, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
+  assert.match(savedText, /创建独立的新 requirement 并重新选择字段/u);
   assert.match(savedText, /每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement/u);
   assert.doesNotMatch(savedText, /RANK_CREATORS_ARGS=/u);
   assert.doesNotMatch(savedText, /CREATE_SUBMISSION_BATCH_ARGS=/u);
@@ -730,6 +736,8 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
   assert.match(rankedText, /YPSCAN_NEXT_ACTION=APPLY_INQUIRY_RANK_POLICY/u);
   assert.match(rankedText, /RANK_REQUIREMENT_ID=req-ingest/u);
   assert.match(rankedText, /生成当前机构询价提报表/u);
+  assert.match(rankedText, /submission_batche_page 固定为页码 1/u);
+  assert.match(rankedText, /不是 rank_creators 的 run_id/u);
   assert.doesNotMatch(rankedText, /^CREATE_SUBMISSION_BATCH_ARGS=/mu);
 
   const submission = persist({
@@ -1108,9 +1116,10 @@ test("more than four inquiry recipients use a compact prompt without option trun
   assert.equal(popupPlainText(recipient.header), "选择询价机构");
   assert.doesNotMatch(popupPlainText(recipient.question), /超过.*4.*选项/u);
   assert.match(popupPlainText(recipient.question), /候选机构共 5 家/u);
+  assert.match(popupPlainText(recipient.question), /榜单外机构/u);
   assertPopupLines({ questions: [recipient] });
   names.forEach((name) => assert.doesNotMatch(recipient.question, new RegExp(name, "u")));
-  assert.equal(recipient.multiSelect, false);
+  assert.equal(recipient.multiSelect, true);
   assert.deepEqual(recipient.options, [
     { label: "询价全部机构", description: "选择本轮全部候选机构并进入字段选择" },
     { label: "暂不询价", description: "本轮不发送，可按当前列表继续" },
@@ -1118,8 +1127,9 @@ test("more than four inquiry recipients use a compact prompt without option trun
   assert.doesNotMatch(JSON.stringify(recipient.options), /机构 [A-E]/u);
   assert.match(text, /满足续办规则的后续消息/u);
   assert.match(text, /用户选中弹窗中的一个或多个当前机构/u);
+  assert.match(text, /未命中当前机构或命中对象缺少 supplier_id 的原始名称/u);
   assert.match(text, /选择“询价全部机构”.*全部当前机构/u);
-  assert.match(text, /空输入、未知机构、无法解析或存在歧义时，不得继续询价/u);
+  assert.match(text, /空输入、未明确机构、无法解析、冲突或存在歧义时，不得继续询价/u);
   assert.match(text, /重新调用本提示或结束本轮/u);
   assert.match(text, /“前 5 家”等可按当前排名唯一确定的表达/u);
   assert.match(text, /属于恢复当前询价分支/u);
@@ -1159,7 +1169,7 @@ test("recipient popup avoids collisions with its fixed stop action", () => {
     payload.questions[0].options.map((option) => popupPlainText(option.label)),
     ["询价全部机构", "暂不询价"],
   );
-  assert.equal(payload.questions[0].multiSelect, false);
+  assert.equal(payload.questions[0].multiSelect, true);
   assertPopupLines(payload);
 });
 
@@ -1317,8 +1327,10 @@ test("startup instruction selects and preserves one business mode", () => {
     /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u,
   );
   assert.match(first.prependContext, /后台 API 完成平台达人搜索、详情抓取和筛选/u);
-  assert.match(first.prependContext, /实际数量为 0 或少于 num.*建议用户放宽条件/u);
-  assert.match(first.prependContext, /不得猜测数量、解析 Excel、自动放宽或自动重跑/u);
+  assert.match(first.prependContext, /数量未知时交付当前 Excel 并结束/u);
+  assert.match(first.prependContext, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
+  assert.match(first.prependContext, /创建独立的新 requirement 并重新选择字段/u);
+  assert.match(first.prependContext, /汇总累计放宽的全部条件/u);
   assert.match(first.prependContext, /不再提供浏览器详细拓展分支/u);
   assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
   assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);
@@ -1334,8 +1346,12 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /只有这些必填数值仍缺失.*才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /满足续办规则的后续消息/u);
   assert.match(first.prependContext, /用户选中弹窗中的一个或多个当前机构/u);
+  assert.match(first.prependContext, /未命中当前机构或命中对象缺少 supplier_id 的原始名称/u);
   assert.match(first.prependContext, /选择“询价全部机构”.*全部当前机构/u);
-  assert.match(first.prependContext, /空输入、未知机构、无法解析或存在歧义时，不得继续询价/u);
+  assert.match(
+    first.prependContext,
+    /空输入、未明确机构、无法解析、冲突或存在歧义时，不得继续询价/u,
+  );
   assert.match(first.prependContext, /Dify 品牌候选唯一、合法且非空时必须原样作为 brandName/u);
   assert.match(first.prependContext, /不得询问、改写或被原文与 clarification 覆盖/u);
   assert.match(first.prependContext, /解析品牌缺失、多候选或为 null、未知等占位值时才询问/u);
@@ -1649,6 +1665,7 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /等待用户提交并回复“好了”/u);
   assert.match(text, /按原分支恢复/u);
   assert.match(text, /用户明确选中的当前 MCN/u);
+  assert.match(text, /其他原名走 supplier_name/u);
   assert.match(text, /发送前警示弹窗确认/u);
   assert.match(text, /手动拓展使用原 requirement_id 和 num/u);
   assert.ok(text.length < 900, `field-selection directive too long: ${text.length}`);
@@ -1712,7 +1729,8 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
     /sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→rank_creators→create_submission_batch/u,
   );
   assert.match(startup.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
-  assert.match(startup.prependContext, /最终手动拓展结果/u);
+  assert.match(startup.prependContext, /本轮真实手动拓展结果/u);
+  assert.match(startup.prependContext, /逐项自动放宽流程/u);
   assert.match(startup.prependContext, /不调用 rank_creators 或 create_submission_batch/u);
   assert.match(startup.prependContext, /读取.*input schema/u);
   assert.match(startup.prependContext, /需求原文.*可选字段/u);

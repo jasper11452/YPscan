@@ -35,16 +35,16 @@ const REQUIREMENT_COMPLETENESS_RULE =
 const RAW_MESSAGES_JSON_KEY_CONTRACT =
   "rawMessagesJson key 与取值严格按 validate_requirement 工具卡 rawMessagesJson 契约执行，禁止写成 original_demand 或 demand；key 写错会被本地预检当成缺失原文阻断。";
 const INQUIRY_RECIPIENT_RESPONSE_RULE =
-  "机构选择仅在用户选中弹窗中的一个或多个当前机构、选择“询价全部机构”，或用户输入成功解析为一个或多个当前机构的唯一编号或完整名称时成立；用户输入包括弹窗自定义输入和满足续办规则的后续消息。弹窗机构标签中的换行仅用于展示，匹配前必须移除换行并还原完整机构名；选择“询价全部机构”表示选择全部当前机构。空输入、未知机构、无法解析或存在歧义时，不得继续询价，应重新调用本提示或结束本轮。";
+  "机构选择仅在用户选中弹窗中的一个或多个当前机构、选择“询价全部机构”，或用户输入机构名称时成立。支持弹窗自定义输入和满足续办规则的后续消息。能解析为当前机构唯一编号或完整名称时复用当前机构映射；未命中当前机构或命中对象缺少 supplier_id 的原始名称，保留到 supplier_name 交给 Provider。弹窗换行只用于展示，匹配前移除换行还原机构名；选择“询价全部机构”表示选择全部当前机构；“暂不询价”不得与机构或“询价全部机构”同时成立。空输入、未明确机构、无法解析、冲突或存在歧义时，不得继续询价；重新调用本提示或结束本轮。";
 const INQUIRY_RECIPIENT_RESUME_RULE =
-  "用户在当前 requirement 的 rank_mcns 机构列表后选择“暂不询价”、关闭/取消弹窗或当轮未回答，之后在同一会话明确要求给该列表中的机构发询价（包括“前 5 家”等可按当前排名唯一确定的表达），且期间未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，属于恢复当前询价分支。继续使用该列表所属 requirement、平台和 rank_mcns 机构映射；不得重新调用 ypscan_parse_requirement、validate_requirement、search_creators 或 rank_mcns。已提交当前 requirement 字段配置则复用，否则再调用 select_inquiry_form_fields。“暂不询价”只暂停发送，不算明确停止整个询价功能。";
+  "当前 rank_mcns 列表后，若用户选择“暂不询价”、关闭/取消弹窗或当轮未回答，之后在同一会话明确要求给该列表机构发询价（包括“前 5 家”等可按当前排名唯一确定的表达），且期间未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，属于恢复当前询价分支。继续使用该列表所属 requirement、平台和 rank_mcns 机构映射；不得重新调用 ypscan_parse_requirement、validate_requirement、search_creators 或 rank_mcns。已提交字段配置则复用，否则再调用 select_inquiry_form_fields。“暂不询价”只暂停发送，不算明确停止整个询价功能。";
 const REQUIREMENT_CREATION_RULE =
   "每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement：即使同一会话、同一平台、业务条件未变，或刚完成/停止另一功能，也必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement。不得跨功能复用 requirement 或已提交字段配置；新 requirement 必须重新调用 select_inquiry_form_fields。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。当前 rank_mcns 列表后的暂不发送再续办按询价恢复规则处理，不属于新功能开始。";
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
 const MANUAL_SOURCE_SHORTFALL_RULE =
-  "交付时只在当前 Provider 响应明确给出可信实际数量时与本轮 num 比较：实际数量为 0 或少于 num，必须说明实际数量、目标数量和缺口，并建议用户放宽条件；不得猜测数量、解析 Excel、自动放宽或自动重跑。用户明确修改条件后，按新条件重新解析、复核并创建独立的新 requirement";
+  "只在当前 Provider 响应明确给出可信实际数量时与本轮 num 比较，不得猜测数量或解析 Excel。数量未知时交付当前 Excel 并结束；达到 num 时结束，如此前发生自动放宽，必须在最终结果前汇总累计放宽的全部条件；实际数量为 0 或少于 num 时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再按 media-assistant Skill 的“结果不足：先复核，再放宽”共享顺序逐项自动放宽。每轮提前告诉用户唯一修改项，重新解析、复核、创建独立的新 requirement 并重新选择字段，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。全部允许项用完仍不足时询问“手动修改需求 / 改用询价机构 / 结束”";
 
 const [BUSINESS_MODE_INQUIRY] = BUSINESS_MODE_VALUES;
 const PLATFORM_ALIASES = Object.freeze({
@@ -362,7 +362,7 @@ function fieldSelectionDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL 后停止业务调用，等待用户提交并回复“好了”；不得改写、包装、用 Browser 打开或替用户选择字段。",
     `FIELD_SELECTION_URL=${url}`,
-    "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN并做发送前警示弹窗确认，手动拓展使用原 requirement_id 和 num。",
+    "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN 或用户明确提供的机构名称；命中本轮榜单且有 supplier_id 的机构走 supplierIds，其他原名走 supplier_name，并做发送前警示弹窗确认，手动拓展使用原 requirement_id 和 num。",
   ].join("\n");
 }
 
@@ -411,10 +411,10 @@ function rankMcnsDirective(
   const empty = mcns.length === 0;
   const recipientNames = inquiryRecipientNames(mcns);
   const lines = [
-    "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。当前已处于询价机构分支；先把当前响应中的全部机构按原顺序输出为完整 MCN Markdown 表格，作为用户可见正文文本块，再保存排名表并选择询价收件机构。",
-    "MCN_OUTPUT_FORMAT_LOCK=用户可见结果只能是五列：排名、机构、覆盖达人、返点、综合分；排名从 1 连续编号，覆盖达人取当前机构的 candidate_count。禁止展示 supplier_id、其他字段、汇总或历史数据。",
+    "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。当前已处于询价机构分支；先按原顺序输出完整 MCN Markdown 表格，作为用户可见正文文本块，再保存排名表并选择询价收件机构。",
+    "MCN_OUTPUT_FORMAT_LOCK=只能是五列：排名、机构、覆盖达人、返点、综合分；覆盖达人取当前机构的 candidate_count。禁止展示 supplier_id、其他字段、汇总或历史数据。",
     MCN_MARKDOWN_TABLE_HEADER,
-    "机构名转 supplier ID 只允许使用本轮同一 requirement_id、同一平台响应中的唯一精确匹配；命中非空 ID 只传 supplierIds，否则传原始名称 supplier_name。不得模糊匹配、跨轮复用或自动选机构。",
+    "机构名转 supplier ID 只允许使用本轮同一 requirement_id、同一平台的唯一精确匹配；命中非空 ID 只传 supplierIds，否则传原始名称 supplier_name。不得模糊匹配、跨轮复用。",
   ];
   if (empty) {
     return [
@@ -445,7 +445,7 @@ function rankMcnsDirective(
     }
     lines.push(
       INQUIRY_RECIPIENT_RESUME_RULE,
-      "当前结果无法保存 MCN 排名表；表格后如实说明，再调用 ASK_USER_QUESTION_ARGS 选择收件机构。收到机构选择答案后，若当前对话中同一 requirement_id 已提交字段配置则复用，否则调用 select_inquiry_form_fields（参数见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得查询、缓存或重建 columns，也不得按排名或指标自行选择。",
+      "无法保存 MCN 排名表；再调用 ASK_USER_QUESTION_ARGS 选择收件机构。收到机构选择答案后，同一 requirement_id 已提交字段配置则复用，否则调用 select_inquiry_form_fields（见下方 SELECT_INQUIRY_FORM_FIELDS_ARGS）；不得查询、缓存或重建 columns，不得按排名或指标自行选择。",
       `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
       INQUIRY_RECIPIENT_RESPONSE_RULE,
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(mcnRankingRecipientQuestionPayload(recipientNames))}`,
@@ -556,7 +556,8 @@ function manualSourceCreatorsDirective(
   const excelFileUrl = providerExcelUrl(result);
   if (excelFileUrl && requirementId) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已同步返回最终手动拓展 Excel。立即保存且不展示 Provider 下载 URL；保存后原样交付并结束本次手动拓展，不调用 manual_source_creators_status、rank_creators 或 create_submission_batch。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已同步返回本轮手动拓展 Excel。立即保存且不展示 Provider 下载 URL；保存后按手动拓展结果策略决定结束或逐项自动放宽，不调用 manual_source_creators_status、rank_creators 或 create_submission_batch。",
+      "YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY",
       MANUAL_SOURCE_SHORTFALL_RULE,
       `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_source",
@@ -586,7 +587,8 @@ function manualSourceCreatorsStatusDirective(message, params = {}) {
     const artifactId = requirementId;
     if (!artifactId) return flowPauseDirective("手动拓展结果查询", message);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。该 Excel 是后台 API 搜索、详情抓取和筛选后的最终手动拓展结果；立即保存且不展示 Provider 下载 URL，保存后原样交付并结束本次手动拓展，不调用 rank_creators 或 create_submission_batch。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。该 Excel 是后台 API 搜索、详情抓取和筛选后的本轮真实手动拓展结果；立即保存且不展示 Provider 下载 URL，保存后按手动拓展结果策略决定结束或逐项自动放宽，不调用 rank_creators 或 create_submission_batch。",
+      "YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY",
       MANUAL_SOURCE_SHORTFALL_RULE,
       `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_source",
@@ -760,7 +762,7 @@ function rankCreatorsDirective(message, params = {}) {
     "YPSCAN_NEXT_ACTION=APPLY_INQUIRY_RANK_POLICY",
     `RANKED_COUNT=${Number.isFinite(rankedCount) ? rankedCount : "unknown"}`,
     `RANK_REQUIREMENT_ID=${requirementId}`,
-    "生成当前机构询价提报表；数量不足时说明实际数量和缺口，不自动放宽或重新询价。调用 create_submission_batch 时使用本行 RANK_REQUIREMENT_ID 且 submission_batche_page=1。手动拓展完成后不得调用本工具。",
+    "生成当前机构询价提报表；数量不足时说明实际数量和缺口，不自动放宽或重新询价。调用 create_submission_batch 时使用本行 RANK_REQUIREMENT_ID，首次调用的 submission_batche_page 固定为页码 1；它不是 rank_creators 的 run_id，即使 run_id 是正整数也绝不复制，达人数量、缺口、batch ID 或其他业务数字也不得作为页码。手动拓展完成后不得调用本工具。",
   ].join("\n");
 }
 
@@ -827,7 +829,8 @@ function excelArtifactSaveDirective(
   if (!localFileLink) return flowPauseDirective(stage, message);
   if (artifactKind === "manual_source") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=手动拓展 Excel 已保存。原样展示本地链接作为后台搜索、详情抓取和筛选后的最终手动拓展结果，然后结束本次手动拓展；不得调用 rank_creators、create_submission_batch 或补充达人信息弹窗。",
+      "YPSCAN_FLOW_DIRECTIVE=手动拓展 Excel 已保存。原样展示本地链接作为后台搜索、详情抓取和筛选后的本轮真实手动拓展结果；再按此前 Provider 返回的可信实际数量决定结束或逐项自动放宽。不得调用 rank_creators、create_submission_batch 或补充达人信息弹窗。",
+      "YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY",
       MANUAL_SOURCE_SHORTFALL_RULE,
       `MANUAL_SOURCE_LOCAL_PATH=${filePath}`,
       `MANUAL_SOURCE_LOCAL_LINK=${localFileLink}`,
@@ -1109,14 +1112,14 @@ export function registerFlowDirectiveHooks(api) {
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→rank_creators→create_submission_batch；用户说“填好了/已回收/生成表格”时，回收的第一个工具必须是 sync_mcn_inquiry_status。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→保存并交付最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组，机构只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中唯一精确匹配，不模糊匹配或跨轮复用。`,
+          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→rank_creators→create_submission_batch；用户说“填好了/已回收/生成表格”时，回收的第一个工具必须是 sync_mcn_inquiry_status。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→状态轮询→保存并交付最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
           REQUIREMENT_CREATION_RULE,
           INQUIRY_RECIPIENT_RESUME_RULE,
           "所有 AskUserQuestion 弹窗的 header、question、label 和 description 均主动换行，任何一行最多 20 个 Unicode 字符；长机构名可为展示插入换行，匹配前移除换行还原原名。",
           "当前 requirement 平台为小红书或抖音时，提报表保存后询问是否“补充更新达人信息”；该选项唯一映射到 get_creator_detail：用户一旦选择，立即使用本轮正整数 batch_id、同一 requirement_id 和已确认的平台缩写（小红书 xhs、抖音 dy）调用 get_creator_detail，随后使用同一 platform 和 batch_id 调用 get_creator_detail_export 轮询并保存新版表。平台缺失时不得展示该选项、不得调用补全工具或猜测平台；该选择不是提报字段配置，不得调用 select_inquiry_form_fields，不得提供“达人详情/展示字段”二选一，也不得再次追问补充什么。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
-          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成平台达人搜索、详情抓取和筛选。若同步返回 Excel 则立即保存；若返回 batch_id，先等待 30 秒，再用同一 requirement_id 和 batch_id 第 1 次查询 manual_source_creators_status，之后每隔 30 秒查询一次，累计最多 10 次。成功 Excel 保存并展示为最终手动拓展结果，随后结束本次手动拓展，不调用 rank_creators 或 create_submission_batch；第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
+          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成平台达人搜索、详情抓取和筛选。若同步返回 Excel 则立即保存；若返回 batch_id，先等待 30 秒，再用同一 requirement_id 和 batch_id 第 1 次查询 manual_source_creators_status，之后每隔 30 秒查询一次，累计最多 10 次。成功 Excel 先保存并展示为本轮真实手动拓展结果，再按可信实际数量决定结束或进入共享的逐项自动放宽流程；不调用 rank_creators 或 create_submission_batch。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
           MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
           "手动拓展 Excel 保存成功后原样展示 delivery.local_file_link，不再提供浏览器详细拓展分支，也不追加完成弹窗。",

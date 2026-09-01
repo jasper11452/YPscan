@@ -12,7 +12,7 @@
 - [ ] 仅询价分支调用 `search_creators → rank_mcns`。忽略 `search_creators` 的表格链接；`rank_mcns` 成功后按“完整机构表格 → 真实本地 `file_path` → 收件机构弹窗”输出，不再次询问业务模式。
 - [ ] 询价和手动拓展不得并行或在功能处理中切换；前一功能完成或明确停止后可按用户要求顺序切换，但必须为新功能创建新 requirement，并重新提交字段配置，不复用旧机构、达人、batch 或 Excel。“暂不询价”不算明确停止：用户后来要求“给前 5 家发询价”等可由当前列表唯一确定的机构选择时，直接恢复该 requirement 的收件机构选择与后续发送流程。询价机构为空时先复核原需求、解析输出和实际落库参数；确认正确后才按 Skill 固定顺序逐项放宽，每次只改一项并提前告知用户。
 - [ ] `select_inquiry_form_fields` 必须按当前 live schema 传 `platform` 和当前真实 `requirement_id` 建立字段关联；用户提交后由 Provider 直接持久化。只有当前同一 requirement 已有提交证据时才复用字段配置；新建 requirement（包括跨功能切换）必须重新选择。不得调用已弃用的 `get_selected_inquiry_form_fields`，不得轮询 callback，也不得在 Agent 上下文读取、重建或缓存 `columns`。
-- [ ] 手动拓展调用 `manual_source_creators` 时必须使用当前真实 `requirement_id` 和正整数 `num`；`demand` 仅在 live schema 支持且用户原文可直接透传时才作为可选字段传入。工具可能同步直接返回 Excel，也可能异步返回抖音任务批次；无论哪种都先保存并展示当前真实结果作为最终手动拓展结果。只有当前 Provider 响应明确给出可信实际数量时才与 `num` 比较；实际为 0 或不足时说明实际数量、目标数量和缺口并建议用户放宽条件，但不猜测数量、不解析 Excel、不自动放宽或重跑。用户明确修改条件后重建独立 requirement；随后不得调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
+- [ ] 手动拓展调用 `manual_source_creators` 时必须使用当前真实 `requirement_id` 和正整数 `num`；`demand` 仅在 live schema 支持且用户原文可直接透传时才作为可选字段传入。工具可能同步直接返回 Excel，也可能异步返回抖音任务批次；无论哪种都先保存并展示本轮真实结果。只有当前 Provider 响应明确给出可信实际数量时才与 `num` 比较；数量未知时不猜测、不解析 Excel、不自动放宽。实际为 0 或不足时说明实际数量、目标数量和缺口，先复核需求、解析输出、落库参数和当前结果，确认正确后按 Skill 与询价机构共享的固定顺序逐项自动放宽；每轮提前告知唯一修改项，重新解析、复核、创建独立 requirement 并重新选择字段，不合并不同轮次结果。足量时在最终结果前汇总全部累计放宽条件；随后不得调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
 - [ ] 默认 `manual_source_creators` 调用先读取实际 input schema；若存在需求原文可选字段，优先传当前完整原文到 `demand`；schema 不支持或仅因未知参数失败时，只去掉原文字段、保留同一 `requirement_id` 和 `num` 重试一次，不猜字段名、不掩盖其他业务错误。
 - [ ] `manual_source_creators` 若返回异步批次，先等待 30 秒再第 1 次调用 `manual_source_creators_status`，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`、不自动查询第 11 次、不重复提交任务或更换 ID。若同步直接返回 Excel，则跳过状态轮询并直接保存交付。
 - [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；数值字段澄清正文先说明原需求为何无法确定该值，再提示“请选择或自定义输入”，不得只问“报价上限是多少”或展示“落库”等内部术语；每题使用 3 个互斥的具体值并显式设置 `multiSelect: false`，所有选项都必须能直接回答该字段，不得用“1 个数值 + 返回修改/取消”等二按钮结构，以免宿主隐藏自定义输入入口；`header`、`question`、`label`、`description` 每行最多 20 个 Unicode 字符，长机构名的展示换行在匹配前去除；不得用普通聊天问句停住流程。
@@ -24,6 +24,7 @@
 - [ ] `supplier_id` 是企微收件机构的第一优先级：用户提供或提名机构名时，先在本轮同一 requirement ID、同一平台的 `rank_mcns` 结果中做唯一精确匹配；有非空 ID 就放入 `supplierIds` 且不再传同名 `supplier_name`，未匹配或无 ID 才把原名放入 `supplier_name`。不做本地模糊匹配，不跨需求、平台或 run 复用 ID；模糊候选选择后只使用 Provider 返回的真实 ID。
 - [ ] 所有结果、链接、文件和状态来自真实返回值，并归属于当前需求和平台；同一需求多批结果按平台稳定 ID 去重，不混入其他数据。粗召回、复核候选和最终名单须明确区分，自有 Excel 遵循客户模板。
 - [ ] 工具卡、Skill、Hook、MCP schema、数据库字段和实际流程保持一致；`rank_mcns` 必须传 `id+platform`，`select_inquiry_form_fields` 必须传 `platform+requirement_id`。小红书和抖音提报表都展示“补充更新达人信息”，`get_creator_detail` 必须同时收到当前平台缩写（`xhs`/`dy`）、当前正整数 `batch_id` 和同一 `requirement_id`，`get_creator_detail_export` 必须持续使用相同的 `platform` 与 `batch_id`；平台缺失时不得展示补全选项、调用补全工具或猜测平台，错误需分类并用用户能理解的话说明影响与下一步。
+- [ ] 首次生成最终提报表时，`create_submission_batch.submission_batche_page` 固定传从 1 开始的页码 `1`；不得把 `rank_creators.run_id`（即使为正整数）、达人数量、缺口、batch ID 或其他业务数字当页码。只有用户之后明确要求第 N 页时才传对应正整数 N。
 - [ ] 修改前定位真实原因，只做最小改动；不新增无必要的状态、缓存、账本、校验实体或权限门禁，共同逻辑保持共享。
 - [ ] 测试覆盖核心流程、导出、Provider 发送结果透传和失败路径；mock 不替代真实样本与平台验收。
 - [ ] 修改后执行 lint、typecheck、test 和 smoke；不跳过失败、不降低断言、不修改测试制造成功。
