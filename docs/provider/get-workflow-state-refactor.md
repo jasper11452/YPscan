@@ -446,203 +446,132 @@ live schema 要求：
 
 ## Provider 侧落库设计
 
-如果要把 `get_workflow_state` 做稳定，核心不是这个查询接口本身，而是 **先有统一状态写入表**。
+这里建议改一下思路：**第一阶段不要急着新建一套完整的 workflow 表**。当前数据库里已经有一批在工作的业务表，`get_workflow_state` 应该先尽量复用这些现有表，把 requirement → project → inquiry → job → batch 的链路串起来。能用现表解决的，先不要新建表。
 
-建议最少拆三层：
+### 先复用哪些现有表
 
-### 1. `workflow_runs`
+- `customer_demands`：requirement 主表；用 `id`、`status`、`platform`、`columns`、`updatedAt` 作为需求状态和字段选择的事实源。
+- `core_project`：项目主表；已存在 `requirement_id`、`status`、`platform`，用来归属 project。当前问题不是没有这个字段，而是覆盖率不够，需要先补齐新写入并回填历史可确定数据。
+- `mcn_recommendation_items`：机构排名事实表；已经有 `mcn_recommendation_id`、`mcn_run_id`、`requirement_id`、`supplier_id`、`rank_no`，先直接复用。
+- `mcn_inquiries`：询价事实表；已经有 `requirement_id`、`project_id`、`inquiry_id`、`supplierId`，可以直接拿来恢复回收链路。
+- `mcn_ingest_jobs`：入库任务表；已经有 `job_id`、`status`、`inquiry_ids_json`、`results_json`、`export_data_json`。
+- `submission_batches`：提报批次表；已经有 `batch_id`、`requirement_id`、`status`。
+- `manual_sourced_creators` / `manual_sourced_creator_full_rankings`：手动拓展批次和结果事实表；已经有 `requirement_id`、`batch_id`、`platform`。
+- `core_creatorprofiletask` / `core_creatorprofiletaskitem`：达人详情补全任务状态表；先直接复用任务状态，不单独复制一份 workflow 批次表。
+- `core_distribution` / `core_ratecarddistribution` / `core_submissionstatesnapshot`：分发和回收状态事实表；继续作为发送、打开、提交等状态来源。
+- `mcp_tool_call_ledger`：调用账本；表已经有了，只是现在还是空的，应该优先启用，而不是再造第二张账本表。
 
-一条 requirement 对应一个当前 workflow 主记录。
+### 先补最少的字段和索引，不急着造大表
 
-建议字段：
+优先只做这些最小补强：
 
-- `id`
-- `requirement_id` unique
-- `workflow_kind`
-- `platform`
-- `business_mode`
-- `phase`
-- `status`
-- `project_id` nullable
-- `current_distribution_id` nullable
-- `current_ingest_job_id` nullable
-- `current_manual_source_batch_id` nullable
-- `current_creator_detail_batch_id` nullable
-- `current_submission_batch_id` nullable
-- `summary`
-- `created_at`
-- `updated_at`
+1. `core_project.requirement_id`：对新项目改成必写，并补索引；历史数据能回填的回填，补不上的保留空值。
+2. `mcp_tool_call_ledger`：正式启用，把关键工具的 `started / succeeded / failed / result_unknown` 写进去。
+3. 如果现有 summary 字段还不够用，优先在 `mcp_tool_call_ledger` 上补最少字段，比如 `error_code`、`operation_id`、`payload_ref`，不要先建一整套新账本。
+4. 只有当“超长原文无处可挂”这个问题确实用现表解决不了时，再考虑补一张很薄的 `workflow_payloads`；它只管挂长输出，不管承载整套业务状态。
 
-### 2. `workflow_events`
+### `get_workflow_state` 先怎么拼现有事实
 
-每次关键工具成功或失败都写事件流。
+第一阶段先按 requirement 维度回表，不急着引入新的 workflow 主表：
 
-建议字段：
+- 需求和字段选择：查 `customer_demands`
+- project 和发送归属：查 `core_project`、`core_distribution`、`core_ratecarddistribution`
+- 机构排名：查 `mcn_recommendation_items`
+- inquiry 和回收：查 `mcn_inquiries`、`core_submissionstatesnapshot`
+- 入库状态：查 `mcn_ingest_jobs`
+- 达人精排：查 `recommendation_runs`、`creator_recommendation_items`
+- 提报批次：查 `submission_batches`
+- 手动拓展：查 `manual_sourced_creators`、`manual_sourced_creator_full_rankings`
+- 达人详情补全：查 `core_creatorprofiletask`、`core_creatorprofiletaskitem`
+- 调用历史和最近错误：查 `mcp_tool_call_ledger`
 
-- `id`
-- `workflow_run_id`
-- `tool_name`
-- `event_type`：`call_succeeded | call_failed | state_transition | artifact_ready`
-- `phase_before`
-- `phase_after`
-- `status_after`
-- `request_json`
-- `response_json`
-- `error_code`
-- `error_message`
-- `created_at`
+这套方案的重点是：**先把已有事实源串起来，再看还有哪些洞必须补字段，不要一开始就复制一整层 workflow 数据。**
 
-### 3. `workflow_refs`
-
-存恢复需要的外部 ID 集，避免散落在不同业务表里临时拼。
-
-建议字段：
-
-- `workflow_run_id`
-- `ref_type`：`supplier_id | inquiry_id | ingest_job_id | project_id | manual_source_batch_id | creator_detail_batch_id | submission_batch_id`
-- `ref_value`
-- `source_tool`
-- `is_current`
-- `created_at`
-
-如果想更稳一点，再拆一个 `workflow_artifacts`：
-
-- `artifact_type`
-- `provider_url`
-- `local_delivery_url`
-- `source_tool`
-- `is_final`
-
-## 各工具应该如何写状态表
+## 各工具应该如何写入现有表
 
 ### `validate_requirement`
 
-成功时：
-
-- upsert `workflow_runs(requirement_id)`
-- 写 `workflow_kind`、`platform`、`business_mode`
-- `phase = requirement_validated`
-- `status = in_progress`
+- requirement 主事实继续写 `customer_demands`
+- `get_workflow_state` 从 `customer_demands.id / status / platform / columns / updatedAt` 判断“需求是否创建”“字段是否已配置”
+- 同时补一条 `mcp_tool_call_ledger` 摘要，记录这次创建 requirement 是成功、失败还是结果未知
 
 ### `select_inquiry_form_fields`
 
-打开链接成功时：
-
-- `phase = awaiting_field_selection`
-- `status = waiting_user`
-
-字段提交回调成功时：
-
-- inquiry 分支：`phase = ready_to_search`
-- manual_source 分支：`phase = ready_to_start_manual_source`
-- `status = in_progress`
+- 字段配置继续写 `customer_demands.columns`
+- 不额外新建“字段选择状态表”
+- 打开页面、提交成功、超时失败这些过程摘要写 `mcp_tool_call_ledger`
 
 ### `search_creators`
 
-成功时：
-
-- `phase = searched_creators`
+- 第一阶段不额外造状态表
+- 如果需要保留“最近一次搜索是否成功、是否为空”，优先写进 `mcp_tool_call_ledger.response_summary_json`
 
 ### `rank_mcns`
 
-成功且有机构：
-
-- `phase = ranked_mcns`
-- 记录当前 rank 结果关联的 supplier IDs
-- `status = waiting_user`
+- 机构排名事实继续写 `mcn_recommendation_items`
+- `mcn_recommendation_id`、`mcn_run_id`、`requirement_id`、`supplier_id`、`rank_no` 已经足够支撑“是否排过、排了多少家、最新一轮是谁”
+- 关键摘要再写进 `mcp_tool_call_ledger`，避免 `get_workflow_state` 只能扫全表猜状态
 
 ### `create_with_distributions`
 
-成功时：
-
-- 记录 `project_id`
-- 记录实际 resolved supplier IDs
-- 全发成功：`phase = awaiting_submission_sync`
-- 部分成功：`phase = distribution_sent_partial`
-- `status = in_progress`
-
-若报“项目非进行中”：
-
-- `status = failed`
-- recent_errors 写 `PROJECT_NOT_ACTIVE`
+- project 归属继续写 `core_project`
+- 分发事实继续写 `core_distribution` / `core_ratecarddistribution`
+- 机构询价映射继续写 `mcn_inquiries`
+- 必须补强的是：新写入的 `core_project` 要稳定带 `requirement_id`
+- 发送结果摘要、部分成功、结果未知、错误码统一写 `mcp_tool_call_ledger`
 
 ### `sync_mcn_inquiry_status`
 
-成功时：
-
-- 回写实际 `inquiry_ids`
-- `phase = submissions_synced`
+- inquiry 主事实继续看 `mcn_inquiries`
+- 打开、填写、提交、回收完成等状态继续看 `core_submissionstatesnapshot`
+- 本次同步拿回了哪些真实 `inquiry_id`，写入 `mcp_tool_call_ledger.response_summary_json`
 
 ### `ingest_mcn_submissions`
 
-成功时：
-
-- 回写 `job_id`
-- `phase = ingest_job_running`
-- `status = waiting_provider`
+- 入库任务继续写 `mcn_ingest_jobs`
+- `job_id`、状态、涉及哪些 inquiry，直接复用现有字段
+- 同时写 ledger，明确这次是 `started`、`succeeded`、`failed` 还是 `result_unknown`
 
 ### `get_ingest_job`
 
-处理中：
-
-- 保持 `phase = ingest_job_running`
-- `status = waiting_provider`
-
-完成且有 Excel：
-
-- `phase = creator_preview_ready`
-- 记录 artifact
+- 继续更新和读取 `mcn_ingest_jobs.status / results_json / export_data_json`
+- 不再单独造“ingest workflow 表”
+- 超长结果不回 Agent 全文，优先写 summary，必要时留 `payload_ref`
 
 ### `rank_creators`
 
-成功时：
-
-- `phase = creators_ranked`
+- run 事实继续用 `recommendation_runs`
+- 明细继续用 `creator_recommendation_items`
+- `get_workflow_state` 只汇总“有没有跑、最近 run 是哪次、当前状态是什么”，不复制一份 creator ranking 状态表
 
 ### `create_submission_batch`
 
-成功时：
-
-- 记录 `submission_batch_id`
-- `phase = submission_batch_ready`
+- 提报批次继续写 `submission_batches`
+- `batch_id`、`requirement_id`、`status` 已经够用
+- 生成成功与否、导出链接摘要继续写 ledger
 
 ### `get_creator_detail`
 
-成功时：
-
-- 记录 `creator_detail_batch_id`
-- `phase = creator_detail_batch_running`
-- `status = waiting_provider`
+- 达人详情补全任务继续写 `core_creatorprofiletask`
+- 单个 item 状态继续写 `core_creatorprofiletaskitem`
+- `get_workflow_state` 只需要汇总任务级状态，不再另造 creator detail workflow 表
 
 ### `get_creator_detail_export`
 
-完成时：
-
-- `phase = creator_detail_export_ready`
+- 继续从 `core_creatorprofiletask` / `core_creatorprofiletaskitem` 读取完成态
+- 导出结果只保留摘要和引用，避免把长明细塞回上下文
 
 ### `manual_source_creators`
 
-同步 Excel：
-
-- `phase = manual_source_export_ready`
-- `status = completed`
-
-异步 batch：
-
-- 记录 `manual_source_batch_id`
-- `phase = manual_source_batch_running`
-- `status = waiting_provider`
+- 手动拓展结果继续写 `manual_sourced_creators`
+- 如果已经同步拿到最终结果，不新增状态表，直接从现表汇总 `requirement_id`、`batch_id`、`platform`
+- 异步 batch 的提交摘要写 ledger
 
 ### `manual_source_creators_status`
 
-处理中：
-
-- 保持 `manual_source_batch_running`
-
-完成 Excel：
-
-- `phase = manual_source_export_ready`
-- `status = completed`
+- 手动拓展批次状态继续看 `manual_sourced_creators` 和 `manual_sourced_creator_full_rankings`
+- 是否已经产出结果、是否已经可导出，先从现表判断
+- 最近一次轮询结果、错误和继续查询建议写 ledger
 
 ## `allowed_actions` 建议保留，但降级为派生字段
 
@@ -678,12 +607,12 @@ live schema 要求：
 
 这是最低成本、立刻能降错误率的一步。
 
-### 第二阶段：引入统一 workflow 状态写入
+### 第二阶段：先复用现有表，把 requirement 链路串起来
 
-1. 建 `workflow_runs`
-2. 建 `workflow_events`
-3. 关键工具 success/failure 全量写事件
-4. 补 requirement → project / inquiry / batch 的 refs
+1. 先补齐 `core_project.requirement_id` 的新写入和历史可回填数据
+2. 正式启用 `mcp_tool_call_ledger`
+3. 让 `get_workflow_state` 先从 `customer_demands`、`core_project`、`mcn_recommendation_items`、`mcn_inquiries`、`mcn_ingest_jobs`、`submission_batches`、`manual_sourced_*`、`core_creatorprofiletask` 读取状态
+4. 只有当现有表确实承载不了长输出引用或最近错误摘要时，再补最小字段或一张很薄的 payload 表
 
 ### 第三阶段：重写 `get_workflow_state`
 
