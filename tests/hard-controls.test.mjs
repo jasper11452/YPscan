@@ -890,7 +890,11 @@ test("successful WeCom distribution waits for inquiry retrieval without switchin
   });
   const text = directiveText(result);
   assert.match(text, /可随时回收在线表格/u);
-  assert.match(text, /sync_mcn_inquiry_status/u);
+  assert.match(text, /第一个工具必须是 sync_mcn_inquiry_status/u);
+  assert.match(
+    text,
+    /sync_mcn_inquiry_status.*ingest_mcn_submissions.*get_ingest_job.*保存机构达人预览表.*rank_creators.*create_submission_batch/u,
+  );
   assert.match(text, /不切换到手动拓展分支/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
@@ -1702,6 +1706,11 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
   assert.match(startup.prependContext, /同一 requirement_id/u);
+  assert.match(startup.prependContext, /回收的第一个工具必须是 sync_mcn_inquiry_status/u);
+  assert.match(
+    startup.prependContext,
+    /sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→rank_creators→create_submission_batch/u,
+  );
   assert.match(startup.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
   assert.match(startup.prependContext, /最终手动拓展结果/u);
   assert.match(startup.prependContext, /不调用 rank_creators 或 create_submission_batch/u);
