@@ -19,11 +19,12 @@
 
 ## 3. 询价机构链路
 
-```
+```text
 validate_requirement → search_creators → rank_mcns → 输出五列表格
 → 保存 mcn_ranking Excel → 选择收件机构 → select_inquiry_form_fields（已提交则复用）
 → 发送确认弹窗 → create_with_distributions
-→ 回收：sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job（轮询）
+→ 回收：get_workflow_state（inquiry_ids 为空时先 sync_mcn_inquiry_status 再查）
+→ ingest_mcn_submissions → get_ingest_job（轮询至 succeeded/partially_succeeded）
 → 保存 mcn_creator_preview Excel → 保存 mcn_creator_links CSV
 → 分叉：精排并生成提报表 / 只补全达人信息
 ```
@@ -34,28 +35,31 @@ validate_requirement → search_creators → rank_mcns → 输出五列表格
 - `rank_mcns` 成功后先按响应顺序输出完整五列 Markdown 表格（`排名、机构、覆盖达人、返点、综合分`），覆盖达人取本机构 `candidate_count`，缺失写“未知”；禁止展示 supplier_id、候选达人、供给占比、汇总或历史数据。空列表 → 先复核再放宽（见 §6），不得保存空排名表或猜测机构。
 - 收件机构：只在用户选中弹窗机构、选“询价全部机构”或输入机构名时成立；机构名仅在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；命中非空 `supplier_id` 传 `supplierIds`，未命中或无 ID 原名传 `supplier_name`；`supplierIds`/`supplier_name` 始终为数组。不模糊匹配、不跨轮复用。
 - 发送确认：`AskUserQuestion` 一题两选项 `确认发送`/`返回修改`，不设 multiSelect；最终机构名单与完整企微消息写入问题正文；只有“确认发送”或无条件肯定回复才调 `create_with_distributions`（`description` 与 `wechat_notification_message` 一致）。机构匹配、去重、幂等由 Provider 负责。
-- 回收：`sync_mcn_inquiry_status` 只把本次 `inquiry_ids` 传 `ingest_mcn_submissions`；`get_ingest_job` 用同一 `job_id` 轮询，单轮最多 10 次；完成后先保存预览表再保存 links CSV，两者都成功才弹分叉选择。
-- 精排分支：按 20 个一批调用平台原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）→ `ypscan_merge_creator_csv(flow=mcn_rank)` → `ypscan_upload_creator_csv` → `rank_creators({requirement_id, csv_file_path})` → 保存 `ranked_submission`。不再调用 `create_submission_batch`/`get_creator_detail`/`get_creator_detail_export`。
-- 只补全分支：原生补全 → `merge(flow=mcn_complete_only)` → 交付 merged CSV，不上传、不打分；允许同 requirement 同平台会话内继续升级精排。
+- 回收：用户确认机构已回填后第一步调 `get_workflow_state({requirement_id})`；inquiry_ids 非空 → `ingest_mcn_submissions({inquiry_ids})` → `get_ingest_job` 用同一 `job_id` 轮询至 `succeeded`/`partially_succeeded`（单轮最多 10 次）；完成后先保存预览表再保存 links CSV，两者都成功才弹分叉选择。inquiry_ids 为空（已分发项目、mcn_planning）→ 先 `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})`，再回到 `get_workflow_state → ingest`；sync 后不直接 ingest，且 mcn_planning 不等于可精排。
+- 精排分支：直接 `rank_creators({requirement_id, inquiry_ids})` → 保存 `ranked_submission`；不再走原生补全/merge/upload，也不再传 `csv_file_path`。不再调用 `create_submission_batch`/`get_creator_detail`/`get_creator_detail_export`。
+- 只补全分支：按 20 个一批调用平台原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）→ `merge(flow=mcn_complete_only)` → 交付 merged CSV，不上传、不打分；允许同 requirement 同平台会话内继续升级精排。
 - 回收后 `rank_creators` 数量不足：交付当前真实结果并说明缺口，不自动发起新一轮询价。
 
 ## 4. 手动拓展链路
 
-```
+```text
 validate_requirement → select_inquiry_form_fields（原样展示 URL，等用户回复“好了”）
-→ manual_source_creators(requirement_id, num[, demand])
+→ manual_source_creators(requirement_id[, demand])
 → 同步 links CSV：保存 manual_creator_links → 原生补全(20/批) → merge(manual_source)
-  → upload → score_manual_source_csv → 保存 manual_source Excel（最终交付）
-→ batch_id：提示后台耗时 → manual_source_creators_status 轮询 → 同上 CSV 链路
+  → upload → score_manual_source_csv → score_manual_source_csv_status 轮询
+  → 保存 manual_source Excel（最终交付）
+→ batch_id：提示后台耗时 → manual_source_creators_status({requirement_id, batch_id, num}) 30s×10 轮询
+  → 同上 CSV 链路
 → 旧 Provider 返回 Excel：降级路径，保存即交付
 ```
 
 关键约束：
 
-- `manual_source_creators` 只传新版 schema：required 为 `requirement_id:string` 与 `num:integer`；可选需求原文字段只在其 schema 明确支持时传 `demand`（当前完整未改写原文），不支持时不猜字段名。
-- 异步轮询：提交成功后等 30 秒再第 1 次查询，之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
+- `manual_source_creators` 只传新版 schema：`{requirement_id[, demand]}`，不带 `num`；可选需求原文字段只在其 schema 明确支持时传 `demand`（当前完整未改写原文），不支持时不猜字段名。
+- 异步轮询：提交返回 batch_id 后等 30 秒再第 1 次查询 `manual_source_creators_status({requirement_id, batch_id, num})`（`num` 必填正整数 = 每批 URL 数量；Hook 按当前 requirement 落库 `quantityTotal` 预填 `MANUAL_SOURCE_CREATORS_STATUS_ARGS` 的 `num`，与用户最新确认不同时以最新确认为准），之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
+- 打分阶段：`score_manual_source_csv({requirement_id, csv_file_path})` 返回 job_id 后，按 30s×10 轮询 `score_manual_source_csv_status({job_id})`，终态后保存 manual_source Excel。
 - links CSV 到达后：先 `ypscan_save_csv_artifact(manual_creator_links)` 并原样展示本地链接；原生补全每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止 merge/upload/打分并报告失败达人。
-- merge 后若数据行 > 500 必须在上传前阻断，如实交付当前 merged CSV；未超限才 `ypscan_upload_creator_csv`，再把 `csv_file_path` 传 `score_manual_source_csv`；成功才保存最终手动拓展 Excel。
+- merge 后若数据行 > 500 必须在上传前阻断，如实交付当前 merged CSV；未超限才 `ypscan_upload_creator_csv`（`flow=manual_source`），再把 `csv_file_path` 传 `score_manual_source_csv`；`csv_file_path` 只接受当前 `ypscan_upload_creator_csv` 返回值（Provider 进程可读的 HTTP(S) URL 或同机路径），绝不传本机工作区路径或自行构造的路径；`score_manual_source_csv_status` 轮询终态成功后才保存最终手动拓展 Excel。
 - 生产环境无上传契约时 `ypscan_upload_creator_csv` 返回 `YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`（见 [tools.md](./tools.md)），不得猜测真实接口。
 - 降级路径：旧 Provider 同步/异步返回 Excel 时，仅保存并交付当前 Excel，不进 CSV 补全/打分链路，不调 `manual_source_creators_status`、`rank_creators` 或 `create_submission_batch`。
 - 手动拓展 Excel 保存后即为最终手动拓展结果；不再精排、不生成提报表、不触发放宽。

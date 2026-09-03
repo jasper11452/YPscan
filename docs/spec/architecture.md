@@ -13,7 +13,7 @@ OpenClaw 宿主
        └─ skills/media-assistant（业务行为权威，随包发布）
 
 远端：
-  ├─ Provider MCP  https://mcp.eshypdata.com/mcp（Streamable HTTP，13 个白名单工具）
+  ├─ Provider MCP  https://mcp.eshypdata.com/mcp（Streamable HTTP，14 个白名单工具）
   └─ Dify Workflow  https://dfi.eshypdata.com/v1/workflows/run（需求解析）
 ```
 
@@ -22,7 +22,7 @@ OpenClaw 宿主
 | 组件 | 职责 | 关键事实 |
 | --- | --- | --- |
 | `index.js` | 入口：注册工具与 Hook | 5 工具、5 Hook；`gateway_start`/`gateway_stop` 调 `resetTransientState()` |
-| `openclaw.plugin.json` | 插件清单 | Provider MCP 白名单 13 工具；`connectionTimeoutMs: 5000`、`requestTimeoutMs: 330000`；`configSchema` 仅 `testMode`/`testAdapterBaseUrl`；`contracts.tools` 列 5 个本地工具 |
+| `openclaw.plugin.json` | 插件清单 | Provider MCP 白名单 14 工具；`connectionTimeoutMs: 5000`、`requestTimeoutMs: 330000`；`configSchema` 仅 `testMode`/`testAdapterBaseUrl`；`contracts.tools` 列 5 个本地工具 |
 | `src/tools/parse-requirement.js` | 需求解析代理 | 直连 Dify（blocking 模式，60s 超时），`data.outputs` 只返回契约消费字段 |
 | `src/tools/save-excel-artifact.js` | Excel 受控保存 | 5 种 artifact_kind；主域校验、禁止重定向、20 MiB/20s 上限、有限重试、原子发布与幂等 |
 | `src/tools/save-csv-artifact.js` | links CSV 受控保存 | 2 种 artifact_kind；约束同 Excel 保存 |
@@ -52,20 +52,22 @@ OpenClaw 宿主
 业务模式确定 → ypscan_parse_requirement → 复核 → validate_requirement（预检+归一化）
 → search_creators → rank_mcns → 五列机构表 + 保存 mcn_ranking Excel
 → 选择收件机构 → select_inquiry_form_fields（已提交则复用）→ 发送确认弹窗
-→ create_with_distributions → sync_mcn_inquiry_status → ingest_mcn_submissions
-→ get_ingest_job（轮询）→ 保存 mcn_creator_preview Excel → 保存 mcn_creator_links CSV
+→ create_with_distributions → get_workflow_state（空 inquiry_ids 先 sync_mcn_inquiry_status）
+→ ingest_mcn_submissions → get_ingest_job（轮询至 succeeded/partially_succeeded）
+→ 保存 mcn_creator_preview Excel → 保存 mcn_creator_links CSV
 → 分叉：精排并生成提报表 / 只补全达人信息
-   精排：原生补全(20/批) → merge(mcn_rank) → upload → rank_creators → 保存 ranked_submission
-   只补全：原生补全 → merge(mcn_complete_only) → 交付 merged CSV
+   精排：rank_creators({requirement_id, inquiry_ids}) → 保存 ranked_submission
+   只补全：原生补全(20/批) → merge(mcn_complete_only) → 交付 merged CSV
 ```
 
 ### 手动拓展链路
 
 ```
 业务模式确定 → ypscan_parse_requirement → 复核 → validate_requirement（预检+归一化）
-→ select_inquiry_form_fields → manual_source_creators(requirement_id, num[, demand])
+→ select_inquiry_form_fields → manual_source_creators(requirement_id[, demand])
 → 同步返回 links CSV：保存 manual_creator_links → 原生补全(20/批) → merge(manual_source)
-  → upload → score_manual_source_csv → 保存 manual_source Excel（最终交付）
+  → upload → score_manual_source_csv → score_manual_source_csv_status 30s×10 轮询
+  → 保存 manual_source Excel（最终交付）
 → 返回 batch_id：提示后台耗时 → manual_source_creators_status 30s×10 轮询 → 同上 CSV 链路
 → 旧 Provider 返回 Excel：降级路径，保存即交付，不进 CSV 链路
 ```
@@ -92,7 +94,7 @@ OpenClaw 宿主
 
 ### 5.4 CSV 中心链路（替代旧 Excel 直接链路）
 
-- **选择**：links CSV 是达人补全与排序的正式中间产物；`rank_creators` / `score_manual_source_csv` 消费上传后的 `csv_file_path`；`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export` 从白名单移除。
+- **选择**：links CSV 是达人补全与排序的正式中间产物；`score_manual_source_csv` 消费上传后的 `csv_file_path`，`rank_creators` 改为消费 `{requirement_id, inquiry_ids}` 并由 `score_manual_source_csv_status` 轮询打分 job 终态；`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export` 从白名单移除。
 - **为什么**：达人补全结果需要可合并、可校验行数；CSV 显式上传后打分/精排，交付物与评分口径一致。
 - **代价**：链路更长；upload 在生产暂无端点契约（见 README 未决问题），旧 Provider 返回 Excel 时保留降级保存路径。
 
@@ -114,4 +116,4 @@ OpenClaw 宿主
 
 ## 7. 可观测性
 
-插件不包含独立日志、指标或告警设施；工具结果经 `hostToolResult` 序列化为 JSON 文本交回宿主，可观测性依赖宿主与 Provider 侧日志。异步任务（`manual_source_creators_status`、`get_ingest_job`）的轮询上限由指令约束，插件不自行记账。
+插件不包含独立日志、指标或告警设施；工具结果经 `hostToolResult` 序列化为 JSON 文本交回宿主，可观测性依赖宿主与 Provider 侧日志。异步任务（`manual_source_creators_status`、`get_ingest_job`、`score_manual_source_csv_status`）的轮询上限由指令约束，插件不自行记账。

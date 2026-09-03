@@ -4,19 +4,19 @@
 
 ## 1. 常量
 
-| 常量 | 值 | 说明 |
-| --- | --- | --- |
-| `BUSINESS_MODE_VALUES` | `["询价机构", "手动拓展"]` | 用户侧业务模式 |
-| `PROVIDER_MANUAL_BUSINESS_MODE` | `直接手扒` | 手动拓展的 Provider 兼容线值，仅出站边界映射，Agent 不得使用或展示 |
-| `HOST_PREFIXES` | `mcp__ypscan__`、`ypscan__`、`mcp__ypmcn__`、`ypmcn__`、`test__` | 工具名前缀（命名空间），按最后一个 `__` 后段匹配实际工具名 |
-| 平台别名 | `xhs`/`小红书`→`xiaohongshu`；`dy`/`抖音`→`douyin` | 归一化规则 |
-| `MAX_FOLLOWER_COUNT` | `999_999_999` | 粉丝技术上限 |
-| `UNRESTRICTED_FOLLOWERCOUNT_RANGE` | `"[0,999999999]"` | 粉丝无要求时的落库值 |
-| `TOOL_REGISTRY` | 18 个业务工具名 | 含已弃用工具名，供 `stripHostPrefix` 做宿主工具名匹配；不代表白名单 |
+| 常量                               | 值                                                               | 说明                                                                |
+| ---------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `BUSINESS_MODE_VALUES`             | `["询价机构", "手动拓展"]`                                       | 用户侧业务模式                                                      |
+| `PROVIDER_MANUAL_BUSINESS_MODE`    | `直接手扒`                                                       | 手动拓展的 Provider 兼容线值，仅出站边界映射，Agent 不得使用或展示  |
+| `HOST_PREFIXES`                    | `mcp__ypscan__`、`ypscan__`、`mcp__ypmcn__`、`ypmcn__`、`test__` | 工具名前缀（命名空间），按最后一个 `__` 后段匹配实际工具名          |
+| 平台别名                           | `xhs`/`小红书`→`xiaohongshu`；`dy`/`抖音`→`douyin`               | 归一化规则                                                          |
+| `MAX_FOLLOWER_COUNT`               | `999_999_999`                                                    | 粉丝技术上限                                                        |
+| `UNRESTRICTED_FOLLOWERCOUNT_RANGE` | `"[0,999999999]"`                                                | 粉丝无要求时的落库值                                                |
+| `TOOL_REGISTRY`                    | 19 个业务工具名                                                  | 含已弃用工具名，供 `stripHostPrefix` 做宿主工具名匹配；不代表白名单 |
 
 ## 2. Provider MCP 白名单（manifest `toolFilter.include`）
 
-`validate_requirement`、`search_creators`、`rank_mcns`、`select_inquiry_form_fields`、`create_with_distributions`、`sync_mcn_inquiry_status`、`ingest_mcn_submissions`、`get_ingest_job`、`manual_source_creators`、`manual_source_creators_status`、`score_manual_source_csv`、`rank_creators`、`get_workflow_state`（共 13 个）。
+`validate_requirement`、`search_creators`、`rank_mcns`、`select_inquiry_form_fields`、`create_with_distributions`、`sync_mcn_inquiry_status`、`ingest_mcn_submissions`、`get_ingest_job`、`manual_source_creators`、`manual_source_creators_status`、`score_manual_source_csv`、`score_manual_source_csv_status`、`rank_creators`、`get_workflow_state`（共 14 个）。
 
 明确不暴露：`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export`、`get_selected_inquiry_form_fields`（已弃用）。
 
@@ -27,6 +27,8 @@
 ### 必填（10 个）
 
 `status`、`platform`、`brandName`、`projectName`、`quantityTotal`、`submissionDeadlineAt`、`rebate`、`followercount`、`contentTag`、`rawMessagesJson`。
+
+> Provider v1.9.4 schema 的 required 为 8 个（不含 `brandName`、`followercount`）；本地预检仍按上表 10 个必填执行，不随 Provider 放宽。
 
 - `status` 固定 `"ready"`；`projectName` 由 Agent 根据需求自行总结生成，不弹窗询问。
 - `platform` 只允许 `xiaohongshu` / `douyin`。
@@ -57,17 +59,17 @@
 
 ## 4. 归一化行为（`normalizeToolCallParams`，仅 validate_requirement）
 
-| 字段 | 规则 |
-| --- | --- |
-| `platform` | 别名归一化到 `xiaohongshu`/`douyin` |
-| `status` | 缺失/空时补 `"ready"` |
-| `brandName` | 单元素字符串数组解包；优先采用当前平台 Dify 唯一合法品牌 |
-| `quantityTotal` | 归一化为正整数字符串；非法则删除该字段（交预检报错） |
-| 区间字段 | 标量→`[v,v]` 起步；百分号字符串（如 `"20%"`、`"10%-30%"`）解析并换算比例；中文区间 `-~～至到` 解析；`rebate`→`"[min,1]"`；粉丝“无/不限”→`"[0,999999999]"`；粉丝超上限截断到 `999999999`；CPM/CPE 标量→`"[0,v]"`；报价标量→`[floor(v×0.7), ceil(v×1.2)]`（Provider 检索单价只按原价下 30%/上 20% 扩展一次，不回写需求参数） |
-| `submissionDeadlineAt` | 归一化为 `YYYY-MM-DD HH:mm:ss`，仅当晚于当前时间 |
-| 标签数组 | 字符串化 JSON 数组解包；Dify `parse_outputs` 中的标签/品牌/数值唯一值时自动补入缺失字段（抖音按视频类型对齐 L2/L3） |
-| `rawMessagesJson` | `business_mode` 出站映射为 Provider 兼容线值（序列化为字符串在 `before_tool_call` 完成） |
-| 空值清洗 | 非必填字段的 `null`/`"null"` 删除 |
+| 字段                   | 规则                                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `platform`             | 别名归一化到 `xiaohongshu`/`douyin`                                                                                                                                                                                                                                                                                        |
+| `status`               | 缺失/空时补 `"ready"`                                                                                                                                                                                                                                                                                                      |
+| `brandName`            | 单元素字符串数组解包；优先采用当前平台 Dify 唯一合法品牌                                                                                                                                                                                                                                                                   |
+| `quantityTotal`        | 归一化为正整数字符串；非法则删除该字段（交预检报错）                                                                                                                                                                                                                                                                       |
+| 区间字段               | 标量→`[v,v]` 起步；百分号字符串（如 `"20%"`、`"10%-30%"`）解析并换算比例；中文区间 `-~～至到` 解析；`rebate`→`"[min,1]"`；粉丝“无/不限”→`"[0,999999999]"`；粉丝超上限截断到 `999999999`；CPM/CPE 标量→`"[0,v]"`；报价标量→`[floor(v×0.7), ceil(v×1.2)]`（Provider 检索单价只按原价下 30%/上 20% 扩展一次，不回写需求参数） |
+| `submissionDeadlineAt` | 归一化为 `YYYY-MM-DD HH:mm:ss`，仅当晚于当前时间                                                                                                                                                                                                                                                                           |
+| 标签数组               | 字符串化 JSON 数组解包；Dify `parse_outputs` 中的标签/品牌/数值唯一值时自动补入缺失字段（抖音按视频类型对齐 L2/L3）                                                                                                                                                                                                        |
+| `rawMessagesJson`      | `business_mode` 出站映射为 Provider 兼容线值（序列化为字符串在 `before_tool_call` 完成）                                                                                                                                                                                                                                   |
+| 空值清洗               | 非必填字段的 `null`/`"null"` 删除                                                                                                                                                                                                                                                                                          |
 
 ## 5. 预检规则（`validateRequirementPreflight`）
 
@@ -87,3 +89,12 @@
 ## 6. 宿主工具名匹配
 
 `stripHostPrefix` 先做全名精确匹配，再按 `前缀__业务名` 后缀匹配；不匹配返回 null（Hook 不处理）。这使 Provider 工具与本地工具在不同宿主命名空间下都能被 Hook 识别。
+
+## 7. 关键 Provider 工具契约（v1.9.4）
+
+- `rank_mcns`：`data.mcns` 每项字段 = `mcn_recommendation_id`、`supplier_id`、`agency_name`、`candidate_count`、`rank_no`、`rank_score`、`rebate_rate`；成功另有 `mcns_download_url`（`mcns_export_path` 兼容）。五列表格映射：排名=`rank_no`（缺省按响应顺序）、机构=`agency_name`、覆盖达人=`candidate_count`、返点=`rebate_rate`、综合分=`rank_score`。
+- `rank_creators`：props = `inquiry_ids`（array|null）/ `requirement_id`（string|null），required = []，不再消费 `csv_file_path`。
+- `create_with_distributions`：required = [`requirement_id`, `description`, `wechat_notification_message`]；`supplierIds`/`supplier_name` 可选，业务规则不变（两侧恒传数组、空侧 `[]`、至少一侧非空）。
+- `manual_source_creators`：`{requirement_id[, demand]}`（无 `num`）；异步返回 `batch_id` 时用 `manual_source_creators_status({requirement_id, batch_id, num})` 轮询，`num` 必填正整数（= 每批 URL 数量）。Hook 按当前 requirement 落库的 `quantityTotal` 预填 `MANUAL_SOURCE_CREATORS_STATUS_ARGS` 的 `num`，与用户最新确认不同时以最新确认为准；未预填时由 Agent 补上。
+- `score_manual_source_csv`：`{requirement_id, csv_file_path}` → 返回 `job_id`；`score_manual_source_csv_status({job_id})` 轮询至终态 → final workbook URL。`csv_file_path` 只接受当前 `ypscan_upload_creator_csv` 返回值（Provider 进程可读的 HTTP(S) URL 或同机路径），绝不传本机工作区路径；当前生产上传契约缺失（`YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`）时不得猜测真实接口。
+- 回收链：`get_workflow_state({requirement_id})` → inquiry_ids 非空 → `ingest_mcn_submissions({inquiry_ids})` → `get_ingest_job` 轮询至 `succeeded`/`partially_succeeded`；inquiry_ids 为空（已分发项目、mcn_planning）→ `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})` → 再 `get_workflow_state` → ingest（sync 后不直接 ingest；mcn_planning 不等于可精排）。

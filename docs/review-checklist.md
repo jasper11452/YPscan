@@ -1,31 +1,53 @@
 # 用户要求 Review Checklist
 
-- [ ] 每次真正开始新的询价机构或手动拓展都重新解析、复核并创建独立的新 requirement；同一会话、同一平台、条件未变且前一功能完成或明确停止后只要求另一功能时，也不复用旧 requirement 或已提交字段配置。当前 `rank_mcns` 机构列表后的“暂不询价”、关闭/取消弹窗或当轮未回答仅暂停发送；后续明确选择该列表机构且需求、平台未变、没有更新的功能或 requirement 时，沿用原 requirement 和机构映射，不重新解析、落库、搜索或排名。用户主动修改任何业务条件时，回到用户原始需求并合并最新人工修改，撤销自动放宽后再建需。解析复核发现错误时先按原需求纠正，纠正不算自动放宽。解析返回的合法标签数组直接采用，不向用户确认；可选标签（包括小红书 `pgyBloggerTypeLabel` 或抖音 `xtTalentTypeLabel`）缺失或为 `null` 时直接省略，不做映射、不推断、不询问。数值字段缺失、模糊、冲突或需要选择映射时才调用 `AskUserQuestion`，不从历史数据推断，也不要求确认整份 Brief；同平台多达人类型保留一个 requirement、原始总量和合并标签，不拆分或重复落库。
-- [ ] `rebate`、`followercount`、报价、CPM、CPE 及其他数值筛选字段在第一次 `validate_requirement` 调用前全部规范成无空格 JSON 区间字符串 `"[min,max]"` 且 `min < max`，返点固定为 `"[min,1]"`；禁止 `[v,v]`，也禁止向 Provider 传数组、对象、单值、百分号文本或自然语言并来回试类型。
-- [ ] 品牌、项目名、达人数量、截止时间和可选项目日期与 `rawMessagesJson.original` 或非空 `clarifications` 中的明确值一致；空澄清键、解析数值默认值和 Agent 推断不算用户证据。解析标签不适用这条证据门禁。
-- [ ] 抖音报价、CPM、CPE 固定使用 L2=植入视频、L3=定制视频，不传 `kolOfficialPriceL1`、`cpmL1`、`cpeL1`；小红书不传任何 L3 字段，模糊档期不转换成具体日期。
-- [ ] 同平台多个达人类型只有总量时，只建立一个 requirement，保留原始总量并合并所有类型标签和条件；不得按类型拆分、重复落库或重复搜索。
-- [ ] 金额、数量、比例、范围、平台、合作形式和指标档位按当前契约正确解析；纯格式差异由本地边界一次性规范化，未知或不支持的字段省略或保留在 Brief 中。
-- [ ] Provider 检索单价只按原价向下 30%、向上 20% 扩展一次；手动拓展结果不得把这个区间回写到需求参数。
-- [ ] 解析结果完整透传给本地完整预检；所有字段一次性通过后才调用 Provider。预检阻断时 Provider 未写入，先弹窗收齐全部用户值；真实 Provider 错误只根据明确错误处理，禁止逐字段或逐类型盲试。
-- [ ] 用户明确说出“询价机构”或“手动拓展”时直接采用，旧说法仅作为输入别名映射到“手动拓展”；未明确、同时出现两种模式或语义冲突时才用 `AskUserQuestion` 选择，回答前不解析或落库。确定后以用户侧模式作为 `ypscan_parse_requirement.business_mode` 执行 `parse → 复核 → validate`，`rawMessagesJson.business_mode` 使用同一用户侧值并进入当前功能；插件只在 Provider 出站边界映射兼容线值。后续即使条件未变，真正开始任一新功能仍重复这套建需流程；当前机构列表后的暂不发送再续办不属于新功能开始。
-- [ ] 仅询价分支调用 `search_creators → rank_mcns`。忽略 `search_creators` 的表格链接；`rank_mcns` 成功后按“完整机构表格 → 真实本地 `file_path` → 收件机构弹窗”输出，不再次询问业务模式。
-- [ ] 询价和手动拓展不得并行或在功能处理中切换；前一功能完成或明确停止后可按用户要求顺序切换，但必须为新功能创建新 requirement，并重新提交字段配置，不复用旧机构、达人、batch、CSV 或 Excel。“暂不询价”不算明确停止：用户后来要求“给前 5 家发询价”等可由当前列表唯一确定的机构选择时，直接恢复该 requirement 的收件机构选择与后续发送流程。询价机构为空时先复核原需求、解析输出和实际落库参数；确认正确后才按 Skill 固定顺序逐项放宽，每次只改一项并提前告知用户。
-- [ ] `select_inquiry_form_fields` 必须按当前 live schema 传 `platform` 和当前真实 `requirement_id` 建立字段关联；用户提交后由 Provider 直接持久化。只有当前同一 requirement 已有提交证据时才复用字段配置；新建 requirement（包括跨功能切换）必须重新选择。不得调用已弃用的 `get_selected_inquiry_form_fields`，不得轮询 callback，也不得在 Agent 上下文读取、重建或缓存 `columns`。
-- [ ] 手动拓展调用 `manual_source_creators` / `manual_source_creators_status` 成功后，正式链路优先消费本轮真实 `creator_links_csv_url`：先保存 `manual_creator_links`，再按平台分 20 个 author 一批调用原生达人补全工具（小红书 `get_xhs_author_business_card` 且固定 `page_count=1`；抖音 `get_douyin_author_business_card`），再 `ypscan_merge_creator_csv → ypscan_upload_creator_csv → score_manual_source_csv → 保存最终 Excel`。只有旧 Provider 仍直接返回 Excel 时才走兼容降级路径；降级路径不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
-- [ ] `manual_source_creators` 若返回异步批次，先等待 30 秒再第 1 次调用 `manual_source_creators_status`，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`、不自动查询第 11 次、不重复提交任务或更换 ID。若同步直接返回 links CSV，则跳过状态轮询并直接进入 CSV 保存与补全链路。
-- [ ] 机构回收固定执行 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → 保存 mcn_creator_links CSV → 让用户选择“精排并生成提报表 / 只补全达人信息”`。选精排时继续当前 requirement 和当前平台做原生达人补全、merge、显式上传，再把 `csv_file_path` 传给 `rank_creators`，并保存最终 Excel 为 `ranked_submission`；选只补全时交付 merged CSV 并结束。正式链路不得再调用 `create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`。
-- [ ] `ypscan_upload_creator_csv` 必须在上传前阻断空 CSV 和数据行 `> 500` 的 merged CSV。当前仓库在无生产上传契约时必须明确报 `YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`，不得猜测真实上传接口或伪造 `csv_file_path`。
-- [ ] 需要用户决策或补充信息时必须调用 `AskUserQuestion` 弹窗，提供简短、可执行的选项；数值字段澄清正文先说明原需求为何无法确定该值，再提示“请选择或自定义输入”，不得只问“报价上限是多少”或展示“落库”等内部术语；每题使用 3 个互斥的具体值并显式设置 `multiSelect: false`，所有选项都必须能直接回答该字段，不得用“1 个数值 + 返回修改/取消”等二按钮结构，以免宿主隐藏自定义输入入口；`header`、`question`、`label`、`description` 每行最多 20 个 Unicode 字符，长机构名的展示换行在匹配前去除；不得用普通聊天问句停住流程。
-- [ ] Agent 必须自主完成所有可执行步骤并持续推进；不得随意要求用户代为操作、整理信息、输入“完成”或帮助排错。仅在缺少必要授权、必要输入、登录或真实 CAPTCHA 等无法自主完成的情况下暂停。
-- [ ] 企微发送只调用 `create_with_distributions`；发送前必须用警示弹窗确认（一次 `AskUserQuestion` 只含一个问题、恰好两个选项“确认发送/返回修改”、不设 `multiSelect`），最终机构名称列表和完整企微消息写入问题正文，不得把机构或消息拆成选项；`description` 与 `wechat_notification_message` 内容一致。本地 `before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或发送内容确认门禁；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]` 且至少一侧非空。
-- [ ] 机构名匹配、合并去重和同一 requirement_id/机构幂等由 Provider 负责；模糊、不唯一、部分成功和重复发送结果原样展示，不重发已成功机构。
-- [ ] `rank_mcns` 机构表格严格只展示排名、机构、覆盖达人、返点、综合分；排名按响应顺序从 1 开始，缺失写“未知”，不得另行展示匹配机构数、推荐数量或其他汇总。
-- [ ] `rank_mcns` 每行覆盖人数只取当前机构自己的 `candidate_count` 原值；`mcn_covered_creator_count` 是累计字段，不得用作本机构人数，不得与前序机构累加，也不得用其他累计/聚合覆盖字段或相邻行差值替代。
-- [ ] `supplier_id` 是企微收件机构的第一优先级：用户提供或提名机构名时，先在本轮同一 requirement ID、同一平台的 `rank_mcns` 结果中做唯一精确匹配；有非空 ID 就放入 `supplierIds` 且不再传同名 `supplier_name`，未匹配或无 ID 才把原名放入 `supplier_name`。不做本地模糊匹配，不跨需求、平台或 run 复用 ID；模糊候选选择后只使用 Provider 返回的真实 ID。
-- [ ] 所有结果、链接、文件和状态来自真实返回值，并归属于当前需求和平台；同一需求多批结果按平台稳定 ID 去重，不混入其他数据。粗召回、复核候选和最终名单须明确区分，自有 Excel 遵循客户模板。
-- [ ] 工具卡、Skill、Hook、MCP schema、数据库字段和实际流程保持一致；`rank_mcns` 必须传 `id+platform`，`select_inquiry_form_fields` 必须传 `platform+requirement_id`，`rank_creators` 必须消费上传后的 `csv_file_path`，`score_manual_source_csv` 必须消费上传后的 `csv_file_path`。机构回收的后续选择固定是“精排并生成提报表 / 只补全达人信息”；平台缺失时不得猜测原生补全工具或继续精排。
-- [ ] 修改前定位真实原因，只做最小改动；不新增无必要的状态、缓存、账本、校验实体或权限门禁，共同逻辑保持共享。
-- [ ] 测试覆盖核心流程、Excel/CSV 保存链路、Provider 发送结果透传和失败路径；mock 不替代真实样本与平台验收。
-- [ ] 修改后执行 lint、typecheck、test 和 smoke；不跳过失败、不降低断言、不修改测试制造成功。
-- [ ] 发布前验证真实安装流程和包内容；Review 结论必须基于当前代码、真实响应或可复现测试，并区分已验证、推断、未知和外部依赖。
+> 角色约定：**用户**＝发起需求/选择/确认/修改的人；**Agent**＝OpenClaw 模型（按工具卡与 Hook 指令执行）；**界面**＝宿主渲染的弹窗、Markdown 表格与本地文件链接（由插件载荷与 Hook 指令决定）；**后端**＝Provider MCP（搜索/排名/发送/入库/打分/手动拓展任务）与 Dify（需求解析）。
+>
+> 每一条按「触发 → 各角色行为」写：**用户/Agent/后端 做了什么时**，Agent、界面、后端各自会怎样。核对时逐条打勾。
+
+## 一、用户动作触发
+
+- [ ] **用户第一次提出询价机构或手动拓展（真正开始新功能）**：Agent 必须先 `ypscan_parse_requirement → 复核 → validate_requirement` 创建独立的新 requirement，不复用旧 requirement、字段配置、机构、达人、batch、CSV 或 Excel；两功能不得并行或处理中切换，前一功能完成/停止后切换也必须重新建需并重新提交字段配置；界面不弹窗（模式不明除外）；后端只在新 requirement 落库后收到搜索/发送等调用。
+- [ ] **用户同时给出多个达人类型、只给总量**：Agent 只建一个 requirement，保留原始总量、合并全部类型标签与条件，不拆分、不重复落库、不重复搜索；后端不收到子需求或多份落库。
+- [ ] **用户明确说出模式**（“询价机构/机构询价/MCN 询价”→“询价机构”；“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”→“手动拓展”）：Agent 直接采用，旧说法只作输入别名，不弹窗；**用户未明确、两种模式同时出现或语义冲突**：界面弹二选一（询价机构/手动拓展），Agent 回答前不解析、不落库。选定后用户侧模式同时进 `ypscan_parse_requirement.business_mode` 与 `rawMessagesJson.business_mode`；后端只在出站边界把“手动拓展”映射为兼容线值，Agent 不得使用或展示该内部值。
+- [ ] **用户在 `rank_mcns` 列表后选“暂不询价”、关闭/取消弹窗或当轮未回答，之后明确要求给该列表机构发询价（如“前 5 家”，可按当前排名唯一确定），且需求、平台未变、没有更新的功能或 requirement**：Agent 恢复当前询价分支——沿用原 requirement、平台和 `rank_mcns` 机构映射，不重新解析、落库、搜索或排名；已提交字段配置复用，否则再调 `select_inquiry_form_fields`；界面重新进入收件机构选择。任一条件不满足则按真正的新功能重新建需。
+- [ ] **用户主动修改任何业务条件**：Agent 回到用户原始需求、合并最新人工修改、撤销本轮全部自动放宽，重新解析、复核并创建新 requirement；后端收到新落库。
+- [ ] **用户提供或提名机构名**：Agent 先在本轮同一 requirement、同一平台的 `rank_mcns` 结果中做唯一精确匹配——命中非空 `supplier_id` 放 `supplierIds`（不再传同名 `supplier_name`），未命中或无 ID 的原名放 `supplier_name`；不做本地模糊匹配、不跨需求/平台/run 复用 ID；模糊候选由用户选择后，Agent 只使用 Provider 返回的真实 ID；后端负责最终机构匹配。
+- [ ] **用户在字段选择页提交并回复“好了”**：Agent 按原分支恢复——询价进入发送确认，手动拓展用原 `requirement_id` 调 `manual_source_creators`；字段配置已由后端直接持久化，Agent 不得在上下文读取、重建或缓存 `columns`、不得轮询 callback、不得调已弃用的 `get_selected_inquiry_form_fields`。
+- [ ] **用户选中机构、选“询价全部机构”或输入机构名称**：界面选项成立，Agent 才继续询价；空输入、未明确、无法解析、冲突或歧义时 Agent 不得继续询价，重新弹机构选择或结束本轮；“暂不询价”不得与机构/“询价全部机构”同时成立。
+- [ ] **用户说机构已回填、“填好了”或“生成表格”**：Agent 第一步调 `get_workflow_state({requirement_id})`，随后按后端返回进入回收链（见“三、后端结果触发”）。
+- [ ] **用户点“确认发送”或明确说“可以发/发吧/按这个发/就这样发送”**：Agent 调用一次 `create_with_distributions`；否定、修改或带条件的表达不算确认，界面重新弹确认。后端负责企微发送、机构匹配、去重与幂等。
+- [ ] **用户在回收分叉选“精排并生成提报表”**：Agent 直接 `rank_creators({requirement_id, inquiry_ids})`（不传 `csv_file_path`、不走补全/merge/upload），后端精排后 Agent 保存最终 Excel 为 `ranked_submission`，界面展示本地链接并结束；**选“只补全达人信息”**：Agent 按 20 个一批原生补全 → `merge(flow=mcn_complete_only)` → 交付 merged CSV，不上传、不打分，同 requirement 同平台可继续升级精排。
+
+## 二、Agent 动作触发
+
+- [ ] **Agent 调用 `validate_requirement` 前**：必须先对照“用户当前完整需求、本次解析输出、即将发送的参数”三份内容复核；发现错误按原需求纠正后重新解析（纠正不算放宽）。所有数值字段（`rebate`、`followercount`、报价、CPM、CPE 等）第一次调用前一次性规范为无空格区间字符串 `"[min,max]"` 且 `min < max`（返点固定 `"[min,1]"`），禁止 `[v,v]`、数组、对象、单值、百分号文本或自然语言。抖音只用 L2=植入、L3=定制，不传 L1 档位；小红书不传任何 L3 字段；模糊档期不转换成具体日期。金额、数量、比例、范围、平台、合作形式与指标档位按当前契约解析，纯格式差异由本地边界一次性规范化，未知或不支持的字段省略或保留在 Brief 中。
+- [ ] **Agent 调用 `validate_requirement` 时**：界面（插件预检）一次性校验全部必填字段与格式——通过才放行，阻断则 Provider 未写入，Agent 先用弹窗收齐全部用户值再重提，禁止逐字段、逐类型盲试；品牌、项目名、数量、截止时间、可选项目日期必须有 `rawMessagesJson.original` 或非空 `clarifications` 中的明确值证据，空澄清键、解析默认值、Agent 推断不算证据（解析标签不适用此证据门禁）；后端只收到一次完整合法写入，真实 Provider 错误只按明确错误处理。
+- [ ] **Agent 处理解析输出**：八个可选 Label 数组原样落库（保留元素与顺序），缺失或 `null` 直接省略，不做映射、不推断、不询问；唯一合法数值直接采用；只有数值缺失、多候选、冲突或需选择映射时才弹数值澄清；`contentTag` 缺失/无效时重新解析，不问用户、不自补；未知字段不向 Provider 塞。后端收到的字段与解析结果一致。
+- [ ] **Agent 调 `search_creators` 成功后**：忽略 `creators_export_path` 等表格链接，直接用同一 requirement 调 `rank_mcns({id, platform})`；仅询价分支允许调用 `search_creators`。后端检索单价只按原价下 30%、上 20% 扩展一次；Agent 不得把该扩展区间回写需求参数。
+- [ ] **Agent 调 `select_inquiry_form_fields`**：必须按当前 live schema 传 `platform` 与当前真实 `requirement_id`；新建 requirement（含跨功能切换）必须重新选择，只有同一 requirement 已有提交证据时才复用；后端持久化字段配置。
+- [ ] **Agent 调 `manual_source_creators`**：只传 `{requirement_id[, demand]}`，不带 `num`；`demand` 只传当前完整未改写的用户原文，不传解析输出或 `rawMessagesJson`，schema 不支持 `demand` 时不猜字段名；后端异步生成或同步返回 links CSV。
+- [ ] **Agent 调 `manual_source_creators_status`**：`num` 必传（每批 URL 数量，正整数）；提交后先等 30 秒再第 1 次查询，之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不查第 11 次、不重复提交或换 ID；后端返回终态 links CSV 后 Agent 保存 `manual_creator_links`，再按平台分 20 个 author 一批原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）。
+- [ ] **Agent 调原生达人补全工具**：每批只信 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止后续 merge/upload/打分，界面如实报告失败达人。
+- [ ] **Agent 调 `ypscan_merge_creator_csv`**：merged CSV 数据行超过 500 必须在上传前阻断并交付当前 merged CSV；未超限才 `ypscan_upload_creator_csv`，用后端返回的服务器侧 `csv_file_path` 调 `score_manual_source_csv({requirement_id, csv_file_path})`。
+- [ ] **Agent 调 `score_manual_source_csv`**：后端返回 `job_id` 时按 30 秒间隔、单轮最多 10 次轮询 `score_manual_source_csv_status({job_id})`，终态后才保存 manual_source Excel；后端同步返回 Excel 时直接保存（兼容降级路径，不进 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗）。
+- [ ] **Agent 调 `ypscan_upload_creator_csv`**：空 CSV 与数据行 >500 在上传前阻断；生产无上传契约时必须如实报 `YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`，不猜测真实上传接口、不伪造 `csv_file_path`；`score_manual_source_csv` 依赖上传后的服务器侧路径，生产契约缺失时该步同样不可用，如实报告缺口。
+- [ ] **Agent 需要用户输入或决策**：必须用 `AskUserQuestion` 弹窗，提供简短可执行选项——数值澄清正文先说明原需求为何无法确定该值，再提示“请选择或自定义输入”，不得只问“报价上限是多少”或展示“落库”等内部术语；每题 3 个互斥且可直接回答该字段的具体值、显式 `multiSelect:false`，禁用“1 个数值 + 返回修改/取消”二按钮结构；`header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符，长机构名换行在匹配前还原；不得用普通聊天问句停住流程。界面按该载荷渲染。
+- [ ] **Agent 调 `create_with_distributions`**（required=`requirement_id`、`description`、`wechat_notification_message`）：发送前必须弹警示确认——一次 `AskUserQuestion` 只一个问题、恰好两个选项“确认发送/返回修改”、不设 `multiSelect`；最终机构名单与完整企微消息写入问题正文，不得拆成选项；`description` 与 `wechat_notification_message` 内容一致；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]`、至少一侧非空。本地 `before_tool_call` 只做 `validate_requirement` 预检，不做发送内容确认门禁；后端执行发送。
+- [ ] **Agent 发现机构/达人结果不足**：禁止直接放宽——先复核原需求、解析输出与实际落库参数，确认正确后才按固定顺序逐项放宽（刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`），每项只调一次并提前告知用户；平台、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag` 与主达人类型标签永不放宽；每轮放宽建新 requirement 重跑，足量后界面在结果前汇总全部放宽记录。
+
+## 三、后端结果触发
+
+- [ ] **后端 `rank_mcns` 返回结果**：Agent 只输出五列 Markdown 表格（排名、机构、覆盖达人、返点、综合分），映射固定为 排名=`rank_no`（缺失按响应顺序）、机构=`agency_name`、覆盖达人=`candidate_count`、返点=`rebate_rate`、综合分=`rank_score`，缺失写“未知”；覆盖人数只取当前机构 `candidate_count` 原值，不得用累计字段 `mcn_covered_creator_count`、不得与前序累加、不得用相邻行差值替代；不得展示 `supplier_id`、匹配机构数、推荐数量、推荐理由或其他汇总。界面顺序为：完整表格 → 保存 `mcn_ranking` → 本地链接 → 收件机构弹窗，不再询问业务模式；列表为空时 Agent 进入复核与放宽，不保存空排名表、不猜测机构。
+- [ ] **后端 `get_workflow_state` 返回非空 `inquiry_ids`**：Agent 只把本次响应的 `inquiry_ids` 传给 `ingest_mcn_submissions`（不跨轮拼接、不用 trace_id），再 `get_ingest_job` 用同一 `job_id` 轮询至 `succeeded`/`partially_succeeded`，完成后先保存机构达人预览表、再保存 `mcn_creator_links` CSV，两者都成功才弹“精排并生成提报表 / 只补全达人信息”。**返回空 `inquiry_ids`（已分发项目、mcn_planning）**：Agent 先 `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})`，再回到 `get_workflow_state` 取 `inquiry_ids` 才 ingest；sync 后不直接 ingest，`mcn_planning` 单独出现不等于可精排。正式链路不再调用 `create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`。
+- [ ] **后端返回真实错误、幂等冲突（如 `INQUIRY_ALREADY_SENT`）或部分成功**：Agent 原样展示逐机构真实状态，不自动重发已成功机构、不把部分成功说成全成功；模糊/不唯一候选由界面展示供用户选择，后端只收选中的真实 ID；机构名匹配、合并去重、同一 requirement/机构幂等全部由后端负责。
+- [ ] **后端 `rank_creators` 成功后**：Agent 保存最终提报 Excel 为 `ranked_submission` 并结束本轮机构回填精排；不再调 `create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`。
+
+## 四、Agent 自律与工程验证
+
+- [ ] **Agent 执行全程**：自主完成所有可执行步骤并持续推进，不要求用户代为操作、整理信息、输入“完成”或排错；仅在缺少必要授权、必要输入、登录或真实 CAPTCHA 时暂停。
+- [ ] **Agent 使用结果**：所有结果、链接、文件与状态只用当前 requirement、当前平台、本轮真实 Provider 证据；同一需求多批结果按平台稳定 ID 去重，不混入其他需求/平台/账号/历史 run 数据；粗召回、复核候选与最终名单明确区分；自有 Excel 遵循客户模板。
+- [ ] **Agent/工程契约一致**：工具卡、Skill、Hook、MCP schema、数据库字段与实际流程一致；Provider 白名单含 `score_manual_source_csv_status` 且不含已弃用工具（smoke 断言覆盖）；`rank_mcns` 传 `id+platform`，`select_inquiry_form_fields` 传 `platform+requirement_id`，`rank_creators` 传 `{requirement_id, inquiry_ids}` 且不消费 `csv_file_path`，`score_manual_source_csv` 消费上传后的 `csv_file_path` 并用 `score_manual_source_csv_status({job_id})` 轮询终态；平台缺失时不得猜测原生补全工具或继续精排。
+- [ ] **修改代码时**：先定位真实原因，只做最小改动；不新增无必要的状态、缓存、账本、校验实体或权限门禁，共同逻辑保持共享。
+- [ ] **测试**：覆盖核心流程、Excel/CSV 保存链路、Provider 发送结果透传与失败路径；mock 不替代真实样本与平台验收。
+- [ ] **修改后验证**：执行 lint、typecheck、test、smoke 且全绿；不跳过失败、不降低断言、不修改测试制造成功。
+- [ ] **发布前**：验证真实安装流程与包内容；Review 结论基于当前代码、真实响应或可复现测试，并区分已验证、推断、未知与外部依赖。

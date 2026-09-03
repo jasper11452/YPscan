@@ -60,6 +60,11 @@ assert.equal(
   true,
   "manual-source CSV scoring must be exposed from the Provider MCP",
 );
+assert.equal(
+  manifest.mcpServers.ypscan.toolFilter.include.includes("score_manual_source_csv_status"),
+  true,
+  "manual-source CSV scoring job status polling must be exposed from the Provider MCP",
+);
 for (const removed of ["create_submission_batch", "get_creator_detail", "get_creator_detail_export"]) {
   assert.equal(
     manifest.mcpServers.ypscan.toolFilter.include.includes(removed),

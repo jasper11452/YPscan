@@ -23,7 +23,7 @@ ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远�
 
 ### 当前现状
 
-- Provider MCP 提供达人搜索、机构排名、询价发送、手动拓展、异步入库等后端能力，插件侧只做白名单接入（manifest `toolFilter` 暴露 13 个 Provider 工具）。
+- Provider MCP 提供达人搜索、机构排名、询价发送、手动拓展、异步入库等后端能力，插件侧只做白名单接入（manifest `toolFilter` 暴露 14 个 Provider 工具）。
 - 需求解析由固定 Dify Workflow 完成（`ypscan_parse_requirement` 直连代理，不落本地库）。
 - 交付物（Excel、CSV）由 Provider 返回下载 URL，插件负责受控下载与本地保存。
 
@@ -39,7 +39,7 @@ ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远�
 
 ### 为什么是现在
 
-Provider 侧已落地 CSV 中心链路（`score_manual_source_csv`、`rank_creators` 消费上传后的 `csv_file_path`），插件侧完成 5 工具 5 Hook 的对齐改造，是固化 Spec 的时点。
+Provider 侧已落地 CSV 中心链路（`score_manual_source_csv` 消费上传后的 `csv_file_path` 并经 `score_manual_source_csv_status` 轮询；`rank_creators` 消费 `{requirement_id, inquiry_ids}`），插件侧完成 5 工具 5 Hook 的对齐改造，是固化 Spec 的时点。
 
 ## 2. 目标与成功标准
 
@@ -48,7 +48,7 @@ Provider 侧已落地 CSV 中心链路（`score_manual_source_csv`、`rank_creat
 1. **链路固定**：两条业务链路每一步的下一步由 Hook 按真实工具结果动态给出（`*_ARGS` 指令），Agent 不被允许自由发散。
 2. **写入前预检**：`validate_requirement` 在本地完成完整性、格式与证据校验，不通过则阻断，Provider 不收到写入。
 3. **交付受控**：Excel/CSV 只从 `eshypdata.com` 主域 HTTPS 下载、禁止重定向、限量限时、原子发布、同内容幂等，且始终附带可点击的 `local_file_link`。
-4. **CSV 中心链路**：links CSV → 原生达人补全 → merge → 显式上传 → 打分/精排，500 行上限在上传前阻断。
+4. **CSV 中心链路**：手动拓展 links CSV → 原生达人补全 → merge → 显式上传 → 打分（`score_manual_source_csv_status` 轮询 job 终态）；询价回收 inquiry_ids → `rank_creators` 精排；500 行上限在上传前阻断。
 5. **双功能独立建需**：每次真正开始询价机构或手动拓展都重新解析、复核并创建独立 requirement，禁止跨功能复用。
 
 ### 成功标准（可验证）
@@ -61,7 +61,7 @@ Provider 侧已落地 CSV 中心链路（`score_manual_source_csv`、`rank_creat
 ## 3. 非目标（Non-goals）
 
 - **不做 Provider 后端业务逻辑**：搜索、排序、打分、入库、企微发送匹配/去重/幂等全部由 Provider 负责；插件不预检发送内容，`before_tool_call` 只做 `validate_requirement` 预检，不含功能互斥或发送确认门禁。
-- **不持久化 workflow 状态**：Hook 只保留会话内的瞬态路由映射（模式/平台/CSV URL），gateway 启停即清空，不落盘、不跨 run。
+- **不持久化 workflow 状态**：Hook 只保留会话内的瞬态路由映射（模式/平台/CSV URL/inquiry_ids/job_id→requirement_id），gateway 启停即清空，不落盘、不跨 run。
 - **不暴露已弃用工具**：`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export`、`get_selected_inquiry_form_fields` 不在 Provider 白名单。
 - **不重新启用遗留 native Browser 手扒分支**：`src/tools/manual-browser-*`、`manual-research*`、`select-cascade.js`、`set-filter-range.js` 等保留在仓库但不注册、不进发布包（`playwright-core` 仅为该遗留分支保留）。
 - **不实现生产 CSV 暂存端点**：`ypscan_upload_creator_csv` 当前只有测试模式 mock 上传；无生产契约时明确报错而非猜测接口（见 Open Questions）。
@@ -111,6 +111,7 @@ Provider 侧已落地 CSV 中心链路（`score_manual_source_csv`、`rank_creat
 | 风险/未决项 | 现状与影响 | 决策归属 |
 | --- | --- | --- |
 | 生产 CSV 暂存端点契约未定义 | 非测试模式下 `ypscan_upload_creator_csv` 返回 `YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`，CSV 链路在生产环境到上传一步会中断 | Provider 侧定义 `/upload` 契约后接入 |
+| 打分需要服务器侧 `csv_file_path` | `score_manual_source_csv` 消费上传后的服务器侧 `csv_file_path`；生产上传契约缺失时打分步（含 `score_manual_source_csv_status` 轮询）在生产暂不可用 | 同上传契约一并解决 |
 | 契约三处手工对齐 | 工具卡（`skills/media-assistant/references/tools/`）、Hook 指令、Provider MCP schema 靠人工保持一致，历史上反复出漂移 bug | 维护者 + Provider；长期看 schema 校验/对齐自动化 |
 | 瞬态状态生命周期 | `businessModeByScope` 等映射在 gateway 启停时清空；宿主若在长会话中不重启，映射随会话持续存在 | 宿主行为确认 |
 | 外部依赖可用性 | Dify 60s 超时、Provider 请求 330s 超时；两者不可用时链路暂停（`flowPauseDirective` 给重试/结束选项） | Provider/Dify 运维 |

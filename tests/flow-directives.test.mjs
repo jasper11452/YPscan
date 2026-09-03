@@ -128,19 +128,69 @@ test("non-active project failure only triggers a workflow-state diagnostic", () 
   });
 });
 
-test("workflow-state success keeps the raw diagnostic without a repeated directive", () => {
+test("workflow state routes ingest, sync recovery or pauses by inquiry id presence", () => {
   const { hooks } = registeredPlugin();
-  const message = toolMessage({
-    success: true,
-    data: { requirement_id: "req-status", allowed_actions: ["create_with_distributions"] },
-  });
+  const persist = hooks.get("tool_result_persist");
 
-  assert.equal(
-    hooks.get("tool_result_persist")({
-      toolName: "get_workflow_state",
-      message,
+  const withIds = persist({
+    toolName: "get_workflow_state",
+    params: { requirement_id: "req-wf" },
+    message: toolMessage({
+      success: true,
+      data: { requirement_id: "req-wf", inquiry_ids: [12, "13", 12] },
     }),
-    undefined,
+  });
+  const withIdsText = directiveText(withIds);
+  assert.match(withIdsText, /已返回非空 inquiry_ids/u);
+  assert.deepEqual(namedArgsFromDirective(withIdsText, "INGEST_MCN_SUBMISSIONS_ARGS"), {
+    inquiry_ids: ["12", "13"],
+  });
+  assert.doesNotMatch(withIdsText, /GET_WORKFLOW_STATE_ARGS=/u);
+  assert.doesNotMatch(withIdsText, /ASK_USER_QUESTION_ARGS=/u);
+
+  const fromInquiries = persist({
+    toolName: "get_workflow_state",
+    params: { requirement_id: "req-wf" },
+    message: toolMessage({
+      success: true,
+      data: { inquiries: [{ inquiry_id: 7 }, { inquiry_id: "8" }] },
+    }),
+  });
+  assert.deepEqual(
+    namedArgsFromDirective(directiveText(fromInquiries), "INGEST_MCN_SUBMISSIONS_ARGS"),
+    { inquiry_ids: ["7", "8"] },
+  );
+
+  const empty = persist({
+    toolName: "get_workflow_state",
+    params: { requirement_id: "req-wf" },
+    message: toolMessage({ success: true, data: { requirement_id: "req-wf", inquiry_ids: [] } }),
+  });
+  const emptyText = directiveText(empty);
+  assert.match(emptyText, /空 inquiry_ids/u);
+  assert.match(emptyText, /先调用 sync_mcn_inquiry_status/u);
+  assert.match(emptyText, /sync 成功后必须回到 get_workflow_state 取 inquiry_ids/u);
+  assert.match(emptyText, /mcn_planning 单独出现不等于可以精排/u);
+  assert.deepEqual(namedArgsFromDirective(emptyText, "GET_WORKFLOW_STATE_ARGS"), {
+    requirement_id: "req-wf",
+  });
+  assert.doesNotMatch(emptyText, /INGEST_MCN_SUBMISSIONS_ARGS=/u);
+
+  const unparsable = persist({
+    toolName: "get_workflow_state",
+    params: { requirement_id: "req-wf" },
+    message: toolMessage({
+      success: true,
+      data: { requirement_id: "req-wf", allowed_actions: ["create_with_distributions"] },
+    }),
+  });
+  const unparsableText = directiveText(unparsable);
+  assert.match(unparsableText, /get_workflow_state 已暂停/u);
+  assert.deepEqual(
+    namedArgsFromDirective(unparsableText, "ASK_USER_QUESTION_ARGS").questions[0].options.map(
+      (option) => option.label,
+    ),
+    ["重试", "结束本次"],
   );
 });
 

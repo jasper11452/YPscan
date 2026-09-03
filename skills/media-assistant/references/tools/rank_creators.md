@@ -2,14 +2,14 @@
 
 Risk tier: automatic Provider operation.
 
-Use only after the current inquiry retrieval branch has produced a merged creator CSV, `ypscan_upload_creator_csv` has returned a trusted `csv_file_path`, and the user chose the ranking branch. Direct-sourcing compatibility Excel is already a final manual result and must not enter this tool.
+Use only in the current inquiry retrieval's ranking branch after `get_workflow_state` returned non-empty `inquiry_ids`, `ingest_mcn_submissions` succeeded, and `get_ingest_job` reached the terminal `succeeded` or `partially_succeeded` state. Direct-sourcing compatibility Excel is already a final manual result and must not enter this tool.
 
 ## Arguments
 
 - `requirement_id`: exact current requirement ID from this inquiry branch.
-- `csv_file_path`: exact uploaded CSV path returned by the current `ypscan_upload_creator_csv` result.
+- `inquiry_ids`: the complete non-empty `inquiry_ids` array from the current `get_workflow_state` result.
 
-Do not pass `submission_batche_page`, `batch_id`, `inquiry_ids`, local file paths, local CSV content, or a Provider `trace_id`.
+Do not pass `csv_file_path`, `submission_batche_page`, or `batch_id`. The ranking input is the current requirement ID plus this round's `get_workflow_state` inquiry IDs only; no uploaded CSV path is accepted.
 
 ## Result
 

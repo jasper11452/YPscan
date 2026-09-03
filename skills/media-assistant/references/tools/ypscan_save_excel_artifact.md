@@ -2,7 +2,7 @@
 
 Risk tier: local trusted-endpoint save.
 
-Use this tool after `rank_mcns`, `get_ingest_job`, `rank_creators`, `score_manual_source_csv`, `manual_source_creators`, or `manual_source_creators_status` returns a Provider Excel download URL. Never use this tool for the workbook returned by `search_creators`. For `rank_mcns`, first output the complete five-column Markdown table, then save without displaying the ranking URL; show its local link before the recipient question.
+Use this tool after `rank_mcns`, `get_ingest_job`, `rank_creators`, `score_manual_source_csv`, `score_manual_source_csv_status`, `manual_source_creators`, or `manual_source_creators_status` returns a Provider Excel download URL. Never use this tool for the workbook returned by `search_creators`. For `rank_mcns`, first output the complete five-column Markdown table, then save without displaying the ranking URL; show its local link before the recipient question.
 
 ## Arguments
 
@@ -26,7 +26,7 @@ On success, show the returned absolute `delivery.local_file_link` at the point r
 
 - `mcn_ranking` may return `delivery.next_tool="AskUserQuestion"` and `delivery.next_args`; call it after showing the local link.
 - `mcn_creator_preview` ends the Excel-save step only; the next fixed action is to save the same round's links CSV through `ypscan_save_csv_artifact`.
-- `manual_source` is a final delivery artifact in the compatibility Excel path; do not route it into `rank_creators` or any enrichment flow.
+- `manual_source` is the final manual-sourcing delivery (scored workbook or compatibility Excel path); do not route it into `rank_creators` or any enrichment flow.
 - `ranked_submission` is the final ranked institutional submission workbook and ends the inquiry-ranking branch after local delivery.
 
 Stop on URL, size, response, path, symlink, or content-conflict errors. Do not fall back to Browser, shell, curl, `web_fetch`, Python, or a generic file writer.

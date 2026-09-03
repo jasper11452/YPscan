@@ -22,7 +22,7 @@ const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
 const REQUIREMENT_PREFLIGHT_BLOCKED = "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED";
 const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"，且 min < max';
 const MANUAL_SOURCE_ORIGINAL_TEXT_RULE =
-  "调用默认 manual_source_creators 前先读取实际 input schema：required 只使用 requirement_id:string 与 num:integer；若 schema 明确提供承载需求原文的可选字段，则只在该字段传当前完整、未改写的用户原始需求文本作为 demand。只传原文，不传解析输出或 rawMessagesJson；schema 不支持该字段时只传 requirement_id 和 num，不得猜字段名。";
+  "调用默认 manual_source_creators 前先读取实际 input schema：required 只使用 requirement_id:string；若 schema 明确提供用于需求原文的可选字段 demand，则只在该字段传当前完整、未改写的用户原始需求文本。只传原文，不传解析输出或 rawMessagesJson；schema 不支持 demand 时只传 requirement_id，不得猜字段名。";
 const SINGLE_REQUIREMENT_TYPE_RULE =
   "同平台多个达人类型只创建一个 requirement：保留用户给出的总量，合并全部类型标签与条件，不拆分子需求、不重复落库、不重复搜索；本规则覆盖任何旧的平均分配或批量子需求指令。";
 const PARSED_METRIC_REUSE_RULE =
@@ -44,13 +44,18 @@ const REQUIREMENT_CREATION_RULE =
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
+const MANUAL_SOURCE_STATUS_NUM_RULE =
+  "manual_source_creators_status 的 num 必传：取本轮目标交付数量（正整数）。Hook 已按当前 requirement 落库的 quantityTotal 预填 MANUAL_SOURCE_CREATORS_STATUS_ARGS 的 num；与用户最新确认的目标数量不同时以最新确认为准。未预填时调用前必须补上 num，不得省略或传 0。";
+const SCORE_MANUAL_SOURCE_POLL_RULE =
+  "这是异步轮询，不调用 AskUserQuestion、不重新提交 score_manual_source_csv，也不得猜测或更换 job_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
 const MANUAL_SOURCE_SHORTFALL_RULE =
   "只在当前 Provider 响应明确给出可信实际数量时与本轮 num 比较，不得猜测数量或解析 Excel。数量未知时交付当前 Excel 并结束；达到 num 时结束，如此前发生自动放宽，必须在最终结果前汇总累计放宽的全部条件；实际数量为 0 或少于 num 时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再按 media-assistant Skill 的“结果不足：先复核，再放宽”共享顺序逐项自动放宽。每轮提前告诉用户唯一修改项，重新解析、复核、创建独立的新 requirement 并重新选择字段，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。全部允许项用完仍不足时询问“手动修改需求 / 改用询价机构 / 结束”";
 const CREATOR_CSV_LIMIT = 500;
 const MANUAL_SOURCE_FLOW = "manual_source";
 const MCN_COMPLETE_ONLY_FLOW = "mcn_complete_only";
+const MCN_RANK_FLOW = "mcn_rank";
 
-const [BUSINESS_MODE_INQUIRY] = BUSINESS_MODE_VALUES;
+const [BUSINESS_MODE_INQUIRY, BUSINESS_MODE_MANUAL] = BUSINESS_MODE_VALUES;
 const PLATFORM_ALIASES = Object.freeze({
   xiaohongshu: "xiaohongshu",
   xhs: "xiaohongshu",
@@ -411,7 +416,7 @@ function rankMcnsDirective(
   const recipientNames = inquiryRecipientNames(mcns);
   const lines = [
     "YPSCAN_FLOW_DIRECTIVE=rank_mcns 成功。当前已处于询价机构分支；先按原顺序输出完整 MCN Markdown 表格，作为用户可见正文文本块，再保存排名表并选择询价收件机构。",
-    "MCN_OUTPUT_FORMAT_LOCK=只能是五列：排名、机构、覆盖达人、返点、综合分；覆盖达人取当前机构的 candidate_count。禁止展示 supplier_id、其他字段、汇总或历史数据。",
+    "MCN_OUTPUT_FORMAT_LOCK=只能是五列：排名、机构、覆盖达人、返点、综合分；字段映射固定：排名=rank_no（缺省按响应顺序）、机构=agency_name、覆盖达人=candidate_count、返点=rebate_rate、综合分=rank_score。禁止展示 supplier_id、其他字段、汇总或历史数据。",
     MCN_MARKDOWN_TABLE_HEADER,
     "机构名转 supplier ID 只允许使用本轮同一 requirement_id、同一平台的唯一精确匹配；命中非空 ID 只传 supplierIds，否则传原始名称 supplier_name。不得模糊匹配、跨轮复用。",
   ];
@@ -547,6 +552,7 @@ function manualSourceCreatorsDirective(
   params = {},
   recordedPlatform = null,
   requirementPlatform = null,
+  quantityTotalLookup = (_requirementId) => null,
 ) {
   const result = parsedToolResult(message);
   if (result?.success !== true) {
@@ -562,7 +568,7 @@ function manualSourceCreatorsDirective(
       return [
         "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 缺少字段配置。用同一 requirement_id 调用 select_inquiry_form_fields，不得原参数重试。",
         `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
-        "原样展示字段选择 URL；收到“好了”后再用原 requirement_id 和 num 调用 manual_source_creators；可选需求原文只使用 demand。",
+        "原样展示字段选择 URL；收到“好了”后再用原 requirement_id 调用 manual_source_creators；可选需求原文只使用 demand。",
       ].join("\n");
     }
     return flowPauseDirective("手动拓展", message);
@@ -598,13 +604,20 @@ function manualSourceCreatorsDirective(
   }
   const batchId = manualSourceBatchId(result);
   if (batchId == null || !requirementId) return flowPauseDirective("手动拓展", message);
+  const statusArgs = { requirement_id: requirementId, batch_id: batchId };
+  const quantityTotal = quantityTotalLookup(requirementId);
+  if (quantityTotal != null) statusArgs.num = quantityTotal;
   return [
-    `YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已提交后台任务（仅返回 batch_id）。先告知用户“后台手动拓展耗时较长，您可以先不用管，我会继续轮询。”，再按 MANUAL_SOURCE_CREATORS_STATUS_ARGS 轮询；${MANUAL_SOURCE_POLL_RULE}。`,
-    `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify({ requirement_id: requirementId, batch_id: batchId })}`,
+    `YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已提交后台任务（仅返回 batch_id）。先告知用户“后台手动拓展耗时较长，您可以先不用管，我会继续轮询。”，再按 MANUAL_SOURCE_CREATORS_STATUS_ARGS 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
+    `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify(statusArgs)}`,
   ].join("\n");
 }
 
-function manualSourceCreatorsStatusDirective(message, params = {}) {
+function manualSourceCreatorsStatusDirective(
+  message,
+  params = {},
+  quantityTotalLookup = (_requirementId) => null,
+) {
   const result = parsedToolResult(message);
   const requirementId = firstString(
     result?.requirement_id,
@@ -641,9 +654,13 @@ function manualSourceCreatorsStatusDirective(message, params = {}) {
   }
   if (result?.error?.code === "BATCH_NOT_READY") {
     if (batchId == null || !requirementId) return flowPauseDirective("手动拓展结果查询", message);
+    const statusArgs = { requirement_id: requirementId, batch_id: batchId };
+    // 上一轮实际使用的 num 是用户最新确认值，优先于落库 quantityTotal；两者都缺失时保留规则文案兜底。
+    const num = positiveInteger(params?.num) ?? quantityTotalLookup(requirementId);
+    if (num != null) statusArgs.num = num;
     return [
-      `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY）。由当前对话累计查询次数；未到第 10 次时等待 30 秒后继续使用同一 ID 轮询；${MANUAL_SOURCE_POLL_RULE}。`,
-      `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify({ requirement_id: requirementId, batch_id: batchId })}`,
+      `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY）。由当前对话累计查询次数；未到第 10 次时等待 30 秒后继续使用同一 ID 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
+      `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify(statusArgs)}`,
     ].join("\n");
   }
   return flowPauseDirective("手动拓展结果查询", message);
@@ -709,12 +726,12 @@ function distributionDirective(message, params = {}) {
     return lines.join("\n");
   }
   lines.push(
-    "全部机构发送成功。告知用户可随时回收在线表格；用户之后说“填好了”“已回收”或“生成表格”时，第一个工具必须是 sync_mcn_inquiry_status，随后固定执行 ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → 保存 links CSV → 弹出精排或只补全选择；不切换到手动拓展分支。",
+    "全部机构发送成功。告知用户可随时回收在线表格；用户之后说“填好了”“已回收”或“生成表格”时，第一个工具必须是 get_workflow_state，随后按新回收链执行：get_workflow_state 返回非空 inquiry_ids 时 ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → 保存 links CSV → 弹出精排或只补全选择；inquiry_ids 为空时先 sync_mcn_inquiry_status 再回到 get_workflow_state；不切换到手动拓展分支。",
   );
   return lines.join("\n");
 }
 
-function manualSourceCompletionDirective(message, params = {}) {
+function manualSourceCompletionDirective(message, _params = {}, recordedMode = null) {
   const result = parsedToolResult(message);
   if (result?.success !== true) return flowPauseDirective("达人原生补全", message);
   // SKILL.md 契约字段是 csv_file；兼容响应里使用 csv_file_path 的形态。
@@ -740,20 +757,35 @@ function manualSourceCompletionDirective(message, params = {}) {
       `FAILED_AUTHOR_IDS=${JSON.stringify(failedAuthorIds.map((value) => String(value)))}`,
     ].join("\n");
   }
+  const mergeFlow =
+    recordedMode === BUSINESS_MODE_MANUAL
+      ? MANUAL_SOURCE_FLOW
+      : recordedMode === BUSINESS_MODE_INQUIRY
+        ? MCN_COMPLETE_ONLY_FLOW
+        : null;
   return [
     "YPSCAN_FLOW_DIRECTIVE=本批达人原生补全成功。记录本批 csv_file，汇总全部补全批次后再调用 ypscan_merge_creator_csv。部分成功保留成功 CSV，不自动重试整批。",
     `COMPLETION_CSV_FILE=${csvFilePath}`,
     `SUCCESSFUL_AUTHOR_IDS=${JSON.stringify(successfulAuthorIds.map((value) => String(value)))}`,
     `FAILED_AUTHOR_IDS=${JSON.stringify(failedAuthorIds.map((value) => String(value)))}`,
-    `YPSCAN_MERGE_FLOW=${params?.flow ?? ""}`,
+    ...(mergeFlow != null
+      ? [`YPSCAN_MERGE_FLOW=${mergeFlow}`]
+      : [
+          `YPSCAN_MERGE_FLOW 未确定：按当前对话业务分支固定 flow——手动拓展分支 flow=${MANUAL_SOURCE_FLOW}，机构回填“只补全达人信息”分支 flow=${MCN_COMPLETE_ONLY_FLOW}。`,
+        ]),
   ].join("\n");
 }
 
-function csvArtifactSaveDirective(message, params = {}) {
+function csvArtifactSaveDirective(
+  message,
+  params = {},
+  inquiryIdsLookup = (_requirementId) => null,
+) {
   const result = parsedToolResult(message);
   if (result?.success !== true) return flowPauseDirective("links CSV 保存", message);
   const filePath = firstString(result?.data?.file_path, result?.delivery?.local_path);
-  const localFileLink = firstString(result?.delivery?.local_file_link) ?? localFileMarkdownLink(filePath);
+  const localFileLink =
+    firstString(result?.delivery?.local_file_link) ?? localFileMarkdownLink(filePath);
   if (!filePath || !localFileLink) return flowPauseDirective("links CSV 保存", message);
   if (params?.artifact_kind === "manual_creator_links") {
     return [
@@ -763,23 +795,52 @@ function csvArtifactSaveDirective(message, params = {}) {
     ].join("\n");
   }
   if (params?.artifact_kind === "mcn_creator_links") {
-    return [
+    const requirementId = firstString(params?.artifact_id, params?.requirement_id);
+    const inquiryIds = requirementId ? (inquiryIdsLookup(String(requirementId)) ?? null) : null;
+    const lines = [
       "YPSCAN_FLOW_DIRECTIVE=机构回填 links CSV 已保存。原样展示 links CSV 本地链接后，调用 ASK_USER_QUESTION_ARGS 让用户选择“精排并生成提报表”或“只补全达人信息”。",
       `MCN_CREATOR_LINKS_LOCAL_PATH=${filePath}`,
       `MCN_CREATOR_LINKS_LOCAL_LINK=${localFileLink}`,
+      "选“精排并生成提报表”时直接调用 rank_creators，参数为当前 requirement_id 与本轮 get_workflow_state 映射的 inquiry_ids（下方 RANK_CREATORS_ARGS）；映射缺失时先调用 GET_WORKFLOW_STATE_ARGS 取 inquiry_ids。选“只补全达人信息”时继续当前 requirement 和当前平台，按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具，成功后 merge（flow=mcn_complete_only），不上传、不打分，直接交付 merged CSV。",
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(inquiryCreatorCompletionChoiceQuestionPayload())}`,
-    ].join("\n");
+    ];
+    if (Array.isArray(inquiryIds) && inquiryIds.length > 0 && requirementId) {
+      lines.push(
+        `RANK_CREATORS_ARGS=${JSON.stringify({
+          requirement_id: String(requirementId),
+          inquiry_ids: inquiryIds,
+        })}`,
+      );
+    } else if (requirementId) {
+      lines.push(
+        `GET_WORKFLOW_STATE_ARGS=${JSON.stringify({ requirement_id: String(requirementId) })}`,
+      );
+    }
+    return lines.join("\n");
   }
   return null;
 }
 
-function mergeCreatorCsvDirective(message, params = {}) {
+function mergeCreatorCsvDirective(message, params = {}, recordedMode = null) {
   const result = parsedToolResult(message);
   if (result?.success !== true) return flowPauseDirective("达人 CSV 合并", message);
   const mergedCsvPath = firstString(result?.data?.file_path, result?.delivery?.local_path);
-  const localFileLink = firstString(result?.delivery?.local_file_link) ?? localFileMarkdownLink(mergedCsvPath);
+  const localFileLink =
+    firstString(result?.delivery?.local_file_link) ?? localFileMarkdownLink(mergedCsvPath);
   const dataRowCount = Number(result?.data?.data_row_count);
-  const flow = params?.flow;
+  const paramsFlow = params?.flow;
+  // 显式 flow 优先（兼容遗留 mcn_rank）；缺失时按最近一次校验落库的业务模式推导：
+  // 手动拓展 → manual_source（上传后打分），询价机构只补全 → mcn_complete_only（直接交付）。
+  const flow =
+    paramsFlow === MANUAL_SOURCE_FLOW ||
+    paramsFlow === MCN_COMPLETE_ONLY_FLOW ||
+    paramsFlow === MCN_RANK_FLOW
+      ? paramsFlow
+      : recordedMode === BUSINESS_MODE_MANUAL
+        ? MANUAL_SOURCE_FLOW
+        : recordedMode === BUSINESS_MODE_INQUIRY
+          ? MCN_COMPLETE_ONLY_FLOW
+          : paramsFlow;
   if (!mergedCsvPath || !localFileLink) return flowPauseDirective("达人 CSV 合并", message);
   if (flow === MCN_COMPLETE_ONLY_FLOW) {
     return [
@@ -825,11 +886,7 @@ function uploadCreatorCsvDirective(message, params = {}) {
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=merged CSV 已上传。继续调用 rank_creators，成功后保存最终提报表 ranked_submission。",
-    `RANK_CREATORS_ARGS=${JSON.stringify({
-      requirement_id: params.requirement_id,
-      csv_file_path: csvFilePath,
-    })}`,
+    "YPSCAN_FLOW_DIRECTIVE=merged CSV 已上传。机构回填精排已改为 get_workflow_state → rank_creators（参数 requirement_id 与 inquiry_ids），rank_creators 不再消费上传的 CSV；机构回填链路不再通过 CSV 上传进入精排。",
   ].join("\n");
 }
 
@@ -842,6 +899,7 @@ function scoreManualSourceCsvDirective(message, params = {}) {
   );
   const scoredCount = providerScoredCount(result);
   const excelFileUrl = providerExcelUrl(result);
+  const jobId = providerJobId(result);
   if (result?.success !== true) return flowPauseDirective("手动拓展打分", message);
   if (scoredCount !== null && scoredCount <= 0) {
     return [
@@ -849,7 +907,14 @@ function scoreManualSourceCsvDirective(message, params = {}) {
       ...(requirementId ? [`REQUIREMENT_ID=${requirementId}`] : []),
     ].join("\n");
   }
-  if (!excelFileUrl || !requirementId) return flowPauseDirective("手动拓展打分缺少最终 Excel", message);
+  if (jobId != null) {
+    return [
+      `YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv 已提交异步打分任务（仅返回 job_id）。先告知用户“后台打分耗时较长，您可以先不用管，我会继续轮询。”，再按 SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS 轮询；${SCORE_MANUAL_SOURCE_POLL_RULE}。`,
+      `SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS=${JSON.stringify({ job_id: jobId })}`,
+    ].join("\n");
+  }
+  if (!excelFileUrl || !requirementId)
+    return flowPauseDirective("手动拓展打分缺少最终 Excel", message);
   return [
     "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv 成功。立即保存最终手动拓展 Excel，不展示 Provider 下载 URL。",
     `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
@@ -860,25 +925,102 @@ function scoreManualSourceCsvDirective(message, params = {}) {
   ].join("\n");
 }
 
-function syncInquiryDirective(message) {
+function scoreManualSourceCsvStatusDirective(message, params = {}) {
+  const result = parsedToolResult(message);
+  const requirementId = firstString(
+    params?.requirement_id,
+    result?.data?.requirement_id,
+    result?.requirement_id,
+  );
+  const excelFileUrl = providerExcelUrl(result);
+  const jobId = providerJobId(result) ?? providerJobId({ data: params });
+  if (result?.success !== true) return flowPauseDirective("手动拓展打分结果查询", message);
+  if (excelFileUrl && requirementId) {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv_status 已完成。立即保存最终手动拓展 Excel，不展示 Provider 下载 URL。",
+      `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
+        artifact_kind: "manual_source",
+        artifact_id: requirementId,
+        excel_file_url: excelFileUrl,
+      })}`,
+    ].join("\n");
+  }
+  if (result?.success === true && excelFileUrl) {
+    return flowPauseDirective("手动拓展打分结果查询 完成但缺少 requirement_id", message);
+  }
+  if (jobId != null) {
+    return [
+      `YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv_status 尚未完成。继续使用同一 job_id 轮询，不重新打分、不更换 job_id、不询问用户；由当前对话累计查询次数，单轮最多 10 次，第 10 次仍未完成时如实报告并停止，不得自动开始第 11 次。`,
+      `SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS=${JSON.stringify({ job_id: jobId })}`,
+    ].join("\n");
+  }
+  return flowPauseDirective("手动拓展打分结果查询", message);
+}
+
+function workflowInquiryIds(result) {
+  if (Array.isArray(result?.data?.inquiry_ids)) return result.data.inquiry_ids;
+  if (Array.isArray(result?.data?.inquiries)) {
+    return result.data.inquiries.map((item) => item?.inquiry_id).filter((value) => value != null);
+  }
+  if (Array.isArray(result?.inquiry_ids)) return result.inquiry_ids;
+  return null;
+}
+
+function normalizeInquiryIds(values) {
+  return [...new Set(values.map((value) => String(value).trim()).filter(Boolean))];
+}
+
+function requirementIdForInquiryIds(inquiryIds, inquiryIdsByRequirement) {
+  if (!Array.isArray(inquiryIds) || inquiryIds.length === 0) return null;
+  const key = normalizeInquiryIds(inquiryIds).sort().join(",");
+  for (const [requirementId, recordedIds] of inquiryIdsByRequirement) {
+    if (normalizeInquiryIds(recordedIds).sort().join(",") === key) return String(requirementId);
+  }
+  return null;
+}
+
+function workflowStateDirective(message, params = {}) {
+  const result = parsedToolResult(message);
+  if (result?.success !== true) return flowPauseDirective("get_workflow_state", message);
+  const rawIds = workflowInquiryIds(result);
+  const requirementId = firstString(
+    params?.requirement_id,
+    result?.data?.requirement_id,
+    result?.requirement_id,
+  );
+  if (rawIds === null) return flowPauseDirective("get_workflow_state", message);
+  const normalizedIds = normalizeInquiryIds(rawIds);
+  if (normalizedIds.length > 0) {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=get_workflow_state 已返回非空 inquiry_ids。只把本次响应的 inquiry_ids 传给 ingest_mcn_submissions，不得跨轮拼接或使用 trace_id。",
+      `INGEST_MCN_SUBMISSIONS_ARGS=${JSON.stringify({ inquiry_ids: normalizedIds })}`,
+    ].join("\n");
+  }
+  const lines = [
+    "YPSCAN_FLOW_DIRECTIVE=get_workflow_state 已返回空 inquiry_ids（已分发项目或 mcn_planning）。不得直接 ingest 或精排；先调用 sync_mcn_inquiry_status，参数 requirement_id、project_id、supplierIds 由 Agent 按工具卡提供；sync 成功后必须回到 get_workflow_state 取 inquiry_ids 再继续。mcn_planning 单独出现不等于可以精排。",
+  ];
+  if (requirementId) {
+    lines.push(`GET_WORKFLOW_STATE_ARGS=${JSON.stringify({ requirement_id: requirementId })}`);
+  }
+  return lines.join("\n");
+}
+
+function syncInquiryDirective(message, params = {}) {
   const result = parsedToolResult(message);
   if (result?.success !== true) return flowPauseDirective("询价状态同步", message);
-  const inquiryIds = Array.isArray(result?.data?.inquiries)
-    ? result.data.inquiries.map((item) => item?.inquiry_id).filter((value) => value != null)
-    : Array.isArray(result?.data?.inquiry_ids)
-      ? result.data.inquiry_ids
-      : [];
-  const normalizedIds = [
-    ...new Set(inquiryIds.map((value) => String(value).trim()).filter(Boolean)),
-  ];
-  if (!normalizedIds.length) {
+  const requirementId = firstString(
+    params?.requirement_id,
+    result?.data?.requirement_id,
+    result?.requirement_id,
+  );
+  if (!requirementId) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=询价状态同步未返回可验证的 inquiry_ids；不得继续入库、精排或生成空提报表。",
+      "YPSCAN_FLOW_DIRECTIVE=询价状态同步成功但缺少 requirement_id；sync 成功后不得直接 ingest，先补齐 requirement_id 再回到 get_workflow_state 取 inquiry_ids，不得跨轮拼接或使用 trace_id。",
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=询价状态同步成功。只把本次响应的 inquiry_ids 传给 ingest_mcn_submissions，不得跨轮拼接或使用 trace_id。",
-    `INGEST_MCN_SUBMISSIONS_ARGS=${JSON.stringify({ inquiry_ids: normalizedIds })}`,
+    "YPSCAN_FLOW_DIRECTIVE=询价状态同步成功。sync 成功后不得直接 ingest，必须先回到 get_workflow_state 取本次响应的 inquiry_ids 再按新回收链执行，不得跨轮拼接或使用 trace_id。",
+    `GET_WORKFLOW_STATE_ARGS=${JSON.stringify({ requirement_id: requirementId })}`,
   ].join("\n");
 }
 
@@ -904,13 +1046,14 @@ function getIngestJobDirective(message, params = {}) {
   const excelFileUrl = providerExcelUrl(result);
   const creatorLinksCsvUrl = providerCsvUrl(result);
   const requirementId = firstString(
+    params?.requirement_id,
     result?.data?.requirement_id,
     result?.data?.result?.requirement_id,
     result?.requirement_id,
   );
   if (result?.success === true && excelFileUrl && creatorLinksCsvUrl && requirementId) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 已完成。先保存机构达人预览表，再保存本轮 links CSV；两者都成功后再弹“精排并生成提报表 / 只补全达人信息”。缺一时不得进入后续分叉。",
+      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 已完成（succeeded 或 partially_succeeded）。先保存机构达人预览表，再保存本轮 links CSV；两者都成功后再弹“精排并生成提报表 / 只补全达人信息”。缺一时不得进入后续分叉。",
       `MCN_CREATOR_PREVIEW_URL=${excelFileUrl}`,
       `MCN_CREATOR_LINKS_CSV_URL=${creatorLinksCsvUrl}`,
       `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
@@ -919,6 +1062,9 @@ function getIngestJobDirective(message, params = {}) {
         excel_file_url: excelFileUrl,
       })}`,
     ].join("\n");
+  }
+  if (result?.success === true && (excelFileUrl || creatorLinksCsvUrl)) {
+    return flowPauseDirective("异步入库结果查询 完成但缺少 requirement_id", message);
   }
   if (jobId != null) {
     return [
@@ -945,9 +1091,10 @@ function rankCreatorsDirective(message, params = {}) {
       ...(requirementId ? [`RANK_REQUIREMENT_ID=${requirementId}`] : []),
     ].join("\n");
   }
-  if (!requirementId || !excelFileUrl) return flowPauseDirective("rank_creators 缺少最终 Excel", message);
+  if (!requirementId || !excelFileUrl)
+    return flowPauseDirective("rank_creators 缺少最终 Excel", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=rank_creators 成功。直接保存最终提报 Excel 为 ranked_submission，不调用 create_submission_batch。",
+    "YPSCAN_FLOW_DIRECTIVE=rank_creators 成功。该调用消费本轮 get_workflow_state 返回的 inquiry_ids 与当前 requirement_id。直接保存最终提报 Excel 为 ranked_submission，不调用 create_submission_batch。",
     `SAVE_EXCEL_ARTIFACT_ARGS=${JSON.stringify({
       artifact_kind: "ranked_submission",
       artifact_id: requirementId,
@@ -994,7 +1141,7 @@ function excelArtifactSaveDirective(
   if (artifactKind === "mcn_creator_preview") {
     const csvFileUrl = creatorLinksCsvUrlLookup(params.artifact_id);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=机构达人预览表已保存。原样展示本地链接后立即保存同一 requirement、同一平台返回的 links CSV，再弹后续分叉选择。",
+      "YPSCAN_FLOW_DIRECTIVE=机构达人预览表已保存。原样展示本地链接后立即保存同一 requirement、同一平台返回的 links CSV，再弹后续分叉选择；选精排时直接 rank_creators（requirement_id+本轮 get_workflow_state 的 inquiry_ids），不再上传 CSV；选只补全时原生补全后 merge（flow=mcn_complete_only）并交付 merged CSV。",
       `MCN_CREATOR_PREVIEW_LOCAL_PATH=${filePath}`,
       `MCN_CREATOR_PREVIEW_LOCAL_LINK=${localFileLink}`,
       "将 MCN_CREATOR_PREVIEW_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径。",
@@ -1096,6 +1243,8 @@ function flowDirective(
   recordedPlatform = null,
   requirementPlatformLookup = (_requirementId) => null,
   creatorLinksCsvUrlLookup = (_requirementId) => null,
+  inquiryIdsLookup = (_requirementId) => null,
+  quantityTotalLookup = (_requirementId) => null,
 ) {
   const normalizedName = toolName.toLowerCase();
   const bare = stripHostPrefix(normalizedName);
@@ -1125,15 +1274,17 @@ function flowDirective(
     );
   }
   if (/(?:^|__)ypscan_save_csv_artifact$/iu.test(normalizedName)) {
-    return csvArtifactSaveDirective(message, params);
+    return csvArtifactSaveDirective(message, params, inquiryIdsLookup);
   }
   if (/(?:^|__)ypscan_merge_creator_csv$/iu.test(normalizedName)) {
-    return mergeCreatorCsvDirective(message, params);
+    return mergeCreatorCsvDirective(message, params, recordedMode);
   }
   if (/(?:^|__)ypscan_upload_creator_csv$/iu.test(normalizedName)) {
     return uploadCreatorCsvDirective(message, params);
   }
   if (bare === "score_manual_source_csv") return scoreManualSourceCsvDirective(message, params);
+  if (bare === "score_manual_source_csv_status")
+    return scoreManualSourceCsvStatusDirective(message, params);
   if (/(?:^|__)ypscan_select_cascade$/iu.test(normalizedName)) {
     return cascadeSelectionDirective(message);
   }
@@ -1141,19 +1292,25 @@ function flowDirective(
     return filterRangeDirective(message);
   }
   if (bare === "create_with_distributions") return distributionDirective(message, params);
-  if (bare === "sync_mcn_inquiry_status") return syncInquiryDirective(message);
+  if (bare === "sync_mcn_inquiry_status") return syncInquiryDirective(message, params);
   if (bare === "ingest_mcn_submissions") return ingestSubmissionsDirective(message);
   if (bare === "get_ingest_job") return getIngestJobDirective(message, params);
   if (bare === "manual_source_creators") {
-    return manualSourceCreatorsDirective(message, params, recordedPlatform, requirementPlatform);
+    return manualSourceCreatorsDirective(
+      message,
+      params,
+      recordedPlatform,
+      requirementPlatform,
+      quantityTotalLookup,
+    );
   }
   if (bare === "manual_source_creators_status")
-    return manualSourceCreatorsStatusDirective(message, params);
+    return manualSourceCreatorsStatusDirective(message, params, quantityTotalLookup);
   if (bare === "get_xhs_author_business_card" || bare === "get_douyin_author_business_card") {
-    return manualSourceCompletionDirective(message, params);
+    return manualSourceCompletionDirective(message, params, recordedMode);
   }
   if (bare === "rank_creators") return rankCreatorsDirective(message, params);
-  if (bare === "get_workflow_state") return null;
+  if (bare === "get_workflow_state") return workflowStateDirective(message, params);
   if (result?.success !== true) {
     if (
       /(?:^|__)ypscan_parse_requirement$/iu.test(normalizedName) ||
@@ -1245,6 +1402,10 @@ export function registerFlowDirectiveHooks(api) {
   const platformByScope = new Map();
   const platformByRequirement = new Map();
   const creatorLinksCsvUrlByRequirement = new Map();
+  const inquiryIdsByRequirement = new Map();
+  const quantityTotalByRequirement = new Map();
+  const requirementIdByScoreJobId = new Map();
+  const requirementIdByIngestJobId = new Map();
 
   api.on(
     "before_prompt_build",
@@ -1257,14 +1418,15 @@ export function registerFlowDirectiveHooks(api) {
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→保存 links CSV→让用户选择“精排并生成提报表 / 只补全达人信息”；若选精排则继续原生补全→merge→显式 upload→rank_creators→保存最终提报表。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存 links CSV→按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具（小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→merge→显式 upload→score_manual_source_csv→保存最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
+          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→get_workflow_state→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→保存 links CSV→让用户选择“精排并生成提报表 / 只补全达人信息”；若选精排则继续 rank_creators（requirement_id+本轮 get_workflow_state 的 inquiry_ids）→保存最终提报表；若选只补全则原生补全→merge（flow=mcn_complete_only）→交付 merged CSV。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存 links CSV→按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具（小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→merge→显式 upload→score_manual_source_csv→score_manual_source_csv_status→保存最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
           REQUIREMENT_CREATION_RULE,
           INQUIRY_RECIPIENT_RESUME_RULE,
           "所有 AskUserQuestion 弹窗的 header、question、label 和 description 均主动换行，任何一行最多 20 个 Unicode 字符；长机构名可为展示插入换行，匹配前移除换行还原原名。",
-          "机构回填预览链路必须先保存预览表，再保存 links CSV，再弹“精排并生成提报表 / 只补全达人信息”。选精排时继续当前 requirement 和当前平台，按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具，成功后 merge、显式 upload，再把 ypscan_upload_creator_csv 返回的 csv_file_path 传给 rank_creators；rank_creators 直接产最终提报 Excel 并保存为 ranked_submission，不再调用 create_submission_batch、get_creator_detail 或 get_creator_detail_export。选只补全时同样先做原生补全和 merge，但不上传、不打分，直接交付 merged CSV，并允许同一 requirement、同一平台在当前会话里继续升级到精排。",
+          "机构回填预览链路必须先保存预览表，再保存 links CSV，再弹“精排并生成提报表 / 只补全达人信息”。选精排时直接用当前 requirement_id 和本轮 get_workflow_state 映射的 inquiry_ids 调用 rank_creators；rank_creators 直接产最终提报 Excel 并保存为 ranked_submission，不再消费上传 CSV，也不再调用 create_submission_batch、get_creator_detail 或 get_creator_detail_export。选只补全时继续当前 requirement 和当前平台，按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具，成功后 merge（flow=mcn_complete_only），但不上传、不打分，直接交付 merged CSV，并允许同一 requirement、同一平台在当前会话里继续升级到精排。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
-          "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
-          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。若返回 batch_id，先等待 30 秒，再用同一 requirement_id 和 batch_id 第 1 次查询 manual_source_creators_status，之后每隔 30 秒查询一次，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具；每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 merge、upload 和打分。补全完成后 merge、显式 upload，再调用 score_manual_source_csv；score 成功才保存最终手动拓展 Excel。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
+          "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。字段映射固定：排名=rank_no（缺省按响应顺序）、机构=agency_name、覆盖达人=candidate_count、返点=rebate_rate、综合分=rank_score。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
+          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。若返回 batch_id，先等待 30 秒，再用同一 requirement_id、batch_id 和 num 第 1 次查询 manual_source_creators_status（num 必传：取本轮目标交付数量，正整数；Hook 按当前 requirement 落库的 quantityTotal 预填 MANUAL_SOURCE_CREATORS_STATUS_ARGS 的 num，与用户最新确认不同时以最新确认为准），之后每隔 30 秒查询一次，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具；每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 merge、upload 和打分。补全完成后 merge（flow=manual_source）、显式 upload（flow=manual_source），再调用 score_manual_source_csv；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成才保存最终手动拓展 Excel；score 仍同步返回 Excel 时直接保存。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
+          "原生达人补全工具由宿主 YP Action 提供、不在 ypscan 白名单内：小红书 get_xhs_author_business_card 且固定 page_count=1，抖音 get_douyin_author_business_card。宿主未开放对应工具时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。",
           MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
           "手动拓展 Excel 保存成功后原样展示 delivery.local_file_link，不再提供浏览器详细拓展分支，也不追加完成弹窗。",
@@ -1276,7 +1438,7 @@ export function registerFlowDirectiveHooks(api) {
           `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
           "Dify 已给出的唯一数值直接采用，禁止再问；本地只做区间格式与粉丝技术上限截断。只有解析缺失、null、多候选或与用户明确改口冲突时才阻断。",
           "需求解析复核、结果不足后的二次复核与逐项放宽、用户修改需求后的重建规则，统一按 media-assistant Skill 执行；Hook 只提供当前工具结果和下一步动态参数。",
-          "手动拓展调用 manual_source_creators 时只使用新版 schema：required 为 requirement_id:string 与 num:integer，可选需求原文字段只用 demand。禁止继续生成或暗示 size、creator_count、page_url、original_brief 等旧字段。",
+          "手动拓展调用 manual_source_creators 时只使用新版 schema：required 只有 requirement_id:string，可选需求原文字段只用 demand；manual_source_creators_status 的 required 是 requirement_id:string、batch_id:integer 与 num:integer。禁止继续生成或暗示 size、creator_count、page_url、original_brief 等旧字段。",
           PARSED_METRIC_REUSE_RULE,
           SINGLE_REQUIREMENT_TYPE_RULE,
           REQUIREMENT_COMPLETENESS_RULE,
@@ -1330,23 +1492,73 @@ export function registerFlowDirectiveHooks(api) {
           result?.platform,
           recordedPlatform,
         );
-        if (requirementId && platform) platformByRequirement.set(String(requirementId), platform);
+        if (requirementId) {
+          if (platform) platformByRequirement.set(String(requirementId), platform);
+          // 持久化 validate 调用参数里的目标交付数量，作为 manual_source_creators_status 的 num 确定性来源。
+          const quantityTotal = positiveInteger(params?.quantityTotal);
+          if (quantityTotal != null)
+            quantityTotalByRequirement.set(String(requirementId), quantityTotal);
+        }
       } else if (result?.success === true) {
         const requirementId = firstString(params?.requirement_id, params?.id, params?.artifact_id);
         const platform = canonicalPlatformName(params?.platform);
         if (requirementId && platform) platformByRequirement.set(String(requirementId), platform);
         if (bare === "manual_source_creators_status" || bare === "get_ingest_job") {
           const csvUrl = providerCsvUrl(result);
-          const id = firstString(result?.data?.requirement_id, result?.requirement_id, params?.requirement_id);
+          const id = firstString(
+            result?.data?.requirement_id,
+            result?.requirement_id,
+            params?.requirement_id,
+          );
           if (id && csvUrl) creatorLinksCsvUrlByRequirement.set(String(id), csvUrl);
         }
+        if (bare === "get_workflow_state") {
+          const rawIds = workflowInquiryIds(result);
+          const id = firstString(
+            result?.data?.requirement_id,
+            result?.requirement_id,
+            params?.requirement_id,
+          );
+          if (id && Array.isArray(rawIds)) {
+            inquiryIdsByRequirement.set(String(id), normalizeInquiryIds(rawIds));
+          }
+        }
+        if (bare === "score_manual_source_csv" || bare === "score_manual_source_csv_status") {
+          const jobId = providerJobId(result) ?? providerJobId({ data: params });
+          const id = firstString(
+            params?.requirement_id,
+            result?.data?.requirement_id,
+            result?.requirement_id,
+          );
+          if (jobId != null && id) requirementIdByScoreJobId.set(String(jobId), String(id));
+        } else if (bare === "ingest_mcn_submissions" || bare === "get_ingest_job") {
+          const jobId = providerJobId(result) ?? providerJobId({ data: params });
+          const id = firstString(
+            params?.requirement_id,
+            result?.data?.requirement_id,
+            result?.requirement_id,
+            requirementIdForInquiryIds(params?.inquiry_ids, inquiryIdsByRequirement),
+          );
+          if (jobId != null && id) requirementIdByIngestJobId.set(String(jobId), String(id));
+        }
+      }
+      const jobId = providerJobId(result) ?? providerJobId({ data: params });
+      let directiveParams = params;
+      if (jobId != null && !nonemptyString(firstString(params?.requirement_id))) {
+        const requirementId =
+          bare === "score_manual_source_csv_status"
+            ? requirementIdByScoreJobId.get(String(jobId))
+            : bare === "get_ingest_job"
+              ? requirementIdByIngestJobId.get(String(jobId))
+              : null;
+        if (requirementId) directiveParams = { ...params, requirement_id: requirementId };
       }
       return appendDirective(
         event?.message,
         flowDirective(
           toolName,
           event?.message,
-          params,
+          directiveParams,
           recordedMode,
           recordedPlatform,
           (requirementId) =>
@@ -1356,6 +1568,14 @@ export function registerFlowDirectiveHooks(api) {
           (requirementId) =>
             nonemptyString(requirementId)
               ? (creatorLinksCsvUrlByRequirement.get(String(requirementId)) ?? null)
+              : null,
+          (requirementId) =>
+            nonemptyString(requirementId)
+              ? (inquiryIdsByRequirement.get(String(requirementId)) ?? null)
+              : null,
+          (requirementId) =>
+            nonemptyString(requirementId)
+              ? (quantityTotalByRequirement.get(String(requirementId)) ?? null)
               : null,
         ),
       );
@@ -1370,6 +1590,10 @@ export function registerFlowDirectiveHooks(api) {
       platformByScope.clear();
       platformByRequirement.clear();
       creatorLinksCsvUrlByRequirement.clear();
+      inquiryIdsByRequirement.clear();
+      quantityTotalByRequirement.clear();
+      requirementIdByScoreJobId.clear();
+      requirementIdByIngestJobId.clear();
     },
   };
 }

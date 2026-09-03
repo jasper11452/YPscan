@@ -4,8 +4,8 @@
 
 ## 这是什么
 
-- `ypscan`（悦普识星）是 OpenClaw 插件（`id: ypscan`，`private: true`）：客户端集成层，注册 2 个本地工具，通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`）。
-- 当前主线形态（`feat/dual`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成）。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
+- `ypscan`（悦普识星）是 OpenClaw 插件（`id: ypscan`，`private: true`）：客户端集成层，注册 5 个本地工具，通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`）。
+- 当前主线形态（`feat/rank_creators`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成），交付链路为 CSV 中心（links CSV → 原生补全 → merge → 显式上传 → 打分/精排）。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type": "module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。运行时依赖仅 `playwright-core`（为遗留 browser 工具保留，当前插件未注册任何 browser 工具）。
 
 ## 常用命令（仓库根执行）
@@ -13,18 +13,20 @@
 - `npm test` — `node --test tests/*.test.mjs`，必须全绿。
 - `npm run lint` — ESLint（flat config）。
 - `npm run typecheck` — `tsc -p tsconfig.json`（checkJs），必须 0 错。
-- `npm run smoke` — 加载插件断言注册形态：`tools=2, hooks=5`，遗留 browser 工具未注册，且 `openclaw.plugin.json.version === package.json.version`。
+- `npm run smoke` — 加载插件断言注册形态：`tools=5, hooks=5`，遗留 browser 工具未注册，且 `openclaw.plugin.json.version === package.json.version`。
 - `npm run format:check` / `npm run format` — Prettier；`format` 会全量重排，只在明确要求时用。
+- Provider 契约审计：`YPSCAN_PROVIDER_URL=<MCP 地址> node scripts/audit-provider-tools.mjs`（测试环境 `https://test-mcp.eshypdata.com/mcp` 是当前契约对齐基准，改链路前先对一遍 live schema）。
 
 改完代码至少跑 `npm run lint && npm run typecheck && npm test && npm run smoke`。
 
 ## 架构地图（当前形态）
 
-- `index.js` — 入口：注册 2 个本地工具 `ypscan_parse_requirement`、`ypscan_save_excel_artifact`；注册 5 个 Hook：`before_prompt_build`、`before_tool_call`、`tool_result_persist`、`gateway_start`、`gateway_stop`（后两个只重置瞬态状态）。
-- `openclaw.plugin.json` — 清单：Provider MCP 白名单（含 `manual_source_creators`/`manual_source_creators_status`、`rank_mcns`、`select_inquiry_form_fields`）、测试 adapter、`contracts.tools`、`skills`。`configSchema` 只有 `testMode`/`testAdapterBaseUrl`，后者仅 `testMode=true` 时使用且必须是无凭据 loopback origin。
+- `index.js` — 入口：注册 5 个本地工具 `ypscan_parse_requirement`、`ypscan_save_excel_artifact`、`ypscan_save_csv_artifact`、`ypscan_merge_creator_csv`、`ypscan_upload_creator_csv`；注册 5 个 Hook：`before_prompt_build`、`before_tool_call`、`tool_result_persist`、`gateway_start`、`gateway_stop`（后两个只重置瞬态状态）。
+- `openclaw.plugin.json` — 清单：Provider MCP 白名单 14 个（含 `manual_source_creators`/`manual_source_creators_status`、`rank_mcns`、`select_inquiry_form_fields`、`score_manual_source_csv`/`score_manual_source_csv_status`、`rank_creators`、`get_workflow_state`）、测试 adapter、`contracts.tools`、`skills`。`configSchema` 只有 `testMode`/`testAdapterBaseUrl`，后者仅 `testMode=true` 时使用且必须是无凭据 loopback origin。
 - `src/tools/` — 本地工具与辅助：
   - `parse-requirement.js` — 直连 Dify 的需求解析代理；`data.outputs` 只返回当前 Provider 契约消费的字段，缺失字段省略；八个 Dify Label 解析契约保持不变，`talentTypeLabel` 不是 Dify 字段。
   - `save-excel-artifact.js` — 保存 Provider 返回的 Excel 并产出可点击的本地文件链接。
+  - `save-csv-artifact.js`、`creator-csv.js`、`merge-creator-csv.js`、`upload-creator-csv.js` — links CSV 受控保存、CSV 解析/合并助手与 merged CSV 校验上传（非测试模式返回 `YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`）。
   - `test-adapter.js`、`tool-result.js`、`popup-questions.js` — 测试下载、结果适配与统一弹窗载荷。
   - `manual-browser-*`、`manual-research-*`、`select-cascade.js`、`set-filter-range.js` — **遗留 native Browser 手扒工具**：保留在仓库但不在 `index.js` 注册、不在发布包 `files` 内。不要重新注册。
 - `src/contract/registry.js` — 参数归一化、平台别名、`business_mode` 常量与 `validate_requirement` 预检。
@@ -68,6 +70,6 @@
 1. `npm run lint` → 0 错
 2. `npm run typecheck` → 0 错
 3. `npm test` → 全绿
-4. `npm run smoke` → `tools=2, hooks=5`
+4. `npm run smoke` → `tools=5, hooks=5`
 5. 涉及打包/发布：`npm pack --dry-run --cache /tmp/ypscan-npm-cache`，确认发布包只含 `files` 白名单内容（不含遗留 browser 工具与测试文件），发布前核对版本同步。
 6. 涉及业务链路：逐条核对 `docs/review-checklist.md` 中与本次改动相关的条目，并说明结论。

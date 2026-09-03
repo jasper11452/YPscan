@@ -26,7 +26,7 @@ One complete invocation is the real Provider attempt. `MCP_INVALID_PARAMS` prove
 
 ## Remote arguments
 
-- Required: `requirement_id` (string), `supplierIds` (string[]), `supplier_name` (string[]), `description` (non-empty string), `wechat_notification_message` (non-empty string). `description` must carry the same content as `wechat_notification_message`.
+- Required: `requirement_id` (string), `description` (non-empty string), `wechat_notification_message` (non-empty string). `supplierIds` and `supplier_name` are optional in the Provider schema (array or null), but the business rule is unchanged: always pass both recipient arrays, an empty side is `[]`, and at least one side must contain a real value. `description` must carry the same content as `wechat_notification_message`.
 - Do not pass `columns`; the Provider resolves the persisted selection from `requirement_id`.
 - Pass all five arguments directly at the top level, never under `payload`. Both recipient arrays must be present, an empty side is `[]`, and at least one side must contain a real value. Complete and cross-check the call once; do not use repeated calls as a form validator.
 
@@ -83,6 +83,10 @@ One complete invocation is the real Provider attempt. `MCP_INVALID_PARAMS` prove
 - A production `distributions.created` row correlated with the returned project and requested supplier proves distribution creation for status synchronization, but `notification_status: queued` or `submission_state.is_sent: false` does not prove sending.
 - Synchronization may include every resolved supplier with verified per-supplier distribution-creation evidence, including queued or pending notifications; do not describe those suppliers as sent. Use the Provider-returned IDs for name-resolved institutions. Retrying a fuzzy selection must exclude already successful institutions; duplicate-send errors are terminal for that requirement/institution pair.
 - A successful response does not invalidate the persisted field version; later institutional inquiry outputs may reuse it. YPscan links are rendered only in the host conversation and never opened through Browser.
+
+## Retrieval after send
+
+When the user later says the institutions have submitted creator data (机构已回填), the first retrieval step is `get_workflow_state({requirement_id})`; do not start with `sync_mcn_inquiry_status` or `ingest_mcn_submissions`.
 
 ## Stop conditions
 
