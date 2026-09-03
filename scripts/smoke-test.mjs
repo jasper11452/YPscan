@@ -55,6 +55,19 @@ assert.equal(
   true,
   "async ingest result polling must be exposed from the Provider MCP",
 );
+assert.equal(
+  manifest.mcpServers.ypscan.toolFilter.include.includes("score_manual_source_csv"),
+  true,
+  "manual-source CSV scoring must be exposed from the Provider MCP",
+);
+for (const removed of ["create_submission_batch", "get_creator_detail", "get_creator_detail_export"]) {
+  assert.equal(
+    manifest.mcpServers.ypscan.toolFilter.include.includes(removed),
+    false,
+    `deprecated formal-chain tool ${removed} must not be exposed from the Provider MCP`,
+  );
+}
+
 
 const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-smoke-"));
 const registered = { tools: [], hooks: [] };
@@ -87,9 +100,27 @@ try {
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_ranking"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("mcn_creator_preview"));
   assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("manual_source"));
-  assert.equal(excelSaver.parameters.properties.requirement_id.type, "string");
+  assert.ok(excelSaver.parameters.properties.artifact_kind.enum.includes("ranked_submission"));
+  const csvSaver = registered.tools.find((tool) => tool.name === "ypscan_save_csv_artifact");
+  assert.ok(csvSaver);
+  assert.deepEqual(csvSaver.parameters.properties.artifact_kind.enum, [
+    "manual_creator_links",
+    "mcn_creator_links",
+  ]);
+  const mergeTool = registered.tools.find((tool) => tool.name === "ypscan_merge_creator_csv");
+  assert.ok(mergeTool);
+  assert.deepEqual(mergeTool.parameters.required, [
+    "requirement_id",
+    "platform",
+    "flow",
+    "links_csv_path",
+    "completion_csv_paths",
+  ]);
+  const uploadTool = registered.tools.find((tool) => tool.name === "ypscan_upload_creator_csv");
+  assert.ok(uploadTool);
+  assert.deepEqual(uploadTool.parameters.properties.flow.enum, ["manual_source", "mcn_rank"]);
   assert.equal(toolNames.includes("ypscan__select_inquiry_form_fields"), false);
-  assert.equal(toolNames.length, 2);
+  assert.equal(toolNames.length, 5);
   assert.equal(toolNames.includes("ypscan_runtime_status"), false);
   assert.equal(toolNames.includes("ypscan_capture_field_selection"), false);
   assert.equal(toolNames.includes("ypscan_import_manual_source_excel"), false);

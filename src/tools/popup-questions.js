@@ -213,15 +213,15 @@ export function mcnRankingRecipientQuestionPayload(names) {
   return compactMcnRecipientQuestionPayload(options.length);
 }
 
-export function submissionEnrichmentQuestionPayload() {
-  return popupQuestionPayload("达人信息", "提报表已生成并保存，是否要补充更新达人信息？", [
+export function inquiryCreatorCompletionChoiceQuestionPayload() {
+  return popupQuestionPayload("回填后续", "预览表和 links CSV 已就绪，下一步怎么处理？", [
     {
-      label: "补充更新达人信息",
-      description: "立即调用 get_creator_detail 异步补全当前批次，不再选择字段或追问",
+      label: "精排并生成提报表",
+      description: "继续做原生补全、merge、上传、精排并交付最终提报表",
     },
     {
-      label: "暂不补充",
-      description: "保留当前提报表，结束本次处理",
+      label: "只补全达人信息",
+      description: "只做原生补全与 merge，交付 merged CSV 后结束",
     },
   ]);
 }

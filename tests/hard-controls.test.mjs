@@ -7,11 +7,11 @@ import {
   businessModeQuestionPayload,
   flowRetryQuestionPayload,
   ingestJobRecoveryQuestionPayload,
+  inquiryCreatorCompletionChoiceQuestionPayload,
   isPopupQuestionPayload,
   MAX_POPUP_LINE_LENGTH,
   mcnRankingRecipientQuestionPayload,
   popupQuestionPayload,
-  submissionEnrichmentQuestionPayload,
 } from "../src/tools/popup-questions.js";
 
 function registeredHooks() {
@@ -404,7 +404,7 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   assert.match(directiveText(failed), /MCN 排名表保存 已暂停/u);
 });
 
-test("default manual sourcing polls its status before saving the Excel", () => {
+test("default manual sourcing polls its status before saving the final artifact", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const sourced = persist({
     toolName: "ypmcn__manual_source_creators",
@@ -484,21 +484,20 @@ test("default manual sourcing polls its status before saving the Excel", () => {
     message: toolMessage({
       success: true,
       data: {
-        batch_id: 42,
-        excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
+        requirement_id: "req-manual",
+        creator_links_csv_url: "https://files.eshypdata.com/exports/manual-links.csv",
       },
     }),
   });
   const completedText = directiveText(completed);
-  assert.deepEqual(saveExcelArgsFromDirective(completedText), {
-    artifact_kind: "manual_source",
+  assert.deepEqual(namedArgsFromDirective(completedText, "SAVE_CSV_ARTIFACT_ARGS"), {
+    artifact_kind: "manual_creator_links",
     artifact_id: "req-manual",
-    excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
+    csv_file_url: "https://files.eshypdata.com/exports/manual-links.csv",
   });
-  assert.match(completedText, /不展示 Provider 下载 URL/u);
-  assert.match(completedText, /YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
-  assert.match(completedText, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
+  assert.match(completedText, /优先消费当前 Provider 响应中的 creator_links_csv_url|保存 links CSV/u);
   assert.doesNotMatch(completedText, /ASK_USER_QUESTION_ARGS=/u);
+
 
   const saved = persist({
     toolName: "ypscan_save_excel_artifact",
@@ -515,7 +514,7 @@ test("default manual sourcing polls its status before saving the Excel", () => {
   const savedText = directiveText(saved);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_LINK=/u);
-  assert.match(savedText, /本轮真实手动拓展结果/u);
+  assert.match(savedText, /最终手动拓展交付物|本轮真实手动拓展结果/u);
   assert.match(savedText, /YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
   assert.match(savedText, /达到 num 时结束.*汇总累计放宽的全部条件/u);
   assert.match(savedText, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
@@ -700,6 +699,7 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
         job_id: "job-ingest-1",
         requirement_id: "req-ingest",
         excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
+        creator_links_csv_url: "https://files.eshypdata.com/exports/mcn-links.csv",
       },
     }),
   });
@@ -707,7 +707,7 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
     directiveText(completed),
     /MCN_CREATOR_PREVIEW_URL=https:\/\/files\.eshypdata\.com\/exports\/mcn-preview\.xlsx/u,
   );
-  assert.match(directiveText(completed), /原样输出 MCN_CREATOR_PREVIEW_URL/u);
+  assert.match(directiveText(completed), /先保存机构达人预览表，再保存本轮 links CSV/u);
   assert.deepEqual(saveExcelArgsFromDirective(directiveText(completed)), {
     artifact_kind: "mcn_creator_preview",
     artifact_id: "req-ingest",
@@ -723,163 +723,75 @@ test("institutional retrieval polls the ingest job before Excel save, creator ra
     },
     message: toolMessage({ success: true, data: { file_path: "/workspace/mcn-preview.xlsx" } }),
   });
-  assert.deepEqual(namedArgsFromDirective(directiveText(previewSaved), "RANK_CREATORS_ARGS"), {
-    requirement_id: "req-ingest",
+  const previewText = directiveText(previewSaved);
+  assert.match(previewText, /机构达人预览表已保存/u);
+  assert.match(previewText, /原样展示本地链接后立即保存同一 requirement.*links CSV/u);
+  assert.deepEqual(namedArgsFromDirective(previewText, "SAVE_CSV_ARTIFACT_ARGS"), {
+    artifact_kind: "mcn_creator_links",
+    artifact_id: "req-ingest",
+    csv_file_url: "https://files.eshypdata.com/exports/mcn-links.csv",
   });
+
+  const linksSaved = persist({
+    toolName: "ypscan_save_csv_artifact",
+    params: {
+      artifact_kind: "mcn_creator_links",
+      artifact_id: "req-ingest",
+      csv_file_url: "https://files.eshypdata.com/exports/mcn-links.csv",
+    },
+    message: toolMessage({
+      success: true,
+      data: { file_path: "/workspace/mcn-links.csv" },
+      delivery: { local_file_link: "[/workspace/mcn-links.csv](<file:///workspace/mcn-links.csv>)" },
+    }),
+  });
+  const linksText = directiveText(linksSaved);
+  assert.match(linksText, /机构回填 links CSV 已保存/u);
+  assert.deepEqual(
+    namedArgsFromDirective(linksText, "ASK_USER_QUESTION_ARGS"),
+    inquiryCreatorCompletionChoiceQuestionPayload(),
+  );
 
   const ranked = persist({
     toolName: "test__rank_creators",
-    params: { requirement_id: "req-ingest" },
-    message: toolMessage({ success: true, data: { ranked_count: 8 } }),
+    params: { requirement_id: "req-ingest", csv_file_path: "/provider/merged.csv" },
+    message: toolMessage({
+      success: true,
+      data: {
+        ranked_count: 8,
+        excel_file_url: "https://files.eshypdata.com/exports/ranked-submission.xlsx",
+      },
+    }),
   });
   const rankedText = directiveText(ranked);
-  assert.match(rankedText, /YPSCAN_NEXT_ACTION=APPLY_INQUIRY_RANK_POLICY/u);
-  assert.match(rankedText, /RANK_REQUIREMENT_ID=req-ingest/u);
-  assert.match(rankedText, /生成当前机构询价提报表/u);
-  assert.match(rankedText, /submission_batche_page 固定为页码 1/u);
-  assert.match(rankedText, /不是 rank_creators 的 run_id/u);
-  assert.doesNotMatch(rankedText, /^CREATE_SUBMISSION_BATCH_ARGS=/mu);
-
-  const submission = persist({
-    toolName: "test__create_submission_batch",
-    params: { requirement_id: "req-ingest", submission_batche_page: 1 },
-    message: toolMessage({
-      success: true,
-      data: {
-        batch_id: 101,
-        platform: "xiaohongshu",
-        excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
-      },
-    }),
-  });
-  assert.deepEqual(saveExcelArgsFromDirective(directiveText(submission)), {
-    artifact_kind: "submission_batch",
-    artifact_id: "101",
-    excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
-    requirement_id: "req-ingest",
-    platform: "xhs",
+  assert.match(rankedText, /rank_creators 成功。直接保存最终提报 Excel 为 ranked_submission/u);
+  assert.doesNotMatch(rankedText, /CREATE_SUBMISSION_BATCH_ARGS=|submission_batche_page/u);
+  assert.deepEqual(saveExcelArgsFromDirective(rankedText), {
+    artifact_kind: "ranked_submission",
+    artifact_id: "req-ingest",
+    excel_file_url: "https://files.eshypdata.com/exports/ranked-submission.xlsx",
   });
 });
 
-test("submission batch save falls back to a top-level requirement_id", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const result = persist({
-    toolName: "test__create_submission_batch",
-    params: { submission_batche_page: 1 },
-    message: toolMessage({
-      success: true,
-      requirement_id: "req-top-level",
-      batch_id: 202,
-      excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
-    }),
-  });
-  assert.deepEqual(saveExcelArgsFromDirective(directiveText(result)), {
-    artifact_kind: "submission_batch",
-    artifact_id: "202",
-    excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
-    requirement_id: "req-top-level",
-  });
-  assert.match(directiveText(result), /必须把当前 requirement 的已确认平台/u);
-  assert.match(directiveText(result), /平台缺失时.*不得提供达人信息补全入口/u);
-});
-
-test("submission batch save stops when the Provider omits a valid batch ID", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const result = persist({
-    toolName: "test__create_submission_batch",
-    params: { requirement_id: "req-no-batch", submission_batche_page: 1 },
-    message: toolMessage({
-      success: true,
-      data: {
-        excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
-      },
-    }),
-  });
-  const text = directiveText(result);
-
-  assert.match(text, /提报表生成 已暂停/u);
-  assert.doesNotMatch(text, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
-  assert.doesNotMatch(text, /artifact_id.*req-no-batch/u);
-});
-
-test("submission enrichment choice maps both platforms to creator detail and export", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  for (const platform of ["xhs", "dy"]) {
-    const saved = persist({
-      toolName: "ypscan_save_excel_artifact",
-      params: {
-        artifact_kind: "submission_batch",
-        artifact_id: "123",
-        excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
-        requirement_id: `req-${platform}`,
-        platform,
-      },
-      message: toolMessage({
-        success: true,
-        data: { file_path: `/workspace/${platform}-submission.xlsx` },
-        delivery: { next_args: submissionEnrichmentQuestionPayload() },
-      }),
-    });
-    const text = directiveText(saved);
-    assert.match(text, /GET_CREATOR_DETAIL_ARGS.*调用 get_creator_detail/u);
-    assert.match(text, /GET_CREATOR_DETAIL_EXPORT_ARGS.*轮询 get_creator_detail_export/u);
-    assert.match(text, /不得改字段配置/u);
-    assert.match(text, /不得.*再次追问/u);
-    assert.deepEqual(namedArgsFromDirective(text, "GET_CREATOR_DETAIL_ARGS"), {
-      platform,
-      batch_id: 123,
-      requirement_id: `req-${platform}`,
-    });
-    assert.deepEqual(namedArgsFromDirective(text, "GET_CREATOR_DETAIL_EXPORT_ARGS"), {
-      platform,
-      batch_id: 123,
-    });
-  }
-});
-
-test("missing-platform submission saves do not offer creator enrichment", () => {
+test("ranked submission save ends the inquiry ranking branch", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const saved = persist({
     toolName: "ypscan_save_excel_artifact",
     params: {
-      artifact_kind: "submission_batch",
-      artifact_id: "123",
-      excel_file_url: "https://files.eshypdata.com/exports/submission.xlsx",
-      requirement_id: "req-missing",
+      artifact_kind: "ranked_submission",
+      artifact_id: "req-ranked",
+      excel_file_url: "https://files.eshypdata.com/exports/ranked-submission.xlsx",
     },
     message: toolMessage({
       success: true,
-      data: { file_path: "/workspace/missing-submission.xlsx" },
-      delivery: { next_args: { questions: [] } },
+      data: { file_path: "/workspace/ranked-submission.xlsx" },
+      delivery: { local_file_link: "[/workspace/ranked-submission.xlsx](<file:///workspace/ranked-submission.xlsx>)" },
     }),
   });
   const text = directiveText(saved);
-  assert.match(text, /不展示达人信息补全弹窗/u);
-  assert.doesNotMatch(text, /GET_CREATOR_DETAIL_ARGS=|GET_CREATOR_DETAIL_EXPORT_ARGS=/u);
-});
-
-test("submission save rejects a malformed enrichment popup", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const saved = persist({
-    toolName: "ypscan_save_excel_artifact",
-    params: {
-      artifact_kind: "submission_batch",
-      artifact_id: "123",
-      requirement_id: "req-malformed-popup",
-      platform: "xhs",
-    },
-    message: toolMessage({
-      success: true,
-      data: { file_path: "/workspace/submission.xlsx" },
-      delivery: { next_args: { questions: [] } },
-    }),
-  });
-  const text = directiveText(saved);
-  assert.match(text, /达人信息补全弹窗载荷无效/u);
-  assert.doesNotMatch(
-    text,
-    /GET_CREATOR_DETAIL_ARGS=|GET_CREATOR_DETAIL_EXPORT_ARGS=|ASK_USER_QUESTION_ARGS=/u,
-  );
+  assert.match(text, /最终提报表已保存/u);
+  assert.match(text, /原样展示本地链接并结束本轮机构回填精排链路/u);
+  assert.doesNotMatch(text, /GET_CREATOR_DETAIL|create_submission_batch|ASK_USER_QUESTION_ARGS=/u);
 });
 
 test("successful WeCom distribution waits for inquiry retrieval without switching branches", () => {
@@ -901,7 +813,7 @@ test("successful WeCom distribution waits for inquiry retrieval without switchin
   assert.match(text, /第一个工具必须是 sync_mcn_inquiry_status/u);
   assert.match(
     text,
-    /sync_mcn_inquiry_status.*ingest_mcn_submissions.*get_ingest_job.*保存机构达人预览表.*rank_creators.*create_submission_batch/u,
+    /sync_mcn_inquiry_status.*ingest_mcn_submissions.*get_ingest_job.*保存机构达人预览表.*保存 links CSV.*精排或只补全选择/u,
   );
   assert.match(text, /不切换到手动拓展分支/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
@@ -924,15 +836,22 @@ test("rank result is reserved for institutional inquiry after transient state re
 
   const ranked = persist({
     toolName: "rank_creators",
-    params: { requirement_id: "req-after-reset" },
-    message: toolMessage({ success: true, data: { ranked_count: 8 } }),
+    params: { requirement_id: "req-after-reset", csv_file_path: "/provider/merged.csv" },
+    message: toolMessage({
+      success: true,
+      data: {
+        ranked_count: 8,
+        excel_file_url: "https://files.eshypdata.com/exports/ranked-after-reset.xlsx",
+      },
+    }),
   });
   const text = directiveText(ranked);
-  assert.match(text, /YPSCAN_NEXT_ACTION=APPLY_INQUIRY_RANK_POLICY/u);
-  assert.match(text, /RANKED_COUNT=8/u);
-  assert.match(text, /RANK_REQUIREMENT_ID=req-after-reset/u);
-  assert.match(text, /生成当前机构询价提报表/u);
-  assert.match(text, /手动拓展完成后不得调用本工具/u);
+  assert.match(text, /rank_creators 成功。直接保存最终提报 Excel 为 ranked_submission/u);
+  assert.deepEqual(saveExcelArgsFromDirective(text), {
+    artifact_kind: "ranked_submission",
+    artifact_id: "req-after-reset",
+    excel_file_url: "https://files.eshypdata.com/exports/ranked-after-reset.xlsx",
+  });
   assert.doesNotMatch(text, /CREATE_SUBMISSION_BATCH_ARGS=|IF_SUFFICIENT/u);
 });
 
@@ -1175,7 +1094,7 @@ test("recipient popup avoids collisions with its fixed stop action", () => {
 
 test("popup text prefers semantic breaks and keeps ASCII tokens intact", () => {
   const question = "进入 followercount 前必须检查品牌和数量，缺失时通过 AskUserQuestion 收集。";
-  const description = "立即调用 get_creator_detail 异步补全当前批次，不再选择字段或追问";
+  const description = "继续做原生补全、merge、上传、精排并交付最终提报表";
   const payload = popupQuestionPayload("标题", question, [
     { label: "选项", description },
     { label: "结束", description: "结束当前步骤" },
@@ -1191,7 +1110,7 @@ test("popup text prefers semantic breaks and keeps ASCII tokens intact", () => {
 
   const descriptionLines = payload.questions[0].options[0].description.split("\n");
   assert.equal(popupPlainText(payload.questions[0].options[0].description), description);
-  assert.equal(descriptionLines[1].trim(), "get_creator_detail");
+  assert.ok(descriptionLines.some((line) => line.includes("merge")));
   for (const line of [...questionLines, ...descriptionLines]) {
     assert.ok(!/^[，。！？；：、]/u.test(line), "no punctuation stranded at line start");
   }
@@ -1243,7 +1162,7 @@ test("popup payload validation rejects host-incompatible structures", () => {
 });
 
 test("popup text hard-splits an overlong ASCII token without losing characters", () => {
-  const token = "get_creator_detail_export_v2";
+  const token = "score_manual_source_csv_v2";
   const payload = popupQuestionPayload("标题", "请选择工具。", [
     { label: token, description: "选项说明" },
     { label: "结束", description: "结束当前步骤" },
@@ -1326,7 +1245,7 @@ test("startup instruction selects and preserves one business mode", () => {
     first.prependContext,
     /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u,
   );
-  assert.match(first.prependContext, /后台 API 完成平台达人搜索、详情抓取和筛选/u);
+  assert.match(first.prependContext, /该工具由后台 API 完成搜索和落库/u);
   assert.match(first.prependContext, /数量未知时交付当前 Excel 并结束/u);
   assert.match(first.prependContext, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
   assert.match(first.prependContext, /创建独立的新 requirement 并重新选择字段/u);
@@ -1722,18 +1641,17 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
 
   const hooks = registeredHooks();
   const startup = hooks.get("before_prompt_build")({}, { runId: "manual-ban-run" });
-  assert.match(startup.prependContext, /同一 requirement_id/u);
-  assert.match(startup.prependContext, /回收的第一个工具必须是 sync_mcn_inquiry_status/u);
+  assert.match(startup.prependContext, /同一 requirement ID/u);
   assert.match(
     startup.prependContext,
-    /sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→rank_creators→create_submission_batch/u,
+    /sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→保存 links CSV→让用户选择“精排并生成提报表 \/ 只补全达人信息”/u,
   );
   assert.match(startup.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
-  assert.match(startup.prependContext, /本轮真实手动拓展结果/u);
-  assert.match(startup.prependContext, /逐项自动放宽流程/u);
-  assert.match(startup.prependContext, /不调用 rank_creators 或 create_submission_batch/u);
-  assert.match(startup.prependContext, /读取.*input schema/u);
-  assert.match(startup.prependContext, /需求原文.*可选字段/u);
-  assert.match(startup.prependContext, /schema 不支持该字段时只传 requirement_id 和 num/u);
+  assert.match(startup.prependContext, /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u);
+  assert.match(startup.prependContext, /不再提供浏览器详细拓展分支，也不追加完成弹窗/u);
+  assert.match(startup.prependContext, /调用默认 manual_source_creators 前先读取实际 input schema/u);
+  assert.match(startup.prependContext, /承载需求原文的可选字段|用于需求原文的可选字段/u);
+  assert.match(startup.prependContext, /只传 requirement_id 和 num/u);
+
   assert.doesNotMatch(startup.prependContext, /ypscan_manual_research|宿主 Browser/u);
 });

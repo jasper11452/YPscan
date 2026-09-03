@@ -5,11 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { saveExcelArtifact } from "../src/tools/save-excel-artifact.js";
-import {
-  MAX_POPUP_LINE_LENGTH,
-  mcnRankingRecipientQuestionPayload,
-  submissionEnrichmentQuestionPayload,
-} from "../src/tools/popup-questions.js";
+import { MAX_POPUP_LINE_LENGTH, mcnRankingRecipientQuestionPayload } from "../src/tools/popup-questions.js";
 
 function saveFixture(workspaceDir, artifactKind, fileName, extraParams = {}) {
   return saveExcelArtifact(
@@ -30,10 +26,6 @@ function saveFixture(workspaceDir, artifactKind, fileName, extraParams = {}) {
   );
 }
 
-function popupPlainText(value) {
-  return value.replaceAll("\n", "");
-}
-
 function assertPopupLines(payload) {
   for (const question of payload.questions) {
     for (const value of [
@@ -48,61 +40,9 @@ function assertPopupLines(payload) {
   }
 }
 
-test("only Provider submission save offers enrichment", async (t) => {
-  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-submission-enrichment-"));
+test("only MCN ranking save offers the recipient question", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-ranking-recipient-"));
   t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
-
-  const initial = JSON.parse(
-    (
-      await saveFixture(workspaceDir, "submission_batch", "initial-submission.xlsx", {
-        artifact_id: "123",
-        requirement_id: "req-submission",
-        platform: "xhs",
-      })
-    ).content[0].text,
-  );
-  assert.equal(initial.delivery.next_tool, "AskUserQuestion");
-  assert.equal(
-    initial.delivery.local_file_link,
-    `[${initial.data.file_path}](<${new URL(`file://${initial.data.file_path}`).href}>)`,
-  );
-  assert.match(initial.delivery.user_visible_message, /本地文件：\[.*\]\(<file:\/\/\//u);
-  assert.deepEqual(initial.delivery.next_args, submissionEnrichmentQuestionPayload());
-  const enrichmentOption = initial.delivery.next_args.questions[0].options[0];
-  assert.equal(enrichmentOption.label, "补充更新达人信息");
-  assert.match(popupPlainText(enrichmentOption.description), /立即调用 get_creator_detail/u);
-  assert.match(popupPlainText(enrichmentOption.description), /不再选择字段或追问/u);
-  assertPopupLines(initial.delivery.next_args);
-
-  const douyin = JSON.parse(
-    (
-      await saveFixture(workspaceDir, "submission_batch", "douyin-submission.xlsx", {
-        artifact_id: "124",
-        requirement_id: "req-douyin",
-        platform: "dy",
-      })
-    ).content[0].text,
-  );
-  assert.equal(douyin.delivery.next_tool, "AskUserQuestion");
-  assert.deepEqual(douyin.delivery.next_args, submissionEnrichmentQuestionPayload());
-
-  const missingPlatform = JSON.parse(
-    (
-      await saveFixture(workspaceDir, "submission_batch", "missing-platform-submission.xlsx", {
-        artifact_id: "125",
-        requirement_id: "req-missing-platform",
-      })
-    ).content[0].text,
-  );
-  assert.equal(missingPlatform.delivery.next_tool, undefined);
-  assert.equal(missingPlatform.delivery.next_args, undefined);
-
-  const enriched = JSON.parse(
-    (await saveFixture(workspaceDir, "creator_detail_export", "enriched-submission.xlsx"))
-      .content[0].text,
-  );
-  assert.equal(enriched.delivery.next_tool, undefined);
-  assert.equal(enriched.delivery.next_args, undefined);
 
   const mcnRanking = JSON.parse(
     (
@@ -118,6 +58,7 @@ test("only Provider submission save offers enrichment", async (t) => {
     mcnRankingRecipientQuestionPayload(["机构 A", "机构 B"]),
   );
   assert.equal(mcnRanking.delivery.next_args.questions[0].multiSelect, true);
+  assertPopupLines(mcnRanking.delivery.next_args);
 
   const emptyMcnRanking = JSON.parse(
     (await saveFixture(workspaceDir, "mcn_ranking", "empty-mcn-ranking.xlsx", { mcn_names: [] }))
@@ -125,45 +66,14 @@ test("only Provider submission save offers enrichment", async (t) => {
   );
   assert.equal(emptyMcnRanking.delivery.next_args, undefined);
 
-  const mcnPreview = JSON.parse(
-    (await saveFixture(workspaceDir, "mcn_creator_preview", "mcn-creator-preview.xlsx")).content[0]
-      .text,
-  );
-  assert.equal(mcnPreview.success, true);
-  assert.equal(mcnPreview.delivery.next_tool, undefined);
-
-  const manualSource = JSON.parse(
-    (await saveFixture(workspaceDir, "manual_source", "manual-source.xlsx")).content[0].text,
-  );
-  assert.equal(manualSource.success, true);
-  assert.equal(manualSource.delivery.next_tool, undefined);
-});
-
-test("submission enrichment is omitted without a trusted requirement association", async (t) => {
-  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-submission-no-requirement-"));
-  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
-
-  const missingRequirement = JSON.parse(
-    (
-      await saveFixture(workspaceDir, "submission_batch", "missing-requirement.xlsx", {
-        artifact_id: "123",
-      })
-    ).content[0].text,
-  );
-  assert.equal(missingRequirement.success, true);
-  assert.equal(missingRequirement.delivery.next_tool, undefined);
-  assert.equal(missingRequirement.delivery.next_args, undefined);
-
-  const malformedBatch = JSON.parse(
-    (
-      await saveFixture(workspaceDir, "submission_batch", "malformed-batch.xlsx", {
-        artifact_id: "batch-1",
-        requirement_id: "req-submission",
-      })
-    ).content[0].text,
-  );
-  assert.equal(malformedBatch.success, true);
-  assert.equal(malformedBatch.delivery.next_args, undefined);
+  for (const artifactKind of ["mcn_creator_preview", "manual_source", "ranked_submission", "creator_detail_export"]) {
+    const saved = JSON.parse(
+      (await saveFixture(workspaceDir, artifactKind, `${artifactKind}.xlsx`)).content[0].text,
+    );
+    assert.equal(saved.success, true);
+    assert.equal(saved.delivery.next_tool, undefined);
+    assert.equal(saved.delivery.next_args, undefined);
+  }
 });
 
 test("MCN ranking save omits an invalid recipient question", async (t) => {
@@ -258,7 +168,7 @@ test("Excel download rejects URLs outside eshypdata.com before fetching", async 
       (
         await saveExcelArtifact(
           {
-            artifact_kind: "submission_batch",
+            artifact_kind: "ranked_submission",
             artifact_id: "artifact-invalid-url",
             excel_file_url: excelFileUrl,
           },
@@ -285,7 +195,7 @@ test("Excel download uses the configured finite retry schedule", async (t) => {
     (
       await saveExcelArtifact(
         {
-          artifact_kind: "submission_batch",
+          artifact_kind: "ranked_submission",
           artifact_id: "artifact-retry",
           excel_file_url: "https://mcp.eshypdata.com/api/download?file_path=retry.xlsx",
         },

@@ -5,6 +5,9 @@ import {
   PARSE_REQUIREMENT_PARAMETERS,
 } from "./src/tools/parse-requirement.js";
 import { createExcelArtifactSaver } from "./src/tools/save-excel-artifact.js";
+import { createCsvArtifactSaver } from "./src/tools/save-csv-artifact.js";
+import { createCreatorCsvMerger } from "./src/tools/merge-creator-csv.js";
+import { createCreatorCsvUploader } from "./src/tools/upload-creator-csv.js";
 import { resolveTestAdapterBaseUrl } from "./src/tools/test-adapter.js";
 
 /** Entry point for the YPscan client integration layer. */
@@ -47,35 +50,23 @@ export default {
               artifact_kind: {
                 type: "string",
                 enum: [
-                  "submission_batch",
                   "creator_detail_export",
                   "mcn_ranking",
                   "mcn_creator_preview",
                   "manual_source",
+                  "ranked_submission",
                 ],
               },
               artifact_id: {
                 type: "string",
                 minLength: 1,
                 description:
-                  "调用方关联 ID：mcn_ranking、mcn_creator_preview 和 manual_source 使用 requirement_id；submission_batch 和 creator_detail_export 使用 batch/task ID",
+                  "调用方关联 ID：mcn_ranking、mcn_creator_preview、manual_source 和 ranked_submission 使用 requirement_id；creator_detail_export 使用 batch/task ID",
               },
               excel_file_url: {
                 type: "string",
                 minLength: 1,
                 description: "Provider 返回的原始 Excel 下载 URL",
-              },
-              requirement_id: {
-                type: "string",
-                minLength: 1,
-                description:
-                  "submission_batch 使用；当前提报表所属 requirement ID，用于后续 get_creator_detail 补全",
-              },
-              platform: {
-                type: "string",
-                enum: ["xhs", "dy"],
-                description:
-                  "submission_batch 使用；当前 requirement 的平台，xhs 和 dy 均提供后续达人信息补全",
               },
               mcn_names: {
                 type: "array",
@@ -92,6 +83,108 @@ export default {
       },
       { name: "ypscan_save_excel_artifact" },
     );
+
+    api.registerTool(
+      (context) => {
+        const saveCsvArtifact = createCsvArtifactSaver({
+          workspaceDir: context?.workspaceDir,
+          fetchImpl: api.fetch ?? globalThis.fetch,
+          testAdapterBaseUrl,
+        });
+        return {
+          name: "ypscan_save_csv_artifact",
+          description:
+            "将 eshypdata.com 主域下的 links CSV 受控保存到当前项目；成功后必须向用户原样展示 delivery.local_file_link Markdown 超链接。",
+          parameters: {
+            type: "object",
+            additionalProperties: false,
+            required: ["artifact_kind", "artifact_id", "csv_file_url"],
+            properties: {
+              artifact_kind: {
+                type: "string",
+                enum: ["manual_creator_links", "mcn_creator_links"],
+              },
+              artifact_id: {
+                type: "string",
+                minLength: 1,
+                description: "当前 requirement_id",
+              },
+              csv_file_url: {
+                type: "string",
+                minLength: 1,
+                description: "Provider 返回的原始 CSV 下载 URL",
+              },
+            },
+          },
+          async execute(_id, params) {
+            return saveCsvArtifact(params);
+          },
+        };
+      },
+      { name: "ypscan_save_csv_artifact" },
+    );
+
+    api.registerTool(
+      (context) => {
+        const mergeCreatorCsv = createCreatorCsvMerger({
+          workspaceDir: context?.workspaceDir,
+        });
+        return {
+          name: "ypscan_merge_creator_csv",
+          description:
+            "合并当前 requirement 的 links CSV 与一批或多批 YP Action 达人补全 CSV，输出保持 links 原顺序的 merged CSV。",
+          parameters: {
+            type: "object",
+            additionalProperties: false,
+            required: [
+              "requirement_id",
+              "platform",
+              "flow",
+              "links_csv_path",
+              "completion_csv_paths",
+            ],
+            properties: {
+              requirement_id: { type: "string", minLength: 1 },
+              platform: { type: "string", enum: ["xiaohongshu", "douyin"] },
+              flow: { type: "string", enum: ["manual_source", "mcn_rank", "mcn_complete_only"] },
+              links_csv_path: { type: "string", minLength: 1 },
+              completion_csv_paths: {
+                type: "array",
+                minItems: 1,
+                items: { type: "string", minLength: 1 },
+              },
+            },
+          },
+          async execute(_id, params) {
+            return mergeCreatorCsv(params);
+          },
+        };
+      },
+      { name: "ypscan_merge_creator_csv" },
+    );
+
+    api.registerTool({
+      name: "ypscan_upload_creator_csv",
+      description:
+        "显式校验并上传当前 merged CSV；在评分前阻断超过 500 行的数据，并返回 Provider 评分工具消费的 csv_file_path。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["requirement_id", "flow", "merged_csv_path"],
+        properties: {
+          requirement_id: { type: "string", minLength: 1 },
+          flow: { type: "string", enum: ["manual_source", "mcn_rank"] },
+          merged_csv_path: { type: "string", minLength: 1 },
+        },
+      },
+      async execute(_id, params) {
+        const uploadCreatorCsv = createCreatorCsvUploader({
+          fetchImpl: api.fetch ?? globalThis.fetch,
+          testAdapterBaseUrl,
+        });
+        return uploadCreatorCsv(params);
+      },
+    });
 
     api.on("gateway_start", async () => {
       hookRuntime.resetTransientState();

@@ -1,6 +1,6 @@
 # manual_source_creators_status
 
-手动拓展任务的唯一状态查询与结果获取入口。`manual_source_creators` 提交成功后必须调用本工具轮询，直到拿到 Excel 或达到轮询上限。
+手动拓展任务的唯一状态查询与结果获取入口。`manual_source_creators` 提交成功后必须调用本工具轮询，直到拿到 links CSV、兼容 Excel 或达到轮询上限。
 
 ## Remote arguments
 
@@ -21,5 +21,6 @@
 ## Result
 
 - `BATCH_NOT_READY`（含远端 status `0`）表示任务仍在处理中，是预期中间态，不代表 batch ID 传错；按上面的轮询循环继续。
-- 成功要求 `success=true` 且返回 HTTPS `excel_file_url`。拿到后立即调用 `ypscan_save_excel_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 和该 URL 保存；保存成功后先展示 `delivery.local_file_link` 作为本轮真实手动拓展结果，不调用 `rank_creators` 或 `create_submission_batch`。只有当前 Provider 响应明确给出可信实际数量时，才与本轮 `manual_source_creators.num` 比较；数量未知时不得猜测或解析 Excel，当前结果作为最终结果并结束。实际数量达到目标时结束，并在最终结果前汇总此前累计自动放宽的全部条件；实际数量为 0 或不足时说明实际数量、目标数量和缺口，按主 Skill 的“结果不足：先复核，再放宽”共享规则逐项自动放宽，每轮重新解析、复核、创建独立的新 requirement 并重新选择字段。不得打开下载链接、用 Browser 或其他方式下载。
+- 成功优先消费当前 Provider 响应中的 `creator_links_csv_url`。拿到后立即调用 `ypscan_save_csv_artifact`，使用 `artifact_kind="manual_creator_links"`、同一 `requirement_id` 和该 URL 保存；保存成功后先展示 `delivery.local_file_link`，再按平台分 20 个 author 一批调用原生达人补全工具，并继续 `ypscan_merge_creator_csv → ypscan_upload_creator_csv → score_manual_source_csv → 保存最终 Excel`。merged CSV 数据行超过 500 时必须在上传前阻断。
+- 若旧 Provider 仅返回 HTTPS `excel_file_url`，则作为兼容降级路径立即调用 `ypscan_save_excel_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 和该 URL 保存；保存成功后先展示 `delivery.local_file_link` 作为本轮真实手动拓展结果，不调用 `rank_creators` 或 `create_submission_batch`。
 - 其他失败：原样展示原始 code 和 message 后停止，不得换 ID 重试或重新提交任务。
