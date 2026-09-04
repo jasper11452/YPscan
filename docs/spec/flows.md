@@ -55,18 +55,18 @@ validate_requirement → select_inquiry_form_fields（原样展示 URL，等用�
 
 关键约束：
 
-- `manual_source_creators` 只传新版 schema：`{requirement_id[, demand]}`，不带 `num`；可选需求原文字段只在其 schema 明确支持时传 `demand`（当前完整未改写原文），不支持时不猜字段名。
-- 异步轮询：提交返回 batch_id 后等 30 秒再第 1 次查询 `manual_source_creators_status({requirement_id, batch_id, num})`（`num` 必填正整数 = 每批 URL 数量；Hook 按当前 requirement 落库 `quantityTotal` 预填 `MANUAL_SOURCE_CREATORS_STATUS_ARGS` 的 `num`，与用户最新确认不同时以最新确认为准），之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
+- `manual_source_creators` / `manual_source_creators_status` 的 `num` 位置按当前环境 live schema 决定：测试基线 `https://test-mcp.eshypdata.com/mcp` 当前为启动工具不带 `num`、状态查询带 `num`；若生产环境 schema 漂移，只允许按 live schema 做确定性兼容，不得靠前台可见的连续试错探测。可选需求原文字段只在 schema 明确支持时传 `demand`（当前完整未改写原文），不支持时不猜字段名。
+- 异步轮询：提交返回 batch_id 后等 30 秒再第 1 次查询状态工具；当前环境 schema required `num` 时，取当前 requirement 落库 `quantityTotal` 作为目标数量，通过 `MANUAL_SOURCE_TARGET_NUM` 提示并在远端调用时附带，与用户最新确认不同时以最新确认为准。之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
 - 打分阶段：`score_manual_source_csv({requirement_id, csv_file_path})` 返回 job_id 后，按 30s×10 轮询 `score_manual_source_csv_status({job_id})`，终态后保存 manual_source Excel。
 - links CSV 到达后：先 `ypscan_save_csv_artifact(manual_creator_links)` 并原样展示本地链接；原生补全每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止 merge/upload/打分并报告失败达人。
 - merge 后若数据行 > 500 必须在上传前阻断，如实交付当前 merged CSV；未超限才 `ypscan_upload_creator_csv`（`flow=manual_source`），再把 `csv_file_path` 传 `score_manual_source_csv`；`csv_file_path` 只接受当前 `ypscan_upload_creator_csv` 返回值（Provider 进程可读的 HTTP(S) URL 或同机路径），绝不传本机工作区路径或自行构造的路径；`score_manual_source_csv_status` 轮询终态成功后才保存最终手动拓展 Excel。
 - 生产环境无上传契约时 `ypscan_upload_creator_csv` 返回 `YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`（见 [tools.md](./tools.md)），不得猜测真实接口。
-- 降级路径：旧 Provider 同步/异步返回 Excel 时，仅保存并交付当前 Excel，不进 CSV 补全/打分链路，不调 `manual_source_creators_status`、`rank_creators` 或 `create_submission_batch`。
+- 降级路径：旧 Provider 同步/异步返回 Excel 时，仅保存并交付当前 Excel，不进 CSV 补全/打分链路，不调 `manual_source_creators_status`、`rank_creators` 或 `create_submission_batch`，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 `xlsx` 强行补链路。
 - 手动拓展 Excel 保存后即为最终手动拓展结果；不再精排、不生成提报表、不触发放宽。
 
 ## 5. 结果不足：先复核，再放宽
 
-- 触发点：询价分支 `rank_mcns` 为空；手动拓展仅在 Provider 响应明确给出可信实际数量为 0 或少于 `num` 时（数量未知不猜测、不自动放宽，当前交付物即最终结果）。
+- 触发点：询价分支 `rank_mcns` 为空；手动拓展仅在 Provider 响应明确给出可信实际数量为 0 或少于目标数量时（数量未知不猜测、不自动放宽，当前交付物即最终结果）。
 - 禁止直接放宽：先对照当时有效需求、本次解析输出、实际落库参数复核；确认正确后才按固定顺序逐项放宽。
 - 固定顺序：刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`；不存在的字段跳过；每项只调一次。
   - 刊例价/CPM/CPE/粉丝：下界 ×0.8、上界 ×1.2，整数上下界向外取整；返点 `[min,1]`→`[min×0.8,1]`；多报价指标每轮只调一个；标签阶段每轮移除一个完整非核心偏好字段。

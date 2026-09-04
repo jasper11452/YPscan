@@ -19,7 +19,7 @@ Do not add local-only correlation fields or substitute `runId`, `sessionKey`, in
 ## Link and persistence
 
 - Extract the real non-empty `url` from the response. When the Provider returns `success=false` with exact message `浏览器打开请求未成功` but the selection URL is valid, treat only the automatic-open action as failed and continue with the generated link.
-- Output the unchanged selection URL once on its own line. Do not wrap it in Markdown, rewrite it, open it with Browser, or select fields for the user.
+- Output the unchanged selection URL once on its own line. Do not wrap it in Markdown, rewrite it, open it with Browser as a substitute, or select fields for the user. The current plugin has no verified host-side external-link opener, so automatic-open failure must be reported honestly rather than papered over with internal workarounds.
 - Submission on the selection page persists the chosen fields in the Provider database under that requirement ID. `get_selected_inquiry_form_fields` is deprecated: never call it or poll a callback.
 - Reuse is based only on visible same-conversation evidence that this exact requirement's field page was submitted. Do not create a local cache or query/rebuild `columns`.
 

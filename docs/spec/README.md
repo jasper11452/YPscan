@@ -33,7 +33,7 @@ ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远�
 
 1. **链路不固定**：跳步、重复调用、把中间产物当最终交付、跨功能复用 requirement。
 2. **参数契约不表达**：Provider 的 `validate_requirement` schema 未写清类型与格式（历史审计见 `docs/provider/get-workflow-state-refactor.md`），Agent 容易用错误类型来回试。
-3. **证据缺失**：品牌、数量、截止时间、粉丝、返点、报价等业务值缺乏「来自用户原文或弹窗」的硬门禁，容易编造或默认补值。
+3. **证据缺失**：品牌、数量、截止时间、粉丝、返点、报价等业务值缺乏「来自用户原文或弹窗」的硬门禁，容易编造或默认补值；当前代码已补充“明确 `品牌：...` 标注”的本地品牌兜底，同时继续拒绝 `暂无品牌` / `无品牌` 等占位值。
 4. **交付物不受控**：下载 URL 任意、覆盖已有文件、只给裸路径不给可点击链接。
 5. **老链路残留**：`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export` 等旧正式链路工具与新 CSV 链路并存，Agent 误用。
 

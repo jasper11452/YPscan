@@ -8,7 +8,7 @@
 
 - [ ] **用户第一次提出询价机构或手动拓展（真正开始新功能）**：Agent 必须先 `ypscan_parse_requirement → 复核 → validate_requirement` 创建独立的新 requirement，不复用旧 requirement、字段配置、机构、达人、batch、CSV 或 Excel；两功能不得并行或处理中切换，前一功能完成/停止后切换也必须重新建需并重新提交字段配置；界面不弹窗（模式不明除外）；后端只在新 requirement 落库后收到搜索/发送等调用。
 - [ ] **用户同时给出多个达人类型、只给总量**：Agent 只建一个 requirement，保留原始总量、合并全部类型标签与条件，不拆分、不重复落库、不重复搜索；后端不收到子需求或多份落库。
-- [ ] **用户明确说出模式**（“询价机构/机构询价/MCN 询价”→“询价机构”；“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”→“手动拓展”）：Agent 直接采用，旧说法只作输入别名，不弹窗；**用户未明确、两种模式同时出现或语义冲突**：界面弹二选一（询价机构/手动拓展），Agent 回答前不解析、不落库。选定后用户侧模式同时进 `ypscan_parse_requirement.business_mode` 与 `rawMessagesJson.business_mode`；后端只在出站边界把“手动拓展”映射为兼容线值，Agent 不得使用或展示该内部值。
+- [ ] **用户明确说出模式**（“询价机构/机构询价/MCN 询价”→“询价机构”；“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”→“手动拓展”）：Agent 直接采用，旧说法只作输入别名，不弹窗；**用户未明确、两种模式同时出现或语义冲突**：界面弹二选一（询价机构/手动拓展），Agent 回答前不解析、不落库。模式指令每轮注入，避免只在会话启动时出现；选定后用户侧模式同时进 `ypscan_parse_requirement.business_mode` 与 `rawMessagesJson.business_mode`；后端只在出站边界把“手动拓展”映射为兼容线值，Agent 不得使用或展示该内部值。
 - [ ] **用户在 `rank_mcns` 列表后选“暂不询价”、关闭/取消弹窗或当轮未回答，之后明确要求给该列表机构发询价（如“前 5 家”，可按当前排名唯一确定），且需求、平台未变、没有更新的功能或 requirement**：Agent 恢复当前询价分支——沿用原 requirement、平台和 `rank_mcns` 机构映射，不重新解析、落库、搜索或排名；已提交字段配置复用，否则再调 `select_inquiry_form_fields`；界面重新进入收件机构选择。任一条件不满足则按真正的新功能重新建需。
 - [ ] **用户主动修改任何业务条件**：Agent 回到用户原始需求、合并最新人工修改、撤销本轮全部自动放宽，重新解析、复核并创建新 requirement；后端收到新落库。
 - [ ] **用户提供或提名机构名**：Agent 先在本轮同一 requirement、同一平台的 `rank_mcns` 结果中做唯一精确匹配——命中非空 `supplier_id` 放 `supplierIds`（不再传同名 `supplier_name`），未命中或无 ID 的原名放 `supplier_name`；不做本地模糊匹配、不跨需求/平台/run 复用 ID；模糊候选由用户选择后，Agent 只使用 Provider 返回的真实 ID；后端负责最终机构匹配。
@@ -26,7 +26,7 @@
 - [ ] **Agent 调 `search_creators` 成功后**：忽略 `creators_export_path` 等表格链接，直接用同一 requirement 调 `rank_mcns({id, platform})`；仅询价分支允许调用 `search_creators`。后端检索单价只按原价下 30%、上 20% 扩展一次；Agent 不得把该扩展区间回写需求参数。
 - [ ] **Agent 调 `select_inquiry_form_fields`**：必须按当前 live schema 传 `platform` 与当前真实 `requirement_id`；新建 requirement（含跨功能切换）必须重新选择，只有同一 requirement 已有提交证据时才复用；后端持久化字段配置。
 - [ ] **Agent 调 `manual_source_creators`**：只传 `{requirement_id[, demand]}`，不带 `num`；`demand` 只传当前完整未改写的用户原文，不传解析输出或 `rawMessagesJson`，schema 不支持 `demand` 时不猜字段名；后端异步生成或同步返回 links CSV。
-- [ ] **Agent 调 `manual_source_creators_status`**：`num` 必传（每批 URL 数量，正整数）；提交后先等 30 秒再第 1 次查询，之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不查第 11 次、不重复提交或换 ID；后端返回终态 links CSV 后 Agent 保存 `manual_creator_links`，再按平台分 20 个 author 一批原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）。
+- [ ] **Agent 调 `manual_source_creators_status`**：`num` 只在当前环境 live schema required 时传（每批 URL 数量，正整数）；Hook 先通过 `MANUAL_SOURCE_TARGET_NUM` 提示该值。提交后先等 30 秒再第 1 次查询，之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不查第 11 次、不重复提交或换 ID；后端返回终态 links CSV 后 Agent 保存 `manual_creator_links`，再按平台分 20 个 author 一批原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）。
 - [ ] **Agent 调原生达人补全工具**：每批只信 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止后续 merge/upload/打分，界面如实报告失败达人。
 - [ ] **Agent 调 `ypscan_merge_creator_csv`**：merged CSV 数据行超过 500 必须在上传前阻断并交付当前 merged CSV；未超限才 `ypscan_upload_creator_csv`，用后端返回的服务器侧 `csv_file_path` 调 `score_manual_source_csv({requirement_id, csv_file_path})`。
 - [ ] **Agent 调 `score_manual_source_csv`**：后端返回 `job_id` 时按 30 秒间隔、单轮最多 10 次轮询 `score_manual_source_csv_status({job_id})`，终态后才保存 manual_source Excel；后端同步返回 Excel 时直接保存（兼容降级路径，不进 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗）。

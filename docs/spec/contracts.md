@@ -63,7 +63,7 @@
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `platform`             | 别名归一化到 `xiaohongshu`/`douyin`                                                                                                                                                                                                                                                                                        |
 | `status`               | 缺失/空时补 `"ready"`                                                                                                                                                                                                                                                                                                      |
-| `brandName`            | 单元素字符串数组解包；优先采用当前平台 Dify 唯一合法品牌                                                                                                                                                                                                                                                                   |
+| `brandName`            | 单元素字符串数组解包；优先采用当前平台 Dify 唯一合法品牌；若 Dify 当前平台品牌缺失，但 `rawMessagesJson.original` 中存在明确 `品牌：...` / `品牌名称：...` / `合作品牌：...` 标注，则可确定性兜底为该值；`暂无品牌` / `无品牌` 等占位值一律视为无效                                                                                                                                                                                                                                                   |
 | `quantityTotal`        | 归一化为正整数字符串；非法则删除该字段（交预检报错）                                                                                                                                                                                                                                                                       |
 | 区间字段               | 标量→`[v,v]` 起步；百分号字符串（如 `"20%"`、`"10%-30%"`）解析并换算比例；中文区间 `-~～至到` 解析；`rebate`→`"[min,1]"`；粉丝“无/不限”→`"[0,999999999]"`；粉丝超上限截断到 `999999999`；CPM/CPE 标量→`"[0,v]"`；报价标量→`[floor(v×0.7), ceil(v×1.2)]`（Provider 检索单价只按原价下 30%/上 20% 扩展一次，不回写需求参数） |
 | `submissionDeadlineAt` | 归一化为 `YYYY-MM-DD HH:mm:ss`，仅当晚于当前时间                                                                                                                                                                                                                                                                           |
@@ -77,7 +77,7 @@
 
 - 未知字段：`不是 validate_requirement 的已声明参数`。
 - 证据门禁（来自 `rawMessagesJson.original` 与 `clarifications` 拼合的文本证据）：
-  - `brandName` 必须原样使用当前平台唯一 Dify 解析品牌；仅解析缺失/多候选时使用最新弹窗答案。
+  - `brandName` 必须原样使用当前平台唯一 Dify 解析品牌；仅解析缺失/多候选时使用最新弹窗答案，或在原文存在明确 `品牌：...` / `品牌名称：...` / `合作品牌：...` 标注时做确定性本地兜底。
   - `quantityTotal`、`submissionDeadlineAt` 必须有与提交值一致的原文/澄清证据。
   - `followercount`、`rebate`、报价：要么 Dify 给出唯一合法区间且提交值与其等价，要么原文/澄清中有对应证据。
   - `projectStartStart`/`projectStartEnd`（可选）：只能传明确日期，需原文证据，且开始不晚于结束。
@@ -95,6 +95,6 @@
 - `rank_mcns`：`data.mcns` 每项字段 = `mcn_recommendation_id`、`supplier_id`、`agency_name`、`candidate_count`、`rank_no`、`rank_score`、`rebate_rate`；成功另有 `mcns_download_url`（`mcns_export_path` 兼容）。五列表格映射：排名=`rank_no`（缺省按响应顺序）、机构=`agency_name`、覆盖达人=`candidate_count`、返点=`rebate_rate`、综合分=`rank_score`。
 - `rank_creators`：props = `inquiry_ids`（array|null）/ `requirement_id`（string|null），required = []，不再消费 `csv_file_path`。
 - `create_with_distributions`：required = [`requirement_id`, `description`, `wechat_notification_message`]；`supplierIds`/`supplier_name` 可选，业务规则不变（两侧恒传数组、空侧 `[]`、至少一侧非空）。
-- `manual_source_creators`：`{requirement_id[, demand]}`（无 `num`）；异步返回 `batch_id` 时用 `manual_source_creators_status({requirement_id, batch_id, num})` 轮询，`num` 必填正整数（= 每批 URL 数量）。Hook 按当前 requirement 落库的 `quantityTotal` 预填 `MANUAL_SOURCE_CREATORS_STATUS_ARGS` 的 `num`，与用户最新确认不同时以最新确认为准；未预填时由 Agent 补上。
+- `manual_source_creators` / `manual_source_creators_status`：`num` 的位置按当前环境 live schema 决定。测试基线 `https://test-mcp.eshypdata.com/mcp` 当前为 `manual_source_creators({requirement_id[, demand]})`、`manual_source_creators_status({requirement_id, batch_id, num})`；生产环境若漂移，只允许按 live schema 做确定性兼容，不得通过前台可见的连续试错探测。Hook 通过 `MANUAL_SOURCE_TARGET_NUM` 提示状态查询所需的目标数量；只有当前环境 live schema required `num` 时才并入远端调用。
 - `score_manual_source_csv`：`{requirement_id, csv_file_path}` → 返回 `job_id`；`score_manual_source_csv_status({job_id})` 轮询至终态 → final workbook URL。`csv_file_path` 只接受当前 `ypscan_upload_creator_csv` 返回值（Provider 进程可读的 HTTP(S) URL 或同机路径），绝不传本机工作区路径；当前生产上传契约缺失（`YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`）时不得猜测真实接口。
 - 回收链：`get_workflow_state({requirement_id})` → inquiry_ids 非空 → `ingest_mcn_submissions({inquiry_ids})` → `get_ingest_job` 轮询至 `succeeded`/`partially_succeeded`；inquiry_ids 为空（已分发项目、mcn_planning）→ `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})` → 再 `get_workflow_state` → ingest（sync 后不直接 ingest；mcn_planning 不等于可精排）。

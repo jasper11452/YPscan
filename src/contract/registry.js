@@ -4,6 +4,8 @@
  * completeness and canonical-format gate; it does not retain workflow state.
  */
 
+import { isRecord, nonemptyString } from "../util/value.js";
+
 const MAX_FOLLOWER_COUNT = 999_999_999;
 
 export const UNRESTRICTED_FOLLOWERCOUNT_RANGE = `[0,${MAX_FOLLOWER_COUNT}]`;
@@ -314,10 +316,31 @@ function normalizedRawMessages(value) {
   }
   if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) return normalized;
   const record = /** @type {Record<string, unknown>} */ (normalized);
-  const businessMode = providerBusinessMode(record.business_mode);
-  return businessMode && businessMode !== record.business_mode
-    ? { ...record, business_mode: businessMode }
-    : normalized;
+  /** @type {Record<string, unknown>} */
+  const next = { ...record };
+  let changed = false;
+
+  if (!nonemptyString(next.original) && nonemptyString(next.original_demand)) {
+    next.original = String(next.original_demand).trim();
+    changed = true;
+  }
+  if (!isRecord(next.clarifications) && isRecord(next.clarify)) {
+    next.clarifications = next.clarify;
+    changed = true;
+  }
+  if (!nonemptyString(next.business_mode)) {
+    const businessMode = normalizeBusinessMode(record.businessMode) ?? normalizeBusinessMode(record.mode);
+    if (businessMode) {
+      next.business_mode = businessMode;
+      changed = true;
+    }
+  }
+  const providerMode = providerBusinessMode(next.business_mode);
+  if (providerMode && providerMode !== next.business_mode) {
+    next.business_mode = providerMode;
+    changed = true;
+  }
+  return changed ? next : normalized;
 }
 
 function normalizedNumericRange(value, { rate = false, price = false, maximum = false } = {}) {
@@ -769,15 +792,32 @@ function latestFieldEvidence(value, keys) {
 }
 
 const INVALID_BRAND_CANDIDATE =
-  /^(?:null|undefined|unknown|n\/?a|none|未知|未明确|未提及|未提供|暂无|无|不详|待确认|待定)$/iu;
+  /^(?:null|undefined|unknown|n\/?a|none|未知|未明确|未提及|未提供|暂无品牌|暂无|无品牌|无|不详|待确认|待定|none brand)$/iu;
+const BRAND_LABEL_PREFIX = /^(?:品牌(?:名称)?|brandName)\s*[:：=]\s*/iu;
 
 function normalizedBrandCandidate(value) {
   if (typeof value !== "string") return null;
   const candidate = value
     .trim()
     .replace(/^["'“”‘’]+|["'“”‘’]+$/gu, "")
+    .replace(BRAND_LABEL_PREFIX, "")
     .trim();
   return candidate && !INVALID_BRAND_CANDIDATE.test(candidate) ? candidate : null;
+}
+
+function explicitBrandFromOriginal(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/\r\n?/gu, "\n");
+  const patterns = [
+    /(?:^|[；;。\n])\s*品牌(?:名称)?\s*[:：=]\s*([^；;，,。\n]+)/iu,
+    /(?:^|[；;。\n])\s*合作品牌\s*[:：=]\s*([^；;，,。\n]+)/iu,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const candidate = normalizedBrandCandidate(match?.[1]);
+    if (candidate) return candidate;
+  }
+  return null;
 }
 
 function uniqueParsedBrand(value, platform) {
@@ -810,10 +850,7 @@ function clarifiedBrandEvidence(value) {
   }
   const clarification = latestScalarClarification(value, ["brandName", "品牌", "品牌名称"]);
   if (clarification) {
-    const labeled = clarification.text.match(
-      /^(?:品牌(?:名称)?|brandName)\s*[:：=]\s*([^；;，,。\n]+)/iu,
-    );
-    const candidate = normalizedBrandCandidate(labeled?.[1] ?? clarification.text);
+    const candidate = normalizedBrandCandidate(clarification.text);
     return { present: true, candidates: candidate ? [candidate] : [] };
   }
   return { present: false, candidates: [] };
@@ -1198,6 +1235,8 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   const parsedBrand = uniqueParsedBrand(rawMessages, payload.platform);
   const submittedBrand = normalizedBrandCandidate(payload.brandName);
   const clarifiedBrand = clarifiedBrandEvidence(rawMessages);
+  const rawMessagesRecord = /** @type {Record<string, unknown>} */ (rawMessages);
+  const explicitBrand = explicitBrandFromOriginal(rawMessagesRecord.original);
   const clarifiedBrandMatches = Boolean(
     submittedBrand &&
     !parsedBrand &&
@@ -1205,8 +1244,11 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     clarifiedBrand.candidates.length === 1 &&
     clarifiedBrand.candidates[0] === submittedBrand,
   );
+  const explicitBrandMatches = Boolean(
+    submittedBrand && !parsedBrand && !clarifiedBrand.present && explicitBrand === submittedBrand,
+  );
   const parsedBrandMatches = Boolean(submittedBrand && submittedBrand === parsedBrand);
-  if (!parsedBrandMatches && !clarifiedBrandMatches) {
+  if (!parsedBrandMatches && !clarifiedBrandMatches && !explicitBrandMatches) {
     add(
       "brandName",
       "必须原样使用当前平台唯一 Dify 解析品牌；仅在解析缺失或多候选时使用最新弹窗答案",
@@ -1396,6 +1438,14 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
           normalizedPlatformName(normalized.platform),
         );
         if (parsedBrand) set("brandName", parsedBrand);
+        else if (!Object.hasOwn(normalized, "brandName")) {
+          const clarifiedBrand = clarifiedBrandEvidence(rawMessages);
+          if (clarifiedBrand.candidates.length === 1) set("brandName", clarifiedBrand.candidates[0]);
+          else {
+            const explicitBrand = explicitBrandFromOriginal(rawMessages.original);
+            if (explicitBrand) set("brandName", explicitBrand);
+          }
+        }
         for (const field of PARSED_RANGE_FIELDS) {
           if (
             Object.hasOwn(normalized, field) &&

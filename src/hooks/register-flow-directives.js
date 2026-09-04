@@ -22,7 +22,7 @@ const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
 const REQUIREMENT_PREFLIGHT_BLOCKED = "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED";
 const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"，且 min < max';
 const MANUAL_SOURCE_ORIGINAL_TEXT_RULE =
-  "调用默认 manual_source_creators 前先读取实际 input schema：required 只使用 requirement_id:string；若 schema 明确提供用于需求原文的可选字段 demand，则只在该字段传当前完整、未改写的用户原始需求文本。只传原文，不传解析输出或 rawMessagesJson；schema 不支持 demand 时只传 requirement_id，不得猜字段名。";
+  "调用 default manual_source_creators 前先读取实际 input schema：按当前环境 live schema 传参。若 schema required 含 num，则 requirement_id 与 num 一并传；若 schema 不要求 num，则不得附带。若 schema 明确提供用于需求原文的可选字段 demand，则只在该字段传当前完整、未改写的用户原始需求文本。只传原文，不传解析输出或 rawMessagesJson；schema 不支持 demand 时不得猜字段名。";
 const SINGLE_REQUIREMENT_TYPE_RULE =
   "同平台多个达人类型只创建一个 requirement：保留用户给出的总量，合并全部类型标签与条件，不拆分子需求、不重复落库、不重复搜索；本规则覆盖任何旧的平均分配或批量子需求指令。";
 const PARSED_METRIC_REUSE_RULE =
@@ -45,11 +45,11 @@ const REQUIREMENT_CREATION_RULE =
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
 const MANUAL_SOURCE_STATUS_NUM_RULE =
-  "manual_source_creators_status 的 num 必传：取本轮目标交付数量（正整数）。Hook 已按当前 requirement 落库的 quantityTotal 预填 MANUAL_SOURCE_CREATORS_STATUS_ARGS 的 num；与用户最新确认的目标数量不同时以最新确认为准。未预填时调用前必须补上 num，不得省略或传 0。";
+  "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传：取本轮目标交付数量（正整数）。Hook 会用 MANUAL_SOURCE_TARGET_NUM 提供或提示该值；与用户最新确认的目标数量不同时以最新确认为准。schema 不接受 num 时不得附带，避免无效重试。";
 const SCORE_MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 score_manual_source_csv，也不得猜测或更换 job_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
 const MANUAL_SOURCE_SHORTFALL_RULE =
-  "只在当前 Provider 响应明确给出可信实际数量时与本轮 num 比较，不得猜测数量或解析 Excel。数量未知时交付当前 Excel 并结束；达到 num 时结束，如此前发生自动放宽，必须在最终结果前汇总累计放宽的全部条件；实际数量为 0 或少于 num 时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再按 media-assistant Skill 的“结果不足：先复核，再放宽”共享顺序逐项自动放宽。每轮提前告诉用户唯一修改项，重新解析、复核、创建独立的新 requirement 并重新选择字段，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。全部允许项用完仍不足时询问“手动修改需求 / 改用询价机构 / 结束”";
+  "只在当前 Provider 响应明确给出可信实际数量时与本轮目标数量比较，不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束，如此前发生自动放宽，必须在最终结果前汇总累计放宽的全部条件；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再按 media-assistant Skill 的“结果不足：先复核，再放宽”共享顺序逐项自动放宽。每轮提前告诉用户唯一修改项，重新解析、复核、创建独立的新 requirement 并重新选择字段，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。全部允许项用完仍不足时询问“手动修改需求 / 改用询价机构 / 结束”";
 const CREATOR_CSV_LIMIT = 500;
 const MANUAL_SOURCE_FLOW = "manual_source";
 const MCN_COMPLETE_ONLY_FLOW = "mcn_complete_only";
@@ -364,9 +364,9 @@ function fieldSelectionDirective(message) {
   const linkReady = result?.success === true || (result?.success === false && autoOpenFailed);
   if (!linkReady || !url) return flowPauseDirective("字段选择", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL 后停止业务调用，等待用户提交并回复“好了”；不得改写、包装、用 Browser 打开或替用户选择字段。",
+    "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL；若 Provider 已自动打开页面则继续等待提交结果，若仅自动打开失败则如实展示链接。插件当前没有可验证的宿主外链打开能力，不得改写、包装、用 Browser 替代打开或替用户选择字段。",
     `FIELD_SELECTION_URL=${url}`,
-    "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN 或用户明确提供的机构名称；命中本轮榜单且有 supplier_id 的机构走 supplierIds，其他原名走 supplier_name，并做发送前警示弹窗确认，手动拓展使用原 requirement_id 和 num。",
+    "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN 或用户明确提供的机构名称；命中本轮榜单且有 supplier_id 的机构走 supplierIds，其他原名走 supplier_name，并做发送前警示弹窗确认；手动拓展只使用原 requirement_id 和当前环境 live schema 允许的参数。",
   ].join("\n");
 }
 
@@ -547,6 +547,11 @@ function positiveInteger(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function manualSourceTargetNumLine(value) {
+  const num = positiveInteger(value);
+  return num == null ? null : `MANUAL_SOURCE_TARGET_NUM=${num}`;
+}
+
 function manualSourceCreatorsDirective(
   message,
   params = {},
@@ -605,10 +610,12 @@ function manualSourceCreatorsDirective(
   const batchId = manualSourceBatchId(result);
   if (batchId == null || !requirementId) return flowPauseDirective("手动拓展", message);
   const statusArgs = { requirement_id: requirementId, batch_id: batchId };
-  const quantityTotal = quantityTotalLookup(requirementId);
-  if (quantityTotal != null) statusArgs.num = quantityTotal;
+  const targetNumLine = manualSourceTargetNumLine(
+    quantityTotalLookup(requirementId) ?? params?.num,
+  );
   return [
-    `YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已提交后台任务（仅返回 batch_id）。先告知用户“后台手动拓展耗时较长，您可以先不用管，我会继续轮询。”，再按 MANUAL_SOURCE_CREATORS_STATUS_ARGS 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
+    `YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已提交后台任务（仅返回 batch_id）。先告知用户“后台手动拓展耗时较长，您可以先不用管，我会继续轮询。”，再按当前环境 live schema 使用 MANUAL_SOURCE_CREATORS_STATUS_ARGS 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
+    ...(targetNumLine ? [targetNumLine] : []),
     `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify(statusArgs)}`,
   ].join("\n");
 }
@@ -655,11 +662,13 @@ function manualSourceCreatorsStatusDirective(
   if (result?.error?.code === "BATCH_NOT_READY") {
     if (batchId == null || !requirementId) return flowPauseDirective("手动拓展结果查询", message);
     const statusArgs = { requirement_id: requirementId, batch_id: batchId };
-    // 上一轮实际使用的 num 是用户最新确认值，优先于落库 quantityTotal；两者都缺失时保留规则文案兜底。
-    const num = positiveInteger(params?.num) ?? quantityTotalLookup(requirementId);
-    if (num != null) statusArgs.num = num;
+    // 上一轮实际使用的 num 是用户最新确认值，优先于落库 quantityTotal；是否并入远端参数由 live schema 决定。
+    const targetNumLine = manualSourceTargetNumLine(
+      positiveInteger(params?.num) ?? quantityTotalLookup(requirementId),
+    );
     return [
       `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY）。由当前对话累计查询次数；未到第 10 次时等待 30 秒后继续使用同一 ID 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
+      ...(targetNumLine ? [targetNumLine] : []),
       `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify(statusArgs)}`,
     ].join("\n");
   }
@@ -1411,21 +1420,25 @@ export function registerFlowDirectiveHooks(api) {
     "before_prompt_build",
     (event, context) => {
       const scope = scopeKey(event, context);
-      const lines = [];
+      const lines = [
+        "[YPSCAN 业务模式指令]",
+        "业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，必须先逐字调用下方 AskUserQuestion；回答前不得解析或落库。",
+        `BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}`,
+      ];
 
       if (!startupScopes.has(scope)) {
         startupScopes.add(scope);
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          `业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，首次业务动作逐字调用 BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}，回答前不得解析或落库。选择后把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→get_workflow_state→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→保存 links CSV→让用户选择“精排并生成提报表 / 只补全达人信息”；若选精排则继续 rank_creators（requirement_id+本轮 get_workflow_state 的 inquiry_ids）→保存最终提报表；若选只补全则原生补全→merge（flow=mcn_complete_only）→交付 merged CSV。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存 links CSV→按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具（小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→merge→显式 upload→score_manual_source_csv→score_manual_source_csv_status→保存最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
+          `选择业务模式后，把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→get_workflow_state→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→保存 links CSV→让用户选择“精排并生成提报表 / 只补全达人信息”；若选精排则继续 rank_creators（requirement_id+本轮 get_workflow_state 的 inquiry_ids）→保存最终提报表；若选只补全则原生补全→merge（flow=mcn_complete_only）→交付 merged CSV。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存 links CSV→按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具（小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→merge→显式 upload→score_manual_source_csv→score_manual_source_csv_status→保存最终手动拓展表。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
           REQUIREMENT_CREATION_RULE,
           INQUIRY_RECIPIENT_RESUME_RULE,
           "所有 AskUserQuestion 弹窗的 header、question、label 和 description 均主动换行，任何一行最多 20 个 Unicode 字符；长机构名可为展示插入换行，匹配前移除换行还原原名。",
           "机构回填预览链路必须先保存预览表，再保存 links CSV，再弹“精排并生成提报表 / 只补全达人信息”。选精排时直接用当前 requirement_id 和本轮 get_workflow_state 映射的 inquiry_ids 调用 rank_creators；rank_creators 直接产最终提报 Excel 并保存为 ranked_submission，不再消费上传 CSV，也不再调用 create_submission_batch、get_creator_detail 或 get_creator_detail_export。选只补全时继续当前 requirement 和当前平台，按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具，成功后 merge（flow=mcn_complete_only），但不上传、不打分，直接交付 merged CSV，并允许同一 requirement、同一平台在当前会话里继续升级到精排。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。字段映射固定：排名=rank_no（缺省按响应顺序）、机构=agency_name、覆盖达人=candidate_count、返点=rebate_rate、综合分=rank_score。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
-          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。若返回 batch_id，先等待 30 秒，再用同一 requirement_id、batch_id 和 num 第 1 次查询 manual_source_creators_status（num 必传：取本轮目标交付数量，正整数；Hook 按当前 requirement 落库的 quantityTotal 预填 MANUAL_SOURCE_CREATORS_STATUS_ARGS 的 num，与用户最新确认不同时以最新确认为准），之后每隔 30 秒查询一次，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具；每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 merge、upload 和打分。补全完成后 merge（flow=manual_source）、显式 upload（flow=manual_source），再调用 score_manual_source_csv；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成才保存最终手动拓展 Excel；score 仍同步返回 Excel 时直接保存。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
+          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 与 manual_source_creators_status 的 num 位置以当前环境 live schema 为准：测试基线是启动工具不带 num、状态查询带 num；若生产 schema 漂移，则只允许按 live schema 做确定性调整，不能靠连续试错。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具；每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 merge、upload 和打分。补全完成后 merge（flow=manual_source）、显式 upload（flow=manual_source），再调用 score_manual_source_csv；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成才保存最终手动拓展 Excel；score 仍同步返回 Excel 时直接保存。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
           "原生达人补全工具由宿主 YP Action 提供、不在 ypscan 白名单内：小红书 get_xhs_author_business_card 且固定 page_count=1，抖音 get_douyin_author_business_card。宿主未开放对应工具时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。",
           MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
@@ -1438,14 +1451,12 @@ export function registerFlowDirectiveHooks(api) {
           `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
           "Dify 已给出的唯一数值直接采用，禁止再问；本地只做区间格式与粉丝技术上限截断。只有解析缺失、null、多候选或与用户明确改口冲突时才阻断。",
           "需求解析复核、结果不足后的二次复核与逐项放宽、用户修改需求后的重建规则，统一按 media-assistant Skill 执行；Hook 只提供当前工具结果和下一步动态参数。",
-          "手动拓展调用 manual_source_creators 时只使用新版 schema：required 只有 requirement_id:string，可选需求原文字段只用 demand；manual_source_creators_status 的 required 是 requirement_id:string、batch_id:integer 与 num:integer。禁止继续生成或暗示 size、creator_count、page_url、original_brief 等旧字段。",
+          "手动拓展调用 manual_source_creators / manual_source_creators_status 时，num 的位置必须以当前环境 live schema 为准：测试基线要求启动不带 num、状态查询带 num；若当前环境 schema 不同，只能做确定性兼容，禁止用前台可见的多轮试错去探测。可选需求原文字段只用 demand；禁止继续生成或暗示 size、creator_count、page_url、original_brief 等旧字段。",
           PARSED_METRIC_REUSE_RULE,
           SINGLE_REQUIREMENT_TYPE_RULE,
-          REQUIREMENT_COMPLETENESS_RULE,
-          INQUIRY_RECIPIENT_RESPONSE_RULE,
         );
       }
-      return lines.length ? { prependContext: lines.join("\n") } : undefined;
+      return { prependContext: lines.join("\n") };
     },
     HOOK_OPTIONS,
   );

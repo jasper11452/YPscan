@@ -161,21 +161,7 @@ export function browserVerificationQuestionPayload() {
   );
 }
 
-function compactMcnRecipientQuestionPayload(count) {
-  return popupQuestionPayload(
-    "选择询价机构",
-    [
-      `候选机构共 ${count} 家。`,
-      "完整机构名单已在弹窗前的 MCN 表格中展示。",
-      "询价全部机构可直接选择；只询价部分机构或榜单外机构时，请在自定义输入中填写表格编号、完整名称或机构名，可多选。",
-    ].join("\n"),
-    [
-      { label: "询价全部机构", description: "选择本轮全部候选机构并进入字段选择" },
-      { label: "暂不询价", description: "本轮不发送，可按当前列表继续" },
-    ],
-    true,
-  );
-}
+const RESERVED_RECIPIENT_LABELS = new Set(["询价全部机构", "暂不询价"]);
 
 /** @param {unknown} names */
 export function mcnRankingRecipientQuestionPayload(names) {
@@ -189,28 +175,46 @@ export function mcnRankingRecipientQuestionPayload(names) {
     return [restored];
   });
   if (recipientNames.length === 0) return null;
-  const singleInstitution = recipientNames.length === 1;
-  const options = recipientNames.map((name) => ({
-    label: name,
-    description: "选择该机构作为本次询价收件人",
-  }));
-  if (options.length === 1) {
-    if (recipientNames[0] === "暂不询价") {
-      return compactMcnRecipientQuestionPayload(1);
+  const directOptions = recipientNames.slice(0, 2).map((name, index) => {
+    const position = index + 1;
+    if (RESERVED_RECIPIENT_LABELS.has(name)) {
+      return {
+        label: `表格第 ${position} 家`,
+        description: `按 MCN 表格顺序选择第 ${position} 家机构`,
+      };
     }
-    options.push({ label: "暂不询价", description: "本轮不发送，可按当前列表继续" });
+    return {
+      label: name,
+      description: "选择该机构作为本次询价收件人",
+    };
+  });
+  const allInstitutionsOption = {
+    label: "询价全部机构",
+    description: "选择本轮全部候选机构并进入字段选择",
+  };
+  const skipInquiryOption = {
+    label: "暂不询价",
+    description: "本轮不发送，可按当前列表继续",
+  };
+  let question =
+    "当前仅有 1 家候选机构；可直接选择当前机构。若需其他机构、榜单外机构或使用表格编号，请在自定义输入中填写完整名称或编号。";
+  if (recipientNames.length === 2) {
+    question =
+      "请选择本次需要询价的机构；如需一次询价多家、补充榜单外机构或使用表格编号，请在自定义输入中填写完整名称或编号。";
+  } else if (recipientNames.length > 2) {
+    question = [
+      `候选机构共 ${recipientNames.length} 家。`,
+      "完整机构名单已在弹窗前的 MCN 表格中展示。",
+      "可直接选择下方快捷选项；如需其他当前机构、一次询价多家、榜单外机构或使用表格编号，请在自定义输入中填写完整名称或编号。",
+    ].join("\n");
   }
-  if (options.length <= 4) {
-    return popupQuestionPayload(
-      "选择询价机构",
-      singleInstitution
-        ? "当前仅有 1 家候选机构；如需改为其他机构，请在自定义输入中填写完整名称。"
-        : "请选择本次需要询价的机构；如需补充榜单外机构，请在自定义输入中填写完整名称。",
-      options,
-      true,
-    );
-  }
-  return compactMcnRecipientQuestionPayload(options.length);
+  return popupQuestionPayload(
+    "选择询价机构",
+    question,
+    recipientNames.length > 2
+      ? [allInstitutionsOption, ...directOptions, skipInquiryOption]
+      : [...directOptions, allInstitutionsOption, skipInquiryOption],
+  );
 }
 
 export function inquiryCreatorCompletionChoiceQuestionPayload() {

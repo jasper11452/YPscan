@@ -150,4 +150,4 @@
 
 ## 6. 弹窗载荷（供工具与 Hook 共用）
 
-`src/tools/popup-questions.js` 构造 `AskUserQuestion` 载荷：`{ questions: [...] }`，1–4 题；每题 `header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符（语义换行优先），选项 2–4 个且标签去重（忽略换行）。固定载荷：业务模式选择、流程重试/结束、入库恢复、Browser 验证、MCN 收件机构选择（`询价全部机构`/`暂不询价`/机构名列表，multiSelect）、回填后续分叉（`精排并生成提报表`/`只补全达人信息`）。
+`src/tools/popup-questions.js` 构造 `AskUserQuestion` 载荷：`{ questions: [...] }`，1–4 题；每题 `header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符（语义换行优先），选项 2–4 个且标签去重（忽略换行）。固定载荷：业务模式选择、流程重试/结束、入库恢复、Browser 验证、MCN 收件机构选择（单选快捷项 + 宿主自定义输入，内置 `询价全部机构` / `暂不询价`，必要时补少量当前机构快捷项）、回填后续分叉（`精排并生成提报表`/`只补全达人信息`）。

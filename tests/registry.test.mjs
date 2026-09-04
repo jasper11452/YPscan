@@ -824,7 +824,7 @@ test("normalization replaces a conflicting Agent-supplied brand with the Dify br
   assert.equal(normalized.brandName, "品牌A");
 });
 
-test("preflight asks when Dify has no brand even if the original text names one", () => {
+test("preflight accepts an explicitly labeled original brand when Dify brand is missing", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
     ...completeValidateParams(),
@@ -834,10 +834,7 @@ test("preflight asks when Dify has no brand even if the original text names one"
     },
   };
 
-  assert.deepEqual(
-    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["brandName"],
-  );
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
 });
 
 test("preflight accepts the latest brand clarification when Dify has no brand", () => {
@@ -981,7 +978,7 @@ test("preflight does not treat empty clarification keys as user evidence", () =>
 
   assert.deepEqual(
     validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["brandName", "quantityTotal", "followercount", "submissionDeadlineAt"],
+    ["quantityTotal", "followercount", "submissionDeadlineAt"],
   );
 });
 

@@ -264,11 +264,12 @@ test("validated requirements route by the previously selected business mode", ()
   const question = argsFromDirective(directiveText(rank));
   assert.deepEqual(
     question.questions[0].options.map((option) => option.label),
-    ["机构 A", "暂不询价"],
+    ["机构 A", "询价全部机构", "暂不询价"],
   );
-  assert.equal(question.questions[0].multiSelect, true);
+  assert.equal(question.questions[0].multiSelect, false);
   assert.deepEqual(question.questions[0].options, [
     { label: "机构 A", description: "选择该机构作为本次询价收件人" },
+    { label: "询价全部机构", description: "选择本轮全部候选机构并进入字段选择" },
     { label: "暂不询价", description: "本轮不发送，可按当前列表继续" },
   ]);
   assert.doesNotMatch(JSON.stringify(question), /supplier-a/u);
@@ -400,8 +401,9 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   assert.match(savedText, /属于恢复当前询价分支/u);
   assert.deepEqual(
     argsFromDirective(savedText).questions[0].options.map((option) => option.label),
-    ["机构 A", "暂不询价"],
+    ["机构 A", "询价全部机构", "暂不询价"],
   );
+  assert.equal(argsFromDirective(savedText).questions[0].multiSelect, false);
   assert.deepEqual(namedArgsFromDirective(savedText, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
     requirement_id: "req-1",
     platform: "douyin",
@@ -433,7 +435,7 @@ test("default manual sourcing polls its status before saving the final artifact"
     batch_id: 42,
   });
   assert.match(sourceText, /仅返回 batch_id/u);
-  assert.match(sourceText, /num 必传：取本轮目标交付数量（正整数）/u);
+  assert.match(sourceText, /num 只在当前环境 live schema required 时才传/u);
   assert.match(sourceText, /等待 30 秒再进行第 1 次查询/u);
   assert.match(sourceText, /之后每隔 30 秒查询一次，单轮累计最多 10 次/u);
   assert.match(sourceText, /第 10 次仍未完成.*不得自动查询第 11 次/u);
@@ -457,7 +459,7 @@ test("default manual sourcing polls its status before saving the final artifact"
   assert.match(immediateText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
   assert.match(immediateText, /YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
   assert.match(immediateText, /数量未知时交付当前 Excel 并结束/u);
-  assert.match(immediateText, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
+  assert.match(immediateText, /实际数量为 0 或少于目标数量.*共享顺序逐项自动放宽/u);
   assert.match(immediateText, /创建独立的新 requirement 并重新选择字段/u);
   assert.deepEqual(saveExcelArgsFromDirective(immediateText), {
     artifact_kind: "manual_source",
@@ -481,7 +483,7 @@ test("default manual sourcing polls its status before saving the final artifact"
     batch_id: 42,
   });
   assert.match(pendingText, /BATCH_NOT_READY/u);
-  assert.match(pendingText, /num 必传：取本轮目标交付数量（正整数）/u);
+  assert.match(pendingText, /num 只在当前环境 live schema required 时才传/u);
   assert.match(pendingText, /未到第 10 次时等待 30 秒/u);
   assert.match(pendingText, /单轮累计最多 10 次/u);
   assert.match(pendingText, /当前对话累计查询次数/u);
@@ -532,8 +534,8 @@ test("default manual sourcing polls its status before saving the final artifact"
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_LINK=/u);
   assert.match(savedText, /最终手动拓展交付物|本轮真实手动拓展结果/u);
   assert.match(savedText, /YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
-  assert.match(savedText, /达到 num 时结束.*汇总累计放宽的全部条件/u);
-  assert.match(savedText, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
+  assert.match(savedText, /达到目标数量时结束.*汇总累计放宽的全部条件/u);
+  assert.match(savedText, /实际数量为 0 或少于目标数量.*共享顺序逐项自动放宽/u);
   assert.match(savedText, /创建独立的新 requirement 并重新选择字段/u);
   assert.match(savedText, /每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement/u);
   assert.doesNotMatch(savedText, /RANK_CREATORS_ARGS=/u);
@@ -587,9 +589,9 @@ test("manual source status args prefill num from the validated requirement quant
   assert.deepEqual(namedArgsFromDirective(sourceText, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"), {
     requirement_id: "req-num",
     batch_id: 7,
-    num: 30,
   });
-  assert.match(sourceText, /num 必传：取本轮目标交付数量（正整数）/u);
+  assert.match(sourceText, /MANUAL_SOURCE_TARGET_NUM=30/u);
+  assert.match(sourceText, /num 只在当前环境 live schema required 时才传/u);
 
   // 轮询续接：上一轮实际使用的 num（用户最新确认）优先于落库 quantityTotal。
   const continued = persist(
@@ -605,8 +607,9 @@ test("manual source status args prefill num from the validated requirement quant
   );
   assert.deepEqual(
     namedArgsFromDirective(directiveText(continued), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
-    { requirement_id: "req-num", batch_id: 7, num: 25 },
+    { requirement_id: "req-num", batch_id: 7 },
   );
+  assert.match(directiveText(continued), /MANUAL_SOURCE_TARGET_NUM=25/u);
 
   // 未带 num 时回落到落库 quantityTotal。
   const resumed = persist(
@@ -622,8 +625,9 @@ test("manual source status args prefill num from the validated requirement quant
   );
   assert.deepEqual(
     namedArgsFromDirective(directiveText(resumed), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
-    { requirement_id: "req-num", batch_id: 7, num: 30 },
+    { requirement_id: "req-num", batch_id: 7 },
   );
+  assert.match(directiveText(resumed), /MANUAL_SOURCE_TARGET_NUM=30/u);
 });
 
 test("native completion pins the merge flow to the validated business mode", () => {
@@ -1520,15 +1524,17 @@ test("more than four inquiry recipients use a compact prompt without option trun
   assert.equal(popupPlainText(recipient.header), "选择询价机构");
   assert.doesNotMatch(popupPlainText(recipient.question), /超过.*4.*选项/u);
   assert.match(popupPlainText(recipient.question), /候选机构共 5 家/u);
-  assert.match(popupPlainText(recipient.question), /榜单外机构/u);
+  assert.match(popupPlainText(recipient.question), /一次询价多家/u);
   assertPopupLines({ questions: [recipient] });
-  names.forEach((name) => assert.doesNotMatch(recipient.question, new RegExp(name, "u")));
-  assert.equal(recipient.multiSelect, true);
+  names.slice(2).forEach((name) => assert.doesNotMatch(recipient.question, new RegExp(name, "u")));
+  assert.equal(recipient.multiSelect, false);
   assert.deepEqual(recipient.options, [
     { label: "询价全部机构", description: "选择本轮全部候选机构并进入字段选择" },
+    { label: "机构 A", description: "选择该机构作为本次询价收件人" },
+    { label: "机构 B", description: "选择该机构作为本次询价收件人" },
     { label: "暂不询价", description: "本轮不发送，可按当前列表继续" },
   ]);
-  assert.doesNotMatch(JSON.stringify(recipient.options), /机构 [A-E]/u);
+  assert.doesNotMatch(JSON.stringify(recipient.options), /机构 [C-E]/u);
   assert.match(text, /满足续办规则的后续消息/u);
   assert.match(text, /用户选中弹窗中的一个或多个当前机构/u);
   assert.match(text, /未命中当前机构或命中对象缺少 supplier_id 的原始名称/u);
@@ -1561,7 +1567,7 @@ test("recipient popup rejects empty names and deduplicates restored identities",
   const payload = mcnRankingRecipientQuestionPayload(["机构 A", "机构 \nA", "机构 A", "机构 B"]);
   assert.deepEqual(
     payload.questions[0].options.map((option) => popupPlainText(option.label)),
-    ["机构 A", "机构 B"],
+    ["机构 A", "机构 B", "询价全部机构", "暂不询价"],
   );
   assertPopupLines(payload);
 });
@@ -1571,9 +1577,9 @@ test("recipient popup avoids collisions with its fixed stop action", () => {
 
   assert.deepEqual(
     payload.questions[0].options.map((option) => popupPlainText(option.label)),
-    ["询价全部机构", "暂不询价"],
+    ["表格第 1 家", "询价全部机构", "暂不询价"],
   );
-  assert.equal(payload.questions[0].multiSelect, true);
+  assert.equal(payload.questions[0].multiSelect, false);
   assertPopupLines(payload);
 });
 
@@ -1725,14 +1731,14 @@ test("startup instruction selects and preserves one business mode", () => {
   );
   assert.match(first.prependContext, /同一 requirement_id/u);
   assert.match(first.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
-  assert.match(first.prependContext, /先等待 30 秒.*第 1 次查询 manual_source_creators_status/u);
+  assert.match(first.prependContext, /返回 batch_id 后先等待 30 秒.*轮询/u);
   assert.match(
     first.prependContext,
     /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u,
   );
   assert.match(first.prependContext, /该工具由后台 API 完成搜索和落库/u);
   assert.match(first.prependContext, /数量未知时交付当前 Excel 并结束/u);
-  assert.match(first.prependContext, /实际数量为 0 或少于 num.*共享顺序逐项自动放宽/u);
+  assert.match(first.prependContext, /实际数量为 0 或少于目标数量.*共享顺序逐项自动放宽/u);
   assert.match(first.prependContext, /创建独立的新 requirement 并重新选择字段/u);
   assert.match(first.prependContext, /汇总累计放宽的全部条件/u);
   assert.match(first.prependContext, /不再提供浏览器详细拓展分支/u);
@@ -1781,8 +1787,6 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /恰好两个选项/u);
   assert.match(first.prependContext, /不得把机构或消息列为选项/u);
   assert.match(first.prependContext, /description 与 wechat_notification_message 内容一致/u);
-
-  assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
 });
 
 test("validate_requirement preflight canonicalizes all numeric fields before one Provider call", () => {
@@ -2061,17 +2065,17 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
     /FIELD_SELECTION_URL=https:\/\/agenta\.eshypdata\.com\/demand-field-selector\?token=abc/u,
   );
   assert.match(text, /原样输出 URL/u);
-  assert.match(text, /不得改写、包装、用 Browser 打开/u);
+  assert.match(text, /不得改写、包装、用 Browser 替代打开/u);
   assert.match(text, /按 validate_requirement 返回的 requirement_id/u);
   assert.match(text, /不得使用 demand_id/u);
   assert.match(text, /调用已弃用的 get_selected_inquiry_form_fields/u);
   assert.match(text, /把 columns 放入上下文/u);
-  assert.match(text, /等待用户提交并回复“好了”/u);
+  assert.match(text, /收到“好了”后按原分支恢复/u);
   assert.match(text, /按原分支恢复/u);
   assert.match(text, /用户明确选中的当前 MCN/u);
   assert.match(text, /其他原名走 supplier_name/u);
   assert.match(text, /发送前警示弹窗确认/u);
-  assert.match(text, /手动拓展使用原 requirement_id 和 num/u);
+  assert.match(text, /手动拓展只使用原 requirement_id 和当前环境 live schema 允许的参数/u);
   assert.ok(text.length < 900, `field-selection directive too long: ${text.length}`);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
@@ -2132,7 +2136,7 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
     /get_workflow_state→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→保存 links CSV→让用户选择“精排并生成提报表 \/ 只补全达人信息”/u,
   );
   assert.match(startup.prependContext, /score_manual_source_csv→score_manual_source_csv_status/u);
-  assert.match(startup.prependContext, /num 必传：取本轮目标交付数量，正整数/u);
+  assert.match(startup.prependContext, /num 的位置必须以当前环境 live schema 为准/u);
   assert.match(startup.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
   assert.match(
     startup.prependContext,
@@ -2141,11 +2145,11 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   assert.match(startup.prependContext, /不再提供浏览器详细拓展分支，也不追加完成弹窗/u);
   assert.match(
     startup.prependContext,
-    /调用默认 manual_source_creators 前先读取实际 input schema/u,
+    /调用 default manual_source_creators 前先读取实际 input schema/u,
   );
   assert.match(startup.prependContext, /用于需求原文的可选字段 demand/u);
-  assert.match(startup.prependContext, /schema 不支持 demand 时只传 requirement_id，不得猜字段名/u);
-  assert.match(startup.prependContext, /required 只有 requirement_id:string/u);
+  assert.match(startup.prependContext, /schema 不支持 demand 时不得猜字段名/u);
+  assert.match(startup.prependContext, /若 schema required 含 num，则 requirement_id 与 num 一并传/u);
   assert.doesNotMatch(startup.prependContext, /只传 requirement_id 和 num/u);
 
   assert.doesNotMatch(startup.prependContext, /ypscan_manual_research|宿主 Browser/u);

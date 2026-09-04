@@ -6,7 +6,7 @@
 
 | Hook                  | 注册位置                 | 作用                                                  |
 | --------------------- | ------------------------ | ----------------------------------------------------- |
-| `before_prompt_build` | register-flow-directives | 每会话首次注入静态启动指令块                          |
+| `before_prompt_build` | register-flow-directives | 每轮注入模式指令；每会话首次另注入静态启动指令块      |
 | `before_tool_call`    | register-flow-directives | 仅对 `validate_requirement` 做归一化 + 预检，失败阻断 |
 | `tool_result_persist` | register-flow-directives | 记录瞬态映射并按工具结果追加下一步指令                |
 | `gateway_start`       | index.js                 | 重置瞬态状态                                          |
@@ -31,7 +31,7 @@
 
 ## 3. before_prompt_build
 
-每个 scope 只注入一次启动指令块（`prependContext`），内容为静态业务规则的汇总。要点：
+每轮都在 `prependContext` 开头注入精简的业务模式指令及固定 `BUSINESS_MODE_QUESTION_ARGS`；每个 scope 只追加一次完整启动指令块。完整启动块的要点：
 
 - 工具名只认宿主完整名称最后一个 `__` 后的实际工具名，前缀（含 `test__`）只是命名空间。
 - 业务模式识别：明确表达直接用；未明确/冲突/同时出现时先弹 `BUSINESS_MODE_QUESTION_ARGS`（选项固定 `询价机构`/`手动拓展`），回答前不解析不落库；`手动拓展` 在 Provider 边界映射为兼容线值，Agent 不得改写。
@@ -65,13 +65,13 @@
 | `validate_requirement`                                             | 按模式给 `SEARCH_CREATORS_ARGS` 或 `SELECT_INQUIRY_FORM_FIELDS_ARGS`                                                                                                                                                                                                          | 预检阻断文本 → 修正指令；其余 pause   |
 | `search_creators`                                                  | `RANK_MCNS_ARGS`（忽略导出链接）                                                                                                                                                                                                                                              | pause                                 |
 | `rank_mcns`                                                        | 五列表格锁定 + `SAVE_EXCEL_ARTIFACT_ARGS`（或字段选择+机构弹窗）；空列表给复核/放宽策略                                                                                                                                                                                       | pause                                 |
-| `select_inquiry_form_fields`                                       | `FIELD_SELECTION_URL` 原样输出，等“好了”                                                                                                                                                                                                                                      | pause                                 |
+| `select_inquiry_form_fields`                                       | `FIELD_SELECTION_URL` 原样输出；若 Provider 自动打开失败但链接有效，则如实展示链接并等待用户回复“好了”                                                                                                                                                                                                               | pause                                 |
 | `create_with_distributions`                                        | 逐机构发送状态摘要；失败分类处理（无收件机构/项目非进行中→`GET_WORKFLOW_STATE_ARGS`）                                                                                                                                                                                         | —                                     |
 | `sync_mcn_inquiry_status`                                          | `GET_WORKFLOW_STATE_ARGS`（sync 后不直接 ingest）                                                                                                                                                                                                                             | pause                                 |
 | `ingest_mcn_submissions`                                           | `GET_INGEST_JOB_ARGS`；缺 `job_id` 给恢复弹窗                                                                                                                                                                                                                                 | pause                                 |
 | `get_ingest_job`                                                   | 预览表+CSV 双 URL → `SAVE_EXCEL_ARTIFACT_ARGS`（requirement_id 优先取调用参数，缺失时按 job_id 反查 ingest 记录）；终态成功但缺 requirement_id 时 pause 而非继续轮询；未到 `succeeded`/`partially_succeeded` 继续轮询（上限 10 次）                                           | pause                                 |
-| `manual_source_creators`                                           | 分三态：links CSV→`SAVE_CSV_ARTIFACT_ARGS`；Excel→降级交付+放宽策略；batch_id→`MANUAL_SOURCE_CREATORS_STATUS_ARGS`（带 `requirement_id`+`batch_id`，并按当前 requirement 落库 `quantityTotal` 预填 `num`；与用户最新确认不同时以最新确认为准，未预填时由 Agent 补必填 `num`） | 缺字段配置→字段选择；其余 pause       |
-| `manual_source_creators_status`                                    | 同三态；`BATCH_NOT_READY` 继续 30s 轮询（上限 10 次，`num` 必填正整数；续接时优先沿用上一轮实际使用的 `num`，缺失时回落到落库 `quantityTotal`）                                                                                                                               | pause                                 |
+| `manual_source_creators`                                           | 分三态：links CSV→`SAVE_CSV_ARTIFACT_ARGS`；Excel→降级交付+放宽策略；batch_id→`MANUAL_SOURCE_CREATORS_STATUS_ARGS`（只带 `requirement_id`+`batch_id`；目标数量通过 `MANUAL_SOURCE_TARGET_NUM` 提示，只有当前环境 live schema required `num` 时才并入远端调用）                 | 缺字段配置→字段选择；其余 pause       |
+| `manual_source_creators_status`                                    | 同三态；`BATCH_NOT_READY` 继续 30s 轮询（上限 10 次；续接优先沿用上一轮实际使用的 `num` 作为 `MANUAL_SOURCE_TARGET_NUM`，缺失时回落到落库 `quantityTotal`；只有当前环境 live schema required `num` 时才并入远端调用）                                                     | pause                                 |
 | `get_xhs_author_business_card` / `get_douyin_author_business_card` | `COMPLETION_CSV_FILE` + 成功/失败 ID，提示汇总后 merge；按当前业务分支注入 `YPSCAN_MERGE_FLOW`（手动拓展→`manual_source`，询价机构→`mcn_complete_only`）                                                                                                                      | pause                                 |
 | `score_manual_source_csv`                                          | `job_id` → `SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS`（30s 轮询）；全失败不生成空 Excel                                                                                                                                                                                            | pause                                 |
 | `score_manual_source_csv_status`                                   | 终态 → `SAVE_EXCEL_ARTIFACT_ARGS(manual_source)`（requirement_id 优先取调用参数，缺失时按 job_id 反查打分记录）；终态成功但缺 requirement_id 时 pause 而非继续轮询；未完成继续 30s 轮询（上限 10 次）                                                                         | pause                                 |

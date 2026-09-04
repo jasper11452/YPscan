@@ -57,7 +57,7 @@ test("only MCN ranking save offers the recipient question", async (t) => {
     mcnRanking.delivery.next_args,
     mcnRankingRecipientQuestionPayload(["机构 A", "机构 B"]),
   );
-  assert.equal(mcnRanking.delivery.next_args.questions[0].multiSelect, true);
+  assert.equal(mcnRanking.delivery.next_args.questions[0].multiSelect, false);
   assertPopupLines(mcnRanking.delivery.next_args);
 
   const emptyMcnRanking = JSON.parse(

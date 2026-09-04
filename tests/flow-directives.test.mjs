@@ -30,6 +30,25 @@ function namedArgsFromDirective(text, name) {
   return JSON.parse(line.slice(prefix.length));
 }
 
+function canonicalValidateParams(businessMode, quantityTotal = 30) {
+  return {
+    platform: "douyin",
+    brandName: ["测试品牌"],
+    projectName: "测试项目",
+    quantityTotal,
+    submissionDeadlineAt: "2099-08-25 12:00:00",
+    rebate: "25%以上",
+    followercount: [0, 999999999],
+    contentTag: ["科技", "耳机"],
+    rawMessagesJson: JSON.stringify({
+      original: `抖音项目：测试项目；品牌：测试品牌；定制视频；${quantityTotal}位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；科技耳机方向。`,
+      parse_outputs: { dybrandName: ["测试品牌"] },
+      business_mode: businessMode,
+    }),
+    kolOfficialPriceL3: 50000,
+  };
+}
+
 test("flow hooks register the validate_requirement preflight gate", () => {
   const { hooks } = registeredPlugin();
   assert.deepEqual([...hooks.keys()].sort(), [
@@ -271,23 +290,6 @@ test("validate_requirement success reuses the business mode recorded by the pref
   const persist = hooks.get("tool_result_persist");
   const context = { sessionKey: "validate-scope" };
   const requirementId = "a".repeat(32);
-  const validateParams = (businessMode) => ({
-    platform: "douyin",
-    brandName: ["测试品牌"],
-    projectName: "测试项目",
-    quantityTotal: 30,
-    submissionDeadlineAt: "2099-08-25 12:00:00",
-    rebate: "25%以上",
-    followercount: [0, 999999999],
-    contentTag: ["科技", "耳机"],
-    rawMessagesJson: JSON.stringify({
-      original:
-        "抖音项目：测试项目；品牌：测试品牌；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；科技耳机方向。",
-      parse_outputs: { dybrandName: ["测试品牌"] },
-      business_mode: businessMode,
-    }),
-    kolOfficialPriceL3: 50000,
-  });
   // The persist event omits params, matching the reported production failure.
   const persistResult = () =>
     directiveText(
@@ -305,7 +307,10 @@ test("validate_requirement success reuses the business mode recorded by the pref
 
   assert.equal(
     before(
-      { toolName: "mcp__ypscan__validate_requirement", params: validateParams("手动拓展") },
+      {
+        toolName: "mcp__ypscan__validate_requirement",
+        params: canonicalValidateParams("手动拓展"),
+      },
       context,
     ).block,
     undefined,
@@ -321,7 +326,10 @@ test("validate_requirement success reuses the business mode recorded by the pref
 
   assert.equal(
     before(
-      { toolName: "mcp__ypscan__validate_requirement", params: validateParams("询价机构") },
+      {
+        toolName: "mcp__ypscan__validate_requirement",
+        params: canonicalValidateParams("询价机构"),
+      },
       context,
     ).block,
     undefined,
@@ -335,11 +343,159 @@ test("validate_requirement success reuses the business mode recorded by the pref
   assert.doesNotMatch(inquiry, /SELECT_INQUIRY_FORM_FIELDS_ARGS=/u);
 });
 
+test("recorded business mode stays scoped and never leaks across sessions", () => {
+  const { hooks } = registeredPlugin();
+  const before = hooks.get("before_tool_call");
+  const persist = hooks.get("tool_result_persist");
+  const requirementId = "c".repeat(32);
+  const validateEvent = { toolName: "mcp__ypscan__validate_requirement" };
+  const validateSuccess = toolMessage({ success: true, data: { requirement_id: requirementId } });
+
+  const scopeA = { sessionKey: "mode-scope-a" };
+  const scopeB = { sessionKey: "mode-scope-b" };
+
+  assert.equal(
+    before({ ...validateEvent, params: canonicalValidateParams("询价机构") }, scopeA).block,
+    undefined,
+  );
+  const inA = directiveText(persist({ ...validateEvent, message: validateSuccess }, scopeA));
+  assert.deepEqual(namedArgsFromDirective(inA, "SEARCH_CREATORS_ARGS"), { id: requirementId });
+
+  // scopeB never ran a preflight: it must pause instead of reusing scopeA's mode.
+  const inB = directiveText(persist({ ...validateEvent, message: validateSuccess }, scopeB));
+  assert.match(inB, /缺少 business_mode/u);
+  assert.doesNotMatch(inB, /SEARCH_CREATORS_ARGS=/u);
+});
+
+test("quantityTotal stays per requirement and never feeds a later requirement", () => {
+  const { hooks } = registeredPlugin();
+  const before = hooks.get("before_tool_call");
+  const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "quantity-scope" };
+  const reqA = "a".repeat(32);
+  const reqB = "b".repeat(32);
+  const validateEvent = { toolName: "mcp__ypscan__validate_requirement" };
+
+  for (const [requirementId, quantityTotal] of [
+    [reqA, 30],
+    [reqB, 10],
+  ]) {
+    assert.equal(
+      before(
+        { ...validateEvent, params: canonicalValidateParams("手动拓展", quantityTotal) },
+        context,
+      ).block,
+      undefined,
+    );
+    persist(
+      {
+        ...validateEvent,
+        params: { quantityTotal },
+        message: toolMessage({ success: true, data: { requirement_id: requirementId } }),
+      },
+      context,
+    );
+  }
+
+  const manualSource = (requirementId, batchId) =>
+    directiveText(
+      persist(
+        {
+          toolName: "manual_source_creators",
+          message: toolMessage({
+            success: true,
+            requirement_id: requirementId,
+            data: { batch_id: batchId },
+          }),
+        },
+        context,
+      ),
+    );
+
+  assert.deepEqual(
+    namedArgsFromDirective(manualSource(reqA, 7), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
+    { requirement_id: reqA, batch_id: 7 },
+  );
+  assert.match(manualSource(reqA, 7), /MANUAL_SOURCE_TARGET_NUM=30/u);
+  assert.deepEqual(
+    namedArgsFromDirective(manualSource(reqB, 8), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
+    { requirement_id: reqB, batch_id: 8 },
+  );
+  assert.match(manualSource(reqB, 8), /MANUAL_SOURCE_TARGET_NUM=10/u);
+});
+
+test("inquiry ids stay per requirement and never feed a later artifact save", () => {
+  const { hooks } = registeredPlugin();
+  const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "inquiry-ids-scope" };
+  const reqA = "a".repeat(32);
+  const reqB = "b".repeat(32);
+
+  persist(
+    {
+      toolName: "get_workflow_state",
+      message: toolMessage({
+        success: true,
+        data: { requirement_id: reqA, inquiry_ids: [1, 2] },
+      }),
+    },
+    context,
+  );
+
+  const saveLinks = (artifact_id) =>
+    directiveText(
+      persist(
+        {
+          toolName: "ypscan_save_csv_artifact",
+          params: { artifact_kind: "mcn_creator_links", artifact_id },
+          message: toolMessage({
+            success: true,
+            data: { file_path: "/tmp/links.csv" },
+            delivery: { local_file_link: "[links](/tmp/links.csv)" },
+          }),
+        },
+        context,
+      ),
+    );
+
+  const forA = saveLinks(reqA);
+  assert.deepEqual(namedArgsFromDirective(forA, "RANK_CREATORS_ARGS"), {
+    requirement_id: reqA,
+    inquiry_ids: ["1", "2"],
+  });
+
+  const forB = saveLinks(reqB);
+  assert.doesNotMatch(forB, /RANK_CREATORS_ARGS=/u);
+  assert.deepEqual(namedArgsFromDirective(forB, "GET_WORKFLOW_STATE_ARGS"), {
+    requirement_id: reqB,
+  });
+});
+
 test("reset only re-enables the per-gateway startup instruction", () => {
   const { hooks, transientState } = registeredPlugin();
   const context = { sessionKey: "reset-startup" };
   assert.ok(hooks.get("before_prompt_build")({}, context));
-  assert.equal(hooks.get("before_prompt_build")({}, context), undefined);
+  assert.doesNotMatch(
+    hooks.get("before_prompt_build")({}, context).prependContext,
+    /\[YPscan startup instruction\]/u,
+  );
   transientState.resetTransientState();
-  assert.ok(hooks.get("before_prompt_build")({}, context));
+  assert.match(
+    hooks.get("before_prompt_build")({}, context).prependContext,
+    /\[YPscan startup instruction\]/u,
+  );
+});
+
+test("business mode instruction is injected on every prompt while the full startup block remains scoped", () => {
+  const { hooks } = registeredPlugin();
+  const beforePrompt = hooks.get("before_prompt_build");
+  const context = { sessionKey: "business-mode-every-prompt" };
+
+  const first = beforePrompt({}, context);
+  const second = beforePrompt({}, context);
+
+  assert.match(first.prependContext, /\[YPscan startup instruction\]/u);
+  assert.match(first.prependContext, /YPSCAN 业务模式指令/u);
+  assert.doesNotMatch(second.prependContext, /\[YPscan startup instruction\]/u);
+  assert.match(second.prependContext, /YPSCAN 业务模式指令/u);
 });

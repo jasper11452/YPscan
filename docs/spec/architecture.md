@@ -68,7 +68,7 @@ OpenClaw 宿主
 → 同步返回 links CSV：保存 manual_creator_links → 原生补全(20/批) → merge(manual_source)
   → upload → score_manual_source_csv → score_manual_source_csv_status 30s×10 轮询
   → 保存 manual_source Excel（最终交付）
-→ 返回 batch_id：提示后台耗时 → manual_source_creators_status 30s×10 轮询 → 同上 CSV 链路
+→ 返回 batch_id：提示后台耗时 → manual_source_creators_status 30s×10 轮询（`num` 的位置按当前环境 live schema required 决定）→ 同上 CSV 链路
 → 旧 Provider 返回 Excel：降级路径，保存即交付，不进 CSV 链路
 ```
 
@@ -76,7 +76,7 @@ OpenClaw 宿主
 
 ### 5.1 用 Hook 注入指令，而不是只靠 SKILL.md
 
-- **选择**：`before_prompt_build` 每会话注入一次静态规则；`tool_result_persist` 按每个工具的真实结果追加下一步动态参数（如 `RANK_MCNS_ARGS={...}`、`ASK_USER_QUESTION_ARGS={...}`）。
+- **选择**：`before_prompt_build` 每轮注入精简的业务模式指令、每会话首次另注入完整静态规则；`tool_result_persist` 按每个工具的真实结果追加下一步动态参数（如 `RANK_MCNS_ARGS={...}`、`ASK_USER_QUESTION_ARGS={...}`）。
 - **为什么**：纯 SKILL.md 无法把「当前结果的 requirement_id、平台、下载 URL」直接喂给下一步；动态指令消除了 Agent 从结果里自行找字段的偏差空间。
 - **代价**：指令体量大、与 SKILL.md 内容部分重叠，两处需保持一致；`HOOK_OPTIONS`（priority 90、timeout 5s）下指令生成必须同步且轻量。
 
@@ -88,7 +88,7 @@ OpenClaw 宿主
 
 ### 5.3 受控保存（而非直接下载）
 
-- **选择**：仅接受 `eshypdata.com` 主域 HTTPS 且无端口/凭据/hash 的下载 URL；`redirect: "error"`；20 MiB / 20s 预算；临时文件 + `link()` 原子发布；sha256 相同视为幂等成功，不同则拒绝覆盖。
+- **选择**：仅接受 `eshypdata.com` 主域 HTTPS 且无端口/凭据/hash 的下载 URL；`redirect: "error"`；20 MiB / 20s 预算；临时文件 + `link()` 原子发布；sha256 相同视为幂等成功，不同则拒绝覆盖。旧 Provider 仅返回 Excel 时按降级链路直接交付，不再用临时脚本拆 `xlsx` 强补 CSV。
 - **为什么**：交付物来自 Provider 受信域；防重定向防外跳、防覆盖用户已有文件、防超大文件拖垮宿主。
 - **代价**：旧格式下载 URL（如非主域 CDN）会被拒绝，需 Provider 侧配合。
 
