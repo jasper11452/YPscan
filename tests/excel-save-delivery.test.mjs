@@ -4,15 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { saveExcelArtifact } from "../src/tools/save-excel-artifact.js";
-import { MAX_POPUP_LINE_LENGTH, mcnRankingRecipientQuestionPayload } from "../src/tools/popup-questions.js";
+import { saveArtifact } from "../src/tools/save-artifact.js";
+import {
+  MAX_POPUP_LINE_LENGTH,
+  mcnRankingRecipientQuestionPayload,
+} from "../src/tools/popup-questions.js";
 
 function saveFixture(workspaceDir, artifactKind, fileName, extraParams = {}) {
-  return saveExcelArtifact(
+  return saveArtifact(
     {
       artifact_kind: artifactKind,
       artifact_id: "artifact-1",
-      excel_file_url: `https://mcp.eshypdata.com/api/download?file_path=${fileName}`,
+      file_url: `https://mcp.eshypdata.com/api/download?file_path=${fileName}`,
       ...extraParams,
     },
     {
@@ -66,7 +69,12 @@ test("only MCN ranking save offers the recipient question", async (t) => {
   );
   assert.equal(emptyMcnRanking.delivery.next_args, undefined);
 
-  for (const artifactKind of ["mcn_creator_preview", "manual_source", "ranked_submission", "creator_detail_export"]) {
+  for (const artifactKind of [
+    "mcn_creator_preview",
+    "manual_source",
+    "ranked_submission",
+    "creator_detail_export",
+  ]) {
     const saved = JSON.parse(
       (await saveFixture(workspaceDir, artifactKind, `${artifactKind}.xlsx`)).content[0].text,
     );
@@ -118,7 +126,7 @@ test("search creator previews are no longer accepted as save artifacts", async (
     (await saveFixture(workspaceDir, "creator_preview", "creator-preview.xlsx")).content[0].text,
   );
   assert.equal(result.success, false);
-  assert.equal(result.error.code, "YPSCAN_EXCEL_INVALID_INPUT");
+  assert.equal(result.error.code, "YPSCAN_ARTIFACT_INVALID_INPUT");
 });
 
 test("Excel download accepts HTTPS URLs under eshypdata.com", async (t) => {
@@ -129,11 +137,11 @@ test("Excel download accepts HTTPS URLs under eshypdata.com", async (t) => {
   let fetchedUrl = null;
   const result = JSON.parse(
     (
-      await saveExcelArtifact(
+      await saveArtifact(
         {
           artifact_kind: "mcn_ranking",
           artifact_id: "artifact-trusted-url",
-          excel_file_url: excelFileUrl,
+          file_url: excelFileUrl,
         },
         {
           workspaceDir,
@@ -166,11 +174,11 @@ test("Excel download rejects URLs outside eshypdata.com before fetching", async 
   ]) {
     const result = JSON.parse(
       (
-        await saveExcelArtifact(
+        await saveArtifact(
           {
             artifact_kind: "ranked_submission",
             artifact_id: "artifact-invalid-url",
-            excel_file_url: excelFileUrl,
+            file_url: excelFileUrl,
           },
           {
             workspaceDir,
@@ -182,7 +190,7 @@ test("Excel download rejects URLs outside eshypdata.com before fetching", async 
         )
       ).content[0].text,
     );
-    assert.equal(result.error.code, "YPSCAN_EXCEL_DOWNLOAD_URL_INVALID");
+    assert.equal(result.error.code, "YPSCAN_ARTIFACT_DOWNLOAD_URL_INVALID");
   }
   assert.equal(fetchCalls, 0);
 });
@@ -193,11 +201,11 @@ test("Excel download uses the configured finite retry schedule", async (t) => {
   let attempts = 0;
   const result = JSON.parse(
     (
-      await saveExcelArtifact(
+      await saveArtifact(
         {
           artifact_kind: "ranked_submission",
           artifact_id: "artifact-retry",
-          excel_file_url: "https://mcp.eshypdata.com/api/download?file_path=retry.xlsx",
+          file_url: "https://mcp.eshypdata.com/api/download?file_path=retry.xlsx",
         },
         {
           workspaceDir,
@@ -216,4 +224,24 @@ test("Excel download uses the configured finite retry schedule", async (t) => {
 
   assert.equal(result.success, true);
   assert.equal(result.data.download_attempts, 2);
+});
+
+test("CSV artifacts use the same save path and derive a safe format-specific name", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-csv-artifact-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+
+  const saved = JSON.parse(
+    (await saveFixture(workspaceDir, "manual_creator_links", "creator-links.csv")).content[0].text,
+  );
+
+  assert.equal(saved.success, true);
+  assert.equal(saved.data.file_name, "creator-links.csv");
+  assert.match(saved.delivery.local_file_link, /creator-links\.csv/u);
+  assert.match(saved.delivery.user_visible_message, /CSV 已保存/u);
+
+  const fallback = JSON.parse(
+    (await saveFixture(workspaceDir, "manual_creator_links", "creator-links.xlsx")).content[0].text,
+  );
+  assert.equal(fallback.success, true);
+  assert.match(fallback.data.file_name, /^manual_creator_links-[a-f0-9]{16}\.csv$/u);
 });

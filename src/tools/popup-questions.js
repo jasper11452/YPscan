@@ -217,15 +217,15 @@ export function mcnRankingRecipientQuestionPayload(names) {
   );
 }
 
-export function inquiryCreatorCompletionChoiceQuestionPayload() {
-  return popupQuestionPayload("回填后续", "预览表和 links CSV 已就绪，下一步怎么处理？", [
+export function mcnCreatorCompletionQuestionPayload() {
+  return popupQuestionPayload("回填后续", "机构回填预览表已就绪。是否补全已回填达人的信息并打分排序？", [
     {
-      label: "精排并生成提报表",
-      description: "继续做原生补全、merge、上传、精排并交付最终提报表",
+      label: "补全并打分排序",
+      description: "读取 Excel、派生 links CSV、原生补全、合并上传并打分",
     },
     {
-      label: "只补全达人信息",
-      description: "只做原生补全与 merge，交付 merged CSV 后结束",
+      label: "暂不补全",
+      description: "保留预览表并结束，其余机构可稍后处理",
     },
   ]);
 }

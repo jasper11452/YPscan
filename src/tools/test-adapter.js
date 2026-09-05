@@ -26,7 +26,7 @@ export function resolveTestAdapterBaseUrl(pluginConfig = {}) {
   return parsed.origin;
 }
 
-export function excelArtifactTestDownloadUrl(baseUrl, originalDownloadUrl) {
+export function artifactTestDownloadUrl(baseUrl, originalDownloadUrl) {
   if (!baseUrl) return originalDownloadUrl;
   const original = new URL(originalDownloadUrl);
   const filePath = original.searchParams.get("file_path");

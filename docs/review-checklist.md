@@ -10,13 +10,13 @@
 - [ ] **用户同时给出多个达人类型、只给总量**：Agent 只建一个 requirement，保留原始总量、合并全部类型标签与条件，不拆分、不重复落库、不重复搜索；后端不收到子需求或多份落库。
 - [ ] **用户明确说出模式**（“询价机构/机构询价/MCN 询价”→“询价机构”；“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”→“手动拓展”）：Agent 直接采用，旧说法只作输入别名，不弹窗；**用户未明确、两种模式同时出现或语义冲突**：界面弹二选一（询价机构/手动拓展），Agent 回答前不解析、不落库。模式指令每轮注入，避免只在会话启动时出现；选定后用户侧模式同时进 `ypscan_parse_requirement.business_mode` 与 `rawMessagesJson.business_mode`；后端只在出站边界把“手动拓展”映射为兼容线值，Agent 不得使用或展示该内部值。
 - [ ] **用户在 `rank_mcns` 列表后选“暂不询价”、关闭/取消弹窗或当轮未回答，之后明确要求给该列表机构发询价（如“前 5 家”，可按当前排名唯一确定），且需求、平台未变、没有更新的功能或 requirement**：Agent 恢复当前询价分支——沿用原 requirement、平台和 `rank_mcns` 机构映射，不重新解析、落库、搜索或排名；已提交字段配置复用，否则再调 `select_inquiry_form_fields`；界面重新进入收件机构选择。任一条件不满足则按真正的新功能重新建需。
-- [ ] **用户主动修改任何业务条件**：Agent 回到用户原始需求、合并最新人工修改、撤销本轮全部自动放宽，重新解析、复核并创建新 requirement；后端收到新落库。
+- [ ] **用户主动修改任何业务条件**：Agent 回到用户原始需求、合并最新人工修改、撤销本轮全部放宽，重新解析、复核并创建新 requirement；后端收到新落库。
 - [ ] **用户提供或提名机构名**：Agent 先在本轮同一 requirement、同一平台的 `rank_mcns` 结果中做唯一精确匹配——命中非空 `supplier_id` 放 `supplierIds`（不再传同名 `supplier_name`），未命中或无 ID 的原名放 `supplier_name`；不做本地模糊匹配、不跨需求/平台/run 复用 ID；模糊候选由用户选择后，Agent 只使用 Provider 返回的真实 ID；后端负责最终机构匹配。
 - [ ] **用户在字段选择页提交并回复“好了”**：Agent 按原分支恢复——询价进入发送确认，手动拓展用原 `requirement_id` 调 `manual_source_creators`；字段配置已由后端直接持久化，Agent 不得在上下文读取、重建或缓存 `columns`、不得轮询 callback、不得调已弃用的 `get_selected_inquiry_form_fields`。
 - [ ] **用户选中机构、选“询价全部机构”或输入机构名称**：界面选项成立，Agent 才继续询价；空输入、未明确、无法解析、冲突或歧义时 Agent 不得继续询价，重新弹机构选择或结束本轮；“暂不询价”不得与机构/“询价全部机构”同时成立。
-- [ ] **用户说机构已回填、“填好了”或“生成表格”**：Agent 第一步调 `get_workflow_state({requirement_id})`，随后按后端返回进入回收链（见“三、后端结果触发”）。
+- [ ] **用户说机构已回填、“填好了”或“生成表格”**：Agent 第一步调 `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})`，随后按后端返回进入回收链（见“三、后端结果触发”）。
 - [ ] **用户点“确认发送”或明确说“可以发/发吧/按这个发/就这样发送”**：Agent 调用一次 `create_with_distributions`；否定、修改或带条件的表达不算确认，界面重新弹确认。后端负责企微发送、机构匹配、去重与幂等。
-- [ ] **用户在回收分叉选“精排并生成提报表”**：Agent 直接 `rank_creators({requirement_id, inquiry_ids})`（不传 `csv_file_path`、不走补全/merge/upload），后端精排后 Agent 保存最终 Excel 为 `ranked_submission`，界面展示本地链接并结束；**选“只补全达人信息”**：Agent 按 20 个一批原生补全 → `merge(flow=mcn_complete_only)` → 交付 merged CSV，不上传、不打分，同 requirement 同平台可继续升级精排。
+- [ ] **用户保存机构达人预览表后选择是否补全**：选“补全并打分排序”时 Agent 先 `read` 预览 Excel 取达人标识（小红书 `kw_uid`/主页，抖音星图 ID/主页）→ `ypscan_save_creator_links` 派生受控 links CSV → 按 20/批原生补全 → `file_bridge(flow=manual_source)` 合并并上传 → `score_manual_source_csv` 打分 → 保存打分排序 Excel；选“暂不补全”则保留预览表并结束。`partially_succeeded` 时界面如实展示哪些机构 pending、哪些已回填，不得把部分成功当全部完成。
 
 ## 二、Agent 动作触发
 
@@ -27,27 +27,28 @@
 - [ ] **Agent 调 `select_inquiry_form_fields`**：必须按当前 live schema 传 `platform` 与当前真实 `requirement_id`；新建 requirement（含跨功能切换）必须重新选择，只有同一 requirement 已有提交证据时才复用；后端持久化字段配置。
 - [ ] **Agent 调 `manual_source_creators`**：只传 `{requirement_id[, demand]}`，不带 `num`；`demand` 只传当前完整未改写的用户原文，不传解析输出或 `rawMessagesJson`，schema 不支持 `demand` 时不猜字段名；后端异步生成或同步返回 links CSV。
 - [ ] **Agent 调 `manual_source_creators_status`**：`num` 只在当前环境 live schema required 时传（每批 URL 数量，正整数）；Hook 先通过 `MANUAL_SOURCE_TARGET_NUM` 提示该值。提交后先等 30 秒再第 1 次查询，之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不查第 11 次、不重复提交或换 ID；后端返回终态 links CSV 后 Agent 保存 `manual_creator_links`，再按平台分 20 个 author 一批原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）。
+- [ ] **Agent 调 `ypscan_save_creator_links`（询价回收补全）**：只传当前 `requirement_id` 与从 read 出的 `rows`（每项含 `creator_id`、`url`，可带 `source_record_id`）；工具按 `creator_id` 去重后写出 `source_record_id,creator_id,url` CSV 并登记为当前 requirement 的合法 links 来源，界面原样展示本地链接，随后按 20/批原生补全 → `file_bridge(flow=manual_source)` → 打分；非法行或去重后为空时报错，不得用 Browser/脚本代写。
 - [ ] **Agent 调原生达人补全工具**：每批只信 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止后续 merge/upload/打分，界面如实报告失败达人。
-- [ ] **Agent 调 `ypscan_merge_creator_csv`**：merged CSV 数据行超过 500 必须在上传前阻断并交付当前 merged CSV；未超限才 `ypscan_upload_creator_csv`，用后端返回的服务器侧 `csv_file_path` 调 `score_manual_source_csv({requirement_id, csv_file_path})`。
+- [ ] **Agent 调 `file_bridge`**：一次传 links CSV 与全部补全 CSV，由工具内部合并；links 与补全文件必须都是 `.csv`，且必须是当前 requirement 受控保存的 links CSV 与 YP Action 原生补全产物，否则工具返回 `YPSCAN_FILE_BRIDGE_SOURCE_NOT_ALLOWED` 且不上传；merged CSV 数据行超过 500 时必须跳过上传并交付本地文件；未超限才使用返回的服务器侧 `csv_file_path` 调 `score_manual_source_csv({requirement_id, csv_file_path})`。
 - [ ] **Agent 调 `score_manual_source_csv`**：后端返回 `job_id` 时按 30 秒间隔、单轮最多 10 次轮询 `score_manual_source_csv_status({job_id})`，终态后才保存 manual_source Excel；后端同步返回 Excel 时直接保存（兼容降级路径，不进 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗）。
-- [ ] **Agent 调 `ypscan_upload_creator_csv`**：空 CSV 与数据行 >500 在上传前阻断；生产无上传契约时必须如实报 `YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`，不猜测真实上传接口、不伪造 `csv_file_path`；`score_manual_source_csv` 依赖上传后的服务器侧路径，生产契约缺失时该步同样不可用，如实报告缺口。
+- [ ] **Agent 调 `file_bridge`**：空 CSV 与数据行 >500 在上传前阻断；配置读取顺序固定为插件配置 `fileBridgeOss` → 打包内置凭据（prepack 注入的 `src/tools/file-bridge-oss-defaults.json`）→ 宿主进程环境变量 `AccessKeyId`、`AccessKeySecret`、`Region`、`Bucket`、`Object`，`region`/`bucket`/`objectPrefix` 回落到内置非敏感默认值；links 与补全路径必须都是 `.csv`（否则 `YPSCAN_FILE_BRIDGE_INVALID_INPUT`），merged 内容必须合法 CSV（否则 `YPSCAN_FILE_BRIDGE_INVALID_CSV`），links CSV 必须是当前 requirement 受控保存的产物（`ypscan_save_artifact` 保存的 `manual_creator_links` 或 `ypscan_save_creator_links` 生成的 links CSV）、补全 CSV 必须来自当前 requirement 的 YP Action 原生补全工具（否则 `YPSCAN_FILE_BRIDGE_SOURCE_NOT_ALLOWED`，均不上传）；对象键固定为 `<Object 前缀>/<flow>/<requirement_id>/<sha256>.csv`；上传后必须校验返回的未签名 OSS URL 可匿名读取，失败时报 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，不得把坏链接继续传给下游。
 - [ ] **Agent 需要用户输入或决策**：必须用 `AskUserQuestion` 弹窗，提供简短可执行选项——数值澄清正文先说明原需求为何无法确定该值，再提示“请选择或自定义输入”，不得只问“报价上限是多少”或展示“落库”等内部术语；每题 3 个互斥且可直接回答该字段的具体值、显式 `multiSelect:false`，禁用“1 个数值 + 返回修改/取消”二按钮结构；`header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符，长机构名换行在匹配前还原；不得用普通聊天问句停住流程。界面按该载荷渲染。
 - [ ] **Agent 调 `create_with_distributions`**（required=`requirement_id`、`description`、`wechat_notification_message`）：发送前必须弹警示确认——一次 `AskUserQuestion` 只一个问题、恰好两个选项“确认发送/返回修改”、不设 `multiSelect`；最终机构名单与完整企微消息写入问题正文，不得拆成选项；`description` 与 `wechat_notification_message` 内容一致；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]`、至少一侧非空。本地 `before_tool_call` 只做 `validate_requirement` 预检，不做发送内容确认门禁；后端执行发送。
-- [ ] **Agent 发现机构/达人结果不足**：禁止直接放宽——先复核原需求、解析输出与实际落库参数，确认正确后才按固定顺序逐项放宽（刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`），每项只调一次并提前告知用户；平台、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag` 与主达人类型标签永不放宽；每轮放宽建新 requirement 重跑，足量后界面在结果前汇总全部放宽记录。
+- [ ] **Agent 发现机构/达人结果不足**：禁止直接放宽——先复核原需求、解析输出与实际落库参数，确认正确后才按固定顺序向用户逐项建议放宽（刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`），每项只调一次并提前告知用户；平台、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag` 与主达人类型标签永不放宽；放宽只做建议、由用户确认后才建新 requirement 重跑，不自动放宽、不自动重跑；足量后界面在结果前汇总全部放宽记录。
 
 ## 三、后端结果触发
 
 - [ ] **后端 `rank_mcns` 返回结果**：Agent 只输出五列 Markdown 表格（排名、机构、覆盖达人、返点、综合分），映射固定为 排名=`rank_no`（缺失按响应顺序）、机构=`agency_name`、覆盖达人=`candidate_count`、返点=`rebate_rate`、综合分=`rank_score`，缺失写“未知”；覆盖人数只取当前机构 `candidate_count` 原值，不得用累计字段 `mcn_covered_creator_count`、不得与前序累加、不得用相邻行差值替代；不得展示 `supplier_id`、匹配机构数、推荐数量、推荐理由或其他汇总。界面顺序为：完整表格 → 保存 `mcn_ranking` → 本地链接 → 收件机构弹窗，不再询问业务模式；列表为空时 Agent 进入复核与放宽，不保存空排名表、不猜测机构。
-- [ ] **后端 `get_workflow_state` 返回非空 `inquiry_ids`**：Agent 只把本次响应的 `inquiry_ids` 传给 `ingest_mcn_submissions`（不跨轮拼接、不用 trace_id），再 `get_ingest_job` 用同一 `job_id` 轮询至 `succeeded`/`partially_succeeded`，完成后先保存机构达人预览表、再保存 `mcn_creator_links` CSV，两者都成功才弹“精排并生成提报表 / 只补全达人信息”。**返回空 `inquiry_ids`（已分发项目、mcn_planning）**：Agent 先 `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})`，再回到 `get_workflow_state` 取 `inquiry_ids` 才 ingest；sync 后不直接 ingest，`mcn_planning` 单独出现不等于可精排。正式链路不再调用 `create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`。
+- [ ] **后端 `sync_mcn_inquiry_status` 返回 `inquiries[]`（含 `inquiry_id`）**：Agent 只把本次响应的 `inquiry_ids` 传给 `ingest_mcn_submissions`（不跨轮拼接、不用 trace_id），再 `get_ingest_job` 用同一 `job_id` 轮询至 `succeeded`/`partially_succeeded`；终态只回一份预览 Excel（`excel_file_url` + `excel_columns`，无 links CSV），Agent 先保存机构达人预览表，再让用户选择“补全并打分排序 / 暂不补全”。**`partially_succeeded`**：如实报告哪些机构 pending、哪些已回填（`results[]` 里 `DISTRIBUTION_NOT_SUBMITTED` 即 pending）。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`。
 - [ ] **后端返回真实错误、幂等冲突（如 `INQUIRY_ALREADY_SENT`）或部分成功**：Agent 原样展示逐机构真实状态，不自动重发已成功机构、不把部分成功说成全成功；模糊/不唯一候选由界面展示供用户选择，后端只收选中的真实 ID；机构名匹配、合并去重、同一 requirement/机构幂等全部由后端负责。
-- [ ] **后端 `rank_creators` 成功后**：Agent 保存最终提报 Excel 为 `ranked_submission` 并结束本轮机构回填精排；不再调 `create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`。
+- [ ] **后端 `rank_creators`（已废弃）**：正式链路不再调用该工具；若仍被调用并返回成功，Agent 保存 `ranked_submission` 后结束，但不得把该结果当正式链路交付。
 
 ## 四、Agent 自律与工程验证
 
 - [ ] **Agent 执行全程**：自主完成所有可执行步骤并持续推进，不要求用户代为操作、整理信息、输入“完成”或排错；仅在缺少必要授权、必要输入、登录或真实 CAPTCHA 时暂停。
 - [ ] **Agent 使用结果**：所有结果、链接、文件与状态只用当前 requirement、当前平台、本轮真实 Provider 证据；同一需求多批结果按平台稳定 ID 去重，不混入其他需求/平台/账号/历史 run 数据；粗召回、复核候选与最终名单明确区分；自有 Excel 遵循客户模板。
-- [ ] **Agent/工程契约一致**：工具卡、Skill、Hook、MCP schema、数据库字段与实际流程一致；Provider 白名单含 `score_manual_source_csv_status` 且不含已弃用工具（smoke 断言覆盖）；`rank_mcns` 传 `id+platform`，`select_inquiry_form_fields` 传 `platform+requirement_id`，`rank_creators` 传 `{requirement_id, inquiry_ids}` 且不消费 `csv_file_path`，`score_manual_source_csv` 消费上传后的 `csv_file_path` 并用 `score_manual_source_csv_status({job_id})` 轮询终态；平台缺失时不得猜测原生补全工具或继续精排。
+- [ ] **Agent/工程契约一致**：工具卡、Skill、Hook、MCP schema、数据库字段与实际流程一致；Provider 白名单含 `score_manual_source_csv_status` 且不含已弃用工具（smoke 断言覆盖）；`rank_mcns` 传 `id+platform`，`select_inquiry_form_fields` 传 `platform+requirement_id`；`get_workflow_state`、`rank_creators` 已废弃、不再作为正式链路入口；询价回收链用 `sync_mcn_inquiry_status` 返回的 `inquiry_ids` 直接 ingest，回收 Excel 经 `read` 后由 `ypscan_save_creator_links` 派生受控 links CSV；`score_manual_source_csv` 消费 `file_bridge` 返回的 OSS `csv_file_path` 并用 `score_manual_source_csv_status({job_id})` 轮询终态；平台缺失时不得猜测原生补全工具。
 - [ ] **修改代码时**：先定位真实原因，只做最小改动；不新增无必要的状态、缓存、账本、校验实体或权限门禁，共同逻辑保持共享。
-- [ ] **测试**：覆盖核心流程、Excel/CSV 保存链路、Provider 发送结果透传与失败路径；mock 不替代真实样本与平台验收。
+- [ ] **测试**：覆盖核心流程、统一 `ypscan_save_artifact` 的 Excel/CSV 保存链路、Provider 发送结果透传与失败路径；mock 不替代真实样本与平台验收。
 - [ ] **修改后验证**：执行 lint、typecheck、test、smoke 且全绿；不跳过失败、不降低断言、不修改测试制造成功。
-- [ ] **发布前**：验证真实安装流程与包内容；Review 结论基于当前代码、真实响应或可复现测试，并区分已验证、推断、未知与外部依赖。
+- [ ] **发布前**：验证真实安装流程与包内容；确认 prepack 已把本机 OSS 凭据注入安装包（`src/tools/file-bridge-oss-defaults.json` 在 tgz 内、不在 git 中），未注入时明确警告；Review 结论基于当前代码、真实响应或可复现测试，并区分已验证、推断、未知与外部依赖。

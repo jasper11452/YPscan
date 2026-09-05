@@ -15,7 +15,7 @@ Poll the scoring job created by `score_manual_source_csv`. Call only after that 
 
 ## Result
 
-- On success, the response contains the final workbook URL. Save it immediately with `ypscan_save_excel_artifact` using `artifact_kind="manual_source"` and the current `requirement_id` as `artifact_id`, then show `delivery.local_file_link` as the final manual-sourcing delivery. Do not route it into `rank_creators` or any enrichment flow.
+- On success, the response contains the final workbook URL. Save it immediately with `ypscan_save_artifact` using `artifact_kind="manual_source"`, the current `requirement_id` as `artifact_id`, and the exact workbook URL as `file_url`, then show `delivery.local_file_link` as the final scored-and-sorted delivery. Do not route it into `rank_creators` or any enrichment flow.
 - If the score is still incomplete, continue polling with the same `job_id`.
 - At the 10th query, if the score is still incomplete, stop and truthfully report that background scoring has not finished. Do not query an 11th time. Keep the same `job_id` for a later explicit user request to continue.
 

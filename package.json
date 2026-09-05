@@ -12,15 +12,15 @@
     "src/contract/registry.js",
     "src/hooks/register-flow-directives.js",
     "src/tools/manual-research/platform-cascade-routes.json",
-    "src/tools/creator-csv.js",
+    "src/tools/file-bridge.js",
+    "src/tools/file-bridge-oss-defaults.json",
     "src/tools/merge-creator-csv.js",
     "src/tools/parse-requirement.js",
     "src/tools/popup-questions.js",
-    "src/tools/save-csv-artifact.js",
-    "src/tools/save-excel-artifact.js",
+    "src/tools/save-artifact.js",
+    "src/tools/save-creator-links.js",
     "src/tools/test-adapter.js",
     "src/tools/tool-result.js",
-    "src/tools/upload-creator-csv.js",
     "src/util/value.js"
   ],
   "openclaw": {
@@ -45,7 +45,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "prepack": "node scripts/prepare-oss-bundle.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -56,6 +57,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "ali-oss": "^6.23.0",
     "playwright-core": "1.62.1"
   }
 }

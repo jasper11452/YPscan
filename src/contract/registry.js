@@ -329,7 +329,8 @@ function normalizedRawMessages(value) {
     changed = true;
   }
   if (!nonemptyString(next.business_mode)) {
-    const businessMode = normalizeBusinessMode(record.businessMode) ?? normalizeBusinessMode(record.mode);
+    const businessMode =
+      normalizeBusinessMode(record.businessMode) ?? normalizeBusinessMode(record.mode);
     if (businessMode) {
       next.business_mode = businessMode;
       changed = true;
@@ -1440,7 +1441,8 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
         if (parsedBrand) set("brandName", parsedBrand);
         else if (!Object.hasOwn(normalized, "brandName")) {
           const clarifiedBrand = clarifiedBrandEvidence(rawMessages);
-          if (clarifiedBrand.candidates.length === 1) set("brandName", clarifiedBrand.candidates[0]);
+          if (clarifiedBrand.candidates.length === 1)
+            set("brandName", clarifiedBrand.candidates[0]);
           else {
             const explicitBrand = explicitBrandFromOriginal(rawMessages.original);
             if (explicitBrand) set("brandName", explicitBrand);

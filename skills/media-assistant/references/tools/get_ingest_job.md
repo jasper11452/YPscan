@@ -4,17 +4,20 @@ Risk tier: automatic Provider read.
 
 Call after `ingest_mcn_submissions` succeeds. Pass only the exact `job_id` returned by that current ingest call. Do not use an inquiry ID, requirement ID, trace ID, or a job from another retrieval.
 
-This tool reads an asynchronous result. The terminal success states are `succeeded` and `partially_succeeded`. If the job has not reached one of these terminal states or does not yet contain the complete retrieval artifacts, call it again with the same `job_id`; do not rerun `ingest_mcn_submissions`, change or guess the job ID, or ask the user. Make at most 10 queries in one run.
+This tool reads an asynchronous result. The terminal success states are `succeeded` and `partially_succeeded`. If the job has not reached one of these terminal states, call it again with the same `job_id`; do not rerun `ingest_mcn_submissions`, change or guess the job ID, or ask the user. Make at most 10 queries in one run.
 
-A terminal `succeeded` or `partially_succeeded` result in the new flow requires all of the following from the same current result:
+A terminal result returns the retrieval preview as a single Excel (`excel_file_url` / `excel_file_path` / `excel_columns`). It does not return a links CSV. When terminal, first save the preview Excel with `ypscan_save_artifact(artifact_kind="mcn_creator_preview")`, then ask the user whether to complete the creators.
 
-- the current `requirement_id`
-- a trusted preview Excel URL
-- a trusted `creator_links_csv_url`
+## After the preview save
 
-When terminal, first save the preview Excel with `ypscan_save_excel_artifact(artifact_kind="mcn_creator_preview")`, then save the links CSV with `ypscan_save_csv_artifact(artifact_kind="mcn_creator_links")`, and only after both saves succeed ask the user whether to continue with `精排并生成提报表` or `只补全达人信息`. Never skip directly to `rank_creators`.
+When the user chooses to complete and score, continue:
 
-## Branch
+1. `read` the saved local Excel to get creator identifiers (小红书 `kw_uid` or homepage; 抖音星图 ID or homepage).
+2. Call `ypscan_save_creator_links` with the extracted `source_record_id` / `creator_id` / `url` rows to save a controlled links CSV.
+3. Run platform-native completion in batches of 20.
+4. Call `file_bridge` with `flow="manual_source"`, then `score_manual_source_csv` and poll `score_manual_source_csv_status`.
+5. Save the scored Excel as the final result.
 
-- `精排并生成提报表`: call `rank_creators({requirement_id, inquiry_ids})` with the current requirement ID and this round's `get_workflow_state` inquiry IDs; save the final ranked Excel as `ranked_submission`. This branch no longer goes through native completion, merge, or upload.
-- `只补全达人信息`: run the platform-native creator completion in batches of 20, then `ypscan_merge_creator_csv` with `flow="mcn_complete_only"` and deliver the merged CSV as the final result.
+## partially_succeeded
+
+A `partially_succeeded` job has some institutions that submitted and some still pending (`results[]` entries with `error.code="DISTRIBUTION_NOT_SUBMITTED"`). Report truthfully which are pending and which were backfilled, and let the user choose `补全并打分排序` or `暂不补全`. Do not treat partial success as fully complete.

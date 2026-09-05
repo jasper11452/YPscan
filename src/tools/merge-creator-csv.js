@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { hostToolResult } from "./tool-result.js";
-import { countCsvDataRows, findRequiredHeaders, normalizeCsvHeader, parseCsv, rowsToObjects, stringifyCsv } from "./creator-csv.js";
-import { localFileMarkdownLink } from "./save-excel-artifact.js";
 import { nonemptyString } from "../util/value.js";
 
 const FLOW_VALUES = Object.freeze(["manual_source", "mcn_rank", "mcn_complete_only"]);
@@ -17,32 +14,106 @@ const COMPLETION_ID_HEADER_CANDIDATES = Object.freeze([
 ]);
 const RESERVED_HEADERS = new Set(["source_record_id", "creator_id", "url"]);
 
-function failure(code, message, details = {}) {
-  return hostToolResult(
-    {
-      success: false,
-      error: { code, message, details, retriable: false },
-    },
-    { details, isError: true },
+function parseCsv(value) {
+  const text = String(value);
+  /** @type {string[][]} */
+  const rows = [];
+  /** @type {string[]} */
+  let row = [];
+  let field = "";
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quoted) {
+      if (char === '"') {
+        if (text[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        field += char;
+      }
+      continue;
+    }
+    if (char === '"') {
+      quoted = true;
+      continue;
+    }
+    if (char === ",") {
+      row.push(field);
+      field = "";
+      continue;
+    }
+    if (char === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      continue;
+    }
+    if (char !== "\r") field += char;
+  }
+
+  if (quoted) throw new TypeError("CSV 引号未闭合");
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  if (rows.length === 0) return { headers: [], rows: [] };
+
+  const [headers, ...dataRows] = rows;
+  return {
+    headers,
+    rows: dataRows
+      .filter((columns) => columns.some((item) => item !== ""))
+      .map((columns) => {
+        const normalized = columns.slice(0, headers.length);
+        while (normalized.length < headers.length) normalized.push("");
+        return normalized;
+      }),
+  };
+}
+
+function stringifyCsv(headers, rows) {
+  const escape = (value) => {
+    const text = String(value ?? "");
+    return /[",\n\r]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  };
+  return [
+    headers.map(escape).join(","),
+    ...rows.map((row) => headers.map((header) => escape(row[header] ?? "")).join(",")),
+  ].join("\n");
+}
+
+function rowsToObjects(headers, rows) {
+  return rows.map((columns) =>
+    Object.fromEntries(headers.map((header, index) => [header, columns[index] ?? ""])),
   );
 }
 
-function success(payload, filePath) {
-  const localFileLink = localFileMarkdownLink(filePath);
-  return hostToolResult(
-    {
-      success: true,
-      data: payload,
-      delivery: {
-        local_path: filePath,
-        local_file_link: localFileLink,
-        display_required: true,
-        display_before_next_action: true,
-        user_visible_message: `已完成：merged CSV 已保存到本地。\n本地文件：${localFileLink}`,
-      },
-    },
-    { details: payload },
-  );
+function normalizeCsvHeader(header) {
+  return String(header)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/gu, "_");
+}
+
+function findRequiredHeaders(headers, requiredHeaders) {
+  const byNormalized = new Map(headers.map((header) => [normalizeCsvHeader(header), header]));
+  const resolved = new Map();
+  for (const requiredHeader of requiredHeaders) {
+    const header = byNormalized.get(normalizeCsvHeader(requiredHeader));
+    if (!header) return null;
+    resolved.set(requiredHeader, header);
+  }
+  return resolved;
+}
+
+function failure(code, message, details = {}) {
+  return { ok: false, code, message, details };
 }
 
 function sanitizeSegment(value, fallback) {
@@ -68,12 +139,9 @@ function completionDetailHeaders(headers, idHeader) {
 
 /**
  * @param {any} params
- * @param {{ workspaceDir?: string }} [options]
+ * @param {{ workspaceDir?: string, readFileImpl?: typeof readFile }} [options]
  */
-export async function mergeCreatorCsv(
-  params,
-  { workspaceDir } = {},
-) {
+export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl = readFile } = {}) {
   const requirementId = params?.requirement_id;
   const platform = params?.platform;
   const flow = params?.flow;
@@ -106,9 +174,13 @@ export async function mergeCreatorCsv(
   }
 
   try {
-    const linksCsv = await readFile(linksCsvPath, "utf8");
+    const linksCsv = await readFileImpl(linksCsvPath, "utf8");
     const parsedLinks = parseCsv(linksCsv);
-    const requiredHeaders = findRequiredHeaders(parsedLinks.headers, ["source_record_id", "creator_id", "url"]);
+    const requiredHeaders = findRequiredHeaders(parsedLinks.headers, [
+      "source_record_id",
+      "creator_id",
+      "url",
+    ]);
     if (!requiredHeaders) {
       return failure(
         "YPSCAN_CREATOR_LINKS_CSV_INVALID",
@@ -127,7 +199,7 @@ export async function mergeCreatorCsv(
     const seenDetailHeaders = new Set();
 
     for (const completionCsvPath of completionCsvPaths) {
-      const completionCsv = await readFile(completionCsvPath, "utf8");
+      const completionCsv = await readFileImpl(completionCsvPath, "utf8");
       const parsedCompletion = parseCsv(completionCsv);
       const idHeader = preferredCompletionIdHeader(parsedCompletion.headers);
       if (!idHeader) {
@@ -175,15 +247,22 @@ export async function mergeCreatorCsv(
     const headers = ["source_record_id", "creator_id", "url", ...detailHeaders];
     const csvText = stringifyCsv(headers, mergedRows);
     const sha256 = createHash("sha256").update(csvText).digest("hex");
-    const prefix = flow === "manual_source" ? "manual-source" : flow === "mcn_rank" ? "mcn-rank" : "mcn-complete";
+    const prefix =
+      flow === "manual_source"
+        ? "manual-source"
+        : flow === "mcn_rank"
+          ? "mcn-rank"
+          : "mcn-complete";
     const fileName = `${prefix}-${sanitizeSegment(platform, "platform")}-${sanitizeSegment(requirementId, "requirement")}-${sha256.slice(0, 8)}.csv`;
     const filePath = join(workspacePath, fileName);
-    const handle = await open(filePath, "wx", 0o600).catch(async (error) => {
+    const handle = await open(filePath, "wx+", 0o600).catch(async (error) => {
       if (error?.code !== "EEXIST") throw error;
+      const existing = await lstat(filePath);
+      if (existing.isSymbolicLink() || !existing.isFile()) throw new Error("unsafe_existing_file");
       return open(filePath, "r+");
     });
     try {
-      const current = await handle.readFile({ encoding: "utf8" }).catch(() => "");
+      const current = await handle.readFile({ encoding: "utf8" });
       if (current && current !== csvText) {
         return failure("YPSCAN_CREATOR_CSV_MERGE_CONFLICT", "目标 merged CSV 已存在且内容不同");
       }
@@ -196,22 +275,23 @@ export async function mergeCreatorCsv(
       await handle.close();
     }
 
-    return success(
-      {
+    return {
+      ok: true,
+      csvText,
+      details: {
         requirement_id: String(requirementId),
         platform,
         flow,
         file_name: fileName,
         file_path: filePath,
-        data_row_count: countCsvDataRows(mergedRows),
+        data_row_count: mergedRows.length,
         matched_creator_ids: [...matchedCreatorIds],
         missing_creator_ids: [...missingCreatorIds],
         completion_csv_paths: completionCsvPaths.map(String),
         links_csv_path: String(linksCsvPath),
         sha256,
       },
-      filePath,
-    );
+    };
   } catch (error) {
     return failure(
       "YPSCAN_CREATOR_CSV_MERGE_FAILED",
@@ -219,8 +299,4 @@ export async function mergeCreatorCsv(
       error instanceof Error ? { reason: error.message } : {},
     );
   }
-}
-
-export function createCreatorCsvMerger({ workspaceDir }) {
-  return (params) => mergeCreatorCsv(params, { workspaceDir });
 }

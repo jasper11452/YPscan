@@ -49,16 +49,48 @@
       "testAdapterBaseUrl": {
         "type": "string",
         "description": "仅在 testMode=true 时使用；必须是无凭据的 loopback HTTP origin。"
+      },
+      "fileBridgeOss": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "`file_bridge` 上传 OSS 的安装级覆盖配置；官方发布包通常已内置打包注入的凭据（见 scripts/prepare-oss-bundle.mjs），无需填写。",
+        "required": ["accessKeyId", "accessKeySecret", "region", "bucket", "objectPrefix"],
+        "properties": {
+          "accessKeyId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OSS AccessKey ID"
+          },
+          "accessKeySecret": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OSS AccessKey Secret"
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OSS Region，例如 oss-cn-shanghai"
+          },
+          "bucket": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OSS Bucket 名称"
+          },
+          "objectPrefix": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OSS 对象前缀，例如 action"
+          }
+        }
       }
     }
   },
   "contracts": {
     "tools": [
       "ypscan_parse_requirement",
-      "ypscan_save_excel_artifact",
-      "ypscan_save_csv_artifact",
-      "ypscan_merge_creator_csv",
-      "ypscan_upload_creator_csv"
+      "ypscan_save_artifact",
+      "ypscan_save_creator_links",
+      "file_bridge"
     ]
   },
   "hooks": "./index.js"

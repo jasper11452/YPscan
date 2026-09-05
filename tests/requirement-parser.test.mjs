@@ -104,39 +104,44 @@ test("manual sourcing shares the reviewed relaxation policy and recreates requir
   assert.match(skill, /手动修改需求 \/ 改用询价机构 \/ 结束/u);
   assert.match(manual, /creator_links_csv_url/u);
   assert.match(manual, /20 个 author 一批/u);
-  assert.match(manual, /ypscan_merge_creator_csv → ypscan_upload_creator_csv → score_manual_source_csv/u);
+  assert.match(manual, /file_bridge（内部合并并上传）→ score_manual_source_csv/u);
   assert.match(status, /creator_links_csv_url/u);
   assert.match(status, /20 个 author 一批/u);
   assert.match(status, /兼容降级路径/u);
 });
 
-test("save artifact card binds final Excel saves to the requirement ID", () => {
-  const card = projectFile("skills/media-assistant/references/tools/ypscan_save_excel_artifact.md");
+test("save artifact card binds both formats to one tool and the current requirement", () => {
+  const card = projectFile("skills/media-assistant/references/tools/ypscan_save_artifact.md");
 
+  assert.match(card, /single tool/iu);
   assert.match(card, /`manual_source_creators`/iu);
   assert.match(card, /`manual_source_creators_status`/iu);
   assert.match(card, /`rank_creators`/iu);
   assert.match(card, /`score_manual_source_csv`/iu);
-  assert.match(
-    card,
-    /Use the current requirement ID for `mcn_ranking`, `mcn_creator_preview`, `manual_source`, and `ranked_submission`/iu,
-  );
-  assert.match(card, /`artifact_id`.*current requirement ID.*`manual_source`/isu);
-  assert.match(card, /`ranked_submission`.*final ranked institutional submission workbook/isu);
+  assert.match(card, /`file_url`/u);
+  assert.match(card, /uniquely determines whether the file must be `.xlsx` or `.csv`/iu);
+  assert.match(card, /Use the current requirement ID except for/iu);
+  assert.match(card, /`ranked_submission`.*legacy final submission workbook/isu);
 });
 
-test("inquiry ranking contracts use uploaded csv_file_path and ranked_submission", () => {
+test("inquiry retrieval contracts ingest an Excel-only preview then derive links", () => {
   const skill = projectFile("skills/media-assistant/SKILL.md");
   const ingestCard = projectFile("skills/media-assistant/references/tools/get_ingest_job.md");
   const rankCard = projectFile("skills/media-assistant/references/tools/rank_creators.md");
+  const linksCard = projectFile(
+    "skills/media-assistant/references/tools/ypscan_save_creator_links.md",
+  );
 
-  assert.match(skill, /保存机构达人预览表 → 保存 links CSV → 选择“精排并生成提报表 \/ 只补全达人信息”/u);
-  assert.match(skill, /正式链路不再调用 `create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`/u);
-  assert.match(ingestCard, /creator_links_csv_url/iu);
-  assert.match(ingestCard, /Never skip directly to `rank_creators`/iu);
-  assert.match(rankCard, /`csv_file_path`/iu);
-  assert.match(rankCard, /`artifact_kind="ranked_submission"`/iu);
-  assert.match(rankCard, /Do not call `create_submission_batch`, `get_creator_detail`, or `get_creator_detail_export`/iu);
+  assert.match(skill, /sync_mcn_inquiry_status.*ingest_mcn_submissions.*get_ingest_job/u);
+  assert.match(skill, /保存机构达人预览表.*询问用户是否补全/u);
+  assert.match(skill, /ypscan_save_creator_links 派生受控 links CSV/u);
+  assert.match(ingestCard, /excel_file_url/u);
+  assert.match(ingestCard, /does not return a links CSV/iu);
+  assert.match(ingestCard, /partially_succeeded/u);
+  assert.match(ingestCard, /ypscan_save_creator_links/u);
+  assert.match(linksCard, /source_record_id,creator_id,url/u);
+  assert.match(rankCard, /Deprecated in the formal retrieval chain/iu);
+  assert.match(rankCard, /Do not call this tool in the current flow/iu);
 });
 
 test("parser and validation cards agree on explicit reference creator fields", () => {
@@ -157,12 +162,16 @@ test("parser and validation cards agree on explicit reference creator fields", (
   assert.doesNotMatch(parseCard, /不传[^。\n]*`refNickname`[^。\n]*`refUrl`/u);
 });
 
-test("new inquiry contracts remove formal creator enrichment after ranking", () => {
+test("new inquiry contracts remove formal creator enrichment and ranking", () => {
   const skill = projectFile("skills/media-assistant/SKILL.md");
   const rankCard = projectFile("skills/media-assistant/references/tools/rank_creators.md");
 
-  assert.match(skill, /正式链路不再调用 `create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`/u);
-  assert.match(rankCard, /Do not call `create_submission_batch`, `get_creator_detail`, or `get_creator_detail_export`/iu);
+  assert.match(
+    skill,
+    /正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`/u,
+  );
+  assert.match(rankCard, /Deprecated in the formal retrieval chain/iu);
+  assert.match(rankCard, /Do not call this tool in the current flow/iu);
 });
 
 test("parser card keeps required contentTag distinct from optional labels", () => {

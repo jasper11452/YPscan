@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { registerFlowDirectiveHooks } from "../src/hooks/register-flow-directives.js";
+import { saveArtifact } from "../src/tools/save-artifact.js";
 
 function registeredPlugin() {
   const hooks = new Map();
@@ -147,7 +151,7 @@ test("non-active project failure only triggers a workflow-state diagnostic", () 
   });
 });
 
-test("workflow state routes ingest, sync recovery or pauses by inquiry id presence", () => {
+test("get_workflow_state is no longer a fixed-flow directive", () => {
   const { hooks } = registeredPlugin();
   const persist = hooks.get("tool_result_persist");
 
@@ -159,58 +163,14 @@ test("workflow state routes ingest, sync recovery or pauses by inquiry id presen
       data: { requirement_id: "req-wf", inquiry_ids: [12, "13", 12] },
     }),
   });
-  const withIdsText = directiveText(withIds);
-  assert.match(withIdsText, /已返回非空 inquiry_ids/u);
-  assert.deepEqual(namedArgsFromDirective(withIdsText, "INGEST_MCN_SUBMISSIONS_ARGS"), {
-    inquiry_ids: ["12", "13"],
-  });
-  assert.doesNotMatch(withIdsText, /GET_WORKFLOW_STATE_ARGS=/u);
-  assert.doesNotMatch(withIdsText, /ASK_USER_QUESTION_ARGS=/u);
-
-  const fromInquiries = persist({
-    toolName: "get_workflow_state",
-    params: { requirement_id: "req-wf" },
-    message: toolMessage({
-      success: true,
-      data: { inquiries: [{ inquiry_id: 7 }, { inquiry_id: "8" }] },
-    }),
-  });
-  assert.deepEqual(
-    namedArgsFromDirective(directiveText(fromInquiries), "INGEST_MCN_SUBMISSIONS_ARGS"),
-    { inquiry_ids: ["7", "8"] },
-  );
+  assert.equal(withIds, undefined);
 
   const empty = persist({
     toolName: "get_workflow_state",
     params: { requirement_id: "req-wf" },
     message: toolMessage({ success: true, data: { requirement_id: "req-wf", inquiry_ids: [] } }),
   });
-  const emptyText = directiveText(empty);
-  assert.match(emptyText, /空 inquiry_ids/u);
-  assert.match(emptyText, /先调用 sync_mcn_inquiry_status/u);
-  assert.match(emptyText, /sync 成功后必须回到 get_workflow_state 取 inquiry_ids/u);
-  assert.match(emptyText, /mcn_planning 单独出现不等于可以精排/u);
-  assert.deepEqual(namedArgsFromDirective(emptyText, "GET_WORKFLOW_STATE_ARGS"), {
-    requirement_id: "req-wf",
-  });
-  assert.doesNotMatch(emptyText, /INGEST_MCN_SUBMISSIONS_ARGS=/u);
-
-  const unparsable = persist({
-    toolName: "get_workflow_state",
-    params: { requirement_id: "req-wf" },
-    message: toolMessage({
-      success: true,
-      data: { requirement_id: "req-wf", allowed_actions: ["create_with_distributions"] },
-    }),
-  });
-  const unparsableText = directiveText(unparsable);
-  assert.match(unparsableText, /get_workflow_state 已暂停/u);
-  assert.deepEqual(
-    namedArgsFromDirective(unparsableText, "ASK_USER_QUESTION_ARGS").questions[0].options.map(
-      (option) => option.label,
-    ),
-    ["重试", "结束本次"],
-  );
+  assert.equal(empty, undefined);
 });
 
 test("partial success defers candidate resolution instead of asking for manual expansion", () => {
@@ -424,51 +384,13 @@ test("quantityTotal stays per requirement and never feeds a later requirement", 
   assert.match(manualSource(reqB, 8), /MANUAL_SOURCE_TARGET_NUM=10/u);
 });
 
-test("inquiry ids stay per requirement and never feed a later artifact save", () => {
-  const { hooks } = registeredPlugin();
-  const persist = hooks.get("tool_result_persist");
-  const context = { sessionKey: "inquiry-ids-scope" };
-  const reqA = "a".repeat(32);
-  const reqB = "b".repeat(32);
-
-  persist(
-    {
-      toolName: "get_workflow_state",
-      message: toolMessage({
-        success: true,
-        data: { requirement_id: reqA, inquiry_ids: [1, 2] },
-      }),
-    },
-    context,
-  );
-
-  const saveLinks = (artifact_id) =>
-    directiveText(
-      persist(
-        {
-          toolName: "ypscan_save_csv_artifact",
-          params: { artifact_kind: "mcn_creator_links", artifact_id },
-          message: toolMessage({
-            success: true,
-            data: { file_path: "/tmp/links.csv" },
-            delivery: { local_file_link: "[links](/tmp/links.csv)" },
-          }),
-        },
-        context,
-      ),
-    );
-
-  const forA = saveLinks(reqA);
-  assert.deepEqual(namedArgsFromDirective(forA, "RANK_CREATORS_ARGS"), {
-    requirement_id: reqA,
-    inquiry_ids: ["1", "2"],
-  });
-
-  const forB = saveLinks(reqB);
-  assert.doesNotMatch(forB, /RANK_CREATORS_ARGS=/u);
-  assert.deepEqual(namedArgsFromDirective(forB, "GET_WORKFLOW_STATE_ARGS"), {
-    requirement_id: reqB,
-  });
+test("derived creator links CSV records are scoped per requirement", () => {
+  const { transientState } = registeredPlugin();
+  transientState.recordLinksCsv("req-a", "/tmp/links-a.csv", "/workspace");
+  transientState.recordLinksCsv("req-b", "/tmp/links-b.csv", "/workspace");
+  assert.deepEqual(transientState.linksCsvPathsFor("req-a"), ["/tmp/links-a.csv"]);
+  assert.deepEqual(transientState.linksCsvPathsFor("req-b"), ["/tmp/links-b.csv"]);
+  assert.deepEqual(transientState.linksCsvPathsFor("req-other"), []);
 });
 
 test("reset only re-enables the per-gateway startup instruction", () => {
@@ -498,4 +420,121 @@ test("business mode instruction is injected on every prompt while the full start
   assert.match(first.prependContext, /YPSCAN 业务模式指令/u);
   assert.doesNotMatch(second.prependContext, /\[YPscan startup instruction\]/u);
   assert.match(second.prependContext, /YPSCAN 业务模式指令/u);
+});
+
+test("YP Action completion CSV paths are recorded per requirement for upload provenance", () => {
+  const { hooks, transientState } = registeredPlugin();
+  const persist = hooks.get("tool_result_persist");
+  persist({
+    toolName: "validate_requirement",
+    message: toolMessage({ success: true, data: { requirement_id: "req-track" } }),
+  });
+  persist({
+    toolName: "test__get_douyin_author_business_card",
+    message: toolMessage({
+      success: true,
+      csv_file: "/tmp/batch-1.csv",
+      successful_author_ids: ["creator-1"],
+    }),
+  });
+  persist({
+    toolName: "test__get_douyin_author_business_card",
+    message: toolMessage({ success: false, csv_file: null }),
+  });
+
+  assert.deepEqual(transientState.completionCsvPathsFor("req-track"), ["/tmp/batch-1.csv"]);
+  assert.deepEqual(transientState.completionCsvPathsFor("req-other"), []);
+});
+
+test("YP Action completion CSV provenance remains isolated between sessions", () => {
+  const { hooks, transientState } = registeredPlugin();
+  const persist = hooks.get("tool_result_persist");
+  const recordRequirement = (sessionKey, requirementId) =>
+    persist(
+      {
+        toolName: "validate_requirement",
+        message: toolMessage({ success: true, data: { requirement_id: requirementId } }),
+      },
+      { sessionKey },
+    );
+  recordRequirement("session-a", "req-a");
+  recordRequirement("session-b", "req-b");
+  persist(
+    {
+      toolName: "get_xhs_author_business_card",
+      message: toolMessage({ success: true, csv_file: "/tmp/session-a.csv" }),
+    },
+    { sessionKey: "session-a" },
+  );
+
+  assert.deepEqual(transientState.completionCsvPathsFor("req-a"), ["/tmp/session-a.csv"]);
+  assert.deepEqual(transientState.completionCsvPathsFor("req-b"), []);
+});
+
+test("saved links CSV artifacts are recorded per requirement for upload provenance", () => {
+  const { transientState } = registeredPlugin();
+  transientState.recordSavedCsvArtifact("manual_creator_links", "req-links", {
+    details: { file_path: "/tmp/links.csv" },
+  });
+  assert.deepEqual(transientState.linksCsvPathsFor("req-links"), ["/tmp/links.csv"]);
+
+  transientState.recordSavedCsvArtifact("mcn_ranking", "req-links", {
+    details: { file_path: "/tmp/rank.xlsx" },
+  });
+  assert.deepEqual(transientState.linksCsvPathsFor("req-links"), ["/tmp/links.csv"]);
+});
+
+test("saveArtifact hostToolResult shape registers the links CSV path end-to-end", async (t) => {
+  const { transientState } = registeredPlugin();
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-record-links-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+
+  const result = await saveArtifact(
+    {
+      artifact_kind: "manual_creator_links",
+      artifact_id: "req-e2e",
+      file_url: "https://mcp.eshypdata.com/api/download?file_path=links.csv",
+    },
+    {
+      workspaceDir,
+      fetchImpl: async () =>
+        new Response(Buffer.from("source_record_id,creator_id,url"), { status: 200 }),
+      retryDelaysMs: [],
+    },
+  );
+
+  // 模拟 index.js 的 ypscan_save_artifact execute 调用点：把 saveArtifact 返回的
+  // hostToolResult 直接交给 recordSavedCsvArtifact。
+  transientState.recordSavedCsvArtifact(
+    "manual_creator_links",
+    "req-e2e",
+    result,
+    workspaceDir,
+  );
+
+  const filePath = result.details.file_path;
+  assert.match(filePath, /links\.csv$/u);
+  assert.deepEqual(transientState.linksCsvPathsFor("req-e2e"), [filePath]);
+});
+
+test("gateway reset clears upload provenance state", () => {
+  const { hooks, transientState } = registeredPlugin();
+  const persist = hooks.get("tool_result_persist");
+  persist({
+    toolName: "validate_requirement",
+    message: toolMessage({ success: true, data: { requirement_id: "req-reset" } }),
+  });
+  persist({
+    toolName: "get_xhs_author_business_card",
+    message: toolMessage({ success: true, csv_file: "/tmp/batch.csv" }),
+  });
+  transientState.recordSavedCsvArtifact("manual_creator_links", "req-reset", {
+    details: { file_path: "/tmp/links.csv" },
+  });
+  assert.equal(transientState.completionCsvPathsFor("req-reset").length, 1);
+  assert.equal(transientState.linksCsvPathsFor("req-reset").length, 1);
+
+  transientState.resetTransientState();
+  assert.deepEqual(transientState.completionCsvPathsFor("req-reset"), []);
+  assert.deepEqual(transientState.linksCsvPathsFor("req-reset"), []);
 });

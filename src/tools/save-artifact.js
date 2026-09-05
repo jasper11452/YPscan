@@ -1,39 +1,28 @@
 import { createHash, randomUUID } from "node:crypto";
 import { link, lstat, mkdir, open, readFile, realpath, stat, unlink } from "node:fs/promises";
-import { basename, extname, isAbsolute, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { hostToolResult } from "./tool-result.js";
 import { nonemptyString } from "../util/value.js";
-import { excelArtifactTestDownloadUrl } from "./test-adapter.js";
+import { artifactTestDownloadUrl } from "./test-adapter.js";
 import { mcnRankingRecipientQuestionPayload } from "./popup-questions.js";
 
-export const EXCEL_ARTIFACT_KINDS = Object.freeze([
-  "creator_detail_export",
-  "mcn_ranking",
-  "mcn_creator_preview",
-  "manual_source",
-  "ranked_submission",
-]);
-export const MAX_EXCEL_ARTIFACT_BYTES = 20 * 1024 * 1024;
-export const EXCEL_ARTIFACT_TIMEOUT_MS = 20_000;
-export const EXCEL_ARTIFACT_RETRY_DELAYS_MS = Object.freeze([1_000, 2_000, 4_000]);
+const ARTIFACT_EXTENSIONS = {
+  creator_detail_export: ".xlsx",
+  mcn_ranking: ".xlsx",
+  mcn_creator_preview: ".xlsx",
+  manual_source: ".xlsx",
+  ranked_submission: ".xlsx",
+  manual_creator_links: ".csv",
+  mcn_creator_links: ".csv",
+};
+
+export const ARTIFACT_KINDS = Object.freeze(Object.keys(ARTIFACT_EXTENSIONS));
+const MAX_ARTIFACT_BYTES = 20 * 1024 * 1024;
+const ARTIFACT_TIMEOUT_MS = 20_000;
+const ARTIFACT_RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
 
 const RETRYABLE_HTTP_STATUSES = new Set([429, 500, 502, 503, 504]);
-
-function downloadFailureCode(error) {
-  if (
-    error?.name === "TimeoutError" ||
-    error?.name === "AbortError" ||
-    error?.cause?.name === "TimeoutError" ||
-    error?.cause?.name === "AbortError"
-  ) {
-    return "YPSCAN_EXCEL_DOWNLOAD_TIMEOUT";
-  }
-  const detail = `${error?.message ?? ""} ${error?.cause?.message ?? ""}`;
-  return /redirect/iu.test(detail)
-    ? "YPSCAN_EXCEL_REDIRECT_FORBIDDEN"
-    : "YPSCAN_EXCEL_DOWNLOAD_FAILED";
-}
 
 function failure(code, message, reason = code, { retriable = false, details = {} } = {}) {
   const payload = {
@@ -48,29 +37,22 @@ function failure(code, message, reason = code, { retriable = false, details = {}
   return hostToolResult(payload, { details: payload.error.details });
 }
 
-function followUpDelivery(artifactKind, params) {
-  if (artifactKind === "mcn_ranking") {
-    const nextArgs = mcnRankingRecipientQuestionPayload(params?.mcn_names);
-    if (!nextArgs) return {};
-    return {
-      next_tool: "AskUserQuestion",
-      next_args: nextArgs,
-      next_action: "MCN 排名表已保存；展示本地文件链接后按 next_args 选择询价收件机构",
-    };
-  }
-  return {};
-}
-
-function success(details, artifactKind, params) {
+function success(details, artifactKind, params, format) {
   const localFileLink = localFileMarkdownLink(details.file_path);
   const delivery = {
     local_path: details.file_path,
     local_file_link: localFileLink,
     display_required: true,
     display_before_next_action: true,
-    user_visible_message: `已完成：Excel 已保存到本地。\n本地文件：${localFileLink}`,
-    ...followUpDelivery(artifactKind, params),
+    user_visible_message: `已完成：${format} 已保存到本地。\n本地文件：${localFileLink}`,
   };
+  const nextArgs =
+    artifactKind === "mcn_ranking" ? mcnRankingRecipientQuestionPayload(params?.mcn_names) : null;
+  if (nextArgs) {
+    delivery.next_tool = "AskUserQuestion";
+    delivery.next_args = nextArgs;
+    delivery.next_action = "MCN 排名表已保存；展示本地文件链接后按 next_args 选择询价收件机构";
+  }
   return hostToolResult({ success: true, data: details, delivery }, { details });
 }
 
@@ -83,7 +65,7 @@ export function localFileMarkdownLink(filePath) {
   return `[${label}](<${pathToFileURL(filePath).href}>)`;
 }
 
-export function validateExcelDownloadUrl(value) {
+function validateArtifactDownloadUrl(value) {
   if (!nonemptyString(value)) return false;
   try {
     const parsed = new URL(value);
@@ -102,41 +84,55 @@ export function validateExcelDownloadUrl(value) {
   }
 }
 
-function safeExcelNameFromPath(value) {
+function safeArtifactNameFromPath(value, extension) {
   if (!nonemptyString(value)) return null;
   const name = value.trim().split(/[\\/]/).at(-1);
-  return nonemptyString(name) && /^[^/\\]+\.xlsx$/iu.test(name) ? name : null;
+  return nonemptyString(name) && name.toLowerCase().endsWith(extension) ? name : null;
 }
 
-function excelFileNameFromDownloadUrl(excelFileUrl, artifactKind) {
-  const parsedUrl = new URL(excelFileUrl);
+function artifactFileNameFromDownloadUrl(fileUrl, artifactKind, extension) {
+  const parsedUrl = new URL(fileUrl);
   const filePath = parsedUrl.searchParams.get("file_path");
-  const direct = safeExcelNameFromPath(filePath);
-  if (direct) return direct;
-  // Path-style download endpoints (e.g. the creator-detail-export export) carry
-  // the filename in the URL path; fall back to the trailing .xlsx segment.
-  let fromPath;
+  const candidates = [filePath];
   try {
-    fromPath = safeExcelNameFromPath(decodeURIComponent(parsedUrl.pathname));
+    candidates.push(decodeURIComponent(parsedUrl.pathname));
   } catch {
-    fromPath = null;
+    candidates.push(null);
   }
-  if (fromPath) return fromPath;
-  try {
-    const decoded = Buffer.from(filePath, "base64").toString("utf8");
-    const fromBase64 = safeExcelNameFromPath(decoded);
-    if (fromBase64) return fromBase64;
-  } catch {
-    // Fall through to a deterministic local filename.
+  if (extension === ".xlsx" && nonemptyString(filePath)) {
+    try {
+      candidates.push(Buffer.from(filePath, "base64").toString("utf8"));
+    } catch {
+      candidates.push(null);
+    }
   }
-  const suffix = createHash("sha256").update(excelFileUrl).digest("hex").slice(0, 16);
-  return `${artifactKind}-${suffix}.xlsx`;
+  for (const candidate of candidates) {
+    const name = safeArtifactNameFromPath(candidate, extension);
+    if (name) return name;
+  }
+  const suffix = createHash("sha256").update(fileUrl).digest("hex").slice(0, 16);
+  return `${artifactKind}-${suffix}${extension}`;
 }
 
-async function responseBuffer(response, maxBytes) {
+function downloadFailureCode(error) {
+  if (
+    error?.name === "TimeoutError" ||
+    error?.name === "AbortError" ||
+    error?.cause?.name === "TimeoutError" ||
+    error?.cause?.name === "AbortError"
+  ) {
+    return "YPSCAN_ARTIFACT_DOWNLOAD_TIMEOUT";
+  }
+  const detail = `${error?.message ?? ""} ${error?.cause?.message ?? ""}`;
+  return /redirect/iu.test(detail)
+    ? "YPSCAN_ARTIFACT_REDIRECT_FORBIDDEN"
+    : "YPSCAN_ARTIFACT_DOWNLOAD_FAILED";
+}
+
+async function responseBuffer(response) {
   const declaredLength = Number(response?.headers?.get?.("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    return { ok: false, code: "YPSCAN_EXCEL_TOO_LARGE" };
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_ARTIFACT_BYTES) {
+    return { ok: false, code: "YPSCAN_ARTIFACT_TOO_LARGE" };
   }
   if (response?.body?.getReader) {
     const reader = response.body.getReader();
@@ -148,9 +144,9 @@ async function responseBuffer(response, maxBytes) {
         if (done) break;
         const chunk = Buffer.from(value);
         total += chunk.length;
-        if (total > maxBytes) {
+        if (total > MAX_ARTIFACT_BYTES) {
           await reader.cancel().catch(() => {});
-          return { ok: false, code: "YPSCAN_EXCEL_TOO_LARGE" };
+          return { ok: false, code: "YPSCAN_ARTIFACT_TOO_LARGE" };
         }
         chunks.push(chunk);
       }
@@ -163,8 +159,8 @@ async function responseBuffer(response, maxBytes) {
   }
   try {
     const buffer = Buffer.from(await response.arrayBuffer());
-    return buffer.length > maxBytes
-      ? { ok: false, code: "YPSCAN_EXCEL_TOO_LARGE" }
+    return buffer.length > MAX_ARTIFACT_BYTES
+      ? { ok: false, code: "YPSCAN_ARTIFACT_TOO_LARGE" }
       : { ok: true, buffer };
   } catch (error) {
     return { ok: false, code: downloadFailureCode(error) };
@@ -187,23 +183,20 @@ function jitteredDelayMs(delayMs, randomImpl) {
 
 function retryableDownloadFailure(code, status) {
   if (Number.isInteger(status)) return RETRYABLE_HTTP_STATUSES.has(status);
-  return code === "YPSCAN_EXCEL_DOWNLOAD_FAILED" || code === "YPSCAN_EXCEL_DOWNLOAD_TIMEOUT";
+  return code === "YPSCAN_ARTIFACT_DOWNLOAD_FAILED" || code === "YPSCAN_ARTIFACT_DOWNLOAD_TIMEOUT";
 }
 
-async function downloadExcelBuffer(
-  excelFileUrl,
-  { fetchImpl, maxBytes, timeoutMs, retryDelaysMs, sleepImpl, clock, randomImpl },
-) {
-  const startedAt = clock();
+async function downloadArtifactBuffer(fileUrl, { fetchImpl, retryDelaysMs, sleepImpl }) {
+  const startedAt = Date.now();
   let attempts = 0;
   let lastFailure = null;
   for (let index = 0; index <= retryDelaysMs.length; index += 1) {
-    const remainingMs = timeoutMs - Math.max(0, clock() - startedAt);
+    const remainingMs = ARTIFACT_TIMEOUT_MS - Math.max(0, Date.now() - startedAt);
     if (remainingMs <= 0) break;
     attempts += 1;
     let response = null;
     try {
-      response = await fetchImpl(excelFileUrl, {
+      response = await fetchImpl(fileUrl, {
         method: "GET",
         redirect: "error",
         signal: AbortSignal.timeout(Math.max(1, remainingMs)),
@@ -211,7 +204,7 @@ async function downloadExcelBuffer(
       if (response?.status >= 300 && response.status < 400) {
         return {
           ok: false,
-          code: "YPSCAN_EXCEL_REDIRECT_FORBIDDEN",
+          code: "YPSCAN_ARTIFACT_REDIRECT_FORBIDDEN",
           status: response.status,
           attempts,
           retriable: false,
@@ -220,16 +213,14 @@ async function downloadExcelBuffer(
       if (!response?.ok) {
         lastFailure = {
           ok: false,
-          code: "YPSCAN_EXCEL_DOWNLOAD_FAILED",
+          code: "YPSCAN_ARTIFACT_DOWNLOAD_FAILED",
           status: response?.status ?? null,
           attempts,
-          retriable: retryableDownloadFailure("YPSCAN_EXCEL_DOWNLOAD_FAILED", response?.status),
+          retriable: retryableDownloadFailure("YPSCAN_ARTIFACT_DOWNLOAD_FAILED", response?.status),
         };
       } else {
-        const downloaded = await responseBuffer(response, maxBytes);
-        if (downloaded.ok) {
-          return { ...downloaded, attempts, status: response.status };
-        }
+        const downloaded = await responseBuffer(response);
+        if (downloaded.ok) return { ...downloaded, attempts, status: response.status };
         lastFailure = {
           ...downloaded,
           status: response.status,
@@ -248,16 +239,16 @@ async function downloadExcelBuffer(
       };
     }
     if (!lastFailure.retriable || index >= retryDelaysMs.length) break;
-    const retryAfterMs = retryAfterDelayMs(response, clock());
-    const delayMs = retryAfterMs ?? jitteredDelayMs(retryDelaysMs[index], randomImpl);
-    const budgetRemainingMs = timeoutMs - Math.max(0, clock() - startedAt);
+    const retryAfterMs = retryAfterDelayMs(response, Date.now());
+    const delayMs = retryAfterMs ?? jitteredDelayMs(retryDelaysMs[index], Math.random);
+    const budgetRemainingMs = ARTIFACT_TIMEOUT_MS - Math.max(0, Date.now() - startedAt);
     if (delayMs >= budgetRemainingMs) break;
     await sleepImpl(delayMs);
   }
   return (
     lastFailure ?? {
       ok: false,
-      code: "YPSCAN_EXCEL_DOWNLOAD_TIMEOUT",
+      code: "YPSCAN_ARTIFACT_DOWNLOAD_TIMEOUT",
       status: null,
       attempts,
       retriable: true,
@@ -269,20 +260,20 @@ async function existingFileState(targetPath, expectedSha256) {
   try {
     const info = await lstat(targetPath);
     if (info.isSymbolicLink() || !info.isFile()) {
-      return { ok: false, code: "YPSCAN_EXCEL_SAVE_UNSAFE_PATH" };
+      return { ok: false, code: "YPSCAN_ARTIFACT_SAVE_UNSAFE_PATH" };
     }
-    if (info.size <= 0 || info.size > MAX_EXCEL_ARTIFACT_BYTES) {
-      return { ok: false, code: "YPSCAN_EXCEL_SAVE_CONFLICT" };
+    if (info.size <= 0 || info.size > MAX_ARTIFACT_BYTES) {
+      return { ok: false, code: "YPSCAN_ARTIFACT_SAVE_CONFLICT" };
     }
     const existing = await readFile(targetPath);
     const sha256 = createHash("sha256").update(existing).digest("hex");
     return sha256 === expectedSha256
       ? { ok: true, idempotent: true, size: info.size }
-      : { ok: false, code: "YPSCAN_EXCEL_SAVE_CONFLICT" };
+      : { ok: false, code: "YPSCAN_ARTIFACT_SAVE_CONFLICT" };
   } catch (error) {
     return error?.code === "ENOENT"
       ? { ok: true, idempotent: false }
-      : { ok: false, code: "YPSCAN_EXCEL_SAVE_UNSAFE_PATH" };
+      : { ok: false, code: "YPSCAN_ARTIFACT_SAVE_UNSAFE_PATH" };
   }
 }
 
@@ -294,7 +285,7 @@ async function publishWithoutOverwrite(tempPath, targetPath, sha256) {
     return { ok: true, idempotent: false };
   } catch (error) {
     if (error?.code !== "EEXIST") {
-      return { ok: false, code: "YPSCAN_EXCEL_SAVE_FAILED" };
+      return { ok: false, code: "YPSCAN_ARTIFACT_SAVE_FAILED" };
     }
     return existingFileState(targetPath, sha256);
   }
@@ -305,61 +296,44 @@ async function publishWithoutOverwrite(tempPath, targetPath, sha256) {
  * @param {{
  *   workspaceDir?: string,
  *   fetchImpl?: typeof fetch,
- *   timeoutMs?: number,
- *   maxBytes?: number,
  *   retryDelaysMs?: readonly number[],
  *   sleepImpl?: (delayMs: number) => Promise<any>,
- *   clock?: () => number,
- *   randomImpl?: () => number,
  *   testAdapterBaseUrl?: string | null,
  * }} [options]
  */
-export async function saveExcelArtifact(
+export async function saveArtifact(
   params,
   {
     workspaceDir,
     fetchImpl = globalThis.fetch,
-    timeoutMs = EXCEL_ARTIFACT_TIMEOUT_MS,
-    maxBytes = MAX_EXCEL_ARTIFACT_BYTES,
-    retryDelaysMs = EXCEL_ARTIFACT_RETRY_DELAYS_MS,
+    retryDelaysMs = ARTIFACT_RETRY_DELAYS_MS,
     sleepImpl = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
-    clock = Date.now,
-    randomImpl = Math.random,
     testAdapterBaseUrl = null,
   } = {},
 ) {
   const artifactKind = params?.artifact_kind;
   const artifactId = params?.artifact_id;
-  const excelFileUrl = params?.excel_file_url;
-  if (
-    !EXCEL_ARTIFACT_KINDS.includes(artifactKind) ||
-    !nonemptyString(artifactId) ||
-    !nonemptyString(excelFileUrl)
-  ) {
+  const fileUrl = params?.file_url;
+  const extension = ARTIFACT_EXTENSIONS[artifactKind];
+  if (!extension || !nonemptyString(artifactId) || !nonemptyString(fileUrl)) {
     return failure(
-      "YPSCAN_EXCEL_INVALID_INPUT",
-      "artifact_kind、artifact_id 和 excel_file_url 必须完整且有效",
+      "YPSCAN_ARTIFACT_INVALID_INPUT",
+      "artifact_kind、artifact_id 和 file_url 必须完整且有效",
     );
   }
-  if (!validateExcelDownloadUrl(excelFileUrl)) {
+  if (!validateArtifactDownloadUrl(fileUrl)) {
     return failure(
-      "YPSCAN_EXCEL_DOWNLOAD_URL_INVALID",
-      "excel_file_url 必须是 eshypdata.com 主域下的 HTTPS 下载地址",
+      "YPSCAN_ARTIFACT_DOWNLOAD_URL_INVALID",
+      "file_url 必须是 eshypdata.com 主域下的 HTTPS 下载地址",
     );
   }
-  const fileName = excelFileNameFromDownloadUrl(excelFileUrl, artifactKind);
-  if (
-    basename(fileName) !== fileName ||
-    fileName.includes("\\") ||
-    extname(fileName).toLowerCase() !== ".xlsx"
-  ) {
-    return failure("YPSCAN_EXCEL_FILE_NAME_INVALID", "从下载地址推导出的 Excel 文件名不安全");
-  }
+  const format = extension === ".xlsx" ? "Excel" : "CSV";
+  const fileName = artifactFileNameFromDownloadUrl(fileUrl, artifactKind, extension);
   if (!nonemptyString(workspaceDir) || !isAbsolute(workspaceDir)) {
     return failure("YPSCAN_WORKSPACE_UNAVAILABLE", "宿主未提供可信的当前项目目录");
   }
   if (typeof fetchImpl !== "function") {
-    return failure("YPSCAN_EXCEL_DOWNLOAD_UNAVAILABLE", "当前运行环境不支持受控下载");
+    return failure("YPSCAN_ARTIFACT_DOWNLOAD_UNAVAILABLE", "当前运行环境不支持受控下载");
   }
 
   let workspacePath;
@@ -371,34 +345,31 @@ export async function saveExcelArtifact(
   } catch {
     return failure("YPSCAN_WORKSPACE_UNAVAILABLE", "当前项目目录不可用");
   }
+
   const targetPath = join(workspacePath, fileName);
   const tempPath = join(workspacePath, `.${fileName}.ypscan-${randomUUID()}.tmp`);
   let tempCreated = false;
   try {
-    const downloaded = await downloadExcelBuffer(
-      excelArtifactTestDownloadUrl(testAdapterBaseUrl, excelFileUrl),
+    const downloaded = await downloadArtifactBuffer(
+      artifactTestDownloadUrl(testAdapterBaseUrl, fileUrl),
       {
         fetchImpl,
-        maxBytes,
-        timeoutMs,
         retryDelaysMs,
         sleepImpl,
-        clock,
-        randomImpl,
       },
     );
     if (!downloaded.ok) {
       return failure(
         downloaded.code,
-        downloaded.code === "YPSCAN_EXCEL_TOO_LARGE"
-          ? "Excel 超过 20 MiB 上限"
-          : downloaded.code === "YPSCAN_EXCEL_DOWNLOAD_TIMEOUT"
-            ? "Excel 下载超过总时间限制"
-            : downloaded.code === "YPSCAN_EXCEL_REDIRECT_FORBIDDEN"
-              ? "Excel 下载禁止重定向"
+        downloaded.code === "YPSCAN_ARTIFACT_TOO_LARGE"
+          ? `${format} 超过 20 MiB 上限`
+          : downloaded.code === "YPSCAN_ARTIFACT_DOWNLOAD_TIMEOUT"
+            ? `${format} 下载超过总时间限制`
+            : downloaded.code === "YPSCAN_ARTIFACT_REDIRECT_FORBIDDEN"
+              ? `${format} 下载禁止重定向`
               : Number.isInteger(downloaded.status)
-                ? `Excel 下载返回 HTTP ${downloaded.status}`
-                : "无法读取 Excel 下载内容",
+                ? `${format} 下载返回 HTTP ${downloaded.status}`
+                : `无法读取 ${format} 下载内容`,
         downloaded.code,
         {
           retriable: downloaded.retriable,
@@ -411,7 +382,7 @@ export async function saveExcelArtifact(
     }
     const buffer = downloaded.buffer;
     if (buffer.length <= 0) {
-      return failure("YPSCAN_EXCEL_INVALID_XLSX", "Excel 下载内容为空");
+      return failure("YPSCAN_ARTIFACT_INVALID_CONTENT", `${format} 下载内容为空`);
     }
     const sha256 = createHash("sha256").update(buffer).digest("hex");
     const tempHandle = await open(tempPath, "wx", 0o600);
@@ -426,9 +397,9 @@ export async function saveExcelArtifact(
     if (!published.ok) {
       return failure(
         published.code,
-        published.code === "YPSCAN_EXCEL_SAVE_CONFLICT"
+        published.code === "YPSCAN_ARTIFACT_SAVE_CONFLICT"
           ? "目标文件已存在且内容不同，拒绝覆盖"
-          : "Excel 无法安全发布到当前项目",
+          : `${format} 无法安全发布到当前项目`,
       );
     }
     const details = {
@@ -439,22 +410,10 @@ export async function saveExcelArtifact(
       idempotent: published.idempotent,
       download_attempts: downloaded.attempts,
     };
-    return success(details, artifactKind, params);
+    return success(details, artifactKind, params, format);
   } catch {
-    return failure("YPSCAN_EXCEL_SAVE_FAILED", "Excel 保存过程中发生本地错误");
+    return failure("YPSCAN_ARTIFACT_SAVE_FAILED", `${format} 保存过程中发生本地错误`);
   } finally {
     if (tempCreated) await unlink(tempPath).catch(() => {});
   }
-}
-
-/**
- * @param {{ workspaceDir?: string, fetchImpl?: typeof fetch, testAdapterBaseUrl?: string | null }} options
- */
-export function createExcelArtifactSaver({ workspaceDir, fetchImpl, testAdapterBaseUrl = null }) {
-  return (params) =>
-    saveExcelArtifact(params, {
-      workspaceDir,
-      fetchImpl,
-      testAdapterBaseUrl,
-    });
 }

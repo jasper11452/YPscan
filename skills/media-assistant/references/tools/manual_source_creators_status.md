@@ -4,10 +4,10 @@
 
 ## Remote arguments
 
-| Argument         | Constraint                                                                          |
-| ---------------- | ----------------------------------------------------------------------------------- |
-| `requirement_id` | Provider-required string；只传本轮 `manual_source_creators` 同一真实 requirement ID |
-| `batch_id`       | Provider-required integer；只传本轮 `manual_source_creators` 返回的任务 batch ID    |
+| Argument         | Constraint                                                                                                 |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| `requirement_id` | Provider-required string；只传本轮 `manual_source_creators` 同一真实 requirement ID                        |
+| `batch_id`       | Provider-required integer；只传本轮 `manual_source_creators` 返回的任务 batch ID                           |
 | `num`            | 仅当当前环境 live schema 将其列为 required 时传正整数；表示本轮目标交付数量，也是每批应取 links URL 的数量 |
 
 不得传 `size`、平台、达人 ID 或任何猜测字段；`batch_id` 是任务 ID，不需要任何转换或推导。
@@ -24,6 +24,6 @@
 ## Result
 
 - `BATCH_NOT_READY`（含远端 status `0`）表示任务仍在处理中，是预期中间态，不代表 batch ID 传错；按上面的轮询循环继续。
-- 成功优先消费当前 Provider 响应中的 `creator_links_csv_url`。拿到后立即调用 `ypscan_save_csv_artifact`，使用 `artifact_kind="manual_creator_links"`、同一 `requirement_id` 和该 URL 保存；保存成功后先展示 `delivery.local_file_link`，再按平台分 20 个 author 一批调用原生达人补全工具，并继续 `ypscan_merge_creator_csv → ypscan_upload_creator_csv → score_manual_source_csv → score_manual_source_csv_status → 保存最终 Excel`。merged CSV 数据行超过 500 时必须在上传前阻断。
-- 若旧 Provider 仅返回 HTTPS `excel_file_url`，则作为兼容降级路径立即调用 `ypscan_save_excel_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 和该 URL 保存；保存成功后先展示 `delivery.local_file_link` 作为本轮真实手动拓展结果，不调用 `rank_creators` 或 `create_submission_batch`。
+- 成功优先消费当前 Provider 响应中的 `creator_links_csv_url`。拿到后立即调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_creator_links"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 传为 `file_url`；保存成功后先展示 `delivery.local_file_link`，再按平台分 20 个 author 一批调用原生达人补全工具，并继续 `file_bridge（内部合并并上传）→ score_manual_source_csv → score_manual_source_csv_status → 保存最终 Excel`。merged CSV 数据行超过 500 时 `file_bridge` 必须跳过上传并交付本地文件；返回匿名不可读 URL 时同样必须停止打分，但仍展示本地文件。
+- 若旧 Provider 仅返回 HTTPS `excel_file_url`，则作为兼容降级路径立即调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 传为 `file_url`；保存成功后先展示 `delivery.local_file_link` 作为本轮真实手动拓展结果，不调用 `rank_creators` 或 `create_submission_batch`。
 - 其他失败：原样展示原始 code 和 message 后停止，不得换 ID 重试或重新提交任务。

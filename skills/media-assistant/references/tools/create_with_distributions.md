@@ -86,7 +86,7 @@ One complete invocation is the real Provider attempt. `MCP_INVALID_PARAMS` prove
 
 ## Retrieval after send
 
-When the user later says the institutions have submitted creator data (机构已回填), the first retrieval step is `get_workflow_state({requirement_id})`; do not start with `sync_mcn_inquiry_status` or `ingest_mcn_submissions`.
+When the user later says the institutions have submitted creator data (机构已回填), the first retrieval step is `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})`; use its returned `inquiry_ids` to call `ingest_mcn_submissions`. Do not start with `get_workflow_state` or `ingest_mcn_submissions`.
 
 ## Stop conditions
 

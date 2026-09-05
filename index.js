@@ -4,19 +4,20 @@ import {
   PARSE_REQUIREMENT_OUTPUT_SCHEMA,
   PARSE_REQUIREMENT_PARAMETERS,
 } from "./src/tools/parse-requirement.js";
-import { createExcelArtifactSaver } from "./src/tools/save-excel-artifact.js";
-import { createCsvArtifactSaver } from "./src/tools/save-csv-artifact.js";
-import { createCreatorCsvMerger } from "./src/tools/merge-creator-csv.js";
-import { createCreatorCsvUploader } from "./src/tools/upload-creator-csv.js";
+import { ARTIFACT_KINDS, saveArtifact } from "./src/tools/save-artifact.js";
+import { fileBridge } from "./src/tools/file-bridge.js";
+import { saveCreatorLinks } from "./src/tools/save-creator-links.js";
 import { resolveTestAdapterBaseUrl } from "./src/tools/test-adapter.js";
 
 /** Entry point for the YPscan client integration layer. */
 export default {
   id: "ypscan",
   register(api) {
-    const testAdapterBaseUrl = resolveTestAdapterBaseUrl(api.pluginConfig ?? {});
+    const pluginConfig = api.pluginConfig ?? {};
+    const testAdapterBaseUrl = resolveTestAdapterBaseUrl(pluginConfig);
+    const fetchImpl = api.fetch ?? globalThis.fetch;
     const parseRequirement = createRequirementParser({
-      fetchImpl: api.fetch ?? globalThis.fetch,
+      fetchImpl,
     });
     const hookRuntime = registerFlowDirectiveHooks(api);
 
@@ -33,40 +34,29 @@ export default {
 
     api.registerTool(
       (context) => {
-        const saveExcelArtifact = createExcelArtifactSaver({
-          workspaceDir: context?.workspaceDir,
-          fetchImpl: api.fetch ?? globalThis.fetch,
-          testAdapterBaseUrl,
-        });
         return {
-          name: "ypscan_save_excel_artifact",
+          name: "ypscan_save_artifact",
           description:
-            "将 eshypdata.com 主域下的 Excel 受控保存到当前项目；成功后必须向用户原样展示 delivery.local_file_link Markdown 超链接，确保点击即可打开本地 Excel，不得只输出裸 file_path；临时下载故障采用有限重试。",
+            "将 eshypdata.com 主域下的 Excel 或 links CSV 受控保存到当前项目；格式由 artifact_kind 唯一决定。成功后必须向用户原样展示 delivery.local_file_link Markdown 超链接，不得只输出裸 file_path；临时下载故障采用有限重试。",
           parameters: {
             type: "object",
             additionalProperties: false,
-            required: ["artifact_kind", "artifact_id", "excel_file_url"],
+            required: ["artifact_kind", "artifact_id", "file_url"],
             properties: {
               artifact_kind: {
                 type: "string",
-                enum: [
-                  "creator_detail_export",
-                  "mcn_ranking",
-                  "mcn_creator_preview",
-                  "manual_source",
-                  "ranked_submission",
-                ],
+                enum: ARTIFACT_KINDS,
               },
               artifact_id: {
                 type: "string",
                 minLength: 1,
                 description:
-                  "调用方关联 ID：mcn_ranking、mcn_creator_preview、manual_source 和 ranked_submission 使用 requirement_id；creator_detail_export 使用 batch/task ID",
+                  "调用方关联 ID：除 creator_detail_export 使用 batch/task ID 外，其余 artifact_kind 使用当前 requirement_id",
               },
-              excel_file_url: {
+              file_url: {
                 type: "string",
                 minLength: 1,
-                description: "Provider 返回的原始 Excel 下载 URL",
+                description: "Provider 返回的原始 Excel 或 CSV 下载 URL",
               },
               mcn_names: {
                 type: "array",
@@ -77,114 +67,107 @@ export default {
             },
           },
           async execute(_id, params) {
-            return saveExcelArtifact(params);
+            const result = await saveArtifact(params, {
+              workspaceDir: context?.workspaceDir,
+              fetchImpl,
+              testAdapterBaseUrl,
+            });
+            hookRuntime.recordSavedCsvArtifact(
+              params.artifact_kind,
+              params.artifact_id,
+              result,
+              context?.workspaceDir,
+            );
+            return result;
           },
         };
       },
-      { name: "ypscan_save_excel_artifact" },
+      { name: "ypscan_save_artifact" },
     );
 
     api.registerTool(
-      (context) => {
-        const saveCsvArtifact = createCsvArtifactSaver({
-          workspaceDir: context?.workspaceDir,
-          fetchImpl: api.fetch ?? globalThis.fetch,
-          testAdapterBaseUrl,
-        });
-        return {
-          name: "ypscan_save_csv_artifact",
-          description:
-            "将 eshypdata.com 主域下的 links CSV 受控保存到当前项目；成功后必须向用户原样展示 delivery.local_file_link Markdown 超链接。",
-          parameters: {
-            type: "object",
-            additionalProperties: false,
-            required: ["artifact_kind", "artifact_id", "csv_file_url"],
-            properties: {
-              artifact_kind: {
-                type: "string",
-                enum: ["manual_creator_links", "mcn_creator_links"],
-              },
-              artifact_id: {
-                type: "string",
-                minLength: 1,
-                description: "当前 requirement_id",
-              },
-              csv_file_url: {
-                type: "string",
-                minLength: 1,
-                description: "Provider 返回的原始 CSV 下载 URL",
+      (context) => ({
+        name: "ypscan_save_creator_links",
+        description:
+          "将机构回填 Excel 中 read 得到的达人标识（source_record_id / creator_id / url）受控保存为本轮 links CSV，登记为当前 requirement 的合法 links 来源，供 file_bridge 合并使用。成功后必须向用户原样展示 delivery.local_file_link Markdown 超链接。",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: ["requirement_id", "rows"],
+          properties: {
+            requirement_id: {
+              type: "string",
+              minLength: 1,
+              description: "当前 requirement_id",
+            },
+            rows: {
+              type: "array",
+              minItems: 1,
+              items: {
+                type: "object",
+                required: ["creator_id", "url"],
+                properties: {
+                  source_record_id: { type: "string" },
+                  creator_id: { type: "string", minLength: 1 },
+                  url: { type: "string", minLength: 1 },
+                },
               },
             },
           },
-          async execute(_id, params) {
-            return saveCsvArtifact(params);
-          },
-        };
-      },
-      { name: "ypscan_save_csv_artifact" },
-    );
-
-    api.registerTool(
-      (context) => {
-        const mergeCreatorCsv = createCreatorCsvMerger({
-          workspaceDir: context?.workspaceDir,
-        });
-        return {
-          name: "ypscan_merge_creator_csv",
-          description:
-            "合并当前 requirement 的 links CSV 与一批或多批 YP Action 达人补全 CSV，输出保持 links 原顺序的 merged CSV。",
-          parameters: {
-            type: "object",
-            additionalProperties: false,
-            required: [
-              "requirement_id",
-              "platform",
-              "flow",
-              "links_csv_path",
-              "completion_csv_paths",
-            ],
-            properties: {
-              requirement_id: { type: "string", minLength: 1 },
-              platform: { type: "string", enum: ["xiaohongshu", "douyin"] },
-              flow: { type: "string", enum: ["manual_source", "mcn_rank", "mcn_complete_only"] },
-              links_csv_path: { type: "string", minLength: 1 },
-              completion_csv_paths: {
-                type: "array",
-                minItems: 1,
-                items: { type: "string", minLength: 1 },
-              },
-            },
-          },
-          async execute(_id, params) {
-            return mergeCreatorCsv(params);
-          },
-        };
-      },
-      { name: "ypscan_merge_creator_csv" },
-    );
-
-    api.registerTool({
-      name: "ypscan_upload_creator_csv",
-      description:
-        "显式校验并上传当前 merged CSV；在评分前阻断超过 500 行的数据，并返回 Provider 评分工具消费的 csv_file_path。",
-      parameters: {
-        type: "object",
-        additionalProperties: false,
-        required: ["requirement_id", "flow", "merged_csv_path"],
-        properties: {
-          requirement_id: { type: "string", minLength: 1 },
-          flow: { type: "string", enum: ["manual_source", "mcn_rank"] },
-          merged_csv_path: { type: "string", minLength: 1 },
         },
-      },
-      async execute(_id, params) {
-        const uploadCreatorCsv = createCreatorCsvUploader({
-          fetchImpl: api.fetch ?? globalThis.fetch,
-          testAdapterBaseUrl,
-        });
-        return uploadCreatorCsv(params);
-      },
-    });
+        async execute(_id, params) {
+          const result = await saveCreatorLinks(params, {
+            workspaceDir: context?.workspaceDir,
+          });
+          const filePath = result?.details?.file_path;
+          if (filePath) {
+            hookRuntime.recordLinksCsv(params.requirement_id, filePath, context?.workspaceDir);
+          }
+          return result;
+        },
+      }),
+      { name: "ypscan_save_creator_links" },
+    );
+
+    api.registerTool(
+      (context) => ({
+        name: "file_bridge",
+        description:
+          "将当前 requirement 的 links CSV 与一批或多批达人补全 CSV 合并为本地文件；manual_source、mcn_rank 在不超过 500 行时继续上传 OSS 并返回 csv_file_path，mcn_complete_only 只交付本地文件。",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "requirement_id",
+            "platform",
+            "flow",
+            "links_csv_path",
+            "completion_csv_paths",
+          ],
+          properties: {
+            requirement_id: { type: "string", minLength: 1 },
+            platform: { type: "string", enum: ["xiaohongshu", "douyin"] },
+            flow: { type: "string", enum: ["manual_source", "mcn_rank", "mcn_complete_only"] },
+            links_csv_path: { type: "string", minLength: 1 },
+            completion_csv_paths: {
+              type: "array",
+              minItems: 1,
+              items: { type: "string", minLength: 1 },
+            },
+          },
+        },
+        async execute(_id, params) {
+          return fileBridge(params, {
+            workspaceDir: context?.workspaceDir,
+            pluginConfig,
+            fetchImpl,
+            allowedLinksCsvPaths: hookRuntime.linksCsvPathsFor,
+            allowedCompletionCsvPaths: hookRuntime.completionCsvPathsFor,
+          });
+        },
+      }),
+      { name: "file_bridge" },
+    );
 
     api.on("gateway_start", async () => {
       hookRuntime.resetTransientState();

@@ -20,10 +20,10 @@
 
 ## 提交后三态
 
-- 同步 links CSV：提交响应直接返回 `creator_links_csv_url` 时，立刻把它作为 `ypscan_save_csv_artifact` 的内部参数，使用 `artifact_kind="manual_creator_links"` 和同一 `requirement_id` 保存到当前项目，原样展示保存结果中的 `delivery.local_file_link` Markdown 超链接（不得只输出裸 `file_path`），再进入原生达人补全。
+- 同步 links CSV：提交响应直接返回 `creator_links_csv_url` 时，立刻调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_creator_links"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 原样传为 `file_url` 保存到当前项目。原样展示保存结果中的 `delivery.local_file_link` Markdown 超链接（不得只输出裸 `file_path`），再进入原生达人补全。
 - 异步 batch：提交响应返回 `batch_id` 时，先输出进度提示，再等待 30 秒，用同一 `requirement_id` 和返回的整数 `batch_id` 第 1 次调用 `manual_source_creators_status`（见该工具卡）。Hook 会额外提供 `MANUAL_SOURCE_TARGET_NUM`；只有当前环境 live schema required `num` 时，才把该值并入状态查询。轮询成功拿到 `creator_links_csv_url` 后，同样先保存到当前项目。
-- 兼容 Excel：若提交响应只返回兼容 Excel URL，则立刻把它作为 `ypscan_save_excel_artifact` 的内部参数，使用 `artifact_kind="manual_source"` 和同一 `requirement_id` 保存到当前项目，作为旧链路降级结果。该降级路径不进入 CSV 补全/打分链路。
+- 兼容 Excel：若提交响应只返回兼容 Excel URL，则立刻调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 原样传为 `file_url` 保存到当前项目，作为旧链路降级结果。该降级路径不进入 CSV 补全/打分链路。
 
-links CSV 保存成功后，按平台分 20 个 author 一批调用原生达人补全工具，小红书使用 `get_xhs_author_business_card` 且固定 `page_count=1`，抖音使用 `get_douyin_author_business_card`。每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；全部补全批次完成后执行 `ypscan_merge_creator_csv → ypscan_upload_creator_csv → score_manual_source_csv → score_manual_source_csv_status → 保存最终 Excel`。
+links CSV 保存成功后，按平台分 20 个 author 一批调用原生达人补全工具，小红书使用 `get_xhs_author_business_card` 且固定 `page_count=1`，抖音使用 `get_douyin_author_business_card`。每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；全部补全批次完成后执行 `file_bridge（内部合并并上传）→ score_manual_source_csv → score_manual_source_csv_status → 保存最终 Excel`。
 
-当前仓库没有可验证的生产 CSV 暂存端点契约，因此非测试模式下 `ypscan_upload_creator_csv` 会明确返回 `YPSCAN_CREATOR_CSV_UPLOAD_UNAVAILABLE`；不得猜测真实上传接口。
+`file_bridge` 会把 merged CSV 上传到 OSS，并返回当前真实可读的未签名 `csv_file_path`。若上传后匿名地址不可读，则停止后续打分，不得自造 URL 或改走其他上传路径。

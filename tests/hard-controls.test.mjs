@@ -7,9 +7,9 @@ import {
   businessModeQuestionPayload,
   flowRetryQuestionPayload,
   ingestJobRecoveryQuestionPayload,
-  inquiryCreatorCompletionChoiceQuestionPayload,
   isPopupQuestionPayload,
   MAX_POPUP_LINE_LENGTH,
+  mcnCreatorCompletionQuestionPayload,
   mcnRankingRecipientQuestionPayload,
   popupQuestionPayload,
 } from "../src/tools/popup-questions.js";
@@ -40,9 +40,9 @@ function argsFromDirective(text) {
   return JSON.parse(line.slice("ASK_USER_QUESTION_ARGS=".length));
 }
 
-function saveExcelArgsFromDirective(text) {
-  const line = text.split("\n").find((item) => item.startsWith("SAVE_EXCEL_ARTIFACT_ARGS="));
-  return JSON.parse(line.slice("SAVE_EXCEL_ARTIFACT_ARGS=".length));
+function saveArtifactArgsFromDirective(text) {
+  const line = text.split("\n").find((item) => item.startsWith("SAVE_ARTIFACT_ARGS="));
+  return JSON.parse(line.slice("SAVE_ARTIFACT_ARGS=".length));
 }
 
 function namedArgsFromDirective(text, name) {
@@ -227,7 +227,7 @@ test("validated requirements route by the previously selected business mode", ()
   assert.match(searchText, /忽略 creators_export_path 等表格链接，不保存或展示/u);
   assert.match(searchText, /不调用保存工具/u);
   assert.match(searchText, /不得用 Browser、脚本或其他方式下载/u);
-  assert.doesNotMatch(searchText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.doesNotMatch(searchText, /SAVE_ARTIFACT_ARGS=/u);
   assert.deepEqual(namedArgsFromDirective(searchText, "RANK_MCNS_ARGS"), {
     id: "a".repeat(32),
     platform: "douyin",
@@ -361,10 +361,10 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   const rankText = directiveText(rank);
   assert.match(rankText, /完整表格输出后立即使用下面参数保存/u);
   assert.match(rankText, /保存成功前不得展示本地路径/u);
-  assert.deepEqual(saveExcelArgsFromDirective(rankText), {
+  assert.deepEqual(saveArtifactArgsFromDirective(rankText), {
     artifact_kind: "mcn_ranking",
     artifact_id: "req-1",
-    excel_file_url: "https://mcp.eshypdata.com/api/download?file_path=mcn-ranking.xlsx",
+    file_url: "https://mcp.eshypdata.com/api/download?file_path=mcn-ranking.xlsx",
     mcn_names: ["机构 A"],
   });
   assert.doesNotMatch(rankText, /ASK_USER_QUESTION_ARGS=/u);
@@ -375,8 +375,8 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   assert.doesNotMatch(rankText, /属于恢复当前询价分支/u);
 
   const saved = persist({
-    toolName: "ypscan_save_excel_artifact",
-    params: saveExcelArgsFromDirective(rankText),
+    toolName: "ypscan_save_artifact",
+    params: saveArtifactArgsFromDirective(rankText),
     message: toolMessage({
       success: true,
       data: { file_path: "/workspace/mcn-ranking.xlsx" },
@@ -411,8 +411,8 @@ test("rank result saves the Provider MCN workbook before the branch question", (
   assert.match(savedText, /把路径\/链接放入弹窗/u);
 
   const failed = persist({
-    toolName: "ypscan_save_excel_artifact",
-    params: saveExcelArgsFromDirective(rankText),
+    toolName: "ypscan_save_artifact",
+    params: saveArtifactArgsFromDirective(rankText),
     message: toolMessage({ success: false, error: { code: "YPSCAN_EXCEL_DOWNLOAD_FAILED" } }),
   });
   assert.match(directiveText(failed), /MCN 排名表保存 已暂停/u);
@@ -441,7 +441,7 @@ test("default manual sourcing polls its status before saving the final artifact"
   assert.match(sourceText, /第 10 次仍未完成.*不得自动查询第 11 次/u);
   assert.match(sourceText, /不得猜测或更换 requirement_id 或 batch_id/u);
   assert.doesNotMatch(sourceText, /\bsize\b|creator_count|page_url|original_brief/u);
-  assert.doesNotMatch(sourceText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.doesNotMatch(sourceText, /SAVE_ARTIFACT_ARGS=/u);
   assert.doesNotMatch(sourceText, /ASK_USER_QUESTION_ARGS=/u);
 
   const immediate = persist({
@@ -456,15 +456,15 @@ test("default manual sourcing polls its status before saving the final artifact"
     }),
   });
   const immediateText = directiveText(immediate);
-  assert.match(immediateText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.match(immediateText, /SAVE_ARTIFACT_ARGS=/u);
   assert.match(immediateText, /YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
   assert.match(immediateText, /数量未知时交付当前 Excel 并结束/u);
-  assert.match(immediateText, /实际数量为 0 或少于目标数量.*共享顺序逐项自动放宽/u);
-  assert.match(immediateText, /创建独立的新 requirement 并重新选择字段/u);
-  assert.deepEqual(saveExcelArgsFromDirective(immediateText), {
+  assert.match(immediateText, /实际数量为 0 或少于目标数量.*建议.*放宽/u);
+  assert.match(immediateText, /创建独立的新 requirement/u);
+  assert.deepEqual(saveArtifactArgsFromDirective(immediateText), {
     artifact_kind: "manual_source",
     artifact_id: "req-manual",
-    excel_file_url: "https://files.eshypdata.com/exports/manual-direct.xlsx",
+    file_url: "https://files.eshypdata.com/exports/manual-direct.xlsx",
   });
   assert.doesNotMatch(immediateText, /MANUAL_SOURCE_CREATORS_STATUS_ARGS=/u);
   assert.doesNotMatch(immediateText, /\bsize\b|creator_count|page_url|original_brief/u);
@@ -491,7 +491,7 @@ test("default manual sourcing polls its status before saving the final artifact"
   assert.match(pendingText, /不得自动查询第 11 次/u);
   assert.doesNotMatch(pendingText, /继续查询\/暂时结束/u);
   assert.doesNotMatch(pendingText, /POLL_LIMIT_QUESTION_ARGS=/u);
-  assert.doesNotMatch(pendingText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.doesNotMatch(pendingText, /SAVE_ARTIFACT_ARGS=/u);
   assert.doesNotMatch(pendingText, /ASK_USER_QUESTION_ARGS=/u);
 
   const completed = persist({
@@ -506,10 +506,10 @@ test("default manual sourcing polls its status before saving the final artifact"
     }),
   });
   const completedText = directiveText(completed);
-  assert.deepEqual(namedArgsFromDirective(completedText, "SAVE_CSV_ARTIFACT_ARGS"), {
+  assert.deepEqual(saveArtifactArgsFromDirective(completedText), {
     artifact_kind: "manual_creator_links",
     artifact_id: "req-manual",
-    csv_file_url: "https://files.eshypdata.com/exports/manual-links.csv",
+    file_url: "https://files.eshypdata.com/exports/manual-links.csv",
   });
   assert.match(
     completedText,
@@ -518,11 +518,11 @@ test("default manual sourcing polls its status before saving the final artifact"
   assert.doesNotMatch(completedText, /ASK_USER_QUESTION_ARGS=/u);
 
   const saved = persist({
-    toolName: "ypscan_save_excel_artifact",
+    toolName: "ypscan_save_artifact",
     params: {
       artifact_kind: "manual_source",
       artifact_id: "req-manual",
-      excel_file_url: "https://files.eshypdata.com/exports/manual.xlsx",
+      file_url: "https://files.eshypdata.com/exports/manual.xlsx",
     },
     message: toolMessage({
       success: true,
@@ -532,11 +532,11 @@ test("default manual sourcing polls its status before saving the final artifact"
   const savedText = directiveText(saved);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_PATH=\/workspace\/manual\.xlsx/u);
   assert.match(savedText, /MANUAL_SOURCE_LOCAL_LINK=/u);
-  assert.match(savedText, /最终手动拓展交付物|本轮真实手动拓展结果/u);
+  assert.match(savedText, /最终打分排序 Excel 已保存|最终交付物/u);
   assert.match(savedText, /YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
-  assert.match(savedText, /达到目标数量时结束.*汇总累计放宽的全部条件/u);
-  assert.match(savedText, /实际数量为 0 或少于目标数量.*共享顺序逐项自动放宽/u);
-  assert.match(savedText, /创建独立的新 requirement 并重新选择字段/u);
+  assert.match(savedText, /达到目标数量时结束/u);
+  assert.match(savedText, /实际数量为 0 或少于目标数量.*建议.*放宽/u);
+  assert.match(savedText, /创建独立的新 requirement/u);
   assert.match(savedText, /每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement/u);
   assert.doesNotMatch(savedText, /RANK_CREATORS_ARGS=/u);
   assert.doesNotMatch(savedText, /CREATE_SUBMISSION_BATCH_ARGS=/u);
@@ -630,7 +630,7 @@ test("manual source status args prefill num from the validated requirement quant
   assert.match(directiveText(resumed), /MANUAL_SOURCE_TARGET_NUM=30/u);
 });
 
-test("native completion pins the merge flow to the validated business mode", () => {
+test("native completion pins the file bridge flow to the validated business mode", () => {
   const hooks = registeredHooks();
   const before = hooks.get("before_tool_call");
   const persist = hooks.get("tool_result_persist");
@@ -663,9 +663,9 @@ test("native completion pins the merge flow to the validated business mode", () 
     },
     manualContext,
   );
-  assert.match(directiveText(manualCompletion), /^YPSCAN_MERGE_FLOW=manual_source$/mu);
+  assert.match(directiveText(manualCompletion), /^FILE_BRIDGE_FLOW=manual_source$/mu);
 
-  // 询价机构分支：flow=mcn_complete_only。
+  // 询价机构分支：flow=manual_source（补全后统一打分排序）。
   const inquiryContext = { sessionKey: "completion-flow-inquiry" };
   const inquiryParams = completeValidateParams();
   before({ toolName: "ypmcn__validate_requirement", params: inquiryParams }, inquiryContext);
@@ -685,9 +685,9 @@ test("native completion pins the merge flow to the validated business mode", () 
     },
     inquiryContext,
   );
-  assert.match(directiveText(inquiryCompletion), /^YPSCAN_MERGE_FLOW=mcn_complete_only$/mu);
+  assert.match(directiveText(inquiryCompletion), /^FILE_BRIDGE_FLOW=manual_source$/mu);
 
-  // 无已校验模式时不注入死 token，只给固定规则说明。
+  // 无已校验模式时也固定为 manual_source（补全后统一打分排序）。
   const fresh = registeredHooks().get("tool_result_persist");
   const unknownCompletion = fresh({
     toolName: "ypaction__get_douyin_author_business_card",
@@ -695,69 +695,37 @@ test("native completion pins the merge flow to the validated business mode", () 
     message: completionMessage,
   });
   const unknownText = directiveText(unknownCompletion);
-  assert.match(unknownText, /YPSCAN_MERGE_FLOW 未确定/u);
-  assert.doesNotMatch(unknownText, /^YPSCAN_MERGE_FLOW=/mu);
+  assert.match(unknownText, /^FILE_BRIDGE_FLOW=manual_source$/mu);
 });
 
-test("merge derives flow from the validated business mode when the call omits it", () => {
-  const hooks = registeredHooks();
-  const before = hooks.get("before_tool_call");
-  const persist = hooks.get("tool_result_persist");
-  const mergeMessage = toolMessage({
+test("file_bridge delivers local-only and over-limit merged CSVs without downstream calls", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const localOnlyMessage = toolMessage({
     success: true,
     data: { file_path: "/workspace/merged.csv", data_row_count: 120 },
   });
-
-  // 手动拓展：缺 flow 时按模式推导 manual_source，上传参数携带该 flow。
-  const manualContext = { sessionKey: "merge-flow-manual" };
-  const manualParams = completeValidateParamsForMode("手动拓展");
-  before({ toolName: "ypmcn__validate_requirement", params: manualParams }, manualContext);
-  persist(
-    {
-      toolName: "ypmcn__validate_requirement",
-      params: manualParams,
-      message: toolMessage({ success: true, data: { requirement_id: "req-merge-manual" } }),
-    },
-    manualContext,
-  );
-  const manualMerge = persist(
-    {
-      toolName: "ypscan_merge_creator_csv",
-      params: { requirement_id: "req-merge-manual" },
-      message: mergeMessage,
-    },
-    manualContext,
-  );
-  const manualText = directiveText(manualMerge);
-  assert.deepEqual(namedArgsFromDirective(manualText, "UPLOAD_CREATOR_CSV_ARGS"), {
-    requirement_id: "req-merge-manual",
-    flow: "manual_source",
-    merged_csv_path: "/workspace/merged.csv",
+  const localOnly = persist({
+    toolName: "file_bridge",
+    params: { requirement_id: "req-complete", flow: "mcn_complete_only" },
+    message: localOnlyMessage,
   });
+  const localOnlyText = directiveText(localOnly);
+  assert.match(localOnlyText, /只补全达人信息/u);
+  assert.match(localOnlyText, /MERGED_CSV_LOCAL_LINK=/u);
+  assert.doesNotMatch(localOnlyText, /SCORE_MANUAL_SOURCE_CSV_ARGS|RANK_CREATORS_ARGS/u);
 
-  // 询价机构：缺 flow 时按模式推导 mcn_complete_only，直接交付、不生成上传参数。
-  const inquiryContext = { sessionKey: "merge-flow-inquiry" };
-  const inquiryParams = completeValidateParams();
-  before({ toolName: "ypmcn__validate_requirement", params: inquiryParams }, inquiryContext);
-  persist(
-    {
-      toolName: "ypmcn__validate_requirement",
-      params: inquiryParams,
-      message: toolMessage({ success: true, data: { requirement_id: "req-merge-inquiry" } }),
-    },
-    inquiryContext,
-  );
-  const inquiryMerge = persist(
-    {
-      toolName: "ypscan_merge_creator_csv",
-      params: { requirement_id: "req-merge-inquiry" },
-      message: mergeMessage,
-    },
-    inquiryContext,
-  );
-  const inquiryText = directiveText(inquiryMerge);
-  assert.match(inquiryText, /只补全达人信息/u);
-  assert.doesNotMatch(inquiryText, /UPLOAD_CREATOR_CSV_ARGS=/u);
+  const overLimit = persist({
+    toolName: "file_bridge",
+    params: { requirement_id: "req-over-limit", flow: "manual_source" },
+    message: toolMessage({
+      success: true,
+      data: { file_path: "/workspace/too-many.csv", data_row_count: 501 },
+    }),
+  });
+  const overLimitText = directiveText(overLimit);
+  assert.match(overLimitText, /已跳过上传/u);
+  assert.match(overLimitText, /MERGED_DATA_ROW_COUNT=501/u);
+  assert.doesNotMatch(overLimitText, /SCORE_MANUAL_SOURCE_CSV_ARGS/u);
 });
 
 test("manual sourcing rejects a non-integer task batch", () => {
@@ -830,10 +798,10 @@ test("default manual sourcing pauses without a task batch and falls back to para
       data: { excel_file_url: "https://files.eshypdata.com/exports/fallback.xlsx" },
     }),
   });
-  assert.deepEqual(saveExcelArgsFromDirective(directiveText(completed)), {
+  assert.deepEqual(saveArtifactArgsFromDirective(directiveText(completed)), {
     artifact_kind: "manual_source",
     artifact_id: "req-nobatch",
-    excel_file_url: "https://files.eshypdata.com/exports/fallback.xlsx",
+    file_url: "https://files.eshypdata.com/exports/fallback.xlsx",
   });
 });
 
@@ -859,10 +827,10 @@ test("tool-result parsing finds JSON in a separate text block", () => {
     },
   });
 
-  assert.deepEqual(saveExcelArgsFromDirective(directiveText(result)), {
+  assert.deepEqual(saveArtifactArgsFromDirective(directiveText(result)), {
     artifact_kind: "manual_source",
     artifact_id: "req-multipart",
-    excel_file_url: "https://files.eshypdata.com/exports/multipart.xlsx",
+    file_url: "https://files.eshypdata.com/exports/multipart.xlsx",
   });
 });
 
@@ -883,7 +851,7 @@ test("manual scoring polls score_manual_source_csv_status before saving the fina
   assert.deepEqual(namedArgsFromDirective(scoredText, "SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS"), {
     job_id: "job-score-1",
   });
-  assert.doesNotMatch(scoredText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.doesNotMatch(scoredText, /SAVE_ARTIFACT_ARGS=/u);
   assert.doesNotMatch(scoredText, /ASK_USER_QUESTION_ARGS=/u);
 
   const pending = persist({
@@ -899,7 +867,7 @@ test("manual scoring polls score_manual_source_csv_status before saving the fina
   assert.deepEqual(namedArgsFromDirective(pendingText, "SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS"), {
     job_id: "job-score-1",
   });
-  assert.doesNotMatch(pendingText, /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.doesNotMatch(pendingText, /SAVE_ARTIFACT_ARGS=/u);
 
   const completed = persist({
     toolName: "ypmcn__score_manual_source_csv_status",
@@ -914,10 +882,10 @@ test("manual scoring polls score_manual_source_csv_status before saving the fina
   });
   const completedText = directiveText(completed);
   assert.match(completedText, /已完成/u);
-  assert.deepEqual(saveExcelArgsFromDirective(completedText), {
+  assert.deepEqual(saveArtifactArgsFromDirective(completedText), {
     artifact_kind: "manual_source",
     artifact_id: "req-score",
-    excel_file_url: "https://files.eshypdata.com/exports/manual-scored.xlsx",
+    file_url: "https://files.eshypdata.com/exports/manual-scored.xlsx",
   });
   assert.doesNotMatch(completedText, /SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS=/u);
 
@@ -927,7 +895,7 @@ test("manual scoring polls score_manual_source_csv_status before saving the fina
     message: toolMessage({ success: false, error: { code: "SCORE_JOB_FAILED" } }),
   });
   const failedText = directiveText(failed);
-  assert.match(failedText, /手动拓展打分结果查询 已暂停/u);
+  assert.match(failedText, /达人打分结果查询 已暂停/u);
   assert.match(failedText, /ASK_USER_QUESTION_ARGS=/u);
 
   const syncExcel = persist({
@@ -941,10 +909,10 @@ test("manual scoring polls score_manual_source_csv_status before saving the fina
       },
     }),
   });
-  assert.deepEqual(saveExcelArgsFromDirective(directiveText(syncExcel)), {
+  assert.deepEqual(saveArtifactArgsFromDirective(directiveText(syncExcel)), {
     artifact_kind: "manual_source",
     artifact_id: "req-score",
-    excel_file_url: "https://files.eshypdata.com/exports/manual-sync.xlsx",
+    file_url: "https://files.eshypdata.com/exports/manual-sync.xlsx",
   });
 });
 
@@ -967,10 +935,10 @@ test("manual scoring status terminal recovers requirement id from the score job"
     }),
   });
   const text = directiveText(completed);
-  assert.deepEqual(saveExcelArgsFromDirective(text), {
+  assert.deepEqual(saveArtifactArgsFromDirective(text), {
     artifact_kind: "manual_source",
     artifact_id: "req-score-recover",
-    excel_file_url: "https://files.eshypdata.com/exports/manual-recovered.xlsx",
+    file_url: "https://files.eshypdata.com/exports/manual-recovered.xlsx",
   });
   assert.doesNotMatch(text, /SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS=/u);
 });
@@ -986,34 +954,50 @@ test("manual scoring status terminal without any requirement id pauses instead o
     }),
   });
   const text = directiveText(orphan);
-  assert.match(text, /手动拓展打分结果查询.*已暂停/u);
+  assert.match(text, /达人打分结果查询.*已暂停/u);
   assert.doesNotMatch(text, /SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS=/u);
 });
 
-test("non-manual merged CSV upload no longer constructs rank creator args", () => {
+test("file_bridge returns score args for manual_source and compatibility rank args for mcn_rank", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
-    toolName: "ypscan_upload_creator_csv",
+    toolName: "file_bridge",
     params: {
       requirement_id: "req-upload",
-      flow: "mcn_ranking",
-      merged_csv_path: "/workspace/merged.csv",
+      flow: "mcn_rank",
     },
-    message: toolMessage({ success: true, data: { csv_file_path: "/provider/merged.csv" } }),
+    message: toolMessage({
+      success: true,
+      data: {
+        file_path: "/workspace/merged.csv",
+        data_row_count: 20,
+        csv_file_path: "/provider/merged.csv",
+      },
+    }),
   });
   const text = directiveText(result);
-  assert.match(text, /机构回填精排已改为 get_workflow_state → rank_creators/u);
-  assert.match(text, /rank_creators 不再消费上传的 CSV/u);
-  assert.doesNotMatch(text, /RANK_CREATORS_ARGS=/u);
+  assert.match(text, /已合并并完成 OSS 上传/u);
+  assert.match(text, /live rank_creators schema 已明确支持 csv_file_path/u);
+  assert.match(text, /当前测试 Provider 仍默认保留 rank_creators\(requirement_id,inquiry_ids\) 旧链路/u);
+  assert.deepEqual(namedArgsFromDirective(text, "RANK_CREATORS_ARGS"), {
+    requirement_id: "req-upload",
+    csv_file_path: "/provider/merged.csv",
+  });
 
   const manualUpload = persist({
-    toolName: "ypscan_upload_creator_csv",
+    toolName: "file_bridge",
     params: {
       requirement_id: "req-upload",
       flow: "manual_source",
-      merged_csv_path: "/workspace/merged.csv",
     },
-    message: toolMessage({ success: true, data: { csv_file_path: "/provider/merged.csv" } }),
+    message: toolMessage({
+      success: true,
+      data: {
+        file_path: "/workspace/merged.csv",
+        data_row_count: 20,
+        csv_file_path: "/provider/merged.csv",
+      },
+    }),
   });
   assert.deepEqual(
     namedArgsFromDirective(directiveText(manualUpload), "SCORE_MANUAL_SOURCE_CSV_ARGS"),
@@ -1024,36 +1008,22 @@ test("non-manual merged CSV upload no longer constructs rank creator args", () =
   );
 });
 
-test("institutional retrieval syncs, re-reads workflow state and polls the ingest job before rank", () => {
+test("institutional retrieval syncs, ingests and polls before preview save", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const synced = persist({
     toolName: "test__sync_mcn_inquiry_status",
     params: { requirement_id: "req-ingest" },
     message: toolMessage({
       success: true,
-      data: { inquiries: [{ inquiry_id: 12 }, { inquiry_id: "13" }] },
+      data: { requirement_id: "req-ingest", inquiries: [{ inquiry_id: 12 }, { inquiry_id: "13" }] },
     }),
   });
   const syncedText = directiveText(synced);
-  assert.match(syncedText, /sync 成功后不得直接 ingest/u);
-  assert.match(syncedText, /回到 get_workflow_state 取.*inquiry_ids/u);
-  assert.deepEqual(namedArgsFromDirective(syncedText, "GET_WORKFLOW_STATE_ARGS"), {
-    requirement_id: "req-ingest",
+  assert.match(syncedText, /询价状态同步成功，已返回非空 inquiry_ids/u);
+  assert.deepEqual(namedArgsFromDirective(syncedText, "INGEST_MCN_SUBMISSIONS_ARGS"), {
+    inquiry_ids: ["12", "13"],
   });
-  assert.doesNotMatch(syncedText, /INGEST_MCN_SUBMISSIONS_ARGS=/u);
-
-  const workflowState = persist({
-    toolName: "test__get_workflow_state",
-    params: { requirement_id: "req-ingest" },
-    message: toolMessage({
-      success: true,
-      data: { requirement_id: "req-ingest", inquiry_ids: [12, "13"] },
-    }),
-  });
-  assert.deepEqual(
-    namedArgsFromDirective(directiveText(workflowState), "INGEST_MCN_SUBMISSIONS_ARGS"),
-    { inquiry_ids: ["12", "13"] },
-  );
+  assert.doesNotMatch(syncedText, /GET_WORKFLOW_STATE_ARGS=/u);
 
   const ingested = persist({
     toolName: "test__ingest_mcn_submissions",
@@ -1066,7 +1036,7 @@ test("institutional retrieval syncs, re-reads workflow state and polls the inges
   assert.deepEqual(namedArgsFromDirective(directiveText(ingested), "GET_INGEST_JOB_ARGS"), {
     job_id: "job-ingest-1",
   });
-  assert.doesNotMatch(directiveText(ingested), /SAVE_EXCEL_ARTIFACT_ARGS=/u);
+  assert.doesNotMatch(directiveText(ingested), /SAVE_ARTIFACT_ARGS=/u);
 
   const pending = persist({
     toolName: "test__get_ingest_job",
@@ -1079,7 +1049,6 @@ test("institutional retrieval syncs, re-reads workflow state and polls the inges
   assert.match(directiveText(pending), /同一 job_id/u);
   assert.match(directiveText(pending), /第 10 次仍未完成时如实报告并停止/u);
   assert.match(directiveText(pending), /不询问用户/u);
-  assert.doesNotMatch(directiveText(pending), /继续查询\/暂时结束/u);
   assert.doesNotMatch(directiveText(pending), /ASK_USER_QUESTION_ARGS=/u);
 
   const completed = persist({
@@ -1090,102 +1059,143 @@ test("institutional retrieval syncs, re-reads workflow state and polls the inges
       data: {
         job_id: "job-ingest-1",
         requirement_id: "req-ingest",
+        status: "succeeded",
         excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
-        creator_links_csv_url: "https://files.eshypdata.com/exports/mcn-links.csv",
       },
     }),
   });
+  const completedText = directiveText(completed);
   assert.match(
-    directiveText(completed),
+    completedText,
     /MCN_CREATOR_PREVIEW_URL=https:\/\/files\.eshypdata\.com\/exports\/mcn-preview\.xlsx/u,
   );
-  assert.match(directiveText(completed), /先保存机构达人预览表，再保存本轮 links CSV/u);
-  assert.deepEqual(saveExcelArgsFromDirective(directiveText(completed)), {
+  assert.match(completedText, /保存机构达人预览表/u);
+  assert.match(completedText, /ypscan_save_creator_links/u);
+  assert.deepEqual(saveArtifactArgsFromDirective(completedText), {
     artifact_kind: "mcn_creator_preview",
     artifact_id: "req-ingest",
-    excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
+    file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
   });
 
   const previewSaved = persist({
-    toolName: "ypscan_save_excel_artifact",
+    toolName: "ypscan_save_artifact",
     params: {
       artifact_kind: "mcn_creator_preview",
       artifact_id: "req-ingest",
-      excel_file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
+      file_url: "https://files.eshypdata.com/exports/mcn-preview.xlsx",
     },
     message: toolMessage({ success: true, data: { file_path: "/workspace/mcn-preview.xlsx" } }),
   });
   const previewText = directiveText(previewSaved);
   assert.match(previewText, /机构达人预览表已保存/u);
-  assert.match(previewText, /原样展示本地链接后立即保存同一 requirement.*links CSV/u);
-  assert.deepEqual(namedArgsFromDirective(previewText, "SAVE_CSV_ARTIFACT_ARGS"), {
-    artifact_kind: "mcn_creator_links",
-    artifact_id: "req-ingest",
-    csv_file_url: "https://files.eshypdata.com/exports/mcn-links.csv",
-  });
+  assert.match(previewText, /read 读取本地 Excel/u);
+  assert.match(previewText, /ypscan_save_creator_links 派生受控 links CSV/u);
+  assert.match(previewText, /file_bridge（flow=manual_source）/u);
+  assert.deepEqual(
+    namedArgsFromDirective(previewText, "ASK_USER_QUESTION_ARGS"),
+    mcnCreatorCompletionQuestionPayload(),
+  );
 
-  const linksSaved = persist({
-    toolName: "ypscan_save_csv_artifact",
+  const linksGenerated = persist({
+    toolName: "ypscan_save_creator_links",
     params: {
-      artifact_kind: "mcn_creator_links",
-      artifact_id: "req-ingest",
-      csv_file_url: "https://files.eshypdata.com/exports/mcn-links.csv",
+      requirement_id: "req-ingest",
+      rows: [{ creator_id: "c1", url: "https://example.com/1" }],
     },
     message: toolMessage({
       success: true,
-      data: { file_path: "/workspace/mcn-links.csv" },
-      delivery: {
-        local_file_link: "[/workspace/mcn-links.csv](<file:///workspace/mcn-links.csv>)",
-      },
+      data: { file_path: "/workspace/mcn-links.csv", row_count: 1 },
     }),
   });
-  const linksText = directiveText(linksSaved);
-  assert.match(linksText, /机构回填 links CSV 已保存/u);
-  assert.deepEqual(
-    namedArgsFromDirective(linksText, "ASK_USER_QUESTION_ARGS"),
-    inquiryCreatorCompletionChoiceQuestionPayload(),
-  );
-  assert.match(linksText, /选“精排并生成提报表”时直接调用 rank_creators/u);
-  assert.match(linksText, /merge（flow=mcn_complete_only）.*直接交付 merged CSV/u);
-  assert.deepEqual(namedArgsFromDirective(linksText, "RANK_CREATORS_ARGS"), {
-    requirement_id: "req-ingest",
-    inquiry_ids: ["12", "13"],
-  });
-  assert.doesNotMatch(linksText, /GET_WORKFLOW_STATE_ARGS=/u);
+  const linksText = directiveText(linksGenerated);
+  assert.match(linksText, /受控 links CSV 已生成/u);
+  assert.match(linksText, /MCN_CREATOR_LINKS_LOCAL_PATH=\/workspace\/mcn-links\.csv/u);
+});
 
-  const ranked = persist({
-    toolName: "test__rank_creators",
-    params: { requirement_id: "req-ingest", inquiry_ids: ["12", "13"] },
+test("scored Excel delivery keeps inquiry and manual shortfall policies separate", () => {
+  const hooks = registeredHooks();
+  for (const mode of ["询价机构", "手动拓展"]) {
+    const context = { sessionKey: `delivery-${mode}` };
+    hooks.get("before_tool_call")(
+      { toolName: "validate_requirement", params: completeValidateParamsForMode(mode) },
+      context,
+    );
+    const saved = hooks.get("tool_result_persist")(
+      {
+        toolName: "ypscan_save_artifact",
+        params: { artifact_kind: "manual_source", artifact_id: `req-${mode}` },
+        message: toolMessage({ success: true, data: { file_path: "/workspace/scored.xlsx" } }),
+      },
+      context,
+    );
+    const text = directiveText(saved);
+    assert.match(text, /MANUAL_SOURCE_LOCAL_LINK=/u);
+    if (mode === "询价机构") {
+      assert.match(text, /说明缺口后结束/u);
+      assert.doesNotMatch(text, /APPLY_MANUAL_SOURCE_RESULT_POLICY|向用户建议|再向用户建议/u);
+    } else {
+      assert.match(text, /APPLY_MANUAL_SOURCE_RESULT_POLICY/u);
+      assert.match(text, /再向用户建议/u);
+    }
+  }
+});
+
+test("ingest job partially_succeeded reports pending institutions honestly", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const completed = persist({
+    toolName: "test__get_ingest_job",
+    params: { job_id: "job-ingest-partial" },
     message: toolMessage({
       success: true,
       data: {
-        ranked_count: 8,
-        excel_file_url: "https://files.eshypdata.com/exports/ranked-submission.xlsx",
+        job_id: "job-ingest-partial",
+        requirement_id: "req-partial",
+        status: "partially_succeeded",
+        excel_file_url: "https://files.eshypdata.com/exports/mcn-preview-partial.xlsx",
+        results: [
+          { success: false, inquiry_id: 1216, error: { code: "DISTRIBUTION_NOT_SUBMITTED" } },
+          { success: false, inquiry_id: "1217", error: { code: "DISTRIBUTION_NOT_SUBMITTED" } },
+          { success: true, inquiry_id: "1219", error: null },
+        ],
       },
     }),
   });
-  const rankedText = directiveText(ranked);
-  assert.match(
-    rankedText,
-    /rank_creators 成功。该调用消费本轮 get_workflow_state 返回的 inquiry_ids/u,
-  );
-  assert.match(rankedText, /直接保存最终提报 Excel 为 ranked_submission/u);
-  assert.doesNotMatch(rankedText, /CREATE_SUBMISSION_BATCH_ARGS=|submission_batche_page/u);
-  assert.deepEqual(saveExcelArgsFromDirective(rankedText), {
-    artifact_kind: "ranked_submission",
-    artifact_id: "req-ingest",
-    excel_file_url: "https://files.eshypdata.com/exports/ranked-submission.xlsx",
+  const text = directiveText(completed);
+  assert.match(text, /INGEST_PARTIAL_SUMMARY=已回填 1 家，pending 2 家/u);
+  assert.match(text, /inquiry_id: 1216, 1217/u);
+  assert.match(text, /不得把 partially_succeeded 当全部完成/u);
+  assert.deepEqual(saveArtifactArgsFromDirective(text), {
+    artifact_kind: "mcn_creator_preview",
+    artifact_id: "req-partial",
+    file_url: "https://files.eshypdata.com/exports/mcn-preview-partial.xlsx",
   });
+});
+
+test("failed async jobs stop instead of polling again", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  for (const toolName of ["get_ingest_job", "score_manual_source_csv_status"]) {
+    const result = persist({
+      toolName,
+      params: { job_id: `job-${toolName}` },
+      message: toolMessage({ success: true, data: { job_id: `job-${toolName}`, status: "failed" } }),
+    });
+    const text = directiveText(result);
+    assert.match(text, /任务已失败/u);
+    assert.doesNotMatch(text, /继续使用同一 job_id|GET_INGEST_JOB_ARGS|SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS/u);
+  }
 });
 
 test("ingest job terminal recovers requirement id via inquiry ids when the response omits it", () => {
   const persist = registeredHooks().get("tool_result_persist");
   persist({
-    toolName: "test__get_workflow_state",
+    toolName: "test__sync_mcn_inquiry_status",
     params: { requirement_id: "req-ingest-recover" },
     message: toolMessage({
       success: true,
-      data: { requirement_id: "req-ingest-recover", inquiry_ids: [31, "32"] },
+      data: {
+        requirement_id: "req-ingest-recover",
+        inquiries: [{ inquiry_id: 31 }, { inquiry_id: "32" }],
+      },
     }),
   });
   persist({
@@ -1201,15 +1211,14 @@ test("ingest job terminal recovers requirement id via inquiry ids when the respo
       data: {
         job_id: "job-ingest-recover",
         excel_file_url: "https://files.eshypdata.com/exports/mcn-preview-recovered.xlsx",
-        creator_links_csv_url: "https://files.eshypdata.com/exports/mcn-links-recovered.csv",
       },
     }),
   });
   const text = directiveText(completed);
-  assert.deepEqual(saveExcelArgsFromDirective(text), {
+  assert.deepEqual(saveArtifactArgsFromDirective(text), {
     artifact_kind: "mcn_creator_preview",
     artifact_id: "req-ingest-recover",
-    excel_file_url: "https://files.eshypdata.com/exports/mcn-preview-recovered.xlsx",
+    file_url: "https://files.eshypdata.com/exports/mcn-preview-recovered.xlsx",
   });
   assert.doesNotMatch(text, /GET_INGEST_JOB_ARGS=/u);
 });
@@ -1223,7 +1232,6 @@ test("ingest job terminal without any requirement id pauses instead of polling",
       success: true,
       data: {
         excel_file_url: "https://files.eshypdata.com/exports/orphan-preview.xlsx",
-        creator_links_csv_url: "https://files.eshypdata.com/exports/orphan-links.csv",
       },
     }),
   });
@@ -1232,14 +1240,14 @@ test("ingest job terminal without any requirement id pauses instead of polling",
   assert.doesNotMatch(text, /GET_INGEST_JOB_ARGS=/u);
 });
 
-test("institutional links CSV save falls back to workflow state when inquiry ids are missing", () => {
+test("institutional links CSV save no longer routes through the old workflow state fallback", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const linksSaved = persist({
-    toolName: "ypscan_save_csv_artifact",
+    toolName: "ypscan_save_artifact",
     params: {
       artifact_kind: "mcn_creator_links",
       artifact_id: "req-no-mapping",
-      csv_file_url: "https://files.eshypdata.com/exports/mcn-links.csv",
+      file_url: "https://files.eshypdata.com/exports/mcn-links.csv",
     },
     message: toolMessage({
       success: true,
@@ -1249,21 +1257,17 @@ test("institutional links CSV save falls back to workflow state when inquiry ids
       },
     }),
   });
-  const text = directiveText(linksSaved);
-  assert.deepEqual(namedArgsFromDirective(text, "GET_WORKFLOW_STATE_ARGS"), {
-    requirement_id: "req-no-mapping",
-  });
-  assert.doesNotMatch(text, /RANK_CREATORS_ARGS=/u);
+  assert.equal(directiveText(linksSaved), "");
 });
 
 test("ranked submission save ends the inquiry ranking branch", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const saved = persist({
-    toolName: "ypscan_save_excel_artifact",
+    toolName: "ypscan_save_artifact",
     params: {
       artifact_kind: "ranked_submission",
       artifact_id: "req-ranked",
-      excel_file_url: "https://files.eshypdata.com/exports/ranked-submission.xlsx",
+      file_url: "https://files.eshypdata.com/exports/ranked-submission.xlsx",
     },
     message: toolMessage({
       success: true,
@@ -1296,14 +1300,13 @@ test("successful WeCom distribution waits for inquiry retrieval without switchin
   });
   const text = directiveText(result);
   assert.match(text, /可随时回收在线表格/u);
-  assert.match(text, /第一个工具必须是 get_workflow_state/u);
+  assert.match(text, /第一个工具是 sync_mcn_inquiry_status/u);
   assert.match(
     text,
-    /get_workflow_state 返回非空 inquiry_ids 时 ingest_mcn_submissions.*get_ingest_job.*保存机构达人预览表.*保存 links CSV.*精排或只补全选择/u,
+    /ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → read → 派生 links CSV/u,
   );
-  assert.match(text, /inquiry_ids 为空时先 sync_mcn_inquiry_status 再回到 get_workflow_state/u);
   assert.match(text, /不切换到手动拓展分支/u);
-  assert.doesNotMatch(text, /第一个工具必须是 sync_mcn_inquiry_status/u);
+  assert.doesNotMatch(text, /第一个工具必须是 get_workflow_state/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
 
@@ -1334,12 +1337,15 @@ test("rank result is reserved for institutional inquiry after transient state re
     }),
   });
   const text = directiveText(ranked);
-  assert.match(text, /rank_creators 成功。该调用消费本轮 get_workflow_state 返回的 inquiry_ids/u);
+  assert.match(
+    text,
+    /rank_creators 成功。该调用的精排输入为当前 requirement_id 与本轮 sync 的 inquiry_ids/u,
+  );
   assert.match(text, /直接保存最终提报 Excel 为 ranked_submission/u);
-  assert.deepEqual(saveExcelArgsFromDirective(text), {
+  assert.deepEqual(saveArtifactArgsFromDirective(text), {
     artifact_kind: "ranked_submission",
     artifact_id: "req-after-reset",
-    excel_file_url: "https://files.eshypdata.com/exports/ranked-after-reset.xlsx",
+    file_url: "https://files.eshypdata.com/exports/ranked-after-reset.xlsx",
   });
   assert.doesNotMatch(text, /CREATE_SUBMISSION_BATCH_ARGS=|IF_SUFFICIENT/u);
 });
@@ -1417,7 +1423,7 @@ test("fixed-flow failures pause through AskUserQuestion instead of a plain-text 
 test("saved artifact hooks reject malformed popup payloads", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
-    toolName: "ypscan_save_excel_artifact",
+    toolName: "ypscan_save_artifact",
     params: { artifact_kind: "mcn_ranking", artifact_id: "req-popup" },
     message: toolMessage({
       success: true,
@@ -1585,7 +1591,7 @@ test("recipient popup avoids collisions with its fixed stop action", () => {
 
 test("popup text prefers semantic breaks and keeps ASCII tokens intact", () => {
   const question = "进入 followercount 前必须检查品牌和数量，缺失时通过 AskUserQuestion 收集。";
-  const description = "继续做原生补全、merge、上传、精排并交付最终提报表";
+  const description = "继续做原生补全、合并、上传、精排并交付最终提报表";
   const payload = popupQuestionPayload("标题", question, [
     { label: "选项", description },
     { label: "结束", description: "结束当前步骤" },
@@ -1601,7 +1607,7 @@ test("popup text prefers semantic breaks and keeps ASCII tokens intact", () => {
 
   const descriptionLines = payload.questions[0].options[0].description.split("\n");
   assert.equal(popupPlainText(payload.questions[0].options[0].description), description);
-  assert.ok(descriptionLines.some((line) => line.includes("merge")));
+  assert.ok(descriptionLines.some((line) => line.includes("合并")));
   for (const line of [...questionLines, ...descriptionLines]) {
     assert.ok(!/^[，。！？；：、]/u.test(line), "no punctuation stranded at line start");
   }
@@ -1738,9 +1744,9 @@ test("startup instruction selects and preserves one business mode", () => {
   );
   assert.match(first.prependContext, /该工具由后台 API 完成搜索和落库/u);
   assert.match(first.prependContext, /数量未知时交付当前 Excel 并结束/u);
-  assert.match(first.prependContext, /实际数量为 0 或少于目标数量.*共享顺序逐项自动放宽/u);
-  assert.match(first.prependContext, /创建独立的新 requirement 并重新选择字段/u);
-  assert.match(first.prependContext, /汇总累计放宽的全部条件/u);
+  assert.match(first.prependContext, /实际数量为 0 或少于目标数量.*建议.*放宽/u);
+  assert.match(first.prependContext, /创建独立的新 requirement/u);
+  assert.match(first.prependContext, /达到目标数量时结束/u);
   assert.match(first.prependContext, /不再提供浏览器详细拓展分支/u);
   assert.match(first.prependContext, /同平台多个达人类型只创建一个 requirement/u);
   assert.match(first.prependContext, /本规则覆盖任何旧的平均分配或批量子需求指令/u);
@@ -2133,7 +2139,7 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   assert.match(startup.prependContext, /同一 requirement ID/u);
   assert.match(
     startup.prependContext,
-    /get_workflow_state→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→保存 links CSV→让用户选择“精排并生成提报表 \/ 只补全达人信息”/u,
+    /sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→read 读取本地 Excel→ypscan_save_creator_links 派生受控 links CSV/u,
   );
   assert.match(startup.prependContext, /score_manual_source_csv→score_manual_source_csv_status/u);
   assert.match(startup.prependContext, /num 的位置必须以当前环境 live schema 为准/u);
@@ -2149,7 +2155,10 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   );
   assert.match(startup.prependContext, /用于需求原文的可选字段 demand/u);
   assert.match(startup.prependContext, /schema 不支持 demand 时不得猜字段名/u);
-  assert.match(startup.prependContext, /若 schema required 含 num，则 requirement_id 与 num 一并传/u);
+  assert.match(
+    startup.prependContext,
+    /若 schema required 含 num，则 requirement_id 与 num 一并传/u,
+  );
   assert.doesNotMatch(startup.prependContext, /只传 requirement_id 和 num/u);
 
   assert.doesNotMatch(startup.prependContext, /ypscan_manual_research|宿主 Browser/u);

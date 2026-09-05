@@ -13,12 +13,12 @@ Risk tier: automatic host operation.
 
 每批只信任这三个输出字段：
 
-- `csv_file`：本批补全结果 CSV 的本地/可读路径；某批缺失时停止后续 merge、upload 和打分，并原样报告失败达人。
+- `csv_file`：本批补全结果 CSV 的本地/可读路径；某批缺失时停止后续 `file_bridge` 和打分，并原样报告失败达人。
 - `successful_author_ids`：本批补全成功的达人 ID。
 - `failed_author_ids`：本批补全失败的达人 ID。
 
-部分成功时保留成功 CSV，不自动重试整批；全部批次完成后调用 `ypscan_merge_creator_csv` 保持 links 原顺序合并。
+部分成功时保留成功 CSV，不自动重试整批；全部批次完成后调用一次 `file_bridge`，由其保持 links 原顺序合并并按 flow 决定是否上传。
 
 ## Flow
 
-宿主会按当前对话业务分支固定 merge flow：手动拓展分支 `flow=manual_source`（merge 后显式上传再打分）；询价机构“只补全达人信息”分支 `flow=mcn_complete_only`（merge 后直接交付 merged CSV，不上传、不打分）。
+宿主会按当前对话业务分支固定 merge flow：手动拓展分支与询价机构回收分支均走 `flow=manual_source`（merge 后通过 `file_bridge` 上传 OSS 再打分排序）。
