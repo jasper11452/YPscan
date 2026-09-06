@@ -19,6 +19,10 @@ If an older Provider synchronously returns the final Excel workbook instead, sav
 
 `csv_file_path` must come from `file_bridge`. In the current implementation this is an unsigned OSS URL that `file_bridge` already verified as anonymously readable. Do not guess a different upload endpoint, rebuild the URL from the filename, or pass any other local/remote path into this tool.
 
+## Recoverable missing-columns failure
+
+If this tool or its status tool returns `REQUIREMENT_COLUMNS_NOT_CONFIGURED`, `REQUIREMENT_COLUMNS_UNAVAILABLE`, or the exact message `customer demand has no selected inquiry columns`, the score is not complete even when the payload contains `success_count` or another processed-row count. Call `select_inquiry_form_fields` for the same requirement and platform, output the URL unchanged, then end the turn. After the user submitted the page and explicitly replied “好了”, resubmit this tool once: if the failure directive carries `SCORE_MANUAL_SOURCE_CSV_ARGS`, reuse that exact JSON payload without altering the path; otherwise use the same requirement ID and the exact trusted `csv_file_path` returned by the current `file_bridge`. Do not repeat creator search, native completion, or `file_bridge`; if the trusted path is no longer available in the conversation, report that fact and stop instead of reconstructing a URL.
+
 ## Stop conditions
 
-Stop on a failed envelope, a missing or untrusted `csv_file_path`, or a `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE` result. Do not resubmit the same CSV through a different path.
+Stop on any other failed envelope, a missing or untrusted `csv_file_path`, or a `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE` result. Do not resubmit the same CSV through a different path.

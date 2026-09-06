@@ -111,6 +111,12 @@ test("startup requires a visible recipient and WeCom preview before sending", ()
   assert.match(prompt.prependContext, /完整企微消息/u);
   assert.match(prompt.prependContext, /确认发送/u);
   assert.match(prompt.prependContext, /返回修改/u);
+  assert.match(prompt.prependContext, /新 requirement.*select_inquiry_form_fields/u);
+  assert.doesNotMatch(
+    prompt.prependContext,
+    /过去对其他 requirement.*不算当前 requirement 的提交证据/u,
+  );
+  assert.doesNotMatch(prompt.prependContext, /不同 requirement 的 keyword 差异只能作为线索/u);
   assert.doesNotMatch(prompt.prependContext, /不追加企微发送确认/u);
 });
 
@@ -298,6 +304,8 @@ test("parse success requires deadline clock review even when persist omits call 
 
   assert.equal(result.message.content[0], original.content[0]);
   assert.match(directive, /截止时间由 Agent 对照当前完整有效需求和最新澄清复核/u);
+  assert.match(directive, /两者均无截止证据须询问/u);
+  assert.match(directive, /禁止用旧 requirement、默认值或推测/u);
   assert.match(directive, /只有日期没有具体时刻.*必须澄清/u);
   assert.match(directive, /不得默认 18:00、23:59:59 或其他时刻/u);
   assert.match(directive, /不得宣称“无需补充澄清”/u);
@@ -343,6 +351,8 @@ test("validate_requirement success reuses the business mode recorded by the pref
     platform: "douyin",
     requirement_id: requirementId,
   });
+  assert.match(manual, /字段选择 URL 输出后本轮必须结束并等待/u);
+  assert.match(manual, /过去对其他 requirement.*不算当前 requirement 的提交证据/u);
   assert.doesNotMatch(manual, /SEARCH_CREATORS_ARGS=/u);
 
   assert.equal(

@@ -56,6 +56,7 @@
 - 每次真正开始新的询价机构或手动拓展都重新调用本工具。即使同一会话、同一平台、条件未变，或前一功能刚完成/明确停止后只改用另一功能，也必须重新解析、复核并调用 `validate_requirement` 创建新 requirement；不得跨功能复用旧 requirement 或已提交字段配置。
 - 例外：当前 requirement 已完成 `rank_mcns` 并展示机构列表后，用户选择“暂不询价”、关闭/取消机构选择弹窗或当轮未回答，之后在同一会话明确要求给该列表中的机构发询价，且未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，属于恢复原询价分支。继续使用该 requirement 和当前列表，不调用本工具，也不重新 `validate_requirement`、`search_creators` 或 `rank_mcns`。
 - 用户主动修改任何业务条件时，无论是否已经生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销此前全部自动放宽，形成新的完整单平台 `demand`。
+- 结果不足且用户明确确认当前唯一放宽项时，同样用当前完整、未改写的用户原始需求作为 `demand` 重新解析；累计放宽只写入待提交 `validate_requirement` 顶层参数与 `rawMessagesJson.clarifications`，`rawMessagesJson.original` 仍保留原始需求。不得把放宽后的报价、返点、粉丝或标签改写进 `demand`、`original` 或 `manual_source_creators.demand`。
 - 重新调用本工具，复核新输出和待提交参数，创建新的 requirement，并从用户当前要求的功能起点重新执行；不得复用旧 requirement、机构、询价、达人、batch 或 Excel。
 - 重新解析后不得把旧解析字段与新响应拼接。
 - 重跑输入禁止回填任何已归一化值。比如用户原始单价 `10000` 经解析输出 `"[7000,12000]"` 后，后续重跑仍传用户的 `10000`，绝不能把 `"[7000,12000]"` 写入 `demand`，否则会造成二次拓展。返点、粉丝、CPM、CPE 同理。

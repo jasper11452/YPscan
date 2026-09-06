@@ -1,6 +1,6 @@
 # manual_source_creators
 
-手动拓展的默认入口。每次开始手动拓展都先解析、复核并创建独立的新 requirement，再使用该 requirement 调用 `select_inquiry_form_fields`；即使从同一会话已完成或明确停止的询价功能切换而来、且业务条件未变，也不得复用询价 requirement 或字段配置。随后使用当前真实 `requirement_id` 提交任务，由 Provider 后台全自动完成手动拓展。
+手动拓展的默认入口。每次开始手动拓展都先解析、复核并创建独立的新 requirement，再使用该 requirement 调用 `select_inquiry_form_fields`；即使从同一会话已完成或明确停止的询价功能切换而来、且业务条件未变，也不得复用询价 requirement 或字段配置。字段选择 URL 输出后结束本轮，只有用户为这个 requirement 提交字段页并明确回复“好了”后，才使用当前真实 `requirement_id` 提交任务，由 Provider 后台全自动完成手动拓展；用户关于其他 requirement 的“不再选字段”要求不是当前提交证据，不得试调本工具探测 Provider 是否会强制报错。
 
 ## Remote arguments
 
@@ -14,7 +14,7 @@
 
 调用前先读取当前 `manual_source_creators` 的实际 input schema：只按 live schema 传参。如果 schema 明确提供了用于需求原文的可选字段 `demand`，优先把当前完整、未改写的用户原始需求文本放入该字段；只传原文，不传解析输出或 `rawMessagesJson`。如果 schema required 含 `num`，则与 `requirement_id` 一并传入；如果 schema 不含 `num`，则不得附带。未知参数导致的失败最多去掉原文字段重试一次，不得改变 `requirement_id`，也不得用该回退掩盖其他业务错误。不要猜测字段名或强行扩展当前 schema。
 
-若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`，不得原参数重试；重新进入字段选择步骤。
+若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` 或 `REQUIREMENT_COLUMNS_UNAVAILABLE`，不得原参数重试；使用同一 requirement 重新进入字段选择，原样展示 URL 后结束本轮等待用户回复“好了”。Provider 应在启动本工具时做该校验并立即返回，不应把缺列错误延迟到打分终态；这是 Provider 侧 fail-fast 契约要求，插件不为此新增 columns 缓存或本地账本。
 
 “手动拓展”“人工拓展”“直接手扒”“手扒”“手捞筛选”都默认指向本 MCP 工具；除“手动拓展”外的旧说法只作为输入别名，用户侧统一称“手动拓展”。
 

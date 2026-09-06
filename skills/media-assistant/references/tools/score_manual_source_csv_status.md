@@ -19,6 +19,10 @@ Poll the scoring job created by `score_manual_source_csv`. Call only after that 
 - If the score is still incomplete, continue polling with the same `job_id`.
 - At the 10th query, if the score is still incomplete, stop and truthfully report that background scoring has not finished. Do not query an 11th time. Keep the same `job_id` for a later explicit user request to continue.
 
+## Recoverable missing-columns failure
+
+If the terminal result is `REQUIREMENT_COLUMNS_NOT_CONFIGURED`, `REQUIREMENT_COLUMNS_UNAVAILABLE`, or includes the exact message `customer demand has no selected inquiry columns`, stop polling and do not treat `success_count` as a successful workbook. Call `select_inquiry_form_fields` for the same requirement and platform, output its URL unchanged, then end the turn. After the user submitted the page and explicitly replied “好了”, submit a new scoring job once: if the failure directive carries `SCORE_MANUAL_SOURCE_CSV_ARGS`, reuse that exact JSON payload without altering the path; otherwise use the same requirement ID and the exact trusted `csv_file_path` returned by the current `file_bridge`. Do not repeat search, native completion, or `file_bridge`.
+
 ## Stop conditions
 
-Stop on a failed envelope, a mismatched job ID, or an outcome-unknown result. Do not resubmit the scoring job automatically.
+Stop on any other failed envelope, a mismatched job ID, or an outcome-unknown result. Do not resubmit the scoring job automatically.

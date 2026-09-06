@@ -57,9 +57,10 @@ validate_requirement → select_inquiry_form_fields（原样展示 URL，等用�
 
 关键约束：
 
+- 新 requirement 必须重新调用 `select_inquiry_form_fields`；其他 requirement 的字段提交或用户曾说“不再选字段”都不能复用。字段 URL 输出后当前轮次结束，只有用户为该 requirement 提交并明确回复“好了”后才能调用 `manual_source_creators`，不得试调后端探测是否会强制报错。
 - `manual_source_creators` / `manual_source_creators_status` 的 `num` 位置按当前环境 live schema 决定：测试基线 `https://test-mcp.eshypdata.com/mcp` 当前为启动工具不带 `num`、状态查询带 `num`；若生产环境 schema 漂移，只允许按 live schema 做确定性兼容，不得靠前台可见的连续试错探测。可选需求原文字段只在 schema 明确支持时传 `demand`（当前完整未改写原文），不支持时不猜字段名。
 - 异步轮询：提交返回 batch_id 后等 30 秒再第 1 次查询状态工具；当前环境 schema required `num` 时，取当前 requirement 落库 `quantityTotal` 作为目标数量，通过 `MANUAL_SOURCE_TARGET_NUM` 提示并在远端调用时附带，与用户最新确认不同时以最新确认为准。之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
-- 打分阶段：`score_manual_source_csv({requirement_id, csv_file_path})` 返回 job_id 后，按 30s×10 轮询 `score_manual_source_csv_status({job_id})`，终态后保存 manual_source Excel。
+- 打分阶段：`score_manual_source_csv({requirement_id, csv_file_path})` 返回 job_id 后，按 30s×10 轮询 `score_manual_source_csv_status({job_id})`，终态后保存 manual_source Excel。打分提交或状态结果若返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` / `REQUIREMENT_COLUMNS_UNAVAILABLE`（含明确缺少 selected inquiry columns 消息，即使外层包裹通用任务错误也必须识别），停止轮询并为同一 requirement 重新生成字段选择 URL；用户回复“好了”后只用同一 requirement 与本轮 `file_bridge` 原始 `csv_file_path` 重提一次打分——Hook 保留到该可信路径时直接附带精确 `SCORE_MANUAL_SOURCE_CSV_ARGS`，按原样重提，不重搜、不重补全、不重跑 `file_bridge`，也不把 `success_count` 当最终成功。
 - links CSV 到达后：先 `ypscan_save_artifact(artifact_kind="manual_creator_links", file_url=<当前 Provider URL>)` 并原样展示本地链接；原生补全每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止 file_bridge/打分并报告失败达人。
 - `file_bridge` 接收 links CSV 和所有补全 CSV，一次完成合并与后续处理。merged CSV 数据行 > 500 时跳过上传，如实交付本地文件；未超限才上传并把返回的 `csv_file_path` 传 `score_manual_source_csv`。`csv_file_path` 只接受当前 `file_bridge` 返回值，绝不传本机工作区路径或自行构造的路径；`score_manual_source_csv_status` 轮询终态成功后才保存最终手动拓展 Excel。
 - `file_bridge` 成功后返回未签名 OSS URL；若对象虽已上传但匿名不可读，则返回 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，不得继续把该 URL 传给 `score_manual_source_csv`。
@@ -73,7 +74,7 @@ validate_requirement → select_inquiry_form_fields（原样展示 URL，等用�
 - 固定顺序：刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`；不存在的字段跳过；每项只调一次。
   - 刊例价/CPM/CPE/粉丝：下界 ×0.8、上界 ×1.2，整数上下界向外取整；返点 `[min,1]`→`[min×0.8,1]`；多报价指标每轮只调一个；标签阶段每轮移除一个完整非核心偏好字段。
 - 永不自动放宽：平台、模式、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag`、`pgyBloggerTypeLabel`、`xtTalentTypeLabel`、`growBloggerTypeLabel`、`growTalentTypeLabel`。
-- 每轮放宽只做建议、不自动执行：先可见告知用户当前缺口和可放宽的唯一项，由用户确认后再以“原始需求 + 已确认累计放宽”重新解析、复核、创建新 requirement 并按原模式重跑；足量后在结果前汇总全部放宽记录。
+- 每轮放宽只做建议、不自动执行：先可见告知用户实际数量、目标数量、缺口和可放宽的唯一项；提出具体项后本轮结束，“放宽直到足量”等总体授权不替代后续每轮确认。用户明确确认当前项后，仍以完整未改写的原始需求重新解析并保留在 `rawMessagesJson.original`，累计放宽只写 `rawMessagesJson.clarifications` 与本轮 validate 顶层参数，再复核、创建新 requirement 并按原模式重跑；足量后在结果前汇总全部放宽记录。
 - 全部允许项用完仍不足：询价问“手动修改需求 / 改用手动拓展 / 结束”，手动拓展问“手动修改需求 / 改用询价机构 / 结束”。切换功能时撤销本轮全部放宽，恢复用户当前真实需求后重新建需。
 
 ## 6. 续办例外（“暂不询价”）

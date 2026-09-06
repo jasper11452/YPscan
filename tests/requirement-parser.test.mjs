@@ -102,9 +102,16 @@ test("manual sourcing shares the reviewed relaxation policy and recreates requir
   assert.match(skill, /先复核，再放宽/u);
   assert.match(skill, /在结果前汇总全部放宽记录/u);
   assert.match(skill, /手动修改需求 \/ 改用询价机构 \/ 结束/u);
+  assert.match(skill, /用户过去对其他 requirement.*不算当前 requirement 已提交字段的证据/u);
+  assert.match(skill, /字段选择 URL 输出后本轮必须结束并等待/u);
+  assert.match(skill, /“放宽直到足量”等总体授权不替代后续每轮具体项确认/u);
+  assert.match(skill, /不同 requirement 的 keyword 差异只能作为线索/u);
+  assert.match(skill, /完整、未改写的原始需求.*rawMessagesJson\.original/u);
   assert.match(manual, /creator_links_csv_url/u);
   assert.match(manual, /20 个 author 一批/u);
   assert.match(manual, /file_bridge（内部合并并上传）→ score_manual_source_csv/u);
+  assert.match(manual, /不得试调本工具探测 Provider 是否会强制报错/u);
+  assert.match(manual, /Provider 应在启动本工具时做该校验并立即返回/u);
   assert.match(status, /creator_links_csv_url/u);
   assert.match(status, /20 个 author 一批/u);
   assert.match(status, /兼容降级路径/u);

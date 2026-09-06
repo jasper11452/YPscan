@@ -781,6 +781,8 @@ test("default manual sourcing repairs missing field selection before retrying", 
   });
   assert.match(text, /不得原参数重试/u);
   assert.match(text, /收到“好了”后/u);
+  assert.match(text, /过去对其他 requirement.*不算当前 requirement 的提交证据/u);
+  assert.match(text, /字段选择 URL 输出后本轮必须结束并等待/u);
   assert.doesNotMatch(text, /\bsize\b|creator_count|page_url|original_brief/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
@@ -804,11 +806,15 @@ test("default manual sourcing pauses without a task batch and falls back to para
       data: { excel_file_url: "https://files.eshypdata.com/exports/fallback.xlsx" },
     }),
   });
-  assert.deepEqual(saveArtifactArgsFromDirective(directiveText(completed)), {
+  const completedText = directiveText(completed);
+  assert.deepEqual(saveArtifactArgsFromDirective(completedText), {
     artifact_kind: "manual_source",
     artifact_id: "req-nobatch",
     file_url: "https://files.eshypdata.com/exports/fallback.xlsx",
   });
+  assert.match(completedText, /唯一下一项.*本轮必须结束并等待用户明确确认/u);
+  assert.match(completedText, /累计放宽只写入 rawMessagesJson\.clarifications/u);
+  assert.match(completedText, /跨 requirement 的 keyword 差异只能作为线索/u);
 });
 
 test("tool-result parsing finds JSON in a separate text block", () => {
@@ -838,6 +844,197 @@ test("tool-result parsing finds JSON in a separate text block", () => {
     artifact_id: "req-multipart",
     file_url: "https://files.eshypdata.com/exports/multipart.xlsx",
   });
+});
+
+test("missing scoring columns return to field selection without repeating completed work", () => {
+  const hooks = registeredHooks();
+  const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "score-missing-columns" };
+  persist(
+    {
+      toolName: "ypmcn__validate_requirement",
+      params: { platform: "xiaohongshu" },
+      message: toolMessage({ success: true, data: { requirement_id: "req-score-columns" } }),
+    },
+    context,
+  );
+
+  const directFailure = directiveText(
+    persist(
+      {
+        toolName: "ypmcn__score_manual_source_csv",
+        params: {
+          requirement_id: "req-score-columns",
+          csv_file_path: "https://bucket.oss-cn-shanghai.aliyuncs.com/current.csv",
+        },
+        message: toolMessage({
+          success: false,
+          error: {
+            code: "REQUIREMENT_COLUMNS_UNAVAILABLE",
+            message: "customer demand has no selected inquiry columns",
+          },
+        }),
+      },
+      context,
+    ),
+  );
+  assert.deepEqual(namedArgsFromDirective(directFailure, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
+    requirement_id: "req-score-columns",
+    platform: "xiaohongshu",
+  });
+  assert.match(directFailure, /不得把失败 job 的 success_count 当成最终成功/u);
+  assert.match(directFailure, /不得重新搜索、补全或调用 file_bridge/u);
+  assert.match(directFailure, /结束本轮等待用户回复“好了”/u);
+  assert.deepEqual(namedArgsFromDirective(directFailure, "SCORE_MANUAL_SOURCE_CSV_ARGS"), {
+    requirement_id: "req-score-columns",
+    csv_file_path: "https://bucket.oss-cn-shanghai.aliyuncs.com/current.csv",
+  });
+  assert.doesNotMatch(directFailure, /ASK_USER_QUESTION_ARGS|SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS/u);
+
+  hooks.get("before_tool_call")(
+    {
+      toolName: "ypmcn__score_manual_source_csv",
+      toolCallId: "score-submit",
+      params: {
+        requirement_id: "req-score-columns",
+        csv_file_path: "https://bucket.oss-cn-shanghai.aliyuncs.com/current.csv",
+      },
+    },
+    context,
+  );
+  persist(
+    {
+      toolName: "ypmcn__score_manual_source_csv",
+      toolCallId: "score-submit",
+      message: toolMessage({ success: true, data: { job_id: "job-columns" } }),
+    },
+    context,
+  );
+  const statusFailure = directiveText(
+    persist(
+      {
+        toolName: "ypmcn__score_manual_source_csv_status",
+        params: { job_id: "job-columns" },
+        message: toolMessage({
+          success: true,
+          data: {
+            job_id: "job-columns",
+            status: "failed",
+            success_count: 22,
+            error: {
+              code: "REQUIREMENT_COLUMNS_UNAVAILABLE",
+              message: "customer demand has no selected inquiry columns",
+            },
+          },
+        }),
+      },
+      context,
+    ),
+  );
+  assert.deepEqual(namedArgsFromDirective(statusFailure, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
+    requirement_id: "req-score-columns",
+    platform: "xiaohongshu",
+  });
+  assert.match(statusFailure, /success_count.*最终成功/u);
+  assert.deepEqual(namedArgsFromDirective(statusFailure, "SCORE_MANUAL_SOURCE_CSV_ARGS"), {
+    requirement_id: "req-score-columns",
+    csv_file_path: "https://bucket.oss-cn-shanghai.aliyuncs.com/current.csv",
+  });
+  assert.doesNotMatch(statusFailure, /继续使用同一 job_id 轮询|ASK_USER_QUESTION_ARGS/u);
+});
+
+test("columns recovery survives param retention and a generic outer job error", () => {
+  const hooks = registeredHooks();
+  const persist = hooks.get("tool_result_persist");
+  const beforeCall = hooks.get("before_tool_call");
+  const context = { sessionKey: "score-columns-lifecycle" };
+  const csvPath = "https://bucket.oss-cn-shanghai.aliyuncs.com/merged.csv";
+
+  persist(
+    {
+      toolName: "ypmcn__validate_requirement",
+      params: { platform: "douyin" },
+      message: toolMessage({ success: true, data: { requirement_id: "req-lifecycle" } }),
+    },
+    context,
+  );
+  beforeCall(
+    {
+      toolName: "ypmcn__score_manual_source_csv",
+      toolCallId: "score-lifecycle",
+      params: { requirement_id: "req-lifecycle", csv_file_path: csvPath },
+    },
+    context,
+  );
+  persist(
+    {
+      toolName: "ypmcn__score_manual_source_csv",
+      toolCallId: "score-lifecycle",
+      message: toolMessage({ success: true, data: { job_id: "job-lifecycle" } }),
+    },
+    context,
+  );
+  beforeCall(
+    {
+      toolName: "ypmcn__score_manual_source_csv_status",
+      toolCallId: "status-lifecycle",
+      params: { job_id: "job-lifecycle" },
+    },
+    context,
+  );
+  const statusFailure = directiveText(
+    persist(
+      {
+        toolName: "ypmcn__score_manual_source_csv_status",
+        toolCallId: "status-lifecycle",
+        message: toolMessage({
+          success: false,
+          error: { code: "SCORE_JOB_FAILED", message: "job failed" },
+          data: {
+            job_id: "job-lifecycle",
+            error: {
+              code: "REQUIREMENT_COLUMNS_UNAVAILABLE",
+              message: "customer demand has no selected inquiry columns",
+            },
+          },
+        }),
+      },
+      context,
+    ),
+  );
+  assert.deepEqual(namedArgsFromDirective(statusFailure, "SELECT_INQUIRY_FORM_FIELDS_ARGS"), {
+    requirement_id: "req-lifecycle",
+    platform: "douyin",
+  });
+  assert.deepEqual(namedArgsFromDirective(statusFailure, "SCORE_MANUAL_SOURCE_CSV_ARGS"), {
+    requirement_id: "req-lifecycle",
+    csv_file_path: csvPath,
+  });
+  assert.match(statusFailure, /结束本轮等待用户回复“好了”/u);
+  assert.doesNotMatch(statusFailure, /继续使用同一 job_id 轮询/u);
+
+  const directMasked = directiveText(
+    persist(
+      {
+        toolName: "ypmcn__score_manual_source_csv",
+        params: { requirement_id: "req-lifecycle", csv_file_path: csvPath },
+        message: toolMessage({
+          success: false,
+          error: { code: "SCORE_JOB_FAILED", message: "job failed" },
+          data: { error: { code: "REQUIREMENT_COLUMNS_NOT_CONFIGURED" } },
+        }),
+      },
+      context,
+    ),
+  );
+  assert.deepEqual(namedArgsFromDirective(directMasked, "SCORE_MANUAL_SOURCE_CSV_ARGS"), {
+    requirement_id: "req-lifecycle",
+    csv_file_path: csvPath,
+  });
+  assert.doesNotMatch(
+    directMasked,
+    /达人打分已提交异步打分任务|SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS/u,
+  );
 });
 
 test("manual scoring polls score_manual_source_csv_status before saving the final Excel", () => {
@@ -1431,6 +1628,11 @@ test("empty rank result reviews the requirement before relaxation", () => {
   assert.match(text, /YPSCAN_NEXT_ACTION=REVIEW_BEFORE_RELAXATION/u);
   assert.match(text, /media-assistant Skill.*结果不足：先复核，再放宽/u);
   assert.match(text, /不得保存空排名表/u);
+  assert.match(text, /实际数、目标数、缺口和唯一下一项/u);
+  assert.match(text, /提出后结束本轮并等用户确认该项/u);
+  assert.match(text, /总体授权不替代逐轮确认/u);
+  assert.match(text, /rawMessagesJson\.original 保留未改写原始需求/u);
+  assert.match(text, /禁止改写 demand\/original/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /恢复当前询价分支|前 5 家/u);
 });

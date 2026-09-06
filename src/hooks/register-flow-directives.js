@@ -42,6 +42,13 @@ const INQUIRY_RECIPIENT_RESUME_RULE =
   "当前 rank_mcns 列表后，若用户选择“暂不询价”、关闭/取消弹窗或当轮未回答，之后在同一会话明确要求给该列表机构发询价（包括“前 5 家”等可按当前排名唯一确定的表达），且期间未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，属于恢复当前询价分支。继续使用该列表所属 requirement、平台和 rank_mcns 机构映射；不得重新调用 ypscan_parse_requirement、validate_requirement、search_creators 或 rank_mcns。已提交字段配置则复用，否则再调用 select_inquiry_form_fields。“暂不询价”只暂停发送，不算明确停止整个询价功能。";
 const REQUIREMENT_CREATION_RULE =
   "每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement：即使同一会话、同一平台、业务条件未变，或刚完成/停止另一功能，也必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement。不得跨功能复用 requirement 或已提交字段配置；新 requirement 必须重新调用 select_inquiry_form_fields。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。当前 rank_mcns 列表后的暂不发送再续办按询价恢复规则处理，不属于新功能开始。";
+const FIELD_SELECTION_GATE_RULE =
+  "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields，并等待用户为这个 requirement 提交字段页后明确回复“好了”；用户过去对其他 requirement 说过“以后不用再选字段”等不算当前 requirement 的提交证据。字段选择 URL 输出后本轮必须结束并等待，禁止在同一轮试调 manual_source_creators、搜索或打分。";
+const RELAXATION_REVIEW_COMPACT_RULE =
+  "结果差异先核对各轮需求、解析、validate 参数和实际搜索参数；跨 requirement 的 keyword 差异仅是线索。复核通过后只报实际数、目标数、缺口和唯一下一项，提出后结束本轮并等用户确认该项；总体授权不替代逐轮确认。重建时 rawMessagesJson.original 保留未改写原始需求，放宽只进 clarifications 和 validate 参数，禁止改写 demand/original。";
+// 只在结果时刻注入（manual_source Excel 交付处）；启动块只保留精简的 SHORTFALL 规则。
+const MANUAL_SOURCE_RELAXATION_RULE =
+  "解释多轮结果差异时必须核对各轮完整有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数；跨 requirement 的 keyword 差异只能作为线索，不能单独断言后台不稳定；Provider 未回传实际搜索参数时明确说无法确认根因，不猜测、不让用户替后台决定不可执行的搜索口径。放宽每轮只展示实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑，“放宽直到足量”等总体授权不替代后续每轮具体项确认。重建时 ypscan_parse_requirement.demand 与 rawMessagesJson.original 仍使用用户当前完整、未改写的原始需求；已确认的累计放宽只写入 rawMessagesJson.clarifications 对应字段和本轮 validate_requirement 顶层参数，禁止把放宽值改写进 demand、original 或 manual_source_creators.demand。";
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
@@ -49,8 +56,7 @@ const MANUAL_SOURCE_STATUS_NUM_RULE =
   "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传：取本轮目标交付数量（正整数）。Hook 会用 MANUAL_SOURCE_TARGET_NUM 提供或提示该值；与用户最新确认的目标数量不同时以最新确认为准。schema 不接受 num 时不得附带，避免无效重试。";
 const SCORE_MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 score_manual_source_csv，也不得猜测或更换 job_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
-const MANUAL_SOURCE_SHORTFALL_RULE =
-  "只在当前 Provider 响应明确给出可信实际数量时与本轮目标数量比较，不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确要求放宽时才按其选择重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。";
+const MANUAL_SOURCE_SHORTFALL_RULE = `只在当前 Provider 响应明确给出可信实际数量时与本轮目标数量比较，不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确确认当前唯一放宽项后才按该项重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。`;
 const CREATOR_CSV_LIMIT = 500;
 const MANUAL_SOURCE_FLOW = "manual_source";
 const MCN_COMPLETE_ONLY_FLOW = "mcn_complete_only";
@@ -58,6 +64,10 @@ const MCN_RANK_FLOW = "mcn_rank";
 
 const [BUSINESS_MODE_INQUIRY] = BUSINESS_MODE_VALUES;
 const FAILED_ASYNC_STATUSES = new Set(["failed", "cancelled", "canceled", "error"]);
+const REQUIREMENT_COLUMNS_ERROR_CODES = new Set([
+  "REQUIREMENT_COLUMNS_NOT_CONFIGURED",
+  "REQUIREMENT_COLUMNS_UNAVAILABLE",
+]);
 const PLATFORM_ALIASES = Object.freeze({
   xiaohongshu: "xiaohongshu",
   xhs: "xiaohongshu",
@@ -308,7 +318,7 @@ function requirementParseSuccessDirective(message, params = {}) {
     "唯一值直接采用；八个可选 Label 有则原样保留、无则省略；禁止整体传解析输出。",
     "YPSCAN_POLICY=按 media-assistant Skill 的“解析后、落库前必须复核”执行。",
     "复核 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3，小红书不使用 L3。缺失或有歧义按 Skill 一次性询问；contentTag 必须来自解析结果，contentTag 缺失时重新解析。",
-    "截止时间由 Agent 对照当前完整有效需求和最新澄清复核。只有日期没有具体时刻必须澄清；不得默认 18:00、23:59:59 或其他时刻，不得宣称“无需补充澄清”。AskUserQuestion 给3个未来时间并保留自定义输入。已有明确小时和分钟且未来时间唯一时，秒省略时可补 00，不重复询问。只解析时仍须指出缺失时刻，不得创建需求。",
+    "截止时间由 Agent 对照当前完整有效需求和最新澄清复核；两者均无截止证据须询问，禁止用旧 requirement、默认值或推测。只有日期没有具体时刻必须澄清；不得默认 18:00、23:59:59 或其他时刻，不得宣称“无需补充澄清”。已有明确小时和分钟且未来时间唯一时，秒省略时可补 00，不重复询问。只解析时仍须指出缺失时刻，不得创建需求。",
     RAW_MESSAGES_JSON_KEY_CONTRACT,
     REBATE_MINIMUM_QUESTION_RULE,
   ].join("\n");
@@ -369,7 +379,8 @@ function fieldSelectionDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL；若 Provider 已自动打开页面则继续等待提交结果，若仅自动打开失败则如实展示链接。插件当前没有可验证的宿主外链打开能力，不得改写、包装、用 Browser 替代打开或替用户选择字段。",
     `FIELD_SELECTION_URL=${url}`,
-    "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN 或用户明确提供的机构名称；命中本轮榜单且有 supplier_id 的机构走 supplierIds，其他原名走 supplier_name，并做发送前警示弹窗确认；手动拓展只使用原 requirement_id 和当前环境 live schema 允许的参数。",
+    FIELD_SELECTION_GATE_RULE,
+    "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN 或用户明确提供的机构名称；命中本轮榜单且有 supplier_id 的机构走 supplierIds，其他原名走 supplier_name，并做发送前警示弹窗确认；正常手动拓展只使用原 requirement_id 和当前环境 live schema 允许的参数；若本次字段选择由打分缺列错误触发，则只用同一 requirement_id 与本轮 file_bridge 返回的原始 csv_file_path 重提一次 score_manual_source_csv，不重搜、不重做原生补全、不重跑 file_bridge。",
   ].join("\n");
 }
 
@@ -426,6 +437,7 @@ function rankMcnsDirective(
       "YPSCAN_NEXT_ACTION=REVIEW_BEFORE_RELAXATION",
       "YPSCAN_POLICY=按 media-assistant Skill 的“结果不足：先复核，再放宽”执行。",
       "当前没有可选机构；不得保存空排名表、猜测机构、自动切换功能或未经复核就放宽。",
+      RELAXATION_REVIEW_COMPACT_RULE,
     ].join("\n");
   }
   if (excelFileUrl && artifactId) {
@@ -515,6 +527,23 @@ function providerJobId(result) {
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
+function requirementColumnsError(result) {
+  // 逐字段检查全部嵌套位置，而不是取第一个非空值：外层通用任务错误可能包裹内层缺列原因。
+  const candidates = [result?.error, result?.data?.error, result, result?.data].flatMap(
+    (source) => [
+      firstString(source?.code),
+      firstString(source?.message),
+      firstString(source?.error_code),
+    ],
+  );
+  return candidates.some(
+    (text) =>
+      text != null &&
+      (REQUIREMENT_COLUMNS_ERROR_CODES.has(text.toUpperCase()) ||
+        /customer demand has no selected inquiry columns/iu.test(text)),
+  );
+}
+
 function manualSourceBatchId(result) {
   for (const raw of [
     result?.batch_id,
@@ -548,10 +577,11 @@ function manualSourceCreatorsDirective(
 ) {
   const result = parsedToolResult(message);
   if (result?.success !== true) {
-    if (result?.error?.code === "REQUIREMENT_COLUMNS_NOT_CONFIGURED") {
+    if (requirementColumnsError(result)) {
       const requirementId = firstString(
         params?.requirement_id,
         result?.error?.details?.requirement_id,
+        result?.data?.error?.details?.requirement_id,
       );
       const platform = firstCanonicalPlatform(requirementPlatform, recordedPlatform);
       const selectArgs = selectInquiryFormFieldsArgs(requirementId, platform);
@@ -560,6 +590,7 @@ function manualSourceCreatorsDirective(
       return [
         "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 缺少字段配置。用同一 requirement_id 调用 select_inquiry_form_fields，不得原参数重试。",
         `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
+        FIELD_SELECTION_GATE_RULE,
         "原样展示字段选择 URL；收到“好了”后再用原 requirement_id 调用 manual_source_creators；可选需求原文只使用 demand。",
       ].join("\n");
     }
@@ -584,9 +615,10 @@ function manualSourceCreatorsDirective(
   const excelFileUrl = providerExcelUrl(result);
   if (excelFileUrl && requirementId) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 仅同步返回旧链路 Excel。立即保存且不展示 Provider 下载 URL；保存后按手动拓展结果策略决定结束或逐项自动放宽，不调用 manual_source_creators_status、rank_creators 或 create_submission_batch。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 仅同步返回旧链路 Excel。立即保存且不展示 Provider 下载 URL；保存后按手动拓展结果策略决定结束或逐项建议放宽，不调用 manual_source_creators_status、rank_creators 或 create_submission_batch。",
       "YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY",
       MANUAL_SOURCE_SHORTFALL_RULE,
+      MANUAL_SOURCE_RELAXATION_RULE,
       `SAVE_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_source",
         artifact_id: requirementId,
@@ -636,9 +668,10 @@ function manualSourceCreatorsStatusDirective(
     const artifactId = requirementId;
     if (!artifactId) return flowPauseDirective("手动拓展结果查询", message);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。该 Excel 是后台 API 搜索、详情抓取和筛选后的本轮真实手动拓展结果；立即保存且不展示 Provider 下载 URL，保存后按手动拓展结果策略决定结束或逐项自动放宽，不调用 rank_creators 或 create_submission_batch。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。该 Excel 是后台 API 搜索、详情抓取和筛选后的本轮真实手动拓展结果；立即保存且不展示 Provider 下载 URL，保存后按手动拓展结果策略决定结束或逐项建议放宽，不调用 rank_creators 或 create_submission_batch。",
       "YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY",
       MANUAL_SOURCE_SHORTFALL_RULE,
+      MANUAL_SOURCE_RELAXATION_RULE,
       `SAVE_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_source",
         artifact_id: artifactId,
@@ -841,13 +874,57 @@ function fileBridgeDirective(message, params = {}) {
   ].join("\n");
 }
 
-function scoreManualSourceCsvDirective(message, params = {}) {
+function scoreColumnsRecoveryDirective(
+  message,
+  params = {},
+  recordedPlatform = null,
+  requirementPlatform = null,
+) {
+  const result = parsedToolResult(message);
+  const requirementId = firstString(
+    params?.requirement_id,
+    result?.data?.requirement_id,
+    result?.requirement_id,
+    result?.error?.details?.requirement_id,
+    result?.data?.error?.details?.requirement_id,
+  );
+  const platform = firstCanonicalPlatform(requirementPlatform, recordedPlatform);
+  const selectArgs = selectInquiryFormFieldsArgs(requirementId, platform);
+  if (!requirementId) return flowPauseDirective("达人打分缺少字段配置", message);
+  if (!selectArgs) return flowPauseDirective("达人打分字段选择缺少 platform", message);
+  const csvFilePath = firstString(params?.csv_file_path);
+  const lines = [
+    "YPSCAN_FLOW_DIRECTIVE=达人打分因当前 requirement 缺少已提交字段配置而停止。立即用同一 requirement_id 调用 select_inquiry_form_fields，不得把失败 job 的 success_count 当成最终成功，也不得重新搜索、补全或调用 file_bridge。",
+    `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
+  ];
+  if (csvFilePath) {
+    lines.push(
+      `SCORE_MANUAL_SOURCE_CSV_ARGS=${JSON.stringify({ requirement_id: requirementId, csv_file_path: csvFilePath })}`,
+      "原样展示字段选择 URL并结束本轮等待用户回复“好了”；用户回复后只用上方 SCORE_MANUAL_SOURCE_CSV_ARGS 原样重提一次 score_manual_source_csv，不得重搜、重做原生补全、重跑 file_bridge 或改写该 csv_file_path。",
+    );
+  } else {
+    lines.push(
+      "原样展示字段选择 URL并结束本轮等待用户回复“好了”；随后只使用同一 requirement_id 与本轮 file_bridge 返回的原始 csv_file_path 重提一次 score_manual_source_csv。当前对话无法取得该可信 csv_file_path 时如实说明并停止，禁止自行构造 URL 或重跑前序链路。",
+    );
+  }
+  return lines.join("\n");
+}
+
+function scoreManualSourceCsvDirective(
+  message,
+  params = {},
+  recordedPlatform = null,
+  requirementPlatform = null,
+) {
   const result = parsedToolResult(message);
   const requirementId = firstString(
     params?.requirement_id,
     result?.data?.requirement_id,
     result?.requirement_id,
   );
+  if (requirementColumnsError(result)) {
+    return scoreColumnsRecoveryDirective(message, params, recordedPlatform, requirementPlatform);
+  }
   const scoredCount = providerScoredCount(result);
   const excelFileUrl = providerExcelUrl(result);
   const jobId = providerJobId(result);
@@ -875,13 +952,21 @@ function scoreManualSourceCsvDirective(message, params = {}) {
   ].join("\n");
 }
 
-function scoreManualSourceCsvStatusDirective(message, params = {}) {
+function scoreManualSourceCsvStatusDirective(
+  message,
+  params = {},
+  recordedPlatform = null,
+  requirementPlatform = null,
+) {
   const result = parsedToolResult(message);
   const requirementId = firstString(
     params?.requirement_id,
     result?.data?.requirement_id,
     result?.requirement_id,
   );
+  if (requirementColumnsError(result)) {
+    return scoreColumnsRecoveryDirective(message, params, recordedPlatform, requirementPlatform);
+  }
   const excelFileUrl = providerExcelUrl(result);
   const jobId = providerJobId(result) ?? providerJobId({ data: params });
   if (result?.success !== true) return flowPauseDirective("达人打分结果查询", message);
@@ -1126,6 +1211,7 @@ function artifactSaveDirective(
             "YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY",
             "以下放宽建议仅适用于手动拓展；若当前业务来源未确认，先确认来源。询价回收结果只交付真实结果并说明缺口后结束。",
             MANUAL_SOURCE_SHORTFALL_RULE,
+            MANUAL_SOURCE_RELAXATION_RULE,
           ]),
       `MANUAL_SOURCE_LOCAL_PATH=${filePath}`,
       `MANUAL_SOURCE_LOCAL_LINK=${localFileLink}`,
@@ -1269,9 +1355,17 @@ function flowDirective(
   if (/(?:^|__)file_bridge$/iu.test(normalizedName)) {
     return fileBridgeDirective(message, params);
   }
-  if (bare === "score_manual_source_csv") return scoreManualSourceCsvDirective(message, params);
-  if (bare === "score_manual_source_csv_status")
-    return scoreManualSourceCsvStatusDirective(message, params);
+  if (bare === "score_manual_source_csv") {
+    return scoreManualSourceCsvDirective(message, params, recordedPlatform, requirementPlatform);
+  }
+  if (bare === "score_manual_source_csv_status") {
+    return scoreManualSourceCsvStatusDirective(
+      message,
+      params,
+      recordedPlatform,
+      requirementPlatform,
+    );
+  }
   if (/(?:^|__)ypscan_select_cascade$/iu.test(normalizedName)) {
     return cascadeSelectionDirective(message);
   }
@@ -1338,6 +1432,7 @@ function flowDirective(
     return [
       "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。当前需求只保留一个 requirement，业务模式：手动拓展。立即使用 SELECT_INQUIRY_FORM_FIELDS_ARGS 调用 select_inquiry_form_fields，原样展示 URL 并等待用户提交后回复“好了”；不得调用 search_creators、rank_mcns 或 Browser。",
       "只使用本次返回的 data.requirement_id，缺失时兼容 data.id；严禁使用 data.demand_id。",
+      FIELD_SELECTION_GATE_RULE,
       `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
     ].join("\n");
   }
@@ -1423,7 +1518,8 @@ export function registerFlowDirectiveHooks(api) {
   const platformByRequirement = new Map();
   const inquiryIdsByRequirement = new Map();
   const quantityTotalByRequirement = new Map();
-  const requirementIdByScoreJobId = new Map();
+  // score job → { requirement_id, csv_file_path? }：缺列恢复需要精确重提本轮打分参数。
+  const scoreJobRecoveryByScope = new Map();
   const requirementIdByIngestJobId = new Map();
   const currentRequirementIdByScope = new Map();
   const linksCsvPathsByRequirement = new Map();
@@ -1503,6 +1599,11 @@ export function registerFlowDirectiveHooks(api) {
         ]) {
           if (values[field] !== undefined) minimal[field] = structuredClone(values[field]);
         }
+        // 缺列恢复要按本轮可信路径原样重提打分：只对当前 score 调用保留其 csv_file_path。
+        if (bare === "score_manual_source_csv") {
+          const csvFilePath = firstString(values.csv_file_path);
+          if (csvFilePath) minimal.csv_file_path = csvFilePath;
+        }
         if (bare === "ingest_mcn_submissions") {
           const requirementId = requirementIdForInquiryIds(
             values.inquiry_ids,
@@ -1510,14 +1611,19 @@ export function registerFlowDirectiveHooks(api) {
           );
           if (requirementId) minimal.requirement_id = requirementId;
         }
-        if (bare === "score_manual_source_csv_status" || bare === "get_ingest_job") {
-          const jobs =
-            bare === "score_manual_source_csv_status"
-              ? requirementIdByScoreJobId
-              : requirementIdByIngestJobId;
+        if (bare === "score_manual_source_csv_status") {
+          const jobId = providerJobId({ data: values });
+          const record =
+            jobId == null
+              ? null
+              : scoreJobRecoveryByScope.get(JSON.stringify([scope, String(jobId)]));
+          if (record?.requirement_id) minimal.requirement_id = record.requirement_id;
+        } else if (bare === "get_ingest_job") {
           const jobId = providerJobId({ data: values });
           const requirementId =
-            jobId == null ? null : jobs.get(JSON.stringify([scope, String(jobId)]));
+            jobId == null
+              ? null
+              : requirementIdByIngestJobId.get(JSON.stringify([scope, String(jobId)]));
           if (requirementId) minimal.requirement_id = requirementId;
         }
         pendingCalls.set(key, {
@@ -1643,8 +1749,15 @@ export function registerFlowDirectiveHooks(api) {
             result?.data?.requirement_id,
             result?.requirement_id,
           );
-          if (jobId != null && id)
-            requirementIdByScoreJobId.set(JSON.stringify([scope, String(jobId)]), String(id));
+          if (jobId != null && id) {
+            const key = JSON.stringify([scope, String(jobId)]);
+            const previous = scoreJobRecoveryByScope.get(key);
+            const csvFilePath = firstString(params?.csv_file_path) ?? previous?.csv_file_path;
+            scoreJobRecoveryByScope.set(key, {
+              requirement_id: String(id),
+              ...(csvFilePath ? { csv_file_path: csvFilePath } : {}),
+            });
+          }
         } else if (bare === "ingest_mcn_submissions" || bare === "get_ingest_job") {
           const jobId = providerJobId(result) ?? providerJobId({ data: params });
           const id = firstString(
@@ -1665,11 +1778,21 @@ export function registerFlowDirectiveHooks(api) {
       if (jobId != null && !nonemptyString(firstString(params?.requirement_id))) {
         const requirementId =
           bare === "score_manual_source_csv_status"
-            ? requirementIdByScoreJobId.get(JSON.stringify([scope, String(jobId)]))
+            ? scoreJobRecoveryByScope.get(JSON.stringify([scope, String(jobId)]))?.requirement_id
             : bare === "get_ingest_job"
               ? requirementIdByIngestJobId.get(JSON.stringify([scope, String(jobId)]))
               : null;
         if (requirementId) directiveParams = { ...params, requirement_id: requirementId };
+      }
+      if (
+        bare === "score_manual_source_csv_status" &&
+        jobId != null &&
+        !nonemptyString(firstString(directiveParams?.csv_file_path))
+      ) {
+        const csvFilePath = scoreJobRecoveryByScope.get(
+          JSON.stringify([scope, String(jobId)]),
+        )?.csv_file_path;
+        if (csvFilePath) directiveParams = { ...directiveParams, csv_file_path: csvFilePath };
       }
       if (
         jobId != null &&
@@ -1680,7 +1803,7 @@ export function registerFlowDirectiveHooks(api) {
       ) {
         const jobs =
           bare === "score_manual_source_csv_status"
-            ? requirementIdByScoreJobId
+            ? scoreJobRecoveryByScope
             : bare === "get_ingest_job"
               ? requirementIdByIngestJobId
               : null;
@@ -1717,7 +1840,7 @@ export function registerFlowDirectiveHooks(api) {
       platformByRequirement.clear();
       inquiryIdsByRequirement.clear();
       quantityTotalByRequirement.clear();
-      requirementIdByScoreJobId.clear();
+      scoreJobRecoveryByScope.clear();
       requirementIdByIngestJobId.clear();
       currentRequirementIdByScope.clear();
       linksCsvPathsByRequirement.clear();

@@ -21,7 +21,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators(requirement_id[, demand]) → 同步 links CSV 直接保存，或 manual_source_creators_status(requirement_id, batch_id, num) 轮询 → 保存 links CSV → 原生达人补全(20/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存并交付最终手动拓展表`
 
-每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement。即使同一会话、同一平台、业务条件未变，或询价完成/停止后改用手动拓展（反之亦然），也必须重新调用 `ypscan_parse_requirement`、按下文复核并调用 `validate_requirement`；不得跨功能复用 requirement 或已提交字段配置，新 requirement 必须重新调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch、CSV 或 Excel。
+每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement。即使同一会话、同一平台、业务条件未变，或询价完成/停止后改用手动拓展（反之亦然），也必须重新调用 `ypscan_parse_requirement`、按下文复核并调用 `validate_requirement`；不得跨功能复用 requirement 或已提交字段配置，新 requirement 必须重新调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch、CSV 或 Excel。用户过去对其他 requirement 说过“以后不用再选字段”等不算当前 requirement 已提交字段的证据。字段选择 URL 输出后本轮必须结束并等待；只有用户为这个 requirement 提交字段页并明确回复“好了”后才恢复原分支，禁止同一轮试调搜索、手动拓展或打分。
 
 机构列表展示后的“暂不询价”是唯一的续办例外：用户选择“暂不询价”、关闭/取消机构选择弹窗或当轮未回答后，只要仍在同一会话，之后明确要求给该列表中的机构发询价（包括“前 5 家”等可按当前排名唯一确定的表达），且期间未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，就视为恢复当前询价分支，而不是开始新询价。继续使用该列表所属 requirement、平台和 `rank_mcns` 机构映射，不重新解析、落库、搜索或排名；当前 requirement 已提交字段配置时复用，否则再调用 `select_inquiry_form_fields`。“暂不询价”只暂停发送，不算明确停止整个询价功能。任一条件不满足时不得把历史列表当作当前证据，按真正的新功能开始处理。
 
@@ -35,7 +35,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 至少检查模式、平台、品牌、数量、截止时间、内容形式、抖音植入/定制类型、粉丝、返点、刊例价/CPM/CPE 档位、`contentTag`、可选标签、同平台多达人类型是否仍为一个 requirement，以及是否混入其他平台或旧需求值。
 
-截止时间必须由当前完整有效需求和最新澄清唯一确定为未来时间。只有日期没有具体时刻时必须澄清，不得默认 18:00、23:59:59 或其他时刻，也不得宣称“无需补充澄清”；已有明确小时和分钟时只补省略的秒为 00，不重复询问。用户只要求解析、暂不落库时仍须指出缺失时刻，但不得创建需求或继续下游。
+截止时间必须由当前完整有效需求和最新澄清唯一确定为未来时间。当前有效原文与当前有效澄清均没有截止时间证据时必须询问，不得从旧 requirement、系统默认值或推测中回填。只有日期没有具体时刻时必须澄清，不得默认 18:00、23:59:59 或其他时刻，也不得宣称“无需补充澄清”；已有明确小时和分钟时只补省略的秒为 00，不重复询问。用户只要求解析、暂不落库时仍须指出缺失时刻，但不得创建需求或继续下游。
 
 检查正确时直接落库，不展示复核摘要，不等待用户确认。原文未逐字出现但语义合理、且不与需求冲突的解析标签继续原样采用；不得只因措辞不同删除标签。
 
@@ -69,7 +69,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 手动拓展分支
 
-`validate_requirement` 成功后先调用 `select_inquiry_form_fields`；用户提交并回复“好了”后，按 [manual_source_creators](references/tools/manual_source_creators.md) 使用同一 `requirement_id`，以及 schema 支持时可选透传的 `demand` 提交后端任务；提交不再携带 `num`。
+`validate_requirement` 成功后先调用 `select_inquiry_form_fields`；生成字段选择 URL 后原样展示并结束本轮，禁止用“若系统强制会提示”等试错理由提前调用后续工具。用户为该 `requirement_id` 提交字段页并明确回复“好了”后，按 [manual_source_creators](references/tools/manual_source_creators.md) 使用同一 `requirement_id`，以及 schema 支持时可选透传的 `demand` 提交后端任务；提交不再携带 `num`。
 
 若提交响应同步直接返回 links CSV，则立即保存 links CSV 并进入原生达人补全；若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID、`batch_id` 和本轮目标交付数量 `num`（正整数，即每批取 links URL 的数量）第 1 次查询。Hook 会通过 `MANUAL_SOURCE_TARGET_NUM` 提示当前 requirement 落库的 `quantityTotal`；当前环境 live schema required `num` 时再把该值并入状态查询，与用户最新确认的目标数量不同时以最新确认为准。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 requirement ID、batch ID 和当前环境 live schema 对应的目标数量参数开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
 
@@ -79,9 +79,11 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 若旧 Provider 仍同步或异步返回 Excel，则仅作为兼容降级路径：立即保存并交付当前 Excel，不进入 CSV 补全/打分链路。该降级路径不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
 
+若 `score_manual_source_csv` 或 `score_manual_source_csv_status` 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`、`REQUIREMENT_COLUMNS_UNAVAILABLE` 或明确消息 `customer demand has no selected inquiry columns`，不得把 `success_count` 当作最终打分成功，也不得重搜、重做原生补全或重跑 `file_bridge`。使用同一 requirement 调用 `select_inquiry_form_fields`，原样展示 URL 后结束本轮；用户提交并回复“好了”后，若缺列指令已附带 `SCORE_MANUAL_SOURCE_CSV_ARGS` 则原样使用该参数重提一次 `score_manual_source_csv`，不得改写路径；否则只用同一 requirement 和本轮 `file_bridge` 返回的原始 `csv_file_path` 重提，当前对话无法取得该可信路径时如实说明并停止，不自行构造 URL。报告时明确区分 Agent 跳步、Provider 失败与用户操作，不把 Agent 可避免的返工描述成纯系统要求。
+
 ## 结果不足：先复核，再放宽
 
-结果不足时禁止直接放宽。先重新对照当时有效需求、本次解析输出、实际传给 `validate_requirement` 的参数和当前结果。发现漏检错误时按原需求纠正、重新解析、创建新 requirement 并按原模式重跑；歧义时询问用户。只有确认解析和落库参数正确后，才允许放宽。
+结果不足时禁止直接放宽。先重新对照当时有效需求、本次解析输出、实际传给 `validate_requirement` 的参数和当前结果。解释多轮结果差异时还必须核对每轮完整有效需求与 Provider 实际搜索参数；不同 requirement 的 keyword 差异只能作为线索，不能单独证明后台不稳定。Provider 未回传实际搜索参数时明确说无法确认根因，不猜测，也不让用户替后台决定无法由当前工具落实的搜索口径。发现漏检错误时按原需求纠正、重新解析、创建新 requirement 并按原模式重跑；歧义时询问用户。只有确认解析和落库参数正确后，才允许放宽。
 
 触发点：
 
@@ -89,7 +91,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
 - 手动拓展只有在当前 Provider 响应明确给出可信实际数量为 0 或少于 `num` 时，才在交付当前真实 Excel 后进入同一复核和放宽建议；数量未知时不猜测，当前真实交付物即最终结果。
 
-每轮放宽只做建议、不自动执行：先可见地告诉用户当前缺口和可放宽的唯一项，由用户确认后再以“用户原始需求 + 已确认的累计放宽”重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
+每轮放宽只做建议、不自动执行：先可见地告诉用户实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑。“放宽直到足量”等总体授权不替代后续每轮具体项确认。确认后仍把用户当前完整、未改写的原始需求传给 `ypscan_parse_requirement` 并保存在 `rawMessagesJson.original`；已确认的累计放宽只写入 `rawMessagesJson.clarifications` 对应字段和本轮 `validate_requirement` 顶层参数，禁止把放宽值改写进 `demand`、`original` 或 `manual_source_creators.demand`。随后重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
 
 放宽顺序固定为刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`。不存在的字段跳过。
 
