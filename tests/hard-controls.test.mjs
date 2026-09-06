@@ -2047,7 +2047,8 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /当前 rank_mcns 列表后的暂不发送再续办/u);
   assert.match(first.prependContext, /属于恢复当前询价分支/u);
   assert.match(first.prependContext, /继续使用该列表所属 requirement、平台和 rank_mcns 机构映射/u);
-  assert.match(first.prependContext, /任何一行最多 20 个 Unicode 字符/u);
+  assert.match(first.prependContext, /只在整行将超过 20 个 Unicode 字符时换行/u);
+  assert.match(first.prependContext, /禁止把短分句、字段或项目名单独成行/u);
   assert.match(first.prependContext, /询价链路：解析→复核→validate_requirement/u);
   assert.match(first.prependContext, /手动拓展：解析→复核→validate_requirement/u);
   assert.match(first.prependContext, /rank_mcns 成功后先输出完整五列表格/u);
