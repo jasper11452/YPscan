@@ -153,9 +153,12 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
     !FLOW_VALUES.includes(flow) ||
     !nonemptyString(linksCsvPath) ||
     !isAbsolute(linksCsvPath) ||
+    linksCsvPath !== linksCsvPath.trim() ||
     !Array.isArray(completionCsvPaths) ||
     completionCsvPaths.length === 0 ||
-    completionCsvPaths.some((item) => !nonemptyString(item) || !isAbsolute(item))
+    completionCsvPaths.some(
+      (item) => !nonemptyString(item) || item !== item.trim() || !isAbsolute(item),
+    )
   ) {
     return failure("YPSCAN_CREATOR_CSV_MERGE_INVALID_INPUT", "merge 参数不完整或格式无效");
   }

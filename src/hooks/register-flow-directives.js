@@ -295,7 +295,7 @@ function requirementParseSuccessDirective(message, params = {}) {
   const { resolved, missing } = classifyDifyOutputs(parseOutputsFromMessage(message));
   const mode = businessModeFromParams(params);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=需求解析成功。data.outputs 仅包含当前 Provider 契约消费的 Workflow 字段。下一步必须先复核，不得直接调用 Browser、search_creators 或结束。",
+    "YPSCAN_FLOW_DIRECTIVE=data.outputs 仅包含当前 Provider 契约消费的 Workflow 字段；先复核，不得直接调用 Browser、search_creators 或结束。",
     "YPSCAN_NEXT_ACTION=REVIEW_REQUIREMENT",
     `DIFY_RESOLVED_FIELDS=${resolved.join(",")}`,
     `DIFY_MISSING_FIELDS=${missing.join(",")}`,
@@ -305,9 +305,10 @@ function requirementParseSuccessDirective(message, params = {}) {
           "后续 validate_requirement 的 rawMessagesJson.business_mode 必须使用该值；整个流程保持该模式，不得再次询问。",
         ]
       : []),
-    "DIFY_RESOLVED_FIELDS 中的唯一值直接采用；DIFY_MISSING_FIELDS 与非解析必填项按启动规则收集确认。八个可选 Label 有则原样保留、无则省略；contentTag 缺失时按下方规则重新解析。不要把解析输出整体塞入 Provider 参数。",
-    "YPSCAN_POLICY=按 media-assistant Skill 的“解析后、落库前必须复核”执行；复核通过后才调用 validate_requirement。",
-    "复核时必须确认 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount、contentTag 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3，小红书不使用 L3。缺失或有歧义时按 Skill 一次性询问；contentTag 必须来自解析结果，缺失时重新解析。",
+    "唯一值直接采用；八个可选 Label 有则原样保留、无则省略；禁止整体传解析输出。",
+    "YPSCAN_POLICY=按 media-assistant Skill 的“解析后、落库前必须复核”执行。",
+    "复核 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3，小红书不使用 L3。缺失或有歧义按 Skill 一次性询问；contentTag 必须来自解析结果，contentTag 缺失时重新解析。",
+    "截止时间由 Agent 对照当前完整有效需求和最新澄清复核。只有日期没有具体时刻必须澄清；不得默认 18:00、23:59:59 或其他时刻，不得宣称“无需补充澄清”。AskUserQuestion 给3个未来时间并保留自定义输入。已有明确小时和分钟且未来时间唯一时，秒省略时可补 00，不重复询问。只解析时仍须指出缺失时刻，不得创建需求。",
     RAW_MESSAGES_JSON_KEY_CONTRACT,
     REBATE_MINIMUM_QUESTION_RULE,
   ].join("\n");
@@ -661,7 +662,7 @@ function manualSourceCreatorsStatusDirective(
   return flowPauseDirective("手动拓展结果查询", message);
 }
 
-function distributionDirective(message, params = {}) {
+function distributionDirective(message) {
   const result = parsedToolResult(message);
   if (result?.success !== true) {
     const errors = [result?.error, ...(Array.isArray(result?.errors) ? result.errors : [])].filter(
@@ -680,23 +681,8 @@ function distributionDirective(message, params = {}) {
     ) {
       lines.push("无收件机构：回到本轮真实 MCN 的机构选择，不能按排名自动选或重发空数组。");
     }
-    if (hasError(/只有进行中的项目才能创建供应商分发/u)) {
-      const requirementId = firstString(
-        params?.requirement_id,
-        result?.data?.requirement_id,
-        result?.requirement_id,
-      );
-      lines.push(
-        "项目非进行中：仅用当前 requirement_id 调用一次 get_workflow_state 诊断，不自动重发。",
-      );
-      if (requirementId) {
-        lines.push(`GET_WORKFLOW_STATE_ARGS=${JSON.stringify({ requirement_id: requirementId })}`);
-      } else {
-        lines.push(
-          "当前响应和调用参数都缺少 requirement_id，无法安全查询项目状态；停止本轮发送处理。",
-        );
-      }
-    }
+    if (hasError(/只有进行中的项目才能创建供应商分发/u))
+      lines.push("项目非进行中：原样展示 Provider 错误并停止本轮发送处理，不调用旧状态工具。");
     return lines.join("\n");
   }
   const status = result?.data?.send_status;
@@ -721,7 +707,7 @@ function distributionDirective(message, params = {}) {
     return lines.join("\n");
   }
   lines.push(
-    "全部机构发送成功。告知用户可随时回收在线表格；用户之后说“填好了”“已回收”或“生成表格”时，第一个工具是 sync_mcn_inquiry_status（requirement_id + project_id + supplierIds），再用其返回的 inquiry_ids 调用 ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → read → 派生 links CSV → 原生补全 → file_bridge → score；不切换到手动拓展分支。",
+    "全部机构发送成功。告知用户可随时回收在线表格；用户之后说“填好了”“已回收”或“生成表格”时，第一个工具是 sync_mcn_inquiry_status（requirement_id + project_id + supplierIds），再用其返回的 inquiry_ids 调用 ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → ypscan_save_creator_links 读取预览并派生 links CSV → 原生补全 → file_bridge → score；不切换到手动拓展分支。",
   );
   return lines.join("\n");
 }
@@ -870,8 +856,7 @@ function scoreManualSourceCsvDirective(message, params = {}) {
       `SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS=${JSON.stringify({ job_id: jobId })}`,
     ].join("\n");
   }
-  if (!excelFileUrl || !requirementId)
-    return flowPauseDirective("达人打分缺少最终 Excel", message);
+  if (!excelFileUrl || !requirementId) return flowPauseDirective("达人打分缺少最终 Excel", message);
   return [
     "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv 成功。立即保存最终打分排序 Excel，不展示 Provider 下载 URL。",
     `SAVE_ARTIFACT_ARGS=${JSON.stringify({
@@ -892,7 +877,9 @@ function scoreManualSourceCsvStatusDirective(message, params = {}) {
   const excelFileUrl = providerExcelUrl(result);
   const jobId = providerJobId(result) ?? providerJobId({ data: params });
   if (result?.success !== true) return flowPauseDirective("达人打分结果查询", message);
-  if (FAILED_ASYNC_STATUSES.has(String(result?.data?.status ?? result?.status ?? "").toLowerCase())) {
+  if (
+    FAILED_ASYNC_STATUSES.has(String(result?.data?.status ?? result?.status ?? "").toLowerCase())
+  ) {
     return flowPauseDirective("达人打分结果查询任务已失败", message);
   }
   if (excelFileUrl && requirementId) {
@@ -933,10 +920,13 @@ function normalizeInquiryIds(values) {
 function requirementIdForInquiryIds(inquiryIds, inquiryIdsByRequirement) {
   if (!Array.isArray(inquiryIds) || inquiryIds.length === 0) return null;
   const key = normalizeInquiryIds(inquiryIds).sort().join(",");
+  let matched = null;
   for (const [requirementId, recordedIds] of inquiryIdsByRequirement) {
-    if (normalizeInquiryIds(recordedIds).sort().join(",") === key) return String(requirementId);
+    if (normalizeInquiryIds(recordedIds).sort().join(",") !== key) continue;
+    if (matched !== null) return null;
+    matched = String(requirementId);
   }
-  return null;
+  return matched;
 }
 
 function syncInquiryDirective(message, params = {}) {
@@ -983,8 +973,13 @@ function ingestSubmissionsDirective(message) {
 
 function getIngestJobDirective(message, params = {}) {
   const result = parsedToolResult(message);
+  if (result?.success !== true && result?.error?.code !== "JOB_PENDING")
+    return flowPauseDirective("异步入库结果查询", message);
   const jobId = providerJobId(result) ?? providerJobId({ data: params });
-  if (result?.success === true && FAILED_ASYNC_STATUSES.has(String(result?.data?.status ?? result?.status ?? "").toLowerCase())) {
+  if (
+    result?.success === true &&
+    FAILED_ASYNC_STATUSES.has(String(result?.data?.status ?? result?.status ?? "").toLowerCase())
+  ) {
     return flowPauseDirective("异步入库结果查询任务已失败", message);
   }
   const excelFileUrl = providerExcelUrl(result);
@@ -996,7 +991,7 @@ function getIngestJobDirective(message, params = {}) {
   );
   if (result?.success === true && excelFileUrl && requirementId) {
     const lines = [
-      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 已完成（succeeded 或 partially_succeeded），返回机构回填预览 Excel。先保存机构达人预览表，再按后续分叉执行：read 读取本地 Excel → ypscan_save_creator_links 派生受控 links CSV → 原生达人补全（20/批）→ file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。",
+      "YPSCAN_FLOW_DIRECTIVE=get_ingest_job 已完成（succeeded 或 partially_succeeded），返回机构回填预览 Excel。先保存机构达人预览表，再按后续分叉执行：ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生达人补全（20/批）→ file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。",
       `MCN_CREATOR_PREVIEW_URL=${excelFileUrl}`,
       `SAVE_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "mcn_creator_preview",
@@ -1023,17 +1018,26 @@ function getIngestJobDirective(message, params = {}) {
 function ingestPartialSummary(result) {
   const status = String(result?.data?.status ?? result?.status ?? "");
   const results = Array.isArray(result?.data?.results) ? result.data.results : [];
-  if (status !== "partially_succeeded" || results.length === 0) return null;
+  if (status !== "partially_succeeded") return null;
+  if (results.length === 0)
+    return "INGEST_PARTIAL_SUMMARY=部分成功，但缺少逐机构明细；只能引用接口汇总，不能推断失败原因或哪些机构待回填。回填行数不能当作唯一达人数或合格人数，不自动重跑或重发。";
   const pending = [];
   const succeeded = [];
+  const failed = [];
+  let unknown = 0;
   for (const item of results) {
-    const inquiryId = [item?.inquiry_id, item?.error?.details?.inquiry_id]
-      .find((value) => nonemptyString(value) || Number.isSafeInteger(value));
+    const inquiryId = [item?.inquiry_id, item?.error?.details?.inquiry_id].find(
+      (value) => nonemptyString(value) || Number.isSafeInteger(value),
+    );
     if (item?.success === true) succeeded.push(inquiryId);
     else if (item?.error?.code === "DISTRIBUTION_NOT_SUBMITTED") pending.push(inquiryId);
+    else if (item?.success === false)
+      failed.push({ inquiry_id: inquiryId, code: item?.error?.code ?? "UNKNOWN" });
+    else unknown += 1;
   }
   return [
     `INGEST_PARTIAL_SUMMARY=已回填 ${succeeded.length} 家，pending ${pending.length} 家${pending.length > 0 ? `（inquiry_id: ${pending.join(", ")}）` : ""}。`,
+    `处理失败 ${failed.length} 家，状态未知 ${unknown} 家；失败明细=${JSON.stringify(failed)}。不能把 pending 当故障，也不能把回填行数当合格人数。`,
     "如实报告哪些机构 pending、哪些已回填；保存预览表后让用户选择「补全并打分排序 / 暂不补全」，不得把 partially_succeeded 当全部完成。",
   ].join("\n");
 }
@@ -1107,7 +1111,9 @@ function artifactSaveDirective(
     return [
       "YPSCAN_FLOW_DIRECTIVE=最终打分排序 Excel 已保存。原样展示本地链接作为最终交付物。不得调用 rank_creators 或 create_submission_batch。",
       ...(isInquiry
-        ? ["询价回收结果不足时交付当前真实结果并说明缺口后结束，不进入放宽流程，不自动发起新一轮询价。"]
+        ? [
+            "询价回收结果不足时交付当前真实结果并说明缺口后结束，不进入放宽流程，不自动发起新一轮询价。",
+          ]
         : [
             "YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY",
             "以下放宽建议仅适用于手动拓展；若当前业务来源未确认，先确认来源。询价回收结果只交付真实结果并说明缺口后结束。",
@@ -1120,12 +1126,18 @@ function artifactSaveDirective(
     ].join("\n");
   }
   if (artifactKind === "mcn_creator_preview") {
+    const platform = requirementPlatformLookup(params.artifact_id) ?? recordedPlatform;
     return [
-      "YPSCAN_FLOW_DIRECTIVE=机构达人预览表已保存。原样展示本地链接后让用户选择是否补全；选“补全并打分排序”时继续：read 读取本地 Excel 取达人标识 → ypscan_save_creator_links 派生受控 links CSV → 按 20/批调用当前平台 YP Action 原生达人补全工具 → file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。",
+      "YPSCAN_FLOW_DIRECTIVE=机构达人预览表已保存，属于未核验原始回填，不是合格名单。原样展示本地链接后让用户选择是否补全；选“补全并打分排序”时调用 ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 按 20/批调用当前平台 YP Action 原生达人补全工具 → file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。不要用普通 read 读取 xlsx，也不要求用户转换 CSV。",
       `MCN_CREATOR_PREVIEW_LOCAL_PATH=${filePath}`,
       `MCN_CREATOR_PREVIEW_LOCAL_LINK=${localFileLink}`,
       "将 MCN_CREATOR_PREVIEW_LOCAL_LINK 原样作为 Markdown 超链接展示，不要只输出裸路径。",
       `ASK_USER_QUESTION_ARGS=${JSON.stringify(mcnCreatorCompletionQuestionPayload())}`,
+      ...(platform
+        ? [
+            `SAVE_CREATOR_LINKS_ARGS=${JSON.stringify({ requirement_id: params.artifact_id, platform, preview_file_path: filePath })}`,
+          ]
+        : ["缺少本轮已确认平台时暂停，不猜测 platform。"]),
     ].join("\n");
   }
   if (artifactKind === "mcn_ranking") {
@@ -1258,7 +1270,7 @@ function flowDirective(
   if (/(?:^|__)ypscan_set_filter_range$/iu.test(normalizedName)) {
     return filterRangeDirective(message);
   }
-  if (bare === "create_with_distributions") return distributionDirective(message, params);
+  if (bare === "create_with_distributions") return distributionDirective(message);
   if (bare === "sync_mcn_inquiry_status") return syncInquiryDirective(message, params);
   if (bare === "ingest_mcn_submissions") return ingestSubmissionsDirective(message);
   if (bare === "get_ingest_job") return getIngestJobDirective(message, params);
@@ -1353,6 +1365,39 @@ function scopeKey(event, context) {
   );
 }
 
+const REQUIREMENT_ID_TOOLS = new Set([
+  "select_inquiry_form_fields",
+  "manual_source_creators",
+  "manual_source_creators_status",
+  "sync_mcn_inquiry_status",
+  "create_with_distributions",
+  "score_manual_source_csv",
+  "file_bridge",
+  "ypscan_save_creator_links",
+  "rank_creators",
+]);
+
+function trustedRequirementId(bare, params, result) {
+  if (result?.success !== true) return null;
+  if (bare === "validate_requirement")
+    return firstString(result?.data?.requirement_id, result?.data?.id);
+  if (bare === "search_creators" || bare === "rank_mcns")
+    return firstString(params?.id, result?.data?.requirement_id);
+  if (bare === "ypscan_save_artifact" && params?.artifact_kind !== "creator_detail_export")
+    return firstString(params?.artifact_id, result?.data?.artifact_id);
+  return REQUIREMENT_ID_TOOLS.has(bare)
+    ? firstString(params?.requirement_id, result?.data?.requirement_id)
+    : null;
+}
+
+// Installed YP Action passes sessionKey + toolCallId to both hooks. Never correlate
+// by a "latest call" fallback when either coordinate is absent.
+function callKey(event, context) {
+  const session = firstString(context?.sessionKey, event?.sessionKey);
+  const id = firstString(event?.toolCallId, context?.toolCallId);
+  return session && id ? JSON.stringify([session, id]) : null;
+}
+
 /**
  * Register fixed-flow prompt and result directives.
  *
@@ -1363,6 +1408,7 @@ function scopeKey(event, context) {
  * relies on a Provider response echo.
  */
 export function registerFlowDirectiveHooks(api) {
+  const pendingCalls = new Map();
   const startupScopes = new Set();
   const businessModeByScope = new Map();
   const platformByScope = new Map();
@@ -1373,6 +1419,7 @@ export function registerFlowDirectiveHooks(api) {
   const requirementIdByIngestJobId = new Map();
   const currentRequirementIdByScope = new Map();
   const linksCsvPathsByRequirement = new Map();
+  const previewFilesByRequirement = new Map();
   const completionCsvPathsByRequirement = new Map();
 
   api.on(
@@ -1390,11 +1437,11 @@ export function registerFlowDirectiveHooks(api) {
         lines.push(
           "[YPscan startup instruction]",
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
-          `选择业务模式后，把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→read 读取本地 Excel→ypscan_save_creator_links 派生受控 links CSV→原生补全（20/批）→file_bridge（flow=manual_source）→score_manual_source_csv→score_status→保存打分排序 Excel。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存 links CSV→按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具（小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→file_bridge（内部合并并上传）→score_manual_source_csv→score_manual_source_csv_status→保存最终打分排序 Excel。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
+          `选择业务模式后，把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV→原生补全（20/批）→file_bridge（flow=manual_source）→score_manual_source_csv→score_status→保存打分排序 Excel。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存 links CSV→按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具（小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→file_bridge（内部合并并上传）→score_manual_source_csv→score_manual_source_csv_status→保存最终打分排序 Excel。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
           REQUIREMENT_CREATION_RULE,
           INQUIRY_RECIPIENT_RESUME_RULE,
           "所有 AskUserQuestion 弹窗的 header、question、label 和 description 均主动换行，任何一行最多 20 个 Unicode 字符；长机构名可为展示插入换行，匹配前移除换行还原原名。",
-          "机构回填预览链路先保存预览表，再让用户选择是否补全；选“补全并打分排序”时继续 read 读取本地 Excel → ypscan_save_creator_links 派生受控 links CSV → 原生补全（20/批）→ file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。回收不足时不自动放宽，交付真实结果。",
+          "机构回填预览链路先保存预览表，再让用户选择是否补全；选“补全并打分排序”时继续 ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全（20/批）→ file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。回收不足时不自动放宽，交付真实结果。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。字段映射固定：排名=rank_no（缺省按响应顺序）、机构=agency_name、覆盖达人=candidate_count、返点=rebate_rate、综合分=rank_score。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
           "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 与 manual_source_creators_status 的 num 位置以当前环境 live schema 为准：测试基线是启动工具不带 num、状态查询带 num；若生产 schema 漂移，则只允许按 live schema 做确定性调整，不能靠连续试错。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具；每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 file_bridge 和打分。补全完成后调用 file_bridge（flow=manual_source）完成合并和上传，再调用 score_manual_source_csv；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成才保存最终手动拓展 Excel；score 仍同步返回 Excel 时直接保存。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
@@ -1424,9 +1471,71 @@ export function registerFlowDirectiveHooks(api) {
     "before_tool_call",
     (event, context) => {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
-      const bare = stripHostPrefix(toolName.toLowerCase());
+      const bare =
+        stripHostPrefix(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1);
       const params = paramsFromEvent(event);
-      if (bare !== "validate_requirement") return undefined;
+      const key = callKey(event, context);
+      const scope = scopeKey(event, context);
+      const remember = (values) => {
+        if (!key) return;
+        // Retain only directive/correlation fields, never full briefs or download URLs.
+        const minimal = {};
+        for (const field of [
+          "requirement_id",
+          "id",
+          "artifact_id",
+          "artifact_kind",
+          "platform",
+          "quantityTotal",
+          "inquiry_ids",
+          "job_id",
+          "flow",
+          "batch_id",
+          "num",
+        ]) {
+          if (values[field] !== undefined) minimal[field] = structuredClone(values[field]);
+        }
+        if (bare === "ingest_mcn_submissions") {
+          const requirementId = requirementIdForInquiryIds(
+            values.inquiry_ids,
+            inquiryIdsByRequirement.get(scope) ?? new Map(),
+          );
+          if (requirementId) minimal.requirement_id = requirementId;
+        }
+        if (bare === "score_manual_source_csv_status" || bare === "get_ingest_job") {
+          const jobs =
+            bare === "score_manual_source_csv_status"
+              ? requirementIdByScoreJobId
+              : requirementIdByIngestJobId;
+          const jobId = providerJobId({ data: values });
+          const requirementId =
+            jobId == null ? null : jobs.get(JSON.stringify([scope, String(jobId)]));
+          if (requirementId) minimal.requirement_id = requirementId;
+        }
+        pendingCalls.set(key, {
+          bare,
+          params: minimal,
+          requirementId: currentRequirementIdByScope.get(scope),
+          mode: businessModeFromParams(values),
+        });
+      };
+      if (bare !== "validate_requirement") {
+        if (
+          REQUIREMENT_ID_TOOLS.has(bare) ||
+          [
+            "search_creators",
+            "rank_mcns",
+            "ypscan_save_artifact",
+            "ingest_mcn_submissions",
+            "get_ingest_job",
+            "score_manual_source_csv_status",
+            "get_xhs_author_business_card",
+            "get_douyin_author_business_card",
+          ].includes(bare)
+        )
+          remember(params);
+        return undefined;
+      }
       const normalized = normalizeToolCallParams(toolName, params);
       const issues = validateRequirementPreflight(normalized);
       if (issues.length > 0) {
@@ -1436,6 +1545,7 @@ export function registerFlowDirectiveHooks(api) {
         };
       }
       const providerParams = serializeProviderRawMessages(normalized);
+      remember(providerParams);
       const mode = businessModeFromParams(providerParams);
       const platform = canonicalPlatformName(providerParams.platform);
       if (mode) businessModeByScope.set(scopeKey(event, context), mode);
@@ -1449,30 +1559,38 @@ export function registerFlowDirectiveHooks(api) {
     "tool_result_persist",
     (event, context) => {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
-      const params = paramsFromEvent(event);
-      const recordedMode = businessModeByScope.get(scopeKey(event, context));
+      const key = callKey(event, context);
+      const pending = key ? pendingCalls.get(key) : null;
+      if (key) pendingCalls.delete(key);
+      const matched =
+        pending?.bare ===
+        (stripHostPrefix(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1))
+          ? pending
+          : null;
+      const params = { ...(matched?.params ?? paramsFromEvent(event)) };
+      const recordedMode = matched?.mode ?? businessModeByScope.get(scopeKey(event, context));
       const recordedPlatform = platformByScope.get(scopeKey(event, context));
-      const bare = stripHostPrefix(toolName.toLowerCase());
+      const bare =
+        stripHostPrefix(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1);
       const result = parsedToolResult(event?.message);
       const isNativeCompletion =
         bare === "get_xhs_author_business_card" || bare === "get_douyin_author_business_card";
       const scope = scopeKey(event, context);
-      if (!isNativeCompletion) {
-        const seenRequirementId = firstString(
-          params?.requirement_id,
-          params?.id,
-          params?.artifact_id,
-          result?.data?.requirement_id,
-          result?.data?.id,
-        );
-        if (seenRequirementId) currentRequirementIdByScope.set(scope, String(seenRequirementId));
+      if (bare === "ypscan_save_artifact") {
+        for (const field of ["artifact_kind", "artifact_id"]) {
+          if (params[field] === undefined && result?.data?.[field] !== undefined)
+            params[field] = result.data[field];
+        }
       }
-      if (isNativeCompletion) {
+      const seenRequirementId = trustedRequirementId(bare, params, result);
+      if (seenRequirementId) currentRequirementIdByScope.set(scope, String(seenRequirementId));
+      if (isNativeCompletion && result?.success === true && !event?.isSynthetic) {
         const csvFile = firstString(result?.csv_file, result?.data?.csv_file);
-        const requirementId = currentRequirementIdByScope.get(scope);
-        if (csvFile && requirementId) {
+        const requirementId = matched?.requirementId;
+        const path = normalizeLocalFilePath(csvFile, context?.workspaceDir);
+        if (path && requirementId) {
           const set = completionCsvPathsByRequirement.get(requirementId) ?? new Set();
-          set.add(normalizeLocalFilePath(csvFile, context?.workspaceDir));
+          set.add(path);
           completionCsvPathsByRequirement.set(requirementId, set);
         }
       }
@@ -1503,7 +1621,9 @@ export function registerFlowDirectiveHooks(api) {
             params?.requirement_id,
           );
           if (id && Array.isArray(rawIds)) {
-            inquiryIdsByRequirement.set(String(id), normalizeInquiryIds(rawIds));
+            const inquiries = inquiryIdsByRequirement.get(scope) ?? new Map();
+            inquiries.set(String(id), normalizeInquiryIds(rawIds));
+            inquiryIdsByRequirement.set(scope, inquiries);
           }
         }
         if (bare === "score_manual_source_csv" || bare === "score_manual_source_csv_status") {
@@ -1513,16 +1633,21 @@ export function registerFlowDirectiveHooks(api) {
             result?.data?.requirement_id,
             result?.requirement_id,
           );
-          if (jobId != null && id) requirementIdByScoreJobId.set(String(jobId), String(id));
+          if (jobId != null && id)
+            requirementIdByScoreJobId.set(JSON.stringify([scope, String(jobId)]), String(id));
         } else if (bare === "ingest_mcn_submissions" || bare === "get_ingest_job") {
           const jobId = providerJobId(result) ?? providerJobId({ data: params });
           const id = firstString(
             params?.requirement_id,
             result?.data?.requirement_id,
             result?.requirement_id,
-            requirementIdForInquiryIds(params?.inquiry_ids, inquiryIdsByRequirement),
+            requirementIdForInquiryIds(
+              params?.inquiry_ids,
+              inquiryIdsByRequirement.get(scope) ?? new Map(),
+            ),
           );
-          if (jobId != null && id) requirementIdByIngestJobId.set(String(jobId), String(id));
+          if (jobId != null && id)
+            requirementIdByIngestJobId.set(JSON.stringify([scope, String(jobId)]), String(id));
         }
       }
       const jobId = providerJobId(result) ?? providerJobId({ data: params });
@@ -1530,11 +1655,26 @@ export function registerFlowDirectiveHooks(api) {
       if (jobId != null && !nonemptyString(firstString(params?.requirement_id))) {
         const requirementId =
           bare === "score_manual_source_csv_status"
-            ? requirementIdByScoreJobId.get(String(jobId))
+            ? requirementIdByScoreJobId.get(JSON.stringify([scope, String(jobId)]))
             : bare === "get_ingest_job"
-              ? requirementIdByIngestJobId.get(String(jobId))
+              ? requirementIdByIngestJobId.get(JSON.stringify([scope, String(jobId)]))
               : null;
         if (requirementId) directiveParams = { ...params, requirement_id: requirementId };
+      }
+      if (
+        jobId != null &&
+        (providerExcelUrl(result) ||
+          FAILED_ASYNC_STATUSES.has(
+            String(result?.data?.status ?? result?.status ?? "").toLowerCase(),
+          ))
+      ) {
+        const jobs =
+          bare === "score_manual_source_csv_status"
+            ? requirementIdByScoreJobId
+            : bare === "get_ingest_job"
+              ? requirementIdByIngestJobId
+              : null;
+        jobs?.delete(JSON.stringify([scope, String(jobId)]));
       }
       return appendDirective(
         event?.message,
@@ -1560,6 +1700,7 @@ export function registerFlowDirectiveHooks(api) {
 
   return {
     resetTransientState() {
+      pendingCalls.clear();
       startupScopes.clear();
       businessModeByScope.clear();
       platformByScope.clear();
@@ -1570,9 +1711,26 @@ export function registerFlowDirectiveHooks(api) {
       requirementIdByIngestJobId.clear();
       currentRequirementIdByScope.clear();
       linksCsvPathsByRequirement.clear();
+      previewFilesByRequirement.clear();
       completionCsvPathsByRequirement.clear();
     },
     recordSavedCsvArtifact(artifactKind, artifactId, result, workspaceDir) {
+      if (artifactKind === "mcn_creator_preview") {
+        const { file_path: filePath, sha256 } = result?.details ?? {};
+        if (
+          !nonemptyString(artifactId) ||
+          !nonemptyString(filePath) ||
+          !nonemptyString(sha256) ||
+          result?.isError
+        )
+          return;
+        const path = normalizeLocalFilePath(filePath, workspaceDir);
+        if (!path) return;
+        const files = previewFilesByRequirement.get(artifactId) ?? new Map();
+        files.set(path, sha256);
+        previewFilesByRequirement.set(artifactId, files);
+        return;
+      }
       if (artifactKind !== "manual_creator_links" && artifactKind !== "mcn_creator_links") {
         return;
       }
@@ -1596,6 +1754,11 @@ export function registerFlowDirectiveHooks(api) {
     linksCsvPathsFor(requirementId) {
       if (!nonemptyString(requirementId)) return [];
       return [...(linksCsvPathsByRequirement.get(String(requirementId)) ?? [])];
+    },
+    previewFilesFor(requirementId) {
+      return [...(previewFilesByRequirement.get(requirementId) ?? [])].map(
+        ([file_path, sha256]) => ({ file_path, sha256 }),
+      );
     },
     completionCsvPathsFor(requirementId) {
       if (!nonemptyString(requirementId)) return [];

@@ -2,7 +2,7 @@
 
 ## 1. 系统形态
 
-ypscan 是 OpenClaw 插件（`private: true`，ESM，无 TypeScript 源文件，类型安全靠 JSDoc + `tsc --checkJs`）。运行时依赖为 `ali-oss` 与 `playwright-core`（后者仅为遗留 browser 工具保留，当前未注册任何 browser 工具）。
+ypscan 是 OpenClaw 插件（`private: true`，ESM，无 TypeScript 源文件，类型安全靠 JSDoc + `tsc --checkJs`）。运行时依赖为 `ali-oss`、`read-excel-file`（受控预览解析）、`fflate`（ZIP 元数据预检）与 `playwright-core`（仅为遗留 browser 工具保留，当前未注册任何 browser 工具）。
 
 ```
 OpenClaw 宿主
@@ -26,7 +26,7 @@ OpenClaw 宿主
 | `src/tools/parse-requirement.js`                                                                  | 需求解析代理                 | 直连 Dify（blocking 模式，60s 超时），`data.outputs` 只返回契约消费字段                                                                                                                        |
 | `src/tools/save-artifact.js`                                                                      | Excel/links CSV 受控保存     | 单一工具、7 种 artifact_kind；kind 决定扩展名，共用主域校验、下载限制、重试、原子发布与幂等逻辑                                                                                                |
 | `src/tools/merge-creator-csv.js`                                                                  | `file_bridge` 的内部合并实现 | 非公开工具；包含 CSV 编解码，保持 links 原顺序，输出名含 flow/平台/需求/哈希                                                                                                                   |
-| `src/tools/file-bridge.js`                                                                        | CSV 合并与可选上传           | 调内部合并实现；mcn_complete_only/超限只本地交付，其余优先读取插件配置 `fileBridgeOss`（缺失时回落宿主环境变量）上传并校验公网可读 URL                                                         |
+| `src/tools/file-bridge.js`                                                                        | CSV 合并与可选上传           | 调内部合并实现；mcn_complete_only/超限只本地交付，其余按插件配置 `fileBridgeOss` → 打包内置凭据读取（内部测试/集成可显式注入 env）并上传，再校验公网可读 URL                                     |
 | `src/tools/popup-questions.js`                                                                    | AskUserQuestion 统一弹窗载荷 | 每行最多 20 个 Unicode 字符；每题 2–4 选项、1–4 题                                                                                                                                             |
 | `src/tools/tool-result.js`                                                                        | 本地工具结果包装             | `content` 为 JSON 文本 + 可选 `details`/`isError`                                                                                                                                              |
 | `src/tools/test-adapter.js`                                                                       | 隔离测试 adapter             | `testMode` 下解析 loopback origin；下载重定向到 `/mock/artifact`                                                                                                                               |
@@ -53,7 +53,7 @@ OpenClaw 宿主
 → create_with_distributions → sync_mcn_inquiry_status（返回 inquiry_ids）
 → ingest_mcn_submissions → get_ingest_job（轮询至 succeeded/partially_succeeded）
 → ypscan_save_artifact(mcn_creator_preview) → 询问是否补全
-→ read 读取本地 Excel → ypscan_save_creator_links 派生受控 links CSV → 原生补全(20/批)
+→ ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全(20/批)
 → file_bridge(manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询
 → 保存打分排序 Excel（最终交付）
 ```
@@ -92,7 +92,7 @@ OpenClaw 宿主
 
 ### 5.4 CSV 中心链路（替代旧 Excel 直接链路）
 
-- **选择**：links CSV 是达人补全与排序的正式中间产物；`file_bridge` 直接接收 links CSV 与全部补全 CSV，在内部合并并按 flow 决定是否上传，不暴露单独的合并工具或 `merged_csv_path` 中间参数。`score_manual_source_csv` 消费它返回的 OSS `csv_file_path`，是手动拓展与询价回收两链路共用的通用打分步骤；询价回收链的 links CSV 由 `ypscan_save_creator_links` 从 read 出的 Excel 派生。`rank_creators`、`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export` 已从正式链路移除。
+- **选择**：links CSV 是达人补全与排序的正式中间产物；`file_bridge` 直接接收 links CSV 与全部补全 CSV，在内部合并并按 flow 决定是否上传，不暴露单独的合并工具或 `merged_csv_path` 中间参数。`score_manual_source_csv` 消费它返回的 OSS `csv_file_path`，是手动拓展与询价回收两链路共用的通用打分步骤；询价回收链的 links CSV 由 `ypscan_save_creator_links` 直接读取已受控保存的 Excel 派生。`rank_creators`、`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export` 已从正式链路移除。
 - **为什么**：达人补全结果需要可合并、可校验行数；CSV 显式上传后打分/精排，交付物与评分口径一致。
 - **代价**：合并与上传共享一个工具边界，单独重跑上传需重新执行幂等合并；旧 Provider 返回 Excel 时保留降级保存路径。
 

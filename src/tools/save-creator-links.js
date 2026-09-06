@@ -4,6 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { localFileMarkdownLink } from "./save-artifact.js";
 import { hostToolResult } from "./tool-result.js";
 import { nonemptyString } from "../util/value.js";
+import { readCreatorPreview } from "./read-creator-preview.js";
 
 const LINKS_HEADER = "source_record_id,creator_id,url";
 
@@ -52,7 +53,7 @@ function hasCsvControlCharacter(text) {
   return false;
 }
 
-function normalizeRows(rows) {
+function normalizeRows(rows, { preserveSourceId = false } = {}) {
   const problems = [];
   const seen = new Set();
   const normalized = [];
@@ -63,7 +64,9 @@ function normalizeRows(rows) {
     const url = nonemptyString(record.url) ? record.url.trim() : "";
     const sourceRecordId = nonemptyString(record.source_record_id)
       ? record.source_record_id.trim()
-      : String(position + 1);
+      : preserveSourceId
+        ? ""
+        : String(position + 1);
     if (!creatorId) {
       problems.push({ index: position, field: "creator_id", reason: "creator_id 不能为空" });
     } else if (!url) {
@@ -91,6 +94,7 @@ function normalizeRows(rows) {
  *   mkdirImpl?: typeof mkdir,
  *   realpathImpl?: typeof realpath,
  *   statImpl?: typeof stat,
+ *   allowedPreviews?: (requirementId: string) => {file_path: string, sha256: string}[],
  * }} [options]
  */
 export async function saveCreatorLinks(
@@ -101,14 +105,31 @@ export async function saveCreatorLinks(
     mkdirImpl = mkdir,
     realpathImpl = realpath,
     statImpl = stat,
+    allowedPreviews,
   } = {},
 ) {
   const requirementId = params?.requirement_id;
-  const rows = params?.rows;
-  if (!nonemptyString(requirementId) || !Array.isArray(rows) || rows.length === 0) {
-    return failure("YPSCAN_CREATOR_LINKS_INVALID_INPUT", "requirement_id 与 rows 必须完整且有效");
+  let rows = params?.rows;
+  const fromPreview = params?.preview_file_path !== undefined;
+  if (
+    !nonemptyString(requirementId) ||
+    (fromPreview
+      ? rows !== undefined || !["xiaohongshu", "douyin"].includes(params?.platform)
+      : !Array.isArray(rows) || rows.length === 0)
+  ) {
+    return failure(
+      "YPSCAN_CREATOR_LINKS_INVALID_INPUT",
+      "传当前 requirement_id，以及 rows 或 preview_file_path + platform，二者互斥",
+    );
   }
-  const { problems, normalized } = normalizeRows(rows);
+  let preview;
+  if (fromPreview) {
+    const read = await readCreatorPreview(params, { workspaceDir, allowedPreviews });
+    if (!read.ok) return failure(read.code, read.message, read.details);
+    rows = read.rows;
+    preview = read.preview;
+  }
+  const { problems, normalized } = normalizeRows(rows, { preserveSourceId: fromPreview });
   if (problems.length > 0) {
     return failure("YPSCAN_CREATOR_LINKS_INVALID_ROWS", "links 行存在非法项", { problems });
   }
@@ -170,5 +191,6 @@ export async function saveCreatorLinks(
     file_path: filePath,
     row_count: normalized.length,
     sha256,
+    ...(preview ? { preview } : {}),
   });
 }

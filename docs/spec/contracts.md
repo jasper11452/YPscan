@@ -16,9 +16,9 @@
 
 ## 2. Provider MCP 白名单（manifest `toolFilter.include`）
 
-`validate_requirement`、`search_creators`、`rank_mcns`、`select_inquiry_form_fields`、`create_with_distributions`、`sync_mcn_inquiry_status`、`ingest_mcn_submissions`、`get_ingest_job`、`manual_source_creators`、`manual_source_creators_status`、`score_manual_source_csv`、`score_manual_source_csv_status`、`rank_creators`、`get_workflow_state`（共 14 个）。
+`validate_requirement`、`search_creators`、`rank_mcns`、`select_inquiry_form_fields`、`create_with_distributions`、`sync_mcn_inquiry_status`、`ingest_mcn_submissions`、`get_ingest_job`、`manual_source_creators`、`manual_source_creators_status`、`score_manual_source_csv`、`score_manual_source_csv_status`、`rank_creators`（共 13 个）。
 
-明确不暴露：`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export`、`get_selected_inquiry_form_fields`（已弃用）。
+明确不暴露：`get_workflow_state`、`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export`、`get_selected_inquiry_form_fields`（已弃用）。
 
 ## 3. validate_requirement 参数契约
 
@@ -66,14 +66,14 @@
 | `brandName`            | 单元素字符串数组解包；优先采用当前平台 Dify 唯一合法品牌；若 Dify 当前平台品牌缺失，但 `rawMessagesJson.original` 中存在明确 `品牌：...` / `品牌名称：...` / `合作品牌：...` 标注，则可确定性兜底为该值；`暂无品牌` / `无品牌` 等占位值一律视为无效                                                                        |
 | `quantityTotal`        | 归一化为正整数字符串；非法则删除该字段（交预检报错）                                                                                                                                                                                                                                                                       |
 | 区间字段               | 标量→`[v,v]` 起步；百分号字符串（如 `"20%"`、`"10%-30%"`）解析并换算比例；中文区间 `-~～至到` 解析；`rebate`→`"[min,1]"`；粉丝“无/不限”→`"[0,999999999]"`；粉丝超上限截断到 `999999999`；CPM/CPE 标量→`"[0,v]"`；报价标量→`[floor(v×0.7), ceil(v×1.2)]`（Provider 检索单价只按原价下 30%/上 20% 扩展一次，不回写需求参数） |
-| `submissionDeadlineAt` | 归一化为 `YYYY-MM-DD HH:mm:ss`，仅当晚于当前时间                                                                                                                                                                                                                                                                           |
-| 标签数组               | 字符串化 JSON 数组解包；Dify `parse_outputs` 中的标签/品牌/数值唯一值时自动补入缺失字段（抖音按视频类型对齐 L2/L3）                                                                                                                                                                                                        |
+| `submissionDeadlineAt` | 归一化为 `YYYY-MM-DD HH:mm:ss`，仅当晚于当前时间；兼容完整中文日期加冒号时钟（如 `2026年9月26日16:00`，含全角冒号），与原文/最新澄清做等价比较，保留原始证据；过期、非法日期及冲突仍阻断 |
+| 标签数组               | 字符串化 JSON 数组解包；Dify `parse_outputs` 中仅当前平台标签/品牌/数值唯一值自动补入缺失字段；数值保留无平台前缀的既有兼容结构，另一平台 `dy_`/`xhs_` 片段不参与回填或 parsed 证据（抖音按视频类型对齐 L2/L3）                                                                                                            |
 | `rawMessagesJson`      | `business_mode` 出站映射为 Provider 兼容线值（序列化为字符串在 `before_tool_call` 完成）                                                                                                                                                                                                                                   |
 | 空值清洗               | 非必填字段的 `null`/`"null"` 删除                                                                                                                                                                                                                                                                                          |
 
 ## 5. 预检规则（`validateRequirementPreflight`）
 
-返回 `{ field, reason }[]`；`before_tool_call` 据此阻断。除上述必填与格式外：
+返回 `{ field, reason }[]`；`rawMessagesJson` 缺失或 null 同样聚合问题，不抛 TypeError；`before_tool_call` 据此阻断。除上述必填与格式外：
 
 - 未知字段：`不是 validate_requirement 的已声明参数`。
 - 证据门禁（来自 `rawMessagesJson.original` 与 `clarifications` 拼合的文本证据）：
@@ -98,4 +98,4 @@
 - `create_with_distributions`：required = [`requirement_id`, `description`, `wechat_notification_message`]；`supplierIds`/`supplier_name` 可选，业务规则不变（两侧恒传数组、空侧 `[]`、至少一侧非空）。
 - `manual_source_creators` / `manual_source_creators_status`：`num` 的位置按当前环境 live schema 决定。测试基线 `https://test-mcp.eshypdata.com/mcp` 当前为 `manual_source_creators({requirement_id[, demand]})`、`manual_source_creators_status({requirement_id, batch_id, num})`；生产环境若漂移，只允许按 live schema 做确定性兼容，不得通过前台可见的连续试错探测。Hook 通过 `MANUAL_SOURCE_TARGET_NUM` 提示状态查询所需的目标数量；只有当前环境 live schema required `num` 时才并入远端调用。
 - `score_manual_source_csv`：`{requirement_id, csv_file_path}` → 返回 `job_id`；`score_manual_source_csv_status({job_id})` 轮询至终态 → final workbook URL。`csv_file_path` 只接受当前 `file_bridge` 返回值（当前实现为未签名 OSS URL），绝不传本机工作区路径或自行构造的 URL。
-- 回收链：`sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})` → 返回 `data.inquiries[].inquiry_id` → `ingest_mcn_submissions({inquiry_ids})` → `get_ingest_job` 轮询至 `succeeded`/`partially_succeeded`；终态只回一份预览 Excel（`excel_file_url` + `excel_columns`），无 links CSV，之后 read → 派生 links CSV → 原生补全 → `file_bridge(manual_source)` → 打分。
+- 回收链：`sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})` → 返回 `data.inquiries[].inquiry_id` → `ingest_mcn_submissions({inquiry_ids})` → `get_ingest_job` 轮询至 `succeeded`/`partially_succeeded`；终态只回一份预览 Excel（`excel_file_url` + `excel_columns`），无 links CSV，之后 ypscan_save_creator_links 读取预览并派生 links CSV → 原生补全 → `file_bridge(manual_source)` → 打分。

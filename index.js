@@ -89,17 +89,28 @@ export default {
       (context) => ({
         name: "ypscan_save_creator_links",
         description:
-          "将机构回填 Excel 中 read 得到的达人标识（source_record_id / creator_id / url）受控保存为本轮 links CSV，登记为当前 requirement 的合法 links 来源，供 file_bridge 合并使用。成功后必须向用户原样展示 delivery.local_file_link Markdown 超链接。",
+          "直接读取本轮已受控保存的机构回填 xlsx，返回原始表头和记录并派生合法 links CSV；传 preview_file_path + platform，不要用普通 read 读取 xlsx。兼容已有 rows 输入，二者互斥。成功后展示 delivery.local_file_link；preview 是未核验原始数据，不是合格名单。",
         parameters: {
           type: "object",
           additionalProperties: false,
-          required: ["requirement_id", "rows"],
+          required: ["requirement_id"],
+          oneOf: [
+            { required: ["rows"], not: { required: ["preview_file_path"] } },
+            { required: ["preview_file_path", "platform"], not: { required: ["rows"] } },
+          ],
           properties: {
             requirement_id: {
               type: "string",
               minLength: 1,
               description: "当前 requirement_id",
             },
+            preview_file_path: {
+              type: "string",
+              minLength: 1,
+              description:
+                "当前 requirement 的 ypscan_save_artifact(mcn_creator_preview) 返回的本地绝对路径",
+            },
+            platform: { type: "string", enum: ["xiaohongshu", "douyin"] },
             rows: {
               type: "array",
               minItems: 1,
@@ -118,6 +129,7 @@ export default {
         async execute(_id, params) {
           const result = await saveCreatorLinks(params, {
             workspaceDir: context?.workspaceDir,
+            allowedPreviews: hookRuntime.previewFilesFor,
           });
           const filePath = result?.details?.file_path;
           if (filePath) {

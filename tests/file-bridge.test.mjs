@@ -1,18 +1,25 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { fileBridge, loadFileBridgeConfig } from "../src/tools/file-bridge.js";
+
+test("loadFileBridgeConfig does not implicitly consume host environment credentials", () => {
+  const moduleUrl = new URL("../src/tools/file-bridge.js", import.meta.url).href;
+  const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
+    const { loadFileBridgeConfig } = await import(${JSON.stringify(moduleUrl)});
+    const result = await loadFileBridgeConfig({ bundled: null });
+    console.log(JSON.stringify({ ok: result.ok }));
+  `], {
+    encoding: "utf8",
+    env: { ...process.env, AccessKeyId: "test-host-ak", AccessKeySecret: "test-host-sk" },
+  });
+  assert.deepEqual(JSON.parse(output), { ok: false });
+});
 import { mergeCreatorCsvFiles } from "../src/tools/merge-creator-csv.js";
 
 function payload(result) {
@@ -93,7 +100,7 @@ test("fileBridge merges completion batches and returns a local result without up
   );
 });
 
-test("loadFileBridgeConfig prefers pluginConfig over process env", async () => {
+test("loadFileBridgeConfig prefers pluginConfig over explicitly injected env", async () => {
   const result = await loadFileBridgeConfig({
     bundled: null,
     pluginConfig: {
@@ -126,7 +133,7 @@ test("loadFileBridgeConfig prefers pluginConfig over process env", async () => {
   });
 });
 
-test("loadFileBridgeConfig falls back to process env when plugin config is absent", async () => {
+test("loadFileBridgeConfig accepts explicitly injected env when plugin config is absent", async () => {
   const result = await loadFileBridgeConfig({
     bundled: null,
     env: {
@@ -247,6 +254,7 @@ test("fileBridge uploads the merged CSV and returns an unsigned public URL", asy
 
   const result = await fileBridge(fixture.params, {
     workspaceDir: fixture.workspaceDir,
+    bundled: null,
     pluginConfig: {
       fileBridgeOss: {
         accessKeyId: "ak",
@@ -293,6 +301,7 @@ test("fileBridge preserves the local result when the uploaded object is not publ
   const fixture = createMergeFixture(t, { requirementId: "req-private-object" });
   const result = await fileBridge(fixture.params, {
     workspaceDir: fixture.workspaceDir,
+    bundled: null,
     pluginConfig: {
       fileBridgeOss: {
         accessKeyId: "ak",
@@ -411,7 +420,7 @@ test("loadFileBridgeConfig fills built-in non-sensitive defaults from keys alone
   });
 });
 
-test("loadFileBridgeConfig prefers bundled credentials over process env", async () => {
+test("loadFileBridgeConfig prefers bundled credentials over explicitly injected env", async () => {
   const result = await loadFileBridgeConfig({
     bundled: {
       accessKeyId: "bundle-ak",
@@ -468,4 +477,31 @@ test("loadFileBridgeConfig ignores malformed or missing bundled defaults files",
     "fileBridgeOss.accessKeyId / 打包内置凭据 / AccessKeyId 缺失",
     "fileBridgeOss.accessKeySecret / 打包内置凭据 / AccessKeySecret 缺失",
   ]);
+});
+
+test("ambiguous whitespace CSV paths never upload an unregistered sibling", async (t) => {
+  const { workspaceDir, params } = createMergeFixture(t);
+  const original = params.completion_csv_paths[0];
+  writeFileSync(`${original} `, "creator_id,nickname\ncreator-1,unauthorized\n");
+  let uploads = 0;
+  const result = await fileBridge(
+    { ...params, completion_csv_paths: [`${original} `] },
+    {
+      workspaceDir,
+      env: {},
+      bundled: null,
+      pluginConfig: { fileBridgeOss: { accessKeyId: "mock-ak", accessKeySecret: "mock-sk" } },
+      fetchImpl: async () => new Response("ok"),
+      allowedLinksCsvPaths: () => [params.links_csv_path],
+      allowedCompletionCsvPaths: () => [original],
+      createClient: () => ({
+        put: async () => {
+          uploads++;
+          return {};
+        },
+      }),
+    },
+  );
+  assert.equal(payload(result).success, false);
+  assert.equal(uploads, 0);
 });

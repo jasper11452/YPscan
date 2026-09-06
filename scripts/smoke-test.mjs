@@ -28,6 +28,16 @@ assert.equal(
   "manifest and package versions must stay in sync",
 );
 assert.equal(packageJson.files.includes("skills"), true, "published package must include skills");
+assert.deepEqual(
+  manifest.skills,
+  ["./skills"],
+  "plugin manifest must declare skills so the host discovers media-assistant",
+);
+assert.match(
+  readFileSync(new URL("../skills/media-assistant/SKILL.md", import.meta.url), "utf8"),
+  /^name: media-assistant$/m,
+  "declared skills directory must contain the business skill",
+);
 assert.equal(
   packageJson.files.includes("src/tools/save-creator-links.js"),
   true,
@@ -99,6 +109,7 @@ for (const removed of [
   "create_submission_batch",
   "get_creator_detail",
   "get_creator_detail_export",
+  "get_workflow_state",
 ]) {
   assert.equal(
     manifest.mcpServers.ypscan.toolFilter.include.includes(removed),
@@ -158,7 +169,12 @@ try {
     (tool) => tool.name === "ypscan_save_creator_links",
   );
   assert.ok(creatorLinksSaver);
-  assert.deepEqual(creatorLinksSaver.parameters.required, ["requirement_id", "rows"]);
+  assert.deepEqual(creatorLinksSaver.parameters.required, ["requirement_id"]);
+  assert.deepEqual(
+    creatorLinksSaver.parameters.oneOf.map((item) => item.required),
+    [["rows"], ["preview_file_path", "platform"]],
+  );
+  assert.equal(packageJson.files.includes("src/tools/read-creator-preview.js"), true);
   assert.equal(toolNames.includes("ypscan_merge_creator_csv"), false);
   const fileBridgeTool = registered.tools.find((tool) => tool.name === "file_bridge");
   assert.ok(fileBridgeTool);

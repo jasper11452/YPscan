@@ -134,7 +134,7 @@ async function readBundledDefaults(readFileImpl) {
 
 /**
  * 配置读取顺序：插件配置 `fileBridgeOss` → 打包内置凭据（prepack 注入，见
- * scripts/prepare-oss-bundle.mjs）→ 宿主进程环境变量；`region`/`bucket`/
+ * scripts/prepare-oss-bundle.mjs）→ 调用方显式注入的 env 配置；不读取宿主进程环境变量。`region`/`bucket`/
  * `objectPrefix` 最后回落到内置非敏感默认值，只有 AK/SK 缺失才报配置缺失。
  * `bundled` 传 null 时禁用打包凭据；省略时按默认路径读取内置文件（不存在则忽略）。
  * @param {{
@@ -146,7 +146,7 @@ async function readBundledDefaults(readFileImpl) {
  */
 export async function loadFileBridgeConfig({
   pluginConfig = {},
-  env = process.env,
+  env = {},
   bundled,
   readBundledImpl = readFile,
 } = {}) {
@@ -288,12 +288,12 @@ function createOssClient(config) {
 }
 
 function isCsvFilePath(value) {
-  return nonemptyString(value) && /\.csv$/iu.test(value.trim());
+  return nonemptyString(value) && value === value.trim() && /\.csv$/iu.test(value);
 }
 
 /** 把宿主返回的本地路径规范为可比较的绝对路径；供 Hook 记录与 file_bridge 校验共用。 */
 export function normalizeLocalFilePath(value, workspaceDir) {
-  if (!nonemptyString(value)) return "";
+  if (!nonemptyString(value) || value !== value.trim()) return "";
   const trimmed = value.trim();
   let absolute = trimmed;
   if (!isAbsolute(trimmed) && nonemptyString(workspaceDir)) {
@@ -401,7 +401,7 @@ export async function fileBridge(
   {
     workspaceDir,
     pluginConfig = {},
-    env = process.env,
+    env = {},
     bundled,
     readBundledImpl,
     readFileImpl = readFile,

@@ -12,6 +12,8 @@ Call once after all platform-native creator-completion batches finish. This tool
 - `links_csv_path`: absolute local path of the current links CSV. In the manual-sourcing chain this is the path returned by `ypscan_save_artifact` for `manual_creator_links`; in the institutional inquiry-retrieval chain it is the path returned by `ypscan_save_creator_links` (derived from the read preview Excel).
 - `completion_csv_paths`: non-empty list containing every successful completion batch CSV from the current requirement and platform.
 
+Input CSV paths must be absolute and have no leading or trailing whitespace; ambiguous whitespace paths are rejected before reading or uploading.
+
 Do not pre-merge files, pass a `merged_csv_path`, mix requirements/platforms, or omit successful batches.
 
 ## Result

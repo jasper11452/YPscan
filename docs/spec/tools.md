@@ -2,12 +2,12 @@
 
 `index.js` 注册 4 个本地工具（`contracts.tools` 同列）。所有工具结果经 `src/tools/tool-result.js` 包装：`content` 为 JSON 文本（成功/失败结构见各工具），失败时附 `isError: true`，需要宿主展示的详情放 `details`。
 
-| 工具                       | 职责                                                                  |
-| -------------------------- | --------------------------------------------------------------------- |
-| `ypscan_parse_requirement` | 解析当前单个平台的完整最新需求（Dify 代理）                           |
-| `ypscan_save_artifact`     | 按 artifact kind 受控保存 Provider 返回的 Excel 或 links CSV          |
-| `ypscan_save_creator_links` | 把 read 出的达人标识受控写成本轮 links CSV，登记为合法 links 来源     |
-| `file_bridge`              | 合并 links CSV 与多批达人补全 CSV；按 flow 决定本地交付或校验上传 OSS |
+| 工具                        | 职责                                                                  |
+| --------------------------- | --------------------------------------------------------------------- |
+| `ypscan_parse_requirement`  | 解析当前单个平台的完整最新需求（Dify 代理）                           |
+| `ypscan_save_artifact`      | 按 artifact kind 受控保存 Provider 返回的 Excel 或 links CSV          |
+| `ypscan_save_creator_links` | 直接解析受控预览 xlsx（兼容 rows 输入），写出本轮合法 links CSV |
+| `file_bridge`               | 合并 links CSV 与多批达人补全 CSV；按 flow 决定本地交付或校验上传 OSS |
 
 ## 1. ypscan_parse_requirement
 
@@ -69,7 +69,7 @@
 
 ### 输出（成功）
 
-- `data`：`file_name`、`file_path`、`byte_count`、`sha256`、`idempotent`、`download_attempts`。
+- `data`：`artifact_kind`、`artifact_id`（原样回显调用关联元数据）、`file_name`、`file_path`、`byte_count`、`sha256`、`idempotent`、`download_attempts`。
 - `delivery`：`local_path`、`local_file_link`（可点击 Markdown 链接，Agent 必须原样展示，不得只输出裸路径）、`display_required`、`display_before_next_action`、`user_visible_message`；`mcn_ranking` 额外附 `next_tool: "AskUserQuestion"`、`next_args`（收件机构弹窗）、`next_action`。
 
 ### 错误码
@@ -92,6 +92,8 @@
 
 ### 合并语义
 
+- links/补全输入拒绝首尾空白路径，不对歧义路径 trim 后授权再读原路径。CSV 输入仍要求绝对路径；来源登记可把无首尾空白的宿主相对路径按 workspaceDir 规范化。
+
 - links CSV 必含 `source_record_id`、`creator_id`、`url` 三列（表头归一化匹配，`-`/空格/大小写不敏感）。
 - 每批补全 CSV 必须含可识别的 creator ID 列（候选：`creator_id`、`kw_uid`、`xt_id`、`author_id`、`authorid`、`id`）；按 ID 去重取首条。
 - 输出保持 links 原顺序；headers = `source_record_id, creator_id, url` + 各补全 CSV 的非保留详情列（排除 ID 列与 `source_record_id`/`creator_id`/`url`）。
@@ -104,8 +106,8 @@
 ### 上传
 
 - 仅 `flow=manual_source` 或 `flow=mcn_rank` 且数据行在 1–500 时上传。
-- 使用 `ali-oss` 直连 OSS；配置读取顺序固定为：插件配置 `fileBridgeOss` → 打包内置凭据（`src/tools/file-bridge-oss-defaults.json`，由 prepack 从本机 `.env`/环境变量注入安装包，不进 git）→ 宿主进程环境变量；`region`/`bucket`/`objectPrefix` 未配置时回落到内置非敏感默认值（`oss-cn-shanghai`/`ypmisc`/`action`），仅 AK/SK 缺失才报 `YPSCAN_FILE_BRIDGE_CONFIG_MISSING`。
-- 精确配置键：插件配置与打包内置凭据使用 `accessKeyId`、`accessKeySecret`、`region`、`bucket`、`objectPrefix`（插件配置嵌套在 `fileBridgeOss` 下）；环境变量回退使用 `AccessKeyId`、`AccessKeySecret`、`Region`、`Bucket`、`Object`。对象前缀规范化后参与对象键拼接。
+- 使用 `ali-oss` 直连 OSS；配置读取顺序固定为：插件配置 `fileBridgeOss` → 打包内置凭据（`src/tools/file-bridge-oss-defaults.json`，由 prepack 从本机 `.env`/环境变量注入安装包，不进 git）。运行时不隐式读取宿主进程环境变量，内部测试/集成可显式注入；`region`/`bucket`/`objectPrefix` 未配置时回落到内置非敏感默认值（`oss-cn-shanghai`/`ypmisc`/`action`），仅 AK/SK 缺失才报 `YPSCAN_FILE_BRIDGE_CONFIG_MISSING`。
+- 精确配置键：插件配置与打包内置凭据使用 `accessKeyId`、`accessKeySecret`、`region`、`bucket`、`objectPrefix`（插件配置嵌套在 `fileBridgeOss` 下）；显式注入的环境变量使用 `AccessKeyId`、`AccessKeySecret`、`Region`、`Bucket`、`Object`。对象前缀规范化后参与对象键拼接。
 - 上传前强制来源与格式校验：links 与补全路径必须都是 `.csv`（否则 `YPSCAN_FILE_BRIDGE_INVALID_INPUT`）；merged CSV 内容必须以 `source_record_id,creator_id,url` 开头且不含控制字符（否则 `YPSCAN_FILE_BRIDGE_INVALID_CSV`）；links CSV 必须是当前 requirement 受控保存的产物（`ypscan_save_artifact` 保存的 `manual_creator_links`，或 `ypscan_save_creator_links` 生成的 links CSV），补全 CSV 必须来自当前 requirement 的 YP Action 原生补全工具返回的 `csv_file`（否则 `YPSCAN_FILE_BRIDGE_SOURCE_NOT_ALLOWED`，保留本地交付，不上传）。
 - 对象键固定为 `<Object 前缀>/<flow>/<requirement_id>/<sha256>.csv`；当前用户要求下默认形态为 `action/<flow>/<requirement_id>/<sha256>.csv`，不依赖时间戳，同内容幂等落到同一路径。
 - 上传时设置 `Content-Type: text/csv; charset=utf-8` 与 `x-oss-object-acl: public-read`。
@@ -125,25 +127,32 @@
 
 ### 参数（`additionalProperties: false`）
 
-| 字段             | 类型             | 必填 | 约束                                                                                                    |
-| ---------------- | ---------------- | ---- | ------------------------------------------------------------------------------------------------------- |
-| `requirement_id` | string           | 是   | `minLength: 1`；当前 requirement                                                                        |
-| `rows`           | array[object]    | 是   | `minItems: 1`；每项 `creator_id`、`url` 必填非空，`source_record_id` 可选                               |
+| 字段             | 类型          | 必填 | 约束                                                                      |
+| ---------------- | ------------- | ---- | ------------------------------------------------------------------------- |
+| `requirement_id` | string        | 是   | `minLength: 1`；当前 requirement                                          |
+| `rows` | array[object] | 二选一 | 兼容旧输入；每项 creator_id、url 必填，source_record_id 可选 |
+| `preview_file_path` | string | 二选一 | 当前 requirement 已保存的预览 xlsx 绝对路径，与 rows 互斥 |
+| `platform` | string | 文件输入必填 | xiaohongshu / douyin |
 
 ### 行为
 
 - 按 `creator_id` 去重后写出表头 `source_record_id,creator_id,url` 的本机 CSV，文件名 `mcn-links-<requirement_id>-<sha256 前 8 位>.csv`，同名内容一致幂等复用，不一致报 `YPSCAN_CREATOR_LINKS_CONFLICT`。
 - 校验：`creator_id`/`url` 非空且不含控制字符；去重后无行报 `YPSCAN_CREATOR_LINKS_EMPTY`。
 - 保存后通过 `recordLinksCsv` 登记进 `linksCsvPathsByRequirement`，使 `file_bridge` 上传门禁接受该 CSV 为合法 links 来源。
+- 文件输入先校验登记路径、SHA-256 及项目内普通文件，再用 `read-excel-file` 解析；数字和 ID 保留字符串，原字段按列返回。只接受一张表，前 50 行须有唯一平台 ID/主页表头。缺少 source_record_id 留空，旧 rows 输入保留原位置回落行为。
+- 限制：文件 20 MiB、ZIP 声明解压总量 40 MiB/1000 项、解析结果 10000 行/200 列；不执行公式、宏或外部链接。失败不写 links，原始表不修改。
 
 ### 输出（成功）
 
 - `data`：`file_name`、`file_path`、`row_count`、`sha256`。
+- 文件输入额外返回 `data.preview`：file_path、sha256、sheet、header_row、headers、records（最多前 100 条且累计 cells JSON 不超过 256 KiB，含行号及原始 cells）、total_row_count、records_truncated、duplicate_creator_ids、verification_status=unverified。记录数及去重数不等于合格人数。主页须为对应平台支持的主页格式且路径 ID 与所选 ID 一致，未知格式报错而非猜测。
 - `delivery`：`local_path`、`local_file_link`（Agent 必须原样展示）、`display_required`、`display_before_next_action`、`user_visible_message`。
 
 ### 错误码
 
 `YPSCAN_CREATOR_LINKS_INVALID_INPUT`、`YPSCAN_CREATOR_LINKS_INVALID_ROWS`、`YPSCAN_CREATOR_LINKS_EMPTY`、`YPSCAN_WORKSPACE_UNAVAILABLE`、`YPSCAN_CREATOR_LINKS_WRITE_FAILED`、`YPSCAN_CREATOR_LINKS_CONFLICT`。
+
+文件输入错误前缀为 `YPSCAN_CREATOR_PREVIEW_`，后缀：SOURCE_NOT_ALLOWED、SOURCE_CHANGED、LIMIT、HEADERS、ROWS、EMPTY、READ_FAILED。
 
 ## 5. 弹窗载荷（供工具与 Hook 共用）
 

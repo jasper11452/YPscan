@@ -978,7 +978,10 @@ test("file_bridge returns score args for manual_source and compatibility rank ar
   const text = directiveText(result);
   assert.match(text, /已合并并完成 OSS 上传/u);
   assert.match(text, /live rank_creators schema 已明确支持 csv_file_path/u);
-  assert.match(text, /当前测试 Provider 仍默认保留 rank_creators\(requirement_id,inquiry_ids\) 旧链路/u);
+  assert.match(
+    text,
+    /当前测试 Provider 仍默认保留 rank_creators\(requirement_id,inquiry_ids\) 旧链路/u,
+  );
   assert.deepEqual(namedArgsFromDirective(text, "RANK_CREATORS_ARGS"), {
     requirement_id: "req-upload",
     csv_file_path: "/provider/merged.csv",
@@ -1088,8 +1091,8 @@ test("institutional retrieval syncs, ingests and polls before preview save", () 
   });
   const previewText = directiveText(previewSaved);
   assert.match(previewText, /机构达人预览表已保存/u);
-  assert.match(previewText, /read 读取本地 Excel/u);
-  assert.match(previewText, /ypscan_save_creator_links 派生受控 links CSV/u);
+  assert.match(previewText, /ypscan_save_creator_links 直接读取预览 xlsx/u);
+  assert.match(previewText, /不要用普通 read 读取 xlsx/u);
   assert.match(previewText, /file_bridge（flow=manual_source）/u);
   assert.deepEqual(
     namedArgsFromDirective(previewText, "ASK_USER_QUESTION_ARGS"),
@@ -1177,12 +1180,68 @@ test("failed async jobs stop instead of polling again", () => {
     const result = persist({
       toolName,
       params: { job_id: `job-${toolName}` },
-      message: toolMessage({ success: true, data: { job_id: `job-${toolName}`, status: "failed" } }),
+      message: toolMessage({
+        success: true,
+        data: { job_id: `job-${toolName}`, status: "failed" },
+      }),
     });
     const text = directiveText(result);
     assert.match(text, /任务已失败/u);
-    assert.doesNotMatch(text, /继续使用同一 job_id|GET_INGEST_JOB_ARGS|SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS/u);
+    assert.doesNotMatch(
+      text,
+      /继续使用同一 job_id|GET_INGEST_JOB_ARGS|SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS/u,
+    );
   }
+});
+
+test("summary-only partial ingest cannot invent pending institutions or qualified counts", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const text = directiveText(
+    persist({
+      toolName: "get_ingest_job",
+      params: { job_id: "job" },
+      message: toolMessage({
+        success: true,
+        data: {
+          requirement_id: "req",
+          status: "partially_succeeded",
+          excel_file_url: "https://eshypdata.com/preview.xlsx",
+          summary: { requested_count: 3, success_count: 1, failed_count: 2 },
+          excel_row_count: 3,
+        },
+      }),
+    }),
+  );
+  assert.match(text, /缺少逐机构明细/u);
+  assert.match(text, /不能.*合格/u);
+  assert.match(text, /不能.*待回填/u);
+  assert.doesNotMatch(text, /pending 2 家/u);
+});
+
+test("partial ingest keeps real failures apart from unsubmitted institutions", () => {
+  const persist = registeredHooks().get("tool_result_persist");
+  const text = directiveText(
+    persist({
+      toolName: "get_ingest_job",
+      params: { job_id: "job" },
+      message: toolMessage({
+        success: true,
+        data: {
+          requirement_id: "req",
+          status: "partially_succeeded",
+          excel_file_url: "https://eshypdata.com/preview.xlsx",
+          results: [
+            { success: true, inquiry_id: "1" },
+            { success: false, inquiry_id: "2", error: { code: "DISTRIBUTION_NOT_SUBMITTED" } },
+            { success: false, inquiry_id: "3", error: { code: "IMPORT_FAILED" } },
+          ],
+        },
+      }),
+    }),
+  );
+  assert.match(text, /已回填 1 家，pending 1 家/u);
+  assert.match(text, /处理失败 1 家/u);
+  assert.match(text, /IMPORT_FAILED/u);
 });
 
 test("ingest job terminal recovers requirement id via inquiry ids when the response omits it", () => {
@@ -1303,7 +1362,7 @@ test("successful WeCom distribution waits for inquiry retrieval without switchin
   assert.match(text, /第一个工具是 sync_mcn_inquiry_status/u);
   assert.match(
     text,
-    /ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → read → 派生 links CSV/u,
+    /ingest_mcn_submissions → get_ingest_job → 保存机构达人预览表 → ypscan_save_creator_links 读取预览并派生 links CSV/u,
   );
   assert.match(text, /不切换到手动拓展分支/u);
   assert.doesNotMatch(text, /第一个工具必须是 get_workflow_state/u);
@@ -2139,7 +2198,7 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   assert.match(startup.prependContext, /同一 requirement ID/u);
   assert.match(
     startup.prependContext,
-    /sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→read 读取本地 Excel→ypscan_save_creator_links 派生受控 links CSV/u,
+    /sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV/u,
   );
   assert.match(startup.prependContext, /score_manual_source_csv→score_manual_source_csv_status/u);
   assert.match(startup.prependContext, /num 的位置必须以当前环境 live schema 为准/u);

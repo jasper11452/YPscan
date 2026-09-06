@@ -403,6 +403,8 @@ export async function saveArtifact(
       );
     }
     const details = {
+      artifact_kind: artifactKind,
+      artifact_id: artifactId,
       file_name: fileName,
       file_path: targetPath,
       byte_count: buffer.length,

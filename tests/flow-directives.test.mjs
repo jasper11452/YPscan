@@ -62,6 +62,40 @@ test("flow hooks register the validate_requirement preflight gate", () => {
   ]);
 });
 
+test("saved preview emits exact workbook input only for the confirmed platform", () => {
+  const { hooks } = registeredPlugin();
+  const context = { sessionKey: "preview-workbook-args" };
+  const persist = hooks.get("tool_result_persist");
+  persist(
+    {
+      toolName: "validate_requirement",
+      params: { platform: "xiaohongshu" },
+      message: toolMessage({ success: true, data: { id: "req-preview" } }),
+    },
+    context,
+  );
+  const saved = {
+    toolName: "ypscan_save_artifact",
+    message: toolMessage({
+      success: true,
+      data: {
+        artifact_kind: "mcn_creator_preview",
+        artifact_id: "req-preview",
+        file_path: "/workspace/preview.xlsx",
+      },
+    }),
+  };
+  const text = directiveText(persist(saved, context));
+  assert.deepEqual(namedArgsFromDirective(text, "SAVE_CREATOR_LINKS_ARGS"), {
+    requirement_id: "req-preview",
+    platform: "xiaohongshu",
+    preview_file_path: "/workspace/preview.xlsx",
+  });
+  const unknown = directiveText(registeredPlugin().hooks.get("tool_result_persist")(saved));
+  assert.doesNotMatch(unknown, /SAVE_CREATOR_LINKS_ARGS=/u);
+  assert.match(unknown, /不猜测 platform/u);
+});
+
 test("startup requires a visible recipient and WeCom preview before sending", () => {
   const { hooks } = registeredPlugin();
   const prompt = hooks.get("before_prompt_build")({}, { runId: "recipient-contract" });
@@ -130,7 +164,7 @@ test("empty recipients require explicit selection instead of inferring top-ranke
   assert.doesNotMatch(directive, /GET_WORKFLOW_STATE_ARGS=/u);
 });
 
-test("non-active project failure only triggers a workflow-state diagnostic", () => {
+test("non-active project failure stops without calling the deprecated workflow-state tool", () => {
   const { hooks } = registeredPlugin();
   const result = hooks.get("tool_result_persist")({
     toolName: "create_with_distributions",
@@ -145,10 +179,8 @@ test("non-active project failure only triggers a workflow-state diagnostic", () 
 
   const directive = directiveText(result);
   assert.match(directive, /项目非进行中/u);
-  assert.match(directive, /调用一次 get_workflow_state 诊断，不自动重发/u);
-  assert.deepEqual(namedArgsFromDirective(directive, "GET_WORKFLOW_STATE_ARGS"), {
-    requirement_id: "req-status",
-  });
+  assert.match(directive, /原样展示 Provider 错误并停止本轮发送处理/u);
+  assert.doesNotMatch(directive, /get_workflow_state|GET_WORKFLOW_STATE_ARGS=/u);
 });
 
 test("get_workflow_state is no longer a fixed-flow directive", () => {
@@ -242,6 +274,35 @@ test("parse success pins the rawMessagesJson key contract for validate_requireme
   assert.match(directive, /严格按 validate_requirement 工具卡 rawMessagesJson 契约执行/u);
   assert.match(directive, /禁止写成 original_demand 或 demand/u);
   assert.match(directive, /key 写错会被本地预检当成缺失原文阻断/u);
+});
+
+test("parse success requires deadline clock review even when persist omits call arguments", () => {
+  const { hooks } = registeredPlugin();
+  const original = toolMessage({
+    success: true,
+    data: {
+      outputs: {
+        brandName: ["小米"],
+        followercount: "[100000,500000]",
+        rebate: [0.2, 1],
+        kolOfficialPriceL2: [3500, 6000],
+        contentTag: ["数码测评", "办公效率"],
+      },
+    },
+  });
+  const result = hooks.get("tool_result_persist")({
+    toolName: "ypscan_parse_requirement",
+    message: original,
+  });
+  const directive = directiveText(result);
+
+  assert.equal(result.message.content[0], original.content[0]);
+  assert.match(directive, /截止时间由 Agent 对照当前完整有效需求和最新澄清复核/u);
+  assert.match(directive, /只有日期没有具体时刻.*必须澄清/u);
+  assert.match(directive, /不得默认 18:00、23:59:59 或其他时刻/u);
+  assert.match(directive, /不得宣称“无需补充澄清”/u);
+  assert.match(directive, /已有明确小时和分钟.*秒省略时可补 00.*不重复询问/u);
+  assert.match(directive, /只解析.*仍须指出缺失时刻.*不得创建需求/u);
 });
 
 test("validate_requirement success reuses the business mode recorded by the preflight", () => {
@@ -424,13 +485,19 @@ test("business mode instruction is injected on every prompt while the full start
 
 test("YP Action completion CSV paths are recorded per requirement for upload provenance", () => {
   const { hooks, transientState } = registeredPlugin();
-  const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "legacy-provenance-test" };
+  const persist = (event) => hooks.get("tool_result_persist")(event, context);
   persist({
     toolName: "validate_requirement",
     message: toolMessage({ success: true, data: { requirement_id: "req-track" } }),
   });
+  hooks.get("before_tool_call")(
+    { toolName: "test__get_douyin_author_business_card", toolCallId: "batch", params: {} },
+    context,
+  );
   persist({
     toolName: "test__get_douyin_author_business_card",
+    toolCallId: "batch",
     message: toolMessage({
       success: true,
       csv_file: "/tmp/batch-1.csv",
@@ -459,9 +526,14 @@ test("YP Action completion CSV provenance remains isolated between sessions", ()
     );
   recordRequirement("session-a", "req-a");
   recordRequirement("session-b", "req-b");
+  hooks.get("before_tool_call")(
+    { toolName: "get_xhs_author_business_card", toolCallId: "batch-a", params: {} },
+    { sessionKey: "session-a" },
+  );
   persist(
     {
       toolName: "get_xhs_author_business_card",
+      toolCallId: "batch-a",
       message: toolMessage({ success: true, csv_file: "/tmp/session-a.csv" }),
     },
     { sessionKey: "session-a" },
@@ -505,12 +577,7 @@ test("saveArtifact hostToolResult shape registers the links CSV path end-to-end"
 
   // 模拟 index.js 的 ypscan_save_artifact execute 调用点：把 saveArtifact 返回的
   // hostToolResult 直接交给 recordSavedCsvArtifact。
-  transientState.recordSavedCsvArtifact(
-    "manual_creator_links",
-    "req-e2e",
-    result,
-    workspaceDir,
-  );
+  transientState.recordSavedCsvArtifact("manual_creator_links", "req-e2e", result, workspaceDir);
 
   const filePath = result.details.file_path;
   assert.match(filePath, /links\.csv$/u);
@@ -519,13 +586,19 @@ test("saveArtifact hostToolResult shape registers the links CSV path end-to-end"
 
 test("gateway reset clears upload provenance state", () => {
   const { hooks, transientState } = registeredPlugin();
-  const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "legacy-provenance-test" };
+  const persist = (event) => hooks.get("tool_result_persist")(event, context);
   persist({
     toolName: "validate_requirement",
     message: toolMessage({ success: true, data: { requirement_id: "req-reset" } }),
   });
+  hooks.get("before_tool_call")(
+    { toolName: "get_xhs_author_business_card", toolCallId: "batch", params: {} },
+    context,
+  );
   persist({
     toolName: "get_xhs_author_business_card",
+    toolCallId: "batch",
     message: toolMessage({ success: true, csv_file: "/tmp/batch.csv" }),
   });
   transientState.recordSavedCsvArtifact("manual_creator_links", "req-reset", {
@@ -537,4 +610,244 @@ test("gateway reset clears upload provenance state", () => {
   transientState.resetTransientState();
   assert.deepEqual(transientState.completionCsvPathsFor("req-reset"), []);
   assert.deepEqual(transientState.linksCsvPathsFor("req-reset"), []);
+});
+
+test("host call IDs restore quantity, score and ingest params without persist params", () => {
+  const { hooks } = registeredPlugin();
+  const context = { sessionKey: "host-contract" };
+  const call = (toolName, toolCallId, params, data) => {
+    hooks.get("before_tool_call")({ toolName, toolCallId, params }, context);
+    return directiveText(
+      hooks.get("tool_result_persist")(
+        { toolName, toolCallId, message: toolMessage({ success: true, data }) },
+        context,
+      ),
+    );
+  };
+  call("validate_requirement", "validate", canonicalValidateParams("手动拓展", 42), {
+    requirement_id: "req-A",
+  });
+  assert.match(
+    call("manual_source_creators", "manual", { requirement_id: "req-A" }, { batch_id: 9 }),
+    /MANUAL_SOURCE_TARGET_NUM=42/u,
+  );
+  call("score_manual_source_csv", "score", { requirement_id: "req-A" }, { job_id: "score-job" });
+  assert.equal(
+    namedArgsFromDirective(
+      call(
+        "score_manual_source_csv_status",
+        "status",
+        { job_id: "score-job" },
+        { job_id: "score-job", excel_file_url: "https://eshypdata.com/final.xlsx" },
+      ),
+      "SAVE_ARTIFACT_ARGS",
+    ).artifact_id,
+    "req-A",
+  );
+  call("sync_mcn_inquiry_status", "sync", { requirement_id: "req-A" }, { inquiry_ids: ["inq-A"] });
+  call("ingest_mcn_submissions", "ingest", { inquiry_ids: ["inq-A"] }, { job_id: "ingest-job" });
+  assert.equal(
+    namedArgsFromDirective(
+      call(
+        "get_ingest_job",
+        "get",
+        { job_id: "ingest-job" },
+        { status: "succeeded", excel_file_url: "https://eshypdata.com/preview.xlsx" },
+      ),
+      "SAVE_ARTIFACT_ARGS",
+    ).artifact_id,
+    "req-A",
+  );
+});
+
+test("native completion binds invocation requirement and ignores unrelated or failed ids", () => {
+  const { hooks, transientState } = registeredPlugin();
+  const context = { sessionKey: "completion-contract" };
+  const persist = (toolName, data, extra = {}) =>
+    hooks.get("tool_result_persist")(
+      { toolName, message: toolMessage({ success: true, data }), ...extra },
+      context,
+    );
+  persist("validate_requirement", { requirement_id: "req-A" });
+  persist("unrelated_tool", { id: "unrelated" }, { params: { id: "unrelated" } });
+  hooks.get("before_tool_call")(
+    { toolName: "get_xhs_author_business_card", toolCallId: "completion", params: {} },
+    context,
+  );
+  persist("validate_requirement", { requirement_id: "req-B" });
+  persist(
+    "get_xhs_author_business_card",
+    { csv_file: "/tmp/completion.csv" },
+    { toolCallId: "completion" },
+  );
+  assert.deepEqual(transientState.completionCsvPathsFor("req-A"), ["/tmp/completion.csv"]);
+  assert.deepEqual(transientState.completionCsvPathsFor("unrelated"), []);
+  persist("get_xhs_author_business_card", { csv_file: "/tmp/unmatched.csv" });
+  assert.deepEqual(transientState.completionCsvPathsFor("req-B"), []);
+});
+
+test("save preview metadata routes a params-free persist result", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-preview-meta-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+  const result = await saveArtifact(
+    {
+      artifact_kind: "mcn_creator_preview",
+      artifact_id: "req-preview",
+      file_url: "https://eshypdata.com/preview.xlsx",
+    },
+    { workspaceDir, fetchImpl: async () => new Response("mock workbook") },
+  );
+  const { hooks } = registeredPlugin();
+  const text = directiveText(
+    hooks.get("tool_result_persist")({ toolName: "ypscan_save_artifact", message: result }),
+  );
+  assert.match(text, /ASK_USER_QUESTION_ARGS=/u);
+});
+
+test("missing raw messages blocks normally at before_tool_call", () => {
+  const { hooks } = registeredPlugin();
+  for (const rawMessagesJson of [null, undefined]) {
+    const response = hooks.get("before_tool_call")({
+      toolName: "validate_requirement",
+      params: { ...canonicalValidateParams("询价机构"), rawMessagesJson },
+    });
+    assert.equal(response.block, true);
+    assert.match(response.blockReason, /rawMessagesJson/u);
+  }
+});
+
+test("pending calls are consumed once and cannot cross sessions or reset", () => {
+  const { hooks, transientState } = registeredPlugin();
+  const before = hooks.get("before_tool_call");
+  const persist = hooks.get("tool_result_persist");
+  const a = { sessionKey: "a" },
+    b = { sessionKey: "b" };
+  const start = () =>
+    before(
+      {
+        toolName: "score_manual_source_csv",
+        toolCallId: "same",
+        params: { requirement_id: "req-a" },
+      },
+      a,
+    );
+  const result = (context, job) =>
+    persist(
+      {
+        toolName: "score_manual_source_csv",
+        toolCallId: "same",
+        message: toolMessage({ success: true, data: { job_id: job } }),
+      },
+      context,
+    );
+  const status = (context, job) =>
+    directiveText(
+      persist(
+        {
+          toolName: "score_manual_source_csv_status",
+          message: toolMessage({
+            success: true,
+            data: { job_id: job, excel_file_url: "https://eshypdata.com/final.xlsx" },
+          }),
+        },
+        context,
+      ),
+    );
+  start();
+  result(b, "wrong-session");
+  result(a, "right");
+  result(a, "replay");
+  assert.match(status(b, "right"), /缺少 requirement_id/u);
+  assert.match(status(a, "right"), /SAVE_ARTIFACT_ARGS=/u);
+  assert.match(status(a, "right"), /缺少 requirement_id/u);
+  assert.match(status(a, "replay"), /缺少 requirement_id/u);
+  start();
+  transientState.resetTransientState();
+  result(a, "reset");
+  assert.match(status(a, "reset"), /缺少 requirement_id/u);
+});
+
+test("ingest query errors stop instead of polling the restored job ID", () => {
+  const { hooks } = registeredPlugin();
+  const context = { sessionKey: "ingest-error" };
+  hooks.get("before_tool_call")(
+    { toolName: "get_ingest_job", toolCallId: "query", params: { job_id: "missing-job" } },
+    context,
+  );
+  const text = directiveText(
+    hooks.get("tool_result_persist")(
+      {
+        toolName: "get_ingest_job",
+        toolCallId: "query",
+        message: toolMessage({ success: false, error: { code: "JOB_NOT_FOUND" } }),
+      },
+      context,
+    ),
+  );
+  assert.doesNotMatch(text, /GET_INGEST_JOB_ARGS=/u);
+  assert.match(text, /已暂停/u);
+});
+
+test("in-flight status calls retain their requirement after another terminal result", () => {
+  for (const [submitTool, statusTool] of [
+    ["score_manual_source_csv", "score_manual_source_csv_status"],
+    ["ingest_mcn_submissions", "get_ingest_job"],
+  ]) {
+    const { hooks } = registeredPlugin();
+    const context = { sessionKey: statusTool };
+    const before = hooks.get("before_tool_call");
+    const persist = hooks.get("tool_result_persist");
+    before(
+      { toolName: submitTool, toolCallId: "submit", params: { requirement_id: "req-A" } },
+      context,
+    );
+    persist(
+      {
+        toolName: submitTool,
+        toolCallId: "submit",
+        message: toolMessage({ success: true, data: { job_id: "job-A" } }),
+      },
+      context,
+    );
+    for (const toolCallId of ["first", "second"]) {
+      before({ toolName: statusTool, toolCallId, params: { job_id: "job-A" } }, context);
+    }
+    for (const toolCallId of ["first", "second"]) {
+      const text = directiveText(
+        persist(
+          {
+            toolName: statusTool,
+            toolCallId,
+            message: toolMessage({
+              success: true,
+              data: { job_id: "job-A", excel_file_url: "https://eshypdata.com/final.xlsx" },
+            }),
+          },
+          context,
+        ),
+      );
+      assert.equal(namedArgsFromDirective(text, "SAVE_ARTIFACT_ARGS").artifact_id, "req-A");
+    }
+  }
+});
+
+test("failed business or native results cannot change completion provenance", () => {
+  const { hooks, transientState } = registeredPlugin();
+  const context = { sessionKey: "failure-provenance" };
+  const persist = (toolName, body, toolCallId) =>
+    hooks.get("tool_result_persist")({ toolName, toolCallId, message: toolMessage(body) }, context);
+  persist("validate_requirement", { success: true, data: { id: "req-good" } });
+  persist("validate_requirement", { success: false, data: { id: "req-failed" } });
+  for (const [id, success] of [
+    ["failed", false],
+    ["success", true],
+  ]) {
+    hooks.get("before_tool_call")(
+      { toolName: "get_xhs_author_business_card", toolCallId: id, params: {} },
+      context,
+    );
+    persist("get_xhs_author_business_card", { success, csv_file: `/tmp/${id}.csv` }, id);
+  }
+  assert.deepEqual(transientState.completionCsvPathsFor("req-good"), ["/tmp/success.csv"]);
+  assert.deepEqual(transientState.completionCsvPathsFor("req-failed"), []);
 });

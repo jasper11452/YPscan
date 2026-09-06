@@ -22,10 +22,12 @@ The caller cannot choose a destination or filename. The tool derives a safe name
 
 ## Result
 
+Success echoes `data.artifact_kind` and `data.artifact_id` so the result hook can route even when the host omits call params.
+
 On success, show the returned absolute `delivery.local_file_link` at the point required by the flow.
 
 - `mcn_ranking` may return `delivery.next_tool="AskUserQuestion"` and `delivery.next_args`; call it after showing the local link.
-- `mcn_creator_preview` ends the preview-save step only; the next fixed action is to ask the user whether to complete, then `read` the Excel and call `ypscan_save_creator_links` to derive the links CSV.
+- `mcn_creator_preview` registers its path and SHA-256 for this requirement. Ask whether to complete, then call `ypscan_save_creator_links` with `preview_file_path` and confirmed `platform` to directly parse xlsx and derive links. Generic text `read` does not parse xlsx.
 - `manual_creator_links` continues the manual-sourcing completion branch after the local CSV link is shown. `mcn_creator_links` is a legacy kind no longer produced by the formal flow.
 - `manual_source` is the final scored-and-sorted delivery (scored workbook or compatibility Excel path); do not route it into `rank_creators` or any enrichment flow.
 - `ranked_submission` is a legacy final submission workbook kind; the formal flow no longer produces it.

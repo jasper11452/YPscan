@@ -48,12 +48,12 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 1. **链路固定**：两条业务链路每一步的下一步由 Hook 按真实工具结果动态给出（`*_ARGS` 指令），Agent 不被允许自由发散。
 2. **写入前预检**：`validate_requirement` 在本地完成完整性、格式与证据校验，不通过则阻断，Provider 不收到写入。
 3. **交付受控**：Excel/CSV 只从 `eshypdata.com` 主域 HTTPS 下载、禁止重定向、限量限时、原子发布、同内容幂等，且始终附带可点击的 `local_file_link`。
-4. **CSV 中心链路**：手动拓展 links CSV → 原生达人补全 → `file_bridge` 内部合并并上传 OSS → 打分（`score_manual_source_csv_status` 轮询 job 终态）；询价回收链 links CSV 由 `ypscan_save_creator_links` 从 read 出的预览 Excel 派生，之后同样走原生补全 → `file_bridge(manual_source)` → 打分；超过 500 行时只交付本地 merged CSV，不上传。
+4. **CSV 中心链路**：手动拓展 links CSV → 原生达人补全 → `file_bridge` 内部合并并上传 OSS → 打分（`score_manual_source_csv_status` 轮询 job 终态）；询价回收链 links CSV 由 `ypscan_save_creator_links` 直接读取已受控保存的预览 Excel 派生，之后同样走原生补全 → `file_bridge(manual_source)` → 打分；超过 500 行时只交付本地 merged CSV，不上传。
 5. **双功能独立建需**：每次真正开始询价机构或手动拓展都重新解析、复核并创建独立 requirement，禁止跨功能复用。
 
 ### 成功标准（可验证）
 
-- `npm run smoke` 断言：本地工具 `tools=3`、Hook `hooks=5`、清单版本与包版本一致、白名单含新链路工具且不含已弃用工具（见 `scripts/smoke-test.mjs`）。
+- `npm run smoke` 断言：本地工具 `tools=4`、Hook `hooks=5`、清单版本与包版本一致、白名单含新链路工具且不含已弃用工具（见 `scripts/smoke-test.mjs`）。
 - `npm run lint && npm run typecheck && npm test` 全绿（CI 同样执行）。
 - 违反预检的 `validate_requirement` 调用被 `before_tool_call` 阻断（`YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED`），测试覆盖。
 - `docs/review-checklist.md` 中与本形态相关的条目逐条成立。
@@ -101,7 +101,7 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 ## 6. 验证与验收
 
 - **CI**（`.github/workflows/ci.yml`）：`npm ci` → `lint` → `typecheck` → `test` → `smoke`。
-- **Smoke**：版本同步、MCP 端点与 transport、白名单 include/exclude、工具参数枚举、`tools=3, hooks=5`、弃用工具未注册。
+- **Smoke**：版本同步、MCP 端点与 transport、白名单 include/exclude、工具参数枚举、`tools=4, hooks=5`、弃用工具未注册。
 - **行为验收**：逐条核对 `docs/review-checklist.md`；解析器评测见 `benchmarks/requirement-parser/RESULTS.md`。
 - **发布**：`npm pack --dry-run --cache /tmp/ypscan-npm-cache` 确认发布包只含 `files` 白名单内容。
 
@@ -109,7 +109,7 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 
 | 风险/未决项                                        | 现状与影响                                                                                                                        | 决策归属                                                   |
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| 询价回收 links CSV 需本地派生      | Provider 只回预览 Excel，无 links CSV；`ypscan_save_creator_links` 从 read 出的达人标识受控派生并登记为合法来源 | 插件内部闭环；`file_bridge` 上传门禁已放行该来源             |
+| 询价回收 links CSV 需本地派生      | Provider 只回预览 Excel，无 links CSV；`ypscan_save_creator_links` 从已保存预览的结构化达人标识受控派生并登记为合法来源 | 插件内部闭环；`file_bridge` 上传门禁已放行该来源             |
 | OSS 对象需匿名可读                                 | OSS 上传成功后，若 Bucket 或账号策略阻断未签名访问，下游会拿不到 `csv_file_path`                                                  | `file_bridge` 先做匿名 `HEAD/GET` 校验；失败即停止下游调用 |
 | 契约三处手工对齐                                   | 工具卡（`skills/media-assistant/references/tools/`）、Hook 指令、Provider MCP schema 靠人工保持一致，历史上反复出漂移 bug         | 维护者 + Provider；长期看 schema 校验/对齐自动化           |
 | 瞬态状态生命周期                                   | `businessModeByScope` 等映射在 gateway 启停时清空；宿主若在长会话中不重启，映射随会话持续存在                                     | 宿主行为确认                                               |

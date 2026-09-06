@@ -26,7 +26,7 @@ validate_requirement → search_creators → rank_mcns → 输出五列表格
 → 回收：sync_mcn_inquiry_status(requirement_id, project_id, supplierIds) → 用返回的 inquiry_ids 直接 ingest_mcn_submissions
 → get_ingest_job（轮询至 succeeded/partially_succeeded）
 → ypscan_save_artifact(mcn_creator_preview) → 询问是否补全
-→ read 读取本地 Excel → ypscan_save_creator_links 派生受控 links CSV → 原生补全(20/批)
+→ ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全(20/批)
 → file_bridge(manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询
 → 保存打分排序 Excel（最终交付）
 ```
@@ -38,7 +38,7 @@ validate_requirement → search_creators → rank_mcns → 输出五列表格
 - 收件机构：只在用户选中弹窗机构、选“询价全部机构”或输入机构名时成立；机构名仅在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；命中非空 `supplier_id` 传 `supplierIds`，未命中或无 ID 原名传 `supplier_name`；`supplierIds`/`supplier_name` 始终为数组。不模糊匹配、不跨轮复用。
 - 发送确认：`AskUserQuestion` 一题两选项 `确认发送`/`返回修改`，不设 multiSelect；最终机构名单与完整企微消息写入问题正文；只有“确认发送”或无条件肯定回复才调 `create_with_distributions`（`description` 与 `wechat_notification_message` 一致）。机构匹配、去重、幂等由 Provider 负责。
 - 回收：用户确认机构已回填后第一步调 `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})`，用其返回的 `data.inquiries[].inquiry_id` 直接调 `ingest_mcn_submissions({inquiry_ids})`，不依赖 `get_workflow_state`。随后 `get_ingest_job` 用同一 `job_id` 轮询至 `succeeded`/`partially_succeeded`（单轮最多 10 次）；终态只回一份预览 Excel（`excel_file_url` + `excel_columns`，没有 links CSV），先保存预览表，再询问用户是否补全。
-- 补全分支：选“补全并打分排序”时 `read` 读取本地 Excel 取达人标识（小红书 `kw_uid`/主页，抖音星图 ID/主页）→ `ypscan_save_creator_links` 把 `source_record_id`/`creator_id`/`url` 保存为受控 links CSV → 按 20/批调平台原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）→ `file_bridge(flow=manual_source)` 合并并上传 → `score_manual_source_csv` → `score_manual_source_csv_status` 轮询 → 保存打分排序 Excel。
+- 补全分支：选“补全并打分排序”时 `ypscan_save_creator_links({requirement_id, preview_file_path, platform})` 直接读取受控预览并派生 links CSV → 按 20/批调平台原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）→ `file_bridge(flow=manual_source)` 合并并上传 → `score_manual_source_csv` → `score_manual_source_csv_status` 轮询 → 保存打分排序 Excel。
 - `partially_succeeded`：如实报告哪些机构 pending、哪些已回填，让用户选“补全并打分排序 / 暂不补全”，不把部分成功当全部完成。摘要中的 `inquiry_id` 兼容字符串和安全整数。
 - 回收后达人不足：交付当前真实结果并说明缺口，不自动发起新一轮询价、不自动放宽。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export`。
 

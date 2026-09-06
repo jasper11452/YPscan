@@ -35,6 +35,48 @@ function completeValidateParams() {
   };
 }
 
+test("Chinese calendar dates with colon clocks normalize without losing deadline evidence", () => {
+  const now = new Date(2026, 8, 5, 12);
+  for (const date of ["2026年9月26日16:00", "2026年09月26日 16：00：00"]) {
+    const params = completeValidateParams();
+    params.submissionDeadlineAt = date;
+    params.rawMessagesJson.clarifications = { submissionDeadlineAt: date };
+    const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+    assert.equal(normalized.submissionDeadlineAt, "2026-09-26 16:00:00");
+    assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
+    assert.equal(normalized.quantityTotal, "30");
+    assert.equal(normalized.rebate, "[0.25,1]");
+    assert.equal(normalized.rawMessagesJson.clarifications.submissionDeadlineAt, date);
+  }
+});
+
+test("canonical deadline accepts Chinese colon-clock evidence but not a conflicting answer", () => {
+  const now = new Date(2026, 8, 5, 12);
+  const params = completeValidateParams();
+  params.submissionDeadlineAt = "2026-09-26 16:00:00";
+  params.rawMessagesJson.clarifications = { submissionDeadlineAt: "2026年9月26日16:00" };
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+  params.rawMessagesJson.clarifications.submissionDeadlineAt = "2026年9月27日16:00";
+  assert.ok(
+    validateRequirementPreflight(params, { now }).some((i) => i.field === "submissionDeadlineAt"),
+  );
+});
+
+test("invalid or past Chinese deadlines never pass validation", () => {
+  const now = new Date(2026, 8, 5, 12);
+  for (const date of ["2026年2月30日16:00", "2026年9月26日24:00", "2026年9月4日16:00"]) {
+    const params = completeValidateParams();
+    params.submissionDeadlineAt = date;
+    params.rawMessagesJson.clarifications = { submissionDeadlineAt: date };
+    const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+    assert.ok(
+      validateRequirementPreflight(normalized, { now }).some(
+        (i) => i.field === "submissionDeadlineAt",
+      ),
+    );
+  }
+});
+
 test("validate_requirement drops non-positive or malformed quantityTotal values", () => {
   assert.equal(
     Object.hasOwn(
@@ -998,6 +1040,36 @@ test("preflight requires exact evidence for brand, quantity, and deadline values
   );
 });
 
+test("date-only deadline evidence never authorizes an inferred clock", () => {
+  const now = new Date(2026, 7, 24, 10);
+  for (const date of ["2026-08-25", "2026年8月25日"]) {
+    for (const clock of ["00:00:00", "18:00:00", "23:59:59"]) {
+      const params = completeValidateParams();
+      params.rawMessagesJson.original = params.rawMessagesJson.original.replace(
+        "2026-08-25 12:00:00",
+        date,
+      );
+      params.submissionDeadlineAt = `2026-08-25 ${clock}`;
+      const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+      assert.deepEqual(
+        validateRequirementPreflight(normalized, { now }).map((issue) => issue.field),
+        ["submissionDeadlineAt"],
+        `${date} must not authorize ${clock}`,
+      );
+      params.rawMessagesJson.clarifications = {
+        submissionDeadlineAt: `2026-08-25 ${clock}`,
+      };
+      assert.deepEqual(
+        validateRequirementPreflight(
+          normalizeToolCallParams("validate_requirement", params, { now }),
+          { now },
+        ),
+        [],
+      );
+    }
+  }
+});
+
 test("preflight rejects a swapped brand while a swapped project name stays acceptable", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
@@ -1453,4 +1525,67 @@ test("optional platform labels do not enter the required-field list", () => {
     ),
     false,
   );
+});
+
+test("parsed metric and label backfill only uses current platform", () => {
+  const params = completeValidateParams();
+  params.platform = "xiaohongshu";
+  delete params.kolOfficialPriceL3;
+  params.kolOfficialPriceL1 = "[35000,60000]";
+  params.rawMessagesJson.original = params.rawMessagesJson.original
+    .replace("抖音", "小红书")
+    .replace("定制视频", "图文");
+  params.rawMessagesJson.parse_outputs = {
+    xhsbrandName: ["品牌A"],
+    dy_kolOfficialPrice: { kolOfficialPriceL2: [35000, 60000] },
+    dy_cpm: { cpmL2: [0, 50] },
+    xtTalentTypeLabel: ["不属于小红书"],
+    pgyBloggerTypeLabel: ["美妆"],
+  };
+  delete params.xtTalentTypeLabel;
+  const normalized = normalizeToolCallParams("validate_requirement", params);
+  assert.equal(normalized.kolOfficialPriceL2, undefined);
+  assert.equal(normalized.cpmL2, undefined);
+  assert.equal(normalized.xtTalentTypeLabel, undefined);
+  assert.deepEqual(normalized.pgyBloggerTypeLabel, ["美妆"]);
+  const evidenceOnly = {
+    ...normalized,
+    kolOfficialPriceL2: "[35000,60000]",
+    rawMessagesJson: {
+      ...normalized.rawMessagesJson,
+      original: normalized.rawMessagesJson.original.replace("单价5万元；", ""),
+    },
+  };
+  assert.ok(
+    validateRequirementPreflight(evidenceOnly).some(
+      (issue) => issue.field === "kolOfficialPriceL1/L2/L3",
+    ),
+  );
+});
+
+test("missing and null rawMessagesJson aggregate preflight issues without throwing", () => {
+  for (const rawMessagesJson of [undefined, null]) {
+    const issues = validateRequirementPreflight({ ...completeValidateParams(), rawMessagesJson });
+    assert.ok(issues.some((issue) => issue.field === "rawMessagesJson"));
+  }
+});
+
+test("current-platform metric fragments and neutral compatibility shapes remain reusable", () => {
+  for (const platform of ["xiaohongshu", "douyin"]) {
+    const tier = platform === "douyin" ? "L3" : "L1";
+    const prefix = platform === "douyin" ? "dy" : "xhs";
+    const field = `kolOfficialPrice${tier}`;
+    for (const fragment of [
+      { [`${prefix}_kolOfficialPrice`]: { [field]: [35000, 60000] } },
+      { kolOfficialPrice: { [field]: [35000, 60000] } },
+      { [field]: [35000, 60000] },
+    ]) {
+      const params = completeValidateParams();
+      params.platform = platform;
+      delete params.kolOfficialPriceL3;
+      params.rawMessagesJson.parse_outputs = fragment;
+      const normalized = normalizeToolCallParams("validate_requirement", params);
+      assert.equal(normalized[field], "[35000,60000]");
+    }
+  }
 });

@@ -6,7 +6,8 @@
  * （已被 .gitignore 忽略），由 `file_bridge` 作为“打包内置凭据”配置源读取。
  *
  * 缺少 AccessKeyId / AccessKeySecret 时：删除旧 bundle 并警告，仍然退出 0，
- * 让 npm pack / npm publish 继续（安装包不带凭据，运行时回落到插件配置或环境变量）。
+ * 让 npm pack / npm publish 继续（安装包不带凭据，运行时只能使用插件配置；
+ * 内部测试或集成仍可显式注入 env）。
  *
  * 安全约束：本脚本绝不打印任何密钥值，只输出缺失的键名。
  */

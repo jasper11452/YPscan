@@ -134,7 +134,7 @@ test("inquiry retrieval contracts ingest an Excel-only preview then derive links
 
   assert.match(skill, /sync_mcn_inquiry_status.*ingest_mcn_submissions.*get_ingest_job/u);
   assert.match(skill, /保存机构达人预览表.*询问用户是否补全/u);
-  assert.match(skill, /ypscan_save_creator_links 派生受控 links CSV/u);
+  assert.match(skill, /ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV/u);
   assert.match(ingestCard, /excel_file_url/u);
   assert.match(ingestCard, /does not return a links CSV/iu);
   assert.match(ingestCard, /partially_succeeded/u);

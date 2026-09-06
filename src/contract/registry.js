@@ -518,9 +518,15 @@ function parseLocalDateTime(value) {
 function normalizedDateTime(value, { now = new Date() } = {}) {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
-  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/u);
+  const match =
+    trimmed.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/u) ??
+    trimmed.match(
+      /^(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日\s*(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?$/u,
+    );
   if (!match) return trimmed;
-  const normalized = `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6] ?? "00"}`;
+  const [, year, ...parts] = match;
+  const [month, day, hour, minute, second] = parts.map((part) => (part ?? "00").padStart(2, "0"));
+  const normalized = `${year}-${month}-${day} ${hour}:${minute}:${second}`;
   const timestamp = parseLocalDateTime(normalized);
   if (!Number.isFinite(timestamp)) return trimmed;
   return timestamp > now.getTime() ? normalized : value;
@@ -661,8 +667,9 @@ function tagArrayValue(value) {
  * untouched while expanding the canonical fields at the Provider boundary.
  *
  * @param {unknown} rawMessages
+ * @param {unknown} platform
  */
-function parsedTagArrays(rawMessages) {
+function parsedTagArrays(rawMessages, platform) {
   if (!rawMessages || typeof rawMessages !== "object" || Array.isArray(rawMessages)) {
     return {};
   }
@@ -675,6 +682,11 @@ function parsedTagArrays(rawMessages) {
   /** @type {Record<string, string[]>} */
   const tags = {};
   for (const field of PARSED_TAG_FIELDS) {
+    if (
+      Object.values(PLATFORM_TAG_FIELDS).flat().includes(field) &&
+      !(PLATFORM_TAG_FIELDS[normalizedPlatformName(platform)] ?? []).includes(field)
+    )
+      continue;
     const candidate = outputRecord[field];
     const nested =
       candidate && typeof candidate === "object" && !Array.isArray(candidate)
@@ -889,6 +901,12 @@ function hasSubmissionDeadlineEvidence(evidence, value, now) {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/u);
   if (!match) return false;
   const [, year, month, day, hour, minute, second] = match;
+  const colonDates = evidence.matchAll(
+    /(?<!\d)\d{4}年\s*\d{1,2}月\s*\d{1,2}日\s*\d{1,2}[:：]\d{2}(?:[:：]\d{2})?(?!\d|[:：])/gu,
+  );
+  for (const [date] of colonDates) {
+    if (normalizedDateTime(date, { now }) === value) return true;
+  }
   if (new RegExp(`(?<!\\d)${regexLiteral(value)}(?!\\d)`, "u").test(evidence)) return true;
   const minutePrecision = `${year}-${month}-${day} ${hour}:${minute}`;
   if (
@@ -996,9 +1014,10 @@ const PARSED_RANGE_FIELDS = Object.freeze([
 /**
  * @param {unknown} outputs
  * @param {string} field
+ * @param {unknown} platform
  * @returns {unknown[]}
  */
-function collectParsedMetricValues(outputs, field) {
+function collectParsedMetricValues(outputs, field, platform) {
   if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) return [];
   const outputRecord = /** @type {Record<string, unknown>} */ (outputs);
   /** @type {unknown[]} */
@@ -1014,7 +1033,8 @@ function collectParsedMetricValues(outputs, field) {
   add(outputRecord[field]);
   const metricMatch = field.match(/^(kolOfficialPrice|cpm|cpe)(L[123])$/u);
   if (metricMatch) {
-    for (const key of [`dy_${metricMatch[1]}`, `xhs_${metricMatch[1]}`, metricMatch[1]]) {
+    const prefix = { douyin: "dy", xiaohongshu: "xhs" }[normalizedPlatformName(platform)];
+    for (const key of [...(prefix ? [`${prefix}_${metricMatch[1]}`] : []), metricMatch[1]]) {
       const record = outputRecord[key];
       if (record && typeof record === "object" && !Array.isArray(record)) {
         add(/** @type {Record<string, unknown>} */ (record)[field]);
@@ -1041,15 +1061,16 @@ function canonicalizeMetricRange(field, value) {
 /**
  * @param {unknown} rawMessages
  * @param {string} field
+ * @param {unknown} platform
  * @returns {string | null}
  */
-function uniqueParsedRange(rawMessages, field) {
+function uniqueParsedRange(rawMessages, field, platform) {
   if (!rawMessages || typeof rawMessages !== "object" || Array.isArray(rawMessages)) {
     return null;
   }
   const outputs = /** @type {Record<string, unknown>} */ (rawMessages).parse_outputs;
   const unique = new Set();
-  for (const value of collectParsedMetricValues(outputs, field)) {
+  for (const value of collectParsedMetricValues(outputs, field, platform)) {
     const canonical = canonicalizeMetricRange(field, value);
     if (typeof canonical === "string" && parsedCanonicalRange(canonical)) unique.add(canonical);
   }
@@ -1060,9 +1081,10 @@ function uniqueParsedRange(rawMessages, field) {
  * @param {unknown} rawMessages
  * @param {string} field
  * @param {unknown} submitted
+ * @param {unknown} platform
  */
-function hasUniqueParsedRangeEvidence(rawMessages, field, submitted) {
-  const parsed = uniqueParsedRange(rawMessages, field);
+function hasUniqueParsedRangeEvidence(rawMessages, field, submitted, platform) {
+  const parsed = uniqueParsedRange(rawMessages, field, platform);
   if (!parsed) return false;
   const submittedRange = canonicalizeMetricRange(field, submitted);
   return parsed === submittedRange;
@@ -1237,7 +1259,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   const submittedBrand = normalizedBrandCandidate(payload.brandName);
   const clarifiedBrand = clarifiedBrandEvidence(rawMessages);
   const rawMessagesRecord = /** @type {Record<string, unknown>} */ (rawMessages);
-  const explicitBrand = explicitBrandFromOriginal(rawMessagesRecord.original);
+  const explicitBrand = explicitBrandFromOriginal(rawMessagesRecord?.original);
   const clarifiedBrandMatches = Boolean(
     submittedBrand &&
     !parsedBrand &&
@@ -1268,13 +1290,18 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     add("quantityTotal", "原始需求或弹窗澄清记录中没有与提交值一致的达人数量证据");
   }
   if (
-    !hasUniqueParsedRangeEvidence(rawMessages, "followercount", payload.followercount) &&
+    !hasUniqueParsedRangeEvidence(
+      rawMessages,
+      "followercount",
+      payload.followercount,
+      payload.platform,
+    ) &&
     !/(?:粉丝|万粉|w粉|followercount)/iu.test(evidence)
   ) {
     add("followercount", "原始需求或弹窗澄清记录中没有粉丝量证据，且 Dify 未给出唯一粉丝区间");
   }
   if (
-    !hasUniqueParsedRangeEvidence(rawMessages, "rebate", payload.rebate) &&
+    !hasUniqueParsedRangeEvidence(rawMessages, "rebate", payload.rebate, payload.platform) &&
     !/(?:返点|返佣|佣金|rebate)/iu.test(evidence)
   ) {
     add("rebate", "原始需求或弹窗澄清记录中没有返点证据，且 Dify 未给出唯一返点区间");
@@ -1282,7 +1309,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   const hasParsedPrice = PRICE_FIELDS.some(
     (field) =>
       Object.hasOwn(payload, field) &&
-      hasUniqueParsedRangeEvidence(rawMessages, field, payload[field]),
+      hasUniqueParsedRangeEvidence(rawMessages, field, payload[field], payload.platform),
   );
   if (!hasParsedPrice && !/(?:单价|报价|预算|费用|价格|kolOfficialPrice)/iu.test(evidence)) {
     add(
@@ -1430,7 +1457,9 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
     if (Object.hasOwn(normalized, "rawMessagesJson")) {
       const rawMessages = normalizedRawMessages(normalized.rawMessagesJson);
       set("rawMessagesJson", rawMessages);
-      for (const [field, value] of Object.entries(parsedTagArrays(rawMessages))) {
+      for (const [field, value] of Object.entries(
+        parsedTagArrays(rawMessages, normalized.platform),
+      )) {
         if (!Object.hasOwn(normalized, field)) set(field, value);
       }
       if (rawMessages && typeof rawMessages === "object" && !Array.isArray(rawMessages)) {
@@ -1457,7 +1486,7 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
           ) {
             continue;
           }
-          const parsed = uniqueParsedRange(rawMessages, field);
+          const parsed = uniqueParsedRange(rawMessages, field, normalized.platform);
           if (parsed) set(field, parsed);
         }
         normalized = normalizeParsedDouyinMetrics(normalized, rawMessages);
