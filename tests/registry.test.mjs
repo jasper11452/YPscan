@@ -318,7 +318,6 @@ test("validate_requirement preflight blocks a renamed rawMessagesJson original k
     [
       "rawMessagesJson",
       "quantityTotal",
-      "followercount",
       "rebate",
       "kolOfficialPriceL1/L2/L3",
       "submissionDeadlineAt",
@@ -442,6 +441,57 @@ test("normalization clamps followercount down to the technical maximum", () => {
   });
 
   assert.equal(normalized.followercount, "[5000000,999999999]");
+});
+
+test("normalization defaults unlimited fan wording and the legacy sentinel range to the full range", () => {
+  for (const value of [
+    "不限",
+    "不限粉丝数",
+    "粉丝数不限",
+    "无要求",
+    "[0,999999999]",
+    [0, 999999999],
+  ]) {
+    const normalized = normalizeToolCallParams("validate_requirement", {
+      ...completeValidateParams(),
+      followercount: value,
+    });
+    assert.equal(normalized.followercount, "[0,999999999]", JSON.stringify(value));
+  }
+});
+
+test("normalization rewrites the legacy [1,999999999] bad value to the full range", () => {
+  for (const value of ["[1,999999999]", [1, 999999999]]) {
+    const normalized = normalizeToolCallParams("validate_requirement", {
+      ...completeValidateParams(),
+      followercount: value,
+    });
+    assert.equal(normalized.followercount, "[0,999999999]", JSON.stringify(value));
+  }
+});
+
+test("normalization defaults a missing followercount to the full range without popup evidence", () => {
+  const params = completeValidateParams();
+  delete params.followercount;
+  params.rawMessagesJson.original = params.rawMessagesJson.original.replace("粉丝不限；", "");
+  const normalized = normalizeToolCallParams("validate_requirement", params);
+  assert.equal(normalized.followercount, "[0,999999999]");
+});
+
+test("preflight accepts the full-range followercount as a legal stored value", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = { ...completeValidateParams(), followercount: "[0,999999999]" };
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
+test("preflight still requires followercount as a structural required field", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = completeValidateParams();
+  delete params.followercount;
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["followercount"],
+  );
 });
 
 test("Dify-parsed followercount and price do not require extra user evidence", () => {
@@ -1020,7 +1070,7 @@ test("preflight does not treat empty clarification keys as user evidence", () =>
 
   assert.deepEqual(
     validateRequirementPreflight(params, { now }).map((issue) => issue.field),
-    ["quantityTotal", "followercount", "submissionDeadlineAt"],
+    ["quantityTotal", "submissionDeadlineAt"],
   );
 });
 
@@ -1122,6 +1172,62 @@ test("preflight accepts same-day HH:mm deadline evidence before or after the clo
   };
   params.rawMessagesJson.clarifications = { submissionDeadlineAt: "今天18:00" };
   assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
+test("preflight treats equivalent evening clock wordings as the same deadline value", () => {
+  const now = new Date(2026, 7, 24, 10, 30, 0);
+  const original = completeValidateParams().rawMessagesJson.original;
+  for (const deadlineEvidence of [
+    "今晚8点前",
+    "今晚20:00",
+    "晚上8点前",
+    "今天晚8点前",
+    "提交截止今晚20点",
+  ]) {
+    const params = {
+      ...completeValidateParams(),
+      submissionDeadlineAt: "2026-08-24 20:00:00",
+      rawMessagesJson: {
+        ...completeValidateParams().rawMessagesJson,
+        original: original.replace("提报截止2026-08-25 12:00:00", deadlineEvidence),
+      },
+    };
+
+    assert.deepEqual(validateRequirementPreflight(params, { now }), [], deadlineEvidence);
+  }
+
+  const clarified = {
+    ...completeValidateParams(),
+    submissionDeadlineAt: "2026-08-24 20:00:00",
+    rawMessagesJson: { ...completeValidateParams().rawMessagesJson },
+  };
+  clarified.rawMessagesJson.clarifications = { submissionDeadlineAt: "当天20:00:00" };
+  assert.deepEqual(validateRequirementPreflight(clarified, { now }), []);
+});
+
+test("preflight still rejects mismatched or unmotivated same-day evening clocks", () => {
+  const now = new Date(2026, 7, 24, 10, 30, 0);
+  const original = completeValidateParams().rawMessagesJson.original;
+  for (const [deadlineEvidence, deadline] of [
+    ["今晚8点前", "2026-08-24 09:00:00"],
+    ["今晚9点前", "2026-08-24 20:00:00"],
+    ["今天18:00开始直播", "2026-08-24 18:00:00"],
+  ]) {
+    const params = {
+      ...completeValidateParams(),
+      submissionDeadlineAt: deadline,
+      rawMessagesJson: {
+        ...completeValidateParams().rawMessagesJson,
+        original: original.replace("提报截止2026-08-25 12:00:00", deadlineEvidence),
+      },
+    };
+
+    assert.deepEqual(
+      validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+      ["submissionDeadlineAt"],
+      deadlineEvidence,
+    );
+  }
 });
 
 test("preflight accepts zero-padded Chinese clock fields without accepting a longer time", () => {

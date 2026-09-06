@@ -14,7 +14,7 @@
 
 - 每次真正开始新功能都重新解析、复核、创建独立 requirement；同会话、同平台、条件未变也不跨功能复用 requirement 或已提交字段配置；两功能不得并行或中途切换。
 - 复核对照三份内容：用户当前完整有效需求、本次 `data.outputs`、即将发送的 `validate_requirement` 参数；至少检查模式、平台、品牌、数量、截止时间、内容形式、抖音植入/定制类型、粉丝、返点、报价档位、`contentTag`、可选标签、多达人类型是否仍为一个 requirement、是否混入其他平台或旧需求值。
-- 检查正确直接落库；发现错误按原需求纠正后重新解析（不算放宽）；歧义用一次 `AskUserQuestion` 收集全部不确定字段。
+- 检查正确直接落库；发现错误按原需求纠正后重新解析（不算放宽）；歧义用一次 `AskUserQuestion` 收集全部不确定字段，禁止逐字段分轮弹窗；同一字段已确认的澄清答案在本会话后续轮次与 requirement 重建时直接复用，不再重复确认，等价时间表述（今晚8点前/今晚20:00/当天20:00:00）归一为同一值。
 - 需求 ID 优先 `data.requirement_id`，缺失兼容 `data.id`，绝不使用 `data.demand_id`。
 
 ## 3. 询价机构链路
@@ -71,10 +71,10 @@ validate_requirement → select_inquiry_form_fields（原样展示 URL，等用�
 
 - 触发点：询价分支 `rank_mcns` 为空；手动拓展仅在 Provider 响应明确给出可信实际数量为 0 或少于目标数量时（数量未知不猜测、不自动放宽，当前交付物即最终结果）。
 - 禁止直接放宽：先对照当时有效需求、本次解析输出、实际落库参数复核；确认正确后才按固定顺序逐项建议放宽。
-- 固定顺序：刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`；不存在的字段跳过；每项只调一次。
+- 固定顺序：刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`；不存在的字段跳过；每项只调一次。`followercount` 为 `[0,999999999]` 时已是全量区间、无法再放宽，直接跳过粉丝范围。
   - 刊例价/CPM/CPE/粉丝：下界 ×0.8、上界 ×1.2，整数上下界向外取整；返点 `[min,1]`→`[min×0.8,1]`；多报价指标每轮只调一个；标签阶段每轮移除一个完整非核心偏好字段。
 - 永不自动放宽：平台、模式、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag`、`pgyBloggerTypeLabel`、`xtTalentTypeLabel`、`growBloggerTypeLabel`、`growTalentTypeLabel`。
-- 每轮放宽只做建议、不自动执行：先可见告知用户实际数量、目标数量、缺口和可放宽的唯一项；提出具体项后本轮结束，“放宽直到足量”等总体授权不替代后续每轮确认。用户明确确认当前项后，仍以完整未改写的原始需求重新解析并保留在 `rawMessagesJson.original`，累计放宽只写 `rawMessagesJson.clarifications` 与本轮 validate 顶层参数，再复核、创建新 requirement 并按原模式重跑；足量后在结果前汇总全部放宽记录。
+- 每轮放宽只做建议、不自动执行：先可见告知用户实际数量、目标数量、缺口和可放宽的唯一项；提出具体项后本轮结束，“放宽直到足量”等总体授权不替代后续每轮确认。用户明确确认当前项后，仍以完整未改写的原始需求重新解析并保留在 `rawMessagesJson.original`，累计放宽写 `rawMessagesJson.clarifications` 与本轮 validate 顶层参数，再复核、创建新 requirement 并按原模式重跑；重跑搜索时 `manual_source_creators.demand` 传应用了已确认放宽值的有效搜索文本（原文对应字段替换为放宽后值），搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导；足量后在结果前汇总全部放宽记录。
 - 全部允许项用完仍不足：询价问“手动修改需求 / 改用手动拓展 / 结束”，手动拓展问“手动修改需求 / 改用询价机构 / 结束”。切换功能时撤销本轮全部放宽，恢复用户当前真实需求后重新建需。
 
 ## 6. 续办例外（“暂不询价”）

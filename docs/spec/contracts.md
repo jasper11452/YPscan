@@ -44,7 +44,7 @@
 - `rebate` 表示最低返点，固定 `"[min,1]"`。
 - CPM/CPE（`cpmL*`、`cpeL*`）表示最大可接受值，固定 `"[0,max]"`。
 - 比例字段（`interactionRate`、`femaleRate`、`age*Rate`）区间必须位于 0–1。
-- `followercount` 上限不得超过 `999999999`；原文表达“无粉丝要求”时落库 `"[0,999999999]"`。
+- `followercount` 上限不得超过 `999999999`；未明确或原文表达“无/不限/无要求”时落库 `"[0,999999999]"`（零到最大值），不省略字段、不弹窗；历史坏值 `[1,999999999]` 归一为 `[0,999999999]`。
 
 ### 平台标签数组
 
@@ -78,8 +78,9 @@
 - 未知字段：`不是 validate_requirement 的已声明参数`。
 - 证据门禁（来自 `rawMessagesJson.original` 与 `clarifications` 拼合的文本证据）：
   - `brandName` 必须原样使用当前平台唯一 Dify 解析品牌；仅解析缺失/多候选时使用最新弹窗答案，或在原文存在明确 `品牌：...` / `品牌名称：...` / `合作品牌：...` 标注时做确定性本地兜底。
-  - `quantityTotal`、`submissionDeadlineAt` 必须有与提交值一致的原文/澄清证据。
-  - `followercount`、`rebate`、报价：要么 Dify 给出唯一合法区间且提交值与其等价，要么原文/澄清中有对应证据。
+  - `quantityTotal`、`submissionDeadlineAt` 必须有与提交值一致的原文/澄清证据。截止时间的等价同日表述归一为同一值：`今晚8点前`/`今晚20:00`/`当天20:00:00` 同指当天 20:00:00；同一会话内已确认的澄清答案在后续轮次与 requirement 重建时原样带入 `clarifications` 直接复用，不重复询问。
+  - `rebate`、报价：要么 Dify 给出唯一合法区间且提交值与其等价，要么原文/澄清中有对应证据。
+  - `followercount` 无证据门禁：缺失或“不限”由本地边界默认落库全量区间 `[0,999999999]`，`[0,999999999]` 是合法落库值，不弹窗。
   - `projectStartStart`/`projectStartEnd`（可选）：只能传明确日期，需原文证据，且开始不晚于结束。
 - 布尔字符串字段（`hasOrganization`、`hasOrder30day`、`hasSocial30day`）必须是 `"true"`/`"false"`。
 - 字符串字段类型校验；`rawMessagesJson` 结构校验。

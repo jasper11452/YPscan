@@ -410,19 +410,27 @@ function clampFollowerCountRange(value) {
 function normalizedFollowerRange(value) {
   if (
     typeof value === "string" &&
-    /^(?:无(?:要求)?|不限|不限制|无限制|都可以|均可)$/u.test(value.trim())
+    /^(?:无(?:要求)?|不限|不限制|无限制|都可以|均可|粉丝(?:数|量|量级)?不限|不限粉丝(?:数|量|量级)?|粉丝(?:数|量|量级)?无(?:要求|限制)|无(?:任何)?粉丝(?:数|量|量级)?要求)$/u.test(
+      value.trim(),
+    )
   ) {
     return UNRESTRICTED_FOLLOWERCOUNT_RANGE;
   }
   const normalized = normalizedNumericRange(value);
   if (normalized !== value || typeof value !== "string") {
-    return clampFollowerCountRange(normalized);
+    return normalizeLegacyUnrestrictedFollowerRange(clampFollowerCountRange(normalized));
   }
   const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(?:-|~|～|至|到)\s*(\d+(?:\.\d+)?)$/u);
-  if (!match) return clampFollowerCountRange(value);
+  if (!match) return normalizeLegacyUnrestrictedFollowerRange(clampFollowerCountRange(value));
   const lower = Number(match[1]);
   const upper = Number(match[2]);
-  return lower <= upper ? clampFollowerCountRange(JSON.stringify([lower, upper])) : value;
+  const result = lower <= upper ? clampFollowerCountRange(JSON.stringify([lower, upper])) : value;
+  return normalizeLegacyUnrestrictedFollowerRange(result);
+}
+
+/** 历史坏值 [1,999999999]（把“不限”写成下限 1）归一为全量区间。 */
+function normalizeLegacyUnrestrictedFollowerRange(value) {
+  return value === `[1,${MAX_FOLLOWER_COUNT}]` ? UNRESTRICTED_FOLLOWERCOUNT_RANGE : value;
 }
 
 function normalizedRebateRange(value) {
@@ -480,16 +488,6 @@ function normalizedRebateRange(value) {
     if (maximum !== 1) return value;
   }
   return minimum >= 0 && minimum <= 1 ? JSON.stringify([minimum, 1]) : value;
-}
-
-function briefUnrestrictsFollowers(value) {
-  if (typeof value !== "string" || !value.trim()) return false;
-  const compact = value.replace(/[ \t]/gu, "");
-  return (
-    /粉丝(?:数|量|量级)?[^\n。；;]{0,20}要求[:：]?(?:无(?:要求)?|不限|不限制|无限制)(?=$|[\n，,。；;])/u.test(
-      compact,
-    ) || /(?:无|没有|不限|不限制)(?:任何)?粉丝(?:数|量|量级)?要求/u.test(compact)
-  );
 }
 
 function parseLocalDateTime(value) {
@@ -929,18 +927,32 @@ function hasSubmissionDeadlineEvidence(evidence, value, now) {
     Number(month) === now.getMonth() + 1 &&
     Number(day) === now.getDate();
   if (!sameDay || Number(second) !== 0) return false;
-  const hourPattern = numericHour < 10 ? `0?${numericHour}` : String(numericHour);
   const minutePattern = numericMinute < 10 ? `0?${numericMinute}` : String(numericMinute);
-  const clockHour = `(?<!\\d)${hourPattern}`;
-  const sameDayChineseMinute = numericMinute ? `\\s*${minutePattern}\\s*分` : "(?:\\s*0+\\s*分)?";
-  const sameDayChineseClock = `${clockHour}\\s*(?:点|时)${sameDayChineseMinute}(?:\\s*0+\\s*秒)?(?![\\d分秒])`;
-  const colonClock = `${clockHour}\\s*[:：]\\s*${String(numericMinute).padStart(2, "0")}(?:\\s*[:：]\\s*00)?(?!\\d|\\s*[:：]\\s*\\d)`;
-  const dayClock = `(?:今天|今日)[^。；;\\n]{0,20}(?:${sameDayChineseClock}|${colonClock})`;
+  const clockHourPattern = (hourValue) =>
+    `(?<!\\d)${hourValue < 10 ? `0?${hourValue}` : hourValue}`;
+  const chineseClock = (hourValue) =>
+    `${clockHourPattern(hourValue)}\\s*(?:点|时)${numericMinute ? `\\s*${minutePattern}\\s*分` : "(?:\\s*0+\\s*分)?"}(?:\\s*0+\\s*秒)?(?![\\d分秒])`;
+  const colonClock = (hourValue) =>
+    `${clockHourPattern(hourValue)}\\s*[:：]\\s*${String(numericMinute).padStart(2, "0")}(?:\\s*[:：]\\s*00)?(?!\\d|\\s*[:：]\\s*\\d)`;
+  const anyClock = (hourValue) => `(?:${chineseClock(hourValue)}|${colonClock(hourValue)})`;
+  // “今晚8点前”等同日晚上表述：12 小时制别名只在晚/夜语境下与 20:00 等价。
+  const eveningHour = numericHour > 12 ? numericHour - 12 : null;
+  const eveningPrefix = "(?:今晚|今天晚|今日晚|今夜|当天晚|晚上)";
+  const eveningClock =
+    eveningHour == null
+      ? null
+      : `${eveningPrefix}[^。；;\\n]{0,8}(?:${anyClock(numericHour)}|${anyClock(eveningHour)})`;
+  const dayClock = `(?:今天|今日|当天)[^。；;\\n]{0,20}(?:${anyClock(numericHour)}${eveningHour == null ? "" : `|晚[^。；;\\n]{0,8}${anyClock(eveningHour)}`})`;
   const deadlineMarker = "(?:submissionDeadlineAt|提报|提交|反馈|截止)";
-  return new RegExp(
-    `(?:${deadlineMarker}[^。；;\\n]{0,20}${dayClock}|${dayClock}[^。；;\\n]{0,20}${deadlineMarker})`,
-    "iu",
-  ).test(evidence);
+  // 晚/夜语境的同日钟点本身即视为截止证据（“今晚8点前”无需额外截止标记）；
+  // 其余同日钟点仍需截止语义标记，避免把“今天18:00开始直播”误当截止。
+  return (
+    (eveningClock !== null && new RegExp(eveningClock, "iu").test(evidence)) ||
+    new RegExp(
+      `(?:${deadlineMarker}[^。；;\\n]{0,20}${dayClock}|${dayClock}[^。；;\\n]{0,20}${deadlineMarker})`,
+      "iu",
+    ).test(evidence)
+  );
 }
 
 function hasProjectDateEvidence(evidence, value) {
@@ -1290,17 +1302,6 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     add("quantityTotal", "原始需求或弹窗澄清记录中没有与提交值一致的达人数量证据");
   }
   if (
-    !hasUniqueParsedRangeEvidence(
-      rawMessages,
-      "followercount",
-      payload.followercount,
-      payload.platform,
-    ) &&
-    !/(?:粉丝|万粉|w粉|followercount)/iu.test(evidence)
-  ) {
-    add("followercount", "原始需求或弹窗澄清记录中没有粉丝量证据，且 Dify 未给出唯一粉丝区间");
-  }
-  if (
     !hasUniqueParsedRangeEvidence(rawMessages, "rebate", payload.rebate, payload.platform) &&
     !/(?:返点|返佣|佣金|rebate)/iu.test(evidence)
   ) {
@@ -1493,11 +1494,11 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
       }
     }
     if (
-      (normalized.followercount === undefined ||
-        normalized.followercount === null ||
-        normalized.followercount === "") &&
-      briefUnrestrictsFollowers(normalized.originalBrief)
+      normalized.followercount === undefined ||
+      normalized.followercount === null ||
+      normalized.followercount === ""
     ) {
+      // 用户未明确粉丝数或明确“不限”时默认落库全量区间，不省略字段、不弹窗。
       set("followercount", UNRESTRICTED_FOLLOWERCOUNT_RANGE);
     }
     const normalizedQuantity = normalizedQuantityTotal(normalized.quantityTotal);

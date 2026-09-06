@@ -35,13 +35,13 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 至少检查模式、平台、品牌、数量、截止时间、内容形式、抖音植入/定制类型、粉丝、返点、刊例价/CPM/CPE 档位、`contentTag`、可选标签、同平台多达人类型是否仍为一个 requirement，以及是否混入其他平台或旧需求值。
 
-截止时间必须由当前完整有效需求和最新澄清唯一确定为未来时间。当前有效原文与当前有效澄清均没有截止时间证据时必须询问，不得从旧 requirement、系统默认值或推测中回填。只有日期没有具体时刻时必须澄清，不得默认 18:00、23:59:59 或其他时刻，也不得宣称“无需补充澄清”；已有明确小时和分钟时只补省略的秒为 00，不重复询问。用户只要求解析、暂不落库时仍须指出缺失时刻，但不得创建需求或继续下游。
+截止时间必须由当前完整有效需求和最新澄清唯一确定为未来时间。当前有效原文与当前有效澄清均没有截止时间证据时必须询问，不得从旧 requirement、系统默认值或推测中回填。只有日期没有具体时刻时必须澄清，不得默认 18:00、23:59:59 或其他时刻，也不得宣称“无需补充澄清”；已有明确小时和分钟时只补省略的秒为 00，不重复询问。同一会话内用户已确认的澄清答案（含截止时间）持续有效：后续轮次与 requirement 重建必须原样带入新 `rawMessagesJson.clarifications` 直接复用，不得重复询问；等价时间表述（今晚8点前/今晚20:00/当天20:00:00）归一为同一值，不重复确认。用户只要求解析、暂不落库时仍须指出缺失时刻，但不得创建需求或继续下游。
+
+发现明显错误时，先告诉用户“原需求是什么、哪个字段错了、将按什么理解修正”，然后按完整有效需求重新解析；错误参数不得落库，这次纠正不算需求放宽。存在歧义时，用一次 `AskUserQuestion` 收集全部不确定字段（禁止逐字段分轮弹窗），回答前不落库、不搜索、不放宽。重新解析后仍重复同一明显错误时，停止自动重试，展示原需求、错误字段和候选修正，请用户决定；不得直接覆盖解析器标签。
 
 检查正确时直接落库，不展示复核摘要，不等待用户确认。原文未逐字出现但语义合理、且不与需求冲突的解析标签继续原样采用；不得只因措辞不同删除标签。
 
-发现明显错误时，先告诉用户“原需求是什么、哪个字段错了、将按什么理解修正”，然后按完整有效需求重新解析；错误参数不得落库，这次纠正不算需求放宽。存在歧义时，用一次 `AskUserQuestion` 收集全部不确定字段，回答前不落库、不搜索、不放宽。重新解析后仍重复同一明显错误时，停止自动重试，展示原需求、错误字段和候选修正，请用户决定；不得直接覆盖解析器标签。
-
-需求参数细节按 [解析参考](references/tools/ypscan_parse_requirement.md) 和 [validate_requirement](references/tools/validate_requirement.md) 执行。解析器已有唯一合法品牌、粉丝、返点、报价、CPM 或 CPE 时直接采用；缺失、多候选、冲突或用户明确改口时才询问。八个 Dify Label 解析契约保持不变，`talentTypeLabel` 不是 Dify 字段。`validate_requirement` schema 中的 `talentTypeLabel`、`refNickname`、`refUrl` 属于 Provider 可选字段：只有用户明确提供且语义唯一时才传，绝不推断。抖音 L2=植入视频、L3=定制视频，不使用 L1。所有数值区间使用无空格字符串 `"[min,max]"` 且 `min < max`。同平台多个达人类型合并为一个 requirement，保留总量，不拆分人数。
+需求参数细节按 [解析参考](references/tools/ypscan_parse_requirement.md) 和 [validate_requirement](references/tools/validate_requirement.md) 执行。解析器已有唯一合法品牌、粉丝、返点、报价、CPM 或 CPE 时直接采用；粉丝未明确或“不限”时默认落库全量区间 `[0,999999999]`、不询问，其余字段缺失、多候选、冲突或用户明确改口时才询问。八个 Dify Label 解析契约保持不变，`talentTypeLabel` 不是 Dify 字段。`validate_requirement` schema 中的 `talentTypeLabel`、`refNickname`、`refUrl` 属于 Provider 可选字段：只有用户明确提供且语义唯一时才传，绝不推断。抖音 L2=植入视频、L3=定制视频，不使用 L1。所有数值区间使用无空格字符串 `"[min,max]"` 且 `min < max`。用户未明确粉丝数、或写“不限/不限粉丝数/无要求”等时，`followercount` 落库全量区间 `"[0,999999999]"`（零到最大值），不省略字段、不为此弹窗；历史坏值 `[1,999999999]` 同样归一为 `[0,999999999]`。同平台多个达人类型合并为一个 requirement，保留总量，不拆分人数。
 
 需求 ID 优先取 `data.requirement_id`，缺失时兼容 `data.id`；绝不使用 `data.demand_id`。
 
@@ -91,9 +91,11 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
 - 手动拓展只有在当前 Provider 响应明确给出可信实际数量为 0 或少于 `num` 时，才在交付当前真实 Excel 后进入同一复核和放宽建议；数量未知时不猜测，当前真实交付物即最终结果。
 
-每轮放宽只做建议、不自动执行：先可见地告诉用户实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑。“放宽直到足量”等总体授权不替代后续每轮具体项确认。确认后仍把用户当前完整、未改写的原始需求传给 `ypscan_parse_requirement` 并保存在 `rawMessagesJson.original`；已确认的累计放宽只写入 `rawMessagesJson.clarifications` 对应字段和本轮 `validate_requirement` 顶层参数，禁止把放宽值改写进 `demand`、`original` 或 `manual_source_creators.demand`。随后重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
+每轮放宽只做建议、不自动执行：先可见地告诉用户实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑。“放宽直到足量”等总体授权不替代后续每轮具体项确认。确认后仍把用户当前完整、未改写的原始需求传给 `ypscan_parse_requirement` 并保存在 `rawMessagesJson.original`；已确认的累计放宽写入 `rawMessagesJson.clarifications` 对应字段和本轮 `validate_requirement` 顶层参数。此前用户已确认的其他澄清答案（含截止时间）同样一并带入 `clarifications`，直接复用、不重复询问。`ypscan_parse_requirement.demand` 与 `rawMessagesJson.original` 保持未改写原文，禁止把放宽值改写进去。随后重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
 
-放宽顺序固定为刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`。不存在的字段跳过。
+放宽必须真实传导到搜索执行。`manual_source_creators` 的实际搜索参数跟随调用时传入的需求文本，读不到落库的放宽字段，因此重跑搜索时 `manual_source_creators.demand` 传入“应用了本轮全部已确认放宽值的有效搜索需求文本”：在原文对应字段的位置替换为放宽后值（例如“预算：3000-20000”改为“预算：2400-24000”），其余原文保持不变；只传原始文本等于没有放宽。搜索响应若回传实际搜索参数，必须与已确认放宽值逐项核对：不一致时如实报告“放宽未传导到搜索、实际参数仍为 X”，不得把结果归因于放宽或宣称放宽成功。
+
+放宽顺序固定为刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`。不存在的字段跳过（`followercount` 为 `[0,999999999]` 时已是全量区间、无法再放宽，直接跳过粉丝范围）。
 
 - 刊例价、CPM、CPE、粉丝范围：下界乘 `0.8`，上界乘 `1.2`；整数上下界向外取整。
 - 返点 `[min,1]` 改为 `[min×0.8,1]`。
@@ -108,7 +110,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 用户修改需求与最终交付
 
-用户主动修改任何业务条件时，无论是否已生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销全部自动放宽，重新解析、复核、创建新 requirement，并沿原业务模式重跑。不得复用旧 requirement、机构、询价、达人、batch、CSV 或 Excel。
+用户主动修改任何业务条件时，无论是否已生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销全部自动放宽，重新解析、复核、创建新 requirement，并沿原业务模式重跑。不得复用旧 requirement、机构、询价、达人、batch、CSV 或 Excel；未修改字段的已确认澄清答案（含截止时间）必须一并带入新 requirement 的 `rawMessagesJson.clarifications`，直接复用、不重复询问。
 
 业务条件未变、只是前一功能完成或明确停止后要求另一功能时，也必须按当前功能重新解析、复核并创建新 requirement，重新提交字段配置；不得复用前一功能的 requirement、字段配置、机构、达人、batch、CSV 或 Excel。机构列表后的“暂不询价”、弹窗关闭/取消或当轮未回答不属于这里的“明确停止”；满足上文续办条件时继续原询价 requirement。
 

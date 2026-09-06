@@ -813,7 +813,7 @@ test("default manual sourcing pauses without a task batch and falls back to para
     file_url: "https://files.eshypdata.com/exports/fallback.xlsx",
   });
   assert.match(completedText, /唯一下一项.*本轮必须结束并等待用户明确确认/u);
-  assert.match(completedText, /累计放宽只写入 rawMessagesJson\.clarifications/u);
+  assert.match(completedText, /累计放宽写入 rawMessagesJson\.clarifications/u);
   assert.match(completedText, /跨 requirement 的 keyword 差异只能作为线索/u);
 });
 
@@ -1632,7 +1632,8 @@ test("empty rank result reviews the requirement before relaxation", () => {
   assert.match(text, /提出后结束本轮并等用户确认该项/u);
   assert.match(text, /总体授权不替代逐轮确认/u);
   assert.match(text, /rawMessagesJson\.original 保留未改写原始需求/u);
-  assert.match(text, /禁止改写 demand\/original/u);
+  assert.match(text, /manual_source_creators\.demand 必须携带已应用放宽值的有效搜索文本/u);
+  assert.match(text, /搜索返回后核对实际参数与放宽值一致/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /恢复当前询价分支|前 5 家/u);
 });
@@ -1738,10 +1739,7 @@ test("parse and startup directives enumerate required business values before val
   assert.match(startup.prependContext, /选项只给单个最低返点百分比/u);
   assert.match(startup.prependContext, /上限固定按 100% 处理/u);
   assert.match(startup.prependContext, /数值澄清正文须先解释.*请选择或自定义输入/u);
-  assert.match(
-    startup.prependContext,
-    /未提及则明确缺失字段.*“行业头部达人”等定性描述.*无法确定粉丝数范围/u,
-  );
+  assert.match(startup.prependContext, /未提及则明确缺失字段.*定性描述无法确定数值范围.*必须说明/u);
   assert.match(
     startup.prependContext,
     /不得只写“确认报价\/报价上限是多少”.*不得展示“落库\/Provider 参数”等内部术语/u,
@@ -1754,6 +1752,10 @@ test("parse and startup directives enumerate required business values before val
     startup.prependContext,
     /禁用“1 个数值\+返回修改\/取消”的二按钮结构.*自建“其他”选项.*宿主自定义输入/u,
   );
+  assert.match(startup.prependContext, /同一会话内用户已确认的澄清答案.*持续有效/u);
+  assert.match(startup.prependContext, /禁止对同一字段重复询问/u);
+  assert.match(startup.prependContext, /等价时间表述.*今晚8点前.*今晚20:00.*当天20:00:00/u);
+  assert.match(startup.prependContext, /禁止逐字段分轮弹窗/u);
 });
 
 test("recipient selection reuses submitted fields or hands off to field selection", () => {
@@ -2288,6 +2290,7 @@ test("preflight block result requires grouped popup clarification instead of ret
 
   assert.match(text, /Provider 未执行写入/u);
   assert.match(text, /已经回答但漏传的字段补回 rawMessagesJson.clarifications/u);
+  assert.match(text, /同一字段已确认答案直接复用，不得重复询问/u);
   assert.match(text, /同一次 AskUserQuestion 中成组收集/u);
   assert.match(text, /禁止自主选择、默认补值/u);
   assert.match(text, /projectName 由 Agent 根据当前需求自行总结生成/u);

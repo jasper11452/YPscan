@@ -23,17 +23,19 @@ const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
 const REQUIREMENT_PREFLIGHT_BLOCKED = "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED";
 const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"，且 min < max';
 const MANUAL_SOURCE_ORIGINAL_TEXT_RULE =
-  "调用 default manual_source_creators 前先读取实际 input schema：按当前环境 live schema 传参。若 schema required 含 num，则 requirement_id 与 num 一并传；若 schema 不要求 num，则不得附带。若 schema 明确提供用于需求原文的可选字段 demand，则只在该字段传当前完整、未改写的用户原始需求文本。只传原文，不传解析输出或 rawMessagesJson；schema 不支持 demand 时不得猜字段名。";
+  "调用 default manual_source_creators 前先读取实际 input schema：按当前环境 live schema 传参。若 schema required 含 num，则 requirement_id 与 num 一并传；若 schema 不要求 num，则不得附带。若 schema 明确提供用于需求原文的可选字段 demand：无已确认放宽时只传当前完整、未改写的用户原始需求文本；已确认放宽时必须传应用了本轮全部已确认放宽值的有效搜索需求文本（在原文对应字段的位置替换为放宽后值，其余原文不变），确保放宽真实传导到搜索。不传解析输出或 rawMessagesJson；schema 不支持 demand 时不得猜字段名。";
 const SINGLE_REQUIREMENT_TYPE_RULE =
   "同平台多个达人类型只创建一个 requirement：保留用户给出的总量，合并全部类型标签与条件，不拆分子需求、不重复落库、不重复搜索；本规则覆盖任何旧的平均分配或批量子需求指令。";
+const CLARIFICATION_REUSE_RULE =
+  "同一会话内用户已确认的澄清答案（截止时间、粉丝量级、返点、报价等）持续有效：后续轮次和 requirement 重建必须原样带入 rawMessagesJson.clarifications 直接复用，同一字段新答案覆盖旧答案，禁止对同一字段重复询问；只有用户明确修改该字段或与新需求冲突时才重新澄清。等价时间表述（今晚8点前/今晚20:00/当天20:00:00）视为同一值，归一后不再重复确认。";
 const PARSED_METRIC_REUSE_RULE =
-  "解析 Workflow 已给出的唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值，必须直接采用，禁止再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。粉丝技术上限溢出由本地截断到 999999999，不弹窗。只有这些字段缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。";
+  "解析 Workflow 已给出的唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值，必须直接采用，禁止再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。粉丝技术上限溢出由本地截断到 999999999，不弹窗。用户未明确粉丝数或解析为“不限”时默认落库全量区间 [0,999999999]，不省略、不弹窗；历史坏值 [1,999999999] 归一为 [0,999999999]。只有这些字段缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。";
 const REBATE_MINIMUM_QUESTION_RULE =
   '需要澄清返点时只问最低返点：AskUserQuestion 的问题写“最低返点要求是多少”，选项只给单个最低返点百分比（如 20%、25%、30%），禁止给返点区间、上限或“不限”类选项；上限固定按 100% 处理，落库仍为 "[min,1]"。';
 const NUMERIC_CLARIFICATION_QUESTION_RULE =
-  "数值澄清正文须先解释原需求为何不能确定该值，再提示“请选择或自定义输入”：未提及则明确缺失字段；只有“行业头部达人”等定性描述则说明无法确定粉丝数范围。不得只写“确认报价/报价上限是多少”，不得展示“落库/Provider 参数”等内部术语。每题设置 multiSelect=false，提供恰好 3 个互斥且可直接回答该字段的具体值；禁用“1 个数值+返回修改/取消”的二按钮结构及自建“其他”选项，保留宿主自定义输入。";
+  "数值澄清正文须先解释原需求为何不能确定该值，再提示“请选择或自定义输入”：未提及则明确缺失字段；定性描述无法确定数值范围时必须说明。不得只写“确认报价/报价上限是多少”，不得展示“落库/Provider 参数”等内部术语。每题设置 multiSelect=false，提供恰好 3 个互斥且可直接回答该字段的具体值；禁用“1 个数值+返回修改/取消”的二按钮结构及自建“其他”选项，保留宿主自定义输入。需要澄清时用一次 AskUserQuestion 收集全部待确认字段，禁止逐字段分轮弹窗。";
 const REQUIREMENT_COMPLETENESS_RULE =
-  "进入 validate_requirement 前必须检查 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3 且必须匹配视频类型，小红书不使用 L3。这些业务值缺失、无效或需要选择时，必须在调用前一次性通过 AskUserQuestion 收集，禁止默认补值。contentTag 必须是解析结果中的非空数组；缺失或无效时重新解析，禁止向用户询问或自行补值；本规则覆盖任何“contentTag 缺失时直接省略”的旧指令。status=ready、projectName 和 rawMessagesJson（当前原文+parse_outputs）由 Agent 构造。";
+  "进入 validate_requirement 前必须检查 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3 且必须匹配视频类型，小红书不使用 L3。followercount 未明确或“不限”时默认落库全量区间 [0,999999999]，不省略字段、不弹窗；历史坏值 [1,999999999] 归一为 [0,999999999]。这些业务值缺失、无效或需要选择时，必须在调用前一次性通过 AskUserQuestion 收集，禁止默认补值。contentTag 必须是解析结果中的非空数组；缺失或无效时重新解析，禁止向用户询问或自行补值；本规则覆盖任何“contentTag 缺失时直接省略”的旧指令。status=ready、projectName 和 rawMessagesJson（当前原文+parse_outputs）由 Agent 构造。";
 const RAW_MESSAGES_JSON_KEY_CONTRACT =
   "rawMessagesJson key 与取值严格按 validate_requirement 工具卡 rawMessagesJson 契约执行，禁止写成 original_demand 或 demand；key 写错会被本地预检当成缺失原文阻断。";
 const INQUIRY_RECIPIENT_RESPONSE_RULE =
@@ -45,10 +47,10 @@ const REQUIREMENT_CREATION_RULE =
 const FIELD_SELECTION_GATE_RULE =
   "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields，并等待用户为这个 requirement 提交字段页后明确回复“好了”；用户过去对其他 requirement 说过“以后不用再选字段”等不算当前 requirement 的提交证据。字段选择 URL 输出后本轮必须结束并等待，禁止在同一轮试调 manual_source_creators、搜索或打分。";
 const RELAXATION_REVIEW_COMPACT_RULE =
-  "结果差异先核对各轮需求、解析、validate 参数和实际搜索参数；跨 requirement 的 keyword 差异仅是线索。复核通过后只报实际数、目标数、缺口和唯一下一项，提出后结束本轮并等用户确认该项；总体授权不替代逐轮确认。重建时 rawMessagesJson.original 保留未改写原始需求，放宽只进 clarifications 和 validate 参数，禁止改写 demand/original。";
+  "结果差异先核对各轮需求、解析、validate 参数和实际搜索参数；跨 requirement 的 keyword 差异仅是线索。复核通过后只报实际数、目标数、缺口和唯一下一项，提出后结束本轮并等用户确认该项；总体授权不替代逐轮确认。重建时 rawMessagesJson.original 保留未改写原始需求，放宽进 clarifications 和 validate 参数；manual_source_creators.demand 必须携带已应用放宽值的有效搜索文本，搜索返回后核对实际参数与放宽值一致。";
 // 只在结果时刻注入（manual_source Excel 交付处）；启动块只保留精简的 SHORTFALL 规则。
 const MANUAL_SOURCE_RELAXATION_RULE =
-  "解释多轮结果差异时必须核对各轮完整有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数；跨 requirement 的 keyword 差异只能作为线索，不能单独断言后台不稳定；Provider 未回传实际搜索参数时明确说无法确认根因，不猜测、不让用户替后台决定不可执行的搜索口径。放宽每轮只展示实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑，“放宽直到足量”等总体授权不替代后续每轮具体项确认。重建时 ypscan_parse_requirement.demand 与 rawMessagesJson.original 仍使用用户当前完整、未改写的原始需求；已确认的累计放宽只写入 rawMessagesJson.clarifications 对应字段和本轮 validate_requirement 顶层参数，禁止把放宽值改写进 demand、original 或 manual_source_creators.demand。";
+  "解释多轮结果差异时必须核对各轮完整有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数；跨 requirement 的 keyword 差异只能作为线索，不能单独断言后台不稳定；Provider 未回传实际搜索参数时明确说无法确认根因，不猜测、不让用户替后台决定不可执行的搜索口径。放宽每轮只展示实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑，“放宽直到足量”等总体授权不替代后续每轮具体项确认。重建时 ypscan_parse_requirement.demand 与 rawMessagesJson.original 仍使用用户当前完整、未改写的原始需求；已确认的累计放宽写入 rawMessagesJson.clarifications 对应字段和本轮 validate_requirement 顶层参数；重跑搜索时 manual_source_creators.demand 必须传应用了已确认放宽值的有效搜索文本（原文对应字段替换为放宽后值），搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导、不得宣称放宽成功。";
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
@@ -340,7 +342,7 @@ function requirementPreflightBlockedDirective() {
   return [
     "YPSCAN_FLOW_DIRECTIVE=validate_requirement 已被本地预检阻断，Provider 未执行写入。一次处理工具错误列出的全部字段，不得把阻断说成 Provider 报错。",
     `REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。禁止数组、对象、单值和百分号文本直接进入数值筛选字段。`,
-    "先把当前对话中已经回答但漏传的字段补回 rawMessagesJson.clarifications；只对仍未回答、无效、冲突或需选择的字段在同一次 AskUserQuestion 中成组收集（最多四题）。八个可选 Label 缺失时省略；contentTag 缺失时重新解析，不向用户询问或自行补值。projectName 由 Agent 根据当前需求自行总结生成。禁止自主选择、默认补值或重试探测。",
+    "先把当前对话中已经回答但漏传的字段补回 rawMessagesJson.clarifications；同一字段已确认答案直接复用，不得重复询问；只对仍未回答、无效、冲突或需选择的字段在同一次 AskUserQuestion 中成组收集（最多四题）。八个可选 Label 缺失时省略；contentTag 缺失时重新解析，不向用户询问或自行补值。projectName 由 Agent 根据当前需求自行总结生成。禁止自主选择、默认补值或重试探测。",
     NUMERIC_CLARIFICATION_QUESTION_RULE,
   ].join("\n");
 }
@@ -1548,7 +1550,7 @@ export function registerFlowDirectiveHooks(api) {
           "机构回填预览链路先保存预览表，再让用户选择是否补全；选“补全并打分排序”时继续 ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全（20/批）→ file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。回收不足时不自动放宽，交付真实结果。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。字段映射固定：排名=rank_no（缺省按响应顺序）、机构=agency_name、覆盖达人=candidate_count、返点=rebate_rate、综合分=rank_score。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
-          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 与 manual_source_creators_status 的 num 位置以当前环境 live schema 为准：测试基线是启动工具不带 num、状态查询带 num；若生产 schema 漂移，则只允许按 live schema 做确定性调整，不能靠连续试错。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具；每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 file_bridge 和打分。补全完成后调用 file_bridge（flow=manual_source）完成合并和上传，再调用 score_manual_source_csv；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成才保存最终手动拓展 Excel；score 仍同步返回 Excel 时直接保存。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。",
+          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 与 manual_source_creators_status 的 num 位置以当前环境 live schema 为准：测试基线是启动工具不带 num、状态查询带 num；若生产 schema 漂移，则只允许按 live schema 做确定性调整，不能靠连续试错。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具；每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 file_bridge 和打分。补全完成后调用 file_bridge（flow=manual_source）完成合并和上传，再调用 score_manual_source_csv；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成才保存最终手动拓展 Excel；score 仍同步返回 Excel 时直接保存。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。结果不足且用户确认放宽后重建搜索时，manual_source_creators.demand 传应用了已确认放宽值的有效搜索文本（原文对应字段替换为放宽后值），搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导。",
           "原生达人补全工具由宿主 YP Action 提供、不在 ypscan 白名单内：小红书 get_xhs_author_business_card 且固定 page_count=1，抖音 get_douyin_author_business_card。宿主未开放对应工具时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。",
           MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
@@ -1558,12 +1560,13 @@ export function registerFlowDirectiveHooks(api) {
           REBATE_MINIMUM_QUESTION_RULE,
           NUMERIC_CLARIFICATION_QUESTION_RULE,
           INQUIRY_RECIPIENT_RESPONSE_RULE,
-          `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
-          "Dify 已给出的唯一数值直接采用，禁止再问；本地只做区间格式与粉丝技术上限截断。只有解析缺失、null、多候选或与用户明确改口冲突时才阻断。",
+          `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"；followercount 未明确或“不限”时默认落库 [0,999999999]。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
+          "Dify 已给出的唯一数值直接采用，禁止再问；本地只做区间格式与粉丝技术上限截断，粉丝缺失或“不限”默认落库 [0,999999999]、不弹窗。只有解析缺失、null、多候选或与用户明确改口冲突时才阻断。",
           "需求解析复核、结果不足后的二次复核与逐项放宽、用户修改需求后的重建规则，统一按 media-assistant Skill 执行；Hook 只提供当前工具结果和下一步动态参数。",
           "手动拓展调用 manual_source_creators / manual_source_creators_status 时，num 的位置必须以当前环境 live schema 为准：测试基线要求启动不带 num、状态查询带 num；若当前环境 schema 不同，只能做确定性兼容，禁止用前台可见的多轮试错去探测。可选需求原文字段只用 demand；禁止继续生成或暗示 size、creator_count、page_url、original_brief 等旧字段。",
           PARSED_METRIC_REUSE_RULE,
           SINGLE_REQUIREMENT_TYPE_RULE,
+          CLARIFICATION_REUSE_RULE,
         );
       }
       return { prependContext: lines.join("\n") };

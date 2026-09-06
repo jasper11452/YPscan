@@ -28,7 +28,7 @@
 
 - 8 个可选 Label：`growBloggerTypeLabel`、`contentFeatureLabel`、`contentThemeLabel`、`kolPersonaLabel`、`pgyBloggerTypeLabel`、`xtTalentTypeLabel`、`industryTagLabel`、`growTalentTypeLabel`；`contentTag`
 - 品牌：`brandName`、`xhsbrandName`、`dybrandName`
-- 数值：`followercount`、`rebate`；报价 `kolOfficialPrice`/`L1/L2/L3`/`xhs_kolOfficialPrice`/`dy_kolOfficialPrice`；`cpm`/`L1/L2/L3`/`xhs_cpm`/`dy_cpm`；`cpe`/`L1/L2/L3`/`xhs_cpe`/`dy_cpe`
+- 数值：`followercount`、`rebate`；报价 `kolOfficialPrice`/`L1/L2/L3`/`xhs_kolOfficialPrice`/`dy_kolOfficialPrice`；`cpm`/`L1/L2/L3`/`xhs_cpm`/`dy_cpm`；`cpe`/`L1/L2/L3`/`xhs_cpe`/`dy_cpe`。其中 `followercount` 缺失或解析为“不限”时，由 `validate_requirement` 本地边界默认落库全量区间 `[0,999999999]`，不省略、不弹窗；历史坏值 `[1,999999999]` 归一为 `[0,999999999]`。
 
 ### 错误码
 

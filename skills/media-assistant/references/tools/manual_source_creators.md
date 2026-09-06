@@ -6,9 +6,11 @@
 
 - `requirement_id`：Provider-required string，本轮唯一必传基础参数，只传当前真实 requirement ID。
 - `num`：仅当当前环境的 live schema 将其列为 required 时传正整数目标数量；测试基线 `https://test-mcp.eshypdata.com/mcp` 当前不要求该字段，生产环境 schema 若漂移，以 live schema 为准。
-- `demand`：可选 string，live schema 支持时才传，只透传当前完整原文，不传解析输出或 `rawMessagesJson`。
+- `demand`：可选 string，live schema 支持时才传。无已确认放宽时只透传当前完整、未改写的用户原始需求文本；存在已确认放宽时，传“应用了本轮全部已确认放宽值的有效搜索需求文本”：在原文对应字段的位置替换为放宽后值（如“预算：3000-20000”改为“预算：2400-24000”），其余原文不变。不传解析输出或 `rawMessagesJson`；`rawMessagesJson.original` 与重解析的 `ypscan_parse_requirement.demand` 始终保留未改写原文。
 
 `num` 不得靠前台多轮试错探测；只能按当前 live schema 确定性决定是否传入。每批交付数量的业务含义仍由手动拓展目标数量决定。
+
+搜索响应若回传实际搜索参数，必须与已确认放宽值逐项核对：不一致时如实报告“放宽未传导到搜索、实际参数仍为 X”，不得把结果归因于放宽或宣称放宽成功。
 
 ## 调用
 
