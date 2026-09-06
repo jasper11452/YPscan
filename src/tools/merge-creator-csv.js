@@ -4,8 +4,10 @@ import { isAbsolute, join } from "node:path";
 import { nonemptyString } from "../util/value.js";
 
 const FLOW_VALUES = Object.freeze(["manual_source", "mcn_rank", "mcn_complete_only"]);
+// 宿主原生补全 CSV 用「请求kw_uid」作为输入 kw_uid 的回显列，与 links CSV 的 creator_id 对齐。
 const COMPLETION_ID_HEADER_CANDIDATES = Object.freeze([
   "creator_id",
+  "请求kw_uid",
   "kw_uid",
   "xt_id",
   "author_id",

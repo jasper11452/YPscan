@@ -513,6 +513,36 @@ test("YP Action completion CSV paths are recorded per requirement for upload pro
   assert.deepEqual(transientState.completionCsvPathsFor("req-other"), []);
 });
 
+test("host-shaped completion result without a success field still emits success and records the CSV", () => {
+  const { hooks, transientState } = registeredPlugin();
+  const context = { sessionKey: "host-shape-completion" };
+  const persist = (event) => hooks.get("tool_result_persist")(event, context);
+  persist({
+    toolName: "validate_requirement",
+    message: toolMessage({ success: true, data: { requirement_id: "req-host-shape" } }),
+  });
+  hooks.get("before_tool_call")(
+    { toolName: "get_xhs_author_business_card", toolCallId: "batch", params: {} },
+    context,
+  );
+  const text = directiveText(
+    persist({
+      toolName: "get_xhs_author_business_card",
+      toolCallId: "batch",
+      message: toolMessage({
+        csv_file: "/tmp/host-shape.csv",
+        successful_author_ids: ["creator-1", "creator-2"],
+        failed_author_ids: [],
+      }),
+    }),
+  );
+  assert.match(text, /COMPLETION_CSV_FILE=\/tmp\/host-shape\.csv/u);
+  assert.match(text, /SUCCESSFUL_AUTHOR_IDS=\["creator-1","creator-2"\]/u);
+  assert.match(text, /FILE_BRIDGE_FLOW=manual_source/u);
+  assert.doesNotMatch(text, /已暂停|ASK_USER_QUESTION_ARGS/u);
+  assert.deepEqual(transientState.completionCsvPathsFor("req-host-shape"), ["/tmp/host-shape.csv"]);
+});
+
 test("YP Action completion CSV provenance remains isolated between sessions", () => {
   const { hooks, transientState } = registeredPlugin();
   const persist = hooks.get("tool_result_persist");

@@ -6,7 +6,7 @@
 | --------------------------- | --------------------------------------------------------------------- |
 | `ypscan_parse_requirement`  | 解析当前单个平台的完整最新需求（Dify 代理）                           |
 | `ypscan_save_artifact`      | 按 artifact kind 受控保存 Provider 返回的 Excel 或 links CSV          |
-| `ypscan_save_creator_links` | 直接解析受控预览 xlsx（兼容 rows 输入），写出本轮合法 links CSV |
+| `ypscan_save_creator_links` | 直接解析受控预览 xlsx（兼容 rows 输入），写出本轮合法 links CSV       |
 | `file_bridge`               | 合并 links CSV 与多批达人补全 CSV；按 flow 决定本地交付或校验上传 OSS |
 
 ## 1. ypscan_parse_requirement
@@ -95,7 +95,7 @@
 - links/补全输入拒绝首尾空白路径，不对歧义路径 trim 后授权再读原路径。CSV 输入仍要求绝对路径；来源登记可把无首尾空白的宿主相对路径按 workspaceDir 规范化。
 
 - links CSV 必含 `source_record_id`、`creator_id`、`url` 三列（表头归一化匹配，`-`/空格/大小写不敏感）。
-- 每批补全 CSV 必须含可识别的 creator ID 列（候选：`creator_id`、`kw_uid`、`xt_id`、`author_id`、`authorid`、`id`）；按 ID 去重取首条。
+- 每批补全 CSV 必须含可识别的 creator ID 列（候选：`creator_id`、`请求kw_uid`、`kw_uid`、`xt_id`、`author_id`、`authorid`、`id`）；按 ID 去重取首条。
 - 输出保持 links 原顺序；headers = `source_record_id, creator_id, url` + 各补全 CSV 的非保留详情列（排除 ID 列与 `source_record_id`/`creator_id`/`url`）。
 - 未匹配到的 creator_id 计入 `missing_creator_ids`（不中断）。
 - 输出文件名：`<flow 前缀>-<平台>-<requirement_id>-<sha256 前 8 位>.csv`，前缀映射 `manual_source→manual-source`、`mcn_rank→mcn-rank`、`mcn_complete_only→mcn-complete`；同名文件内容一致则复用，不一致报 `YPSCAN_CREATOR_CSV_MERGE_CONFLICT`。
@@ -127,12 +127,12 @@
 
 ### 参数（`additionalProperties: false`）
 
-| 字段             | 类型          | 必填 | 约束                                                                      |
-| ---------------- | ------------- | ---- | ------------------------------------------------------------------------- |
-| `requirement_id` | string        | 是   | `minLength: 1`；当前 requirement                                          |
-| `rows` | array[object] | 二选一 | 兼容旧输入；每项 creator_id、url 必填，source_record_id 可选 |
-| `preview_file_path` | string | 二选一 | 当前 requirement 已保存的预览 xlsx 绝对路径，与 rows 互斥 |
-| `platform` | string | 文件输入必填 | xiaohongshu / douyin |
+| 字段                | 类型          | 必填         | 约束                                                         |
+| ------------------- | ------------- | ------------ | ------------------------------------------------------------ |
+| `requirement_id`    | string        | 是           | `minLength: 1`；当前 requirement                             |
+| `rows`              | array[object] | 二选一       | 兼容旧输入；每项 creator_id、url 必填，source_record_id 可选 |
+| `preview_file_path` | string        | 二选一       | 当前 requirement 已保存的预览 xlsx 绝对路径，与 rows 互斥    |
+| `platform`          | string        | 文件输入必填 | xiaohongshu / douyin                                         |
 
 ### 行为
 

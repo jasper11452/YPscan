@@ -712,16 +712,24 @@ function distributionDirective(message) {
   return lines.join("\n");
 }
 
-function manualSourceCompletionDirective(message, _params = {}, _recordedMode = null) {
-  const result = parsedToolResult(message);
-  if (result?.success !== true) return flowPauseDirective("达人原生补全", message);
-  // SKILL.md 契约字段是 csv_file；兼容响应里使用 csv_file_path 的形态。
-  const csvFilePath = firstString(
+// SKILL.md 契约字段是 csv_file；兼容响应里使用 csv_file_path 的形态。directive 与
+// 上传来源登记共用同一解析链，保证两者登记的路径一致。
+function completionCsvFilePath(result) {
+  return firstString(
     result?.data?.csv_file,
     result?.csv_file,
     result?.data?.csv_file_path,
     result?.csv_file_path,
   );
+}
+
+function manualSourceCompletionDirective(message, _params = {}, _recordedMode = null) {
+  const result = parsedToolResult(message);
+  // SKILL.md 契约只信任 csv_file、successful_author_ids、failed_author_ids，不要求
+  // success 字段；宿主原生补全工具的成功返回没有 success，以 csv_file 是否存在判定。
+  // 显式 success=false 仍按失败处理（保留旧错误语义）。
+  if (result?.success === false) return flowPauseDirective("达人原生补全", message);
+  const csvFilePath = completionCsvFilePath(result);
   const successfulAuthorIds = Array.isArray(result?.successful_author_ids)
     ? result.successful_author_ids
     : Array.isArray(result?.data?.successful_author_ids)
@@ -1584,8 +1592,10 @@ export function registerFlowDirectiveHooks(api) {
       }
       const seenRequirementId = trustedRequirementId(bare, params, result);
       if (seenRequirementId) currentRequirementIdByScope.set(scope, String(seenRequirementId));
-      if (isNativeCompletion && result?.success === true && !event?.isSynthetic) {
-        const csvFile = firstString(result?.csv_file, result?.data?.csv_file);
+      if (isNativeCompletion && result?.success !== false && !event?.isSynthetic) {
+        // 宿主原生补全返回没有 success 字段；与 directive 共用 csv_file 解析链，
+        // 显式 success=false 的结果不登记上传来源。
+        const csvFile = completionCsvFilePath(result);
         const requirementId = matched?.requirementId;
         const path = normalizeLocalFilePath(csvFile, context?.workspaceDir);
         if (path && requirementId) {

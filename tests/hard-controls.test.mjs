@@ -688,14 +688,20 @@ test("native completion pins the file bridge flow to the validated business mode
   assert.match(directiveText(inquiryCompletion), /^FILE_BRIDGE_FLOW=manual_source$/mu);
 
   // 无已校验模式时也固定为 manual_source（补全后统一打分排序）。
+  // 宿主原生补全返回没有 success 字段：以 csv_file 存在为准判定成功。
   const fresh = registeredHooks().get("tool_result_persist");
   const unknownCompletion = fresh({
     toolName: "ypaction__get_douyin_author_business_card",
     params: { requirement_id: "req-unknown" },
-    message: completionMessage,
+    message: toolMessage({
+      csv_file: "/batch/completion.csv",
+      successful_author_ids: ["a1"],
+      failed_author_ids: [],
+    }),
   });
   const unknownText = directiveText(unknownCompletion);
   assert.match(unknownText, /^FILE_BRIDGE_FLOW=manual_source$/mu);
+  assert.doesNotMatch(unknownText, /已暂停|ASK_USER_QUESTION_ARGS/u);
 });
 
 test("file_bridge delivers local-only and over-limit merged CSVs without downstream calls", () => {

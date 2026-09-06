@@ -10,14 +10,22 @@ import { fileBridge, loadFileBridgeConfig } from "../src/tools/file-bridge.js";
 
 test("loadFileBridgeConfig does not implicitly consume host environment credentials", () => {
   const moduleUrl = new URL("../src/tools/file-bridge.js", import.meta.url).href;
-  const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
+  const output = execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
     const { loadFileBridgeConfig } = await import(${JSON.stringify(moduleUrl)});
     const result = await loadFileBridgeConfig({ bundled: null });
     console.log(JSON.stringify({ ok: result.ok }));
-  `], {
-    encoding: "utf8",
-    env: { ...process.env, AccessKeyId: "test-host-ak", AccessKeySecret: "test-host-sk" },
-  });
+  `,
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, AccessKeyId: "test-host-ak", AccessKeySecret: "test-host-sk" },
+    },
+  );
   assert.deepEqual(JSON.parse(output), { ok: false });
 });
 import { mergeCreatorCsvFiles } from "../src/tools/merge-creator-csv.js";
@@ -97,6 +105,35 @@ test("fileBridge merges completion batches and returns a local result without up
   assert.equal(
     readFileSync(parsed.data.file_path, "utf8"),
     "source_record_id,creator_id,url,nickname\nsource-2,creator-2,https://example.com/2,达人二\nsource-1,creator-1,https://example.com/1,达人一",
+  );
+});
+
+test("merge recognizes the host native completion CSV 请求kw_uid id column", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-file-bridge-host-header-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+  const linksCsvPath = join(workspaceDir, "links.csv");
+  const completionCsvPath = join(workspaceDir, "completion.csv");
+  writeFileSync(
+    linksCsvPath,
+    "source_record_id,creator_id,url\nsource-1,creator-1,https://example.com/1\n",
+  );
+  writeFileSync(completionCsvPath, "请求kw_uid,用户ID,nickname\ncreator-1,user-red-id,达人一\n");
+  const merged = await mergeCreatorCsvFiles(
+    {
+      requirement_id: "req-host-header",
+      platform: "xiaohongshu",
+      flow: "manual_source",
+      links_csv_path: linksCsvPath,
+      completion_csv_paths: [completionCsvPath],
+    },
+    { workspaceDir },
+  );
+  assert.equal(merged.ok, true);
+  assert.deepEqual(merged.details.matched_creator_ids, ["creator-1"]);
+  assert.deepEqual(merged.details.missing_creator_ids, []);
+  assert.equal(
+    readFileSync(merged.details.file_path, "utf8"),
+    "source_record_id,creator_id,url,用户ID,nickname\nsource-1,creator-1,https://example.com/1,user-red-id,达人一",
   );
 });
 
