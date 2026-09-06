@@ -32,22 +32,30 @@ function cellText(value) {
   return value instanceof Date ? value.toISOString() : String(value);
 }
 
-function matchesHomepage(platform, creatorId, value) {
-  if (!/^[a-zA-Z0-9_-]+$/u.test(creatorId)) return false;
+/** 从平台主页 URL 提取平台 ID；无法识别或 ID 含非法字符时返回 null。 */
+export function extractCreatorIdFromHomepage(platform, value) {
   try {
     const url = new URL(value);
-    if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
-    const id =
-      platform === "xiaohongshu" &&
-      ["www.xiaohongshu.com", "xiaohongshu.com"].includes(url.hostname)
-        ? url.pathname.match(/^\/user\/profile\/([^/]+)\/?$/u)?.[1]
-        : platform === "douyin" && url.hostname === "www.xingtu.cn"
-          ? url.pathname.match(/^\/ad\/creator\/author-homepage\/douyin-video\/([^/]+)\/?$/u)?.[1]
-          : null;
-    return id === creatorId;
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
+    let id = null;
+    if (platform === "xiaohongshu") {
+      if (["www.xiaohongshu.com", "xiaohongshu.com"].includes(url.hostname)) {
+        id = url.pathname.match(/^\/user\/profile\/([^/]+)\/?$/u)?.[1] ?? null;
+      } else if (url.hostname === "pgy.xiaohongshu.com") {
+        id = url.pathname.match(/^\/solar\/pre-trade\/blogger-detail\/([^/]+)\/?$/u)?.[1] ?? null;
+      }
+    } else if (platform === "douyin" && url.hostname === "www.xingtu.cn") {
+      id = url.pathname.match(/^\/ad\/creator\/author-homepage\/douyin-video\/([^/]+)\/?$/u)?.[1] ?? null;
+    }
+    return id && /^[a-zA-Z0-9_-]+$/u.test(id) ? id : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function matchesHomepage(platform, creatorId, value) {
+  if (!/^[a-zA-Z0-9_-]+$/u.test(creatorId)) return false;
+  return extractCreatorIdFromHomepage(platform, value) === creatorId;
 }
 
 /** Read only a hash-verified preview produced for the current requirement. */

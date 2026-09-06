@@ -16,7 +16,7 @@ const COMPLETION_ID_HEADER_CANDIDATES = Object.freeze([
 ]);
 const RESERVED_HEADERS = new Set(["source_record_id", "creator_id", "url"]);
 
-function parseCsv(value) {
+export function parseCsv(value) {
   const text = String(value);
   /** @type {string[][]} */
   const rows = [];
@@ -96,14 +96,14 @@ function rowsToObjects(headers, rows) {
   );
 }
 
-function normalizeCsvHeader(header) {
+export function normalizeCsvHeader(header) {
   return String(header)
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/gu, "_");
 }
 
-function findRequiredHeaders(headers, requiredHeaders) {
+export function findRequiredHeaders(headers, requiredHeaders) {
   const byNormalized = new Map(headers.map((header) => [normalizeCsvHeader(header), header]));
   const resolved = new Map();
   for (const requiredHeader of requiredHeaders) {

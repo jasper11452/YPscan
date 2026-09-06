@@ -169,10 +169,10 @@ try {
     (tool) => tool.name === "ypscan_save_creator_links",
   );
   assert.ok(creatorLinksSaver);
-  assert.deepEqual(creatorLinksSaver.parameters.required, ["requirement_id"]);
+  assert.deepEqual(creatorLinksSaver.parameters.required, ["requirement_id", "platform"]);
   assert.deepEqual(
     creatorLinksSaver.parameters.oneOf.map((item) => item.required),
-    [["rows"], ["preview_file_path", "platform"]],
+    [["links_csv_path"], ["preview_file_path"]],
   );
   assert.equal(packageJson.files.includes("src/tools/read-creator-preview.js"), true);
   assert.equal(toolNames.includes("ypscan_merge_creator_csv"), false);

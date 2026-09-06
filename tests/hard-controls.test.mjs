@@ -544,6 +544,59 @@ test("default manual sourcing polls its status before saving the final artifact"
   assert.doesNotMatch(savedText, /ypscan_manual_research|宿主 Browser/u);
 });
 
+test("manual links artifact save chains into ypscan_save_creator_links normalization", () => {
+  const hooks = registeredHooks();
+  const context = { sessionKey: "manual-links-chain" };
+  const persist = hooks.get("tool_result_persist");
+  persist(
+    {
+      toolName: "validate_requirement",
+      params: { platform: "xiaohongshu" },
+      message: toolMessage({ success: true, data: { id: "req-manual-chain" } }),
+    },
+    context,
+  );
+  const saved = persist(
+    {
+      toolName: "ypscan_save_artifact",
+      params: { artifact_kind: "manual_creator_links", artifact_id: "req-manual-chain" },
+      message: toolMessage({
+        success: true,
+        data: { file_path: "/workspace/links.csv" },
+        delivery: {
+          local_file_link: "[/workspace/links.csv](<file:///workspace/links.csv>)",
+        },
+      }),
+    },
+    context,
+  );
+  const text = directiveText(saved);
+  assert.match(text, /原始 Provider 下载物，尚未归一化/u);
+  assert.match(text, /不得把该原始 CSV 直接传给 file_bridge/u);
+  assert.deepEqual(namedArgsFromDirective(text, "SAVE_CREATOR_LINKS_ARGS"), {
+    requirement_id: "req-manual-chain",
+    platform: "xiaohongshu",
+    links_csv_path: "/workspace/links.csv",
+  });
+
+  const withoutPlatform = persist(
+    {
+      toolName: "ypscan_save_artifact",
+      params: { artifact_kind: "manual_creator_links", artifact_id: "req-unknown-platform" },
+      message: toolMessage({
+        success: true,
+        data: { file_path: "/workspace/unknown.csv" },
+        delivery: {
+          local_file_link: "[/workspace/unknown.csv](<file:///workspace/unknown.csv>)",
+        },
+      }),
+    },
+    context,
+  );
+  assert.doesNotMatch(directiveText(withoutPlatform), /SAVE_CREATOR_LINKS_ARGS=/u);
+  assert.match(directiveText(withoutPlatform), /不猜测 platform/u);
+});
+
 test("manual sourcing normalizes a numeric batch string before status polling", () => {
   const persist = registeredHooks().get("tool_result_persist");
   const result = persist({
@@ -1306,7 +1359,8 @@ test("institutional retrieval syncs, ingests and polls before preview save", () 
     toolName: "ypscan_save_creator_links",
     params: {
       requirement_id: "req-ingest",
-      rows: [{ creator_id: "c1", url: "https://example.com/1" }],
+      platform: "xiaohongshu",
+      preview_file_path: "/workspace/mcn-preview.xlsx",
     },
     message: toolMessage({
       success: true,
@@ -1315,7 +1369,7 @@ test("institutional retrieval syncs, ingests and polls before preview save", () 
   });
   const linksText = directiveText(linksGenerated);
   assert.match(linksText, /受控 links CSV 已生成/u);
-  assert.match(linksText, /MCN_CREATOR_LINKS_LOCAL_PATH=\/workspace\/mcn-links\.csv/u);
+  assert.match(linksText, /CREATOR_LINKS_LOCAL_PATH=\/workspace\/mcn-links\.csv/u);
 });
 
 test("scored Excel delivery keeps inquiry and manual shortfall policies separate", () => {

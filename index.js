@@ -89,20 +89,26 @@ export default {
       (context) => ({
         name: "ypscan_save_creator_links",
         description:
-          "直接读取本轮已受控保存的机构回填 xlsx，返回原始表头和记录并派生合法 links CSV；传 preview_file_path + platform，不要用普通 read 读取 xlsx。兼容已有 rows 输入，二者互斥。成功后展示 delivery.local_file_link；preview 是未核验原始数据，不是合格名单。",
+          "把当前 requirement 的 Provider links CSV（ypscan_save_artifact 保存的原始下载物）或机构回填预览 xlsx 归一化为受控三列 links CSV（source_record_id,creator_id,url）；links_csv_path 与 preview_file_path 互斥。links CSV 只有 url 列时按平台主页规则推导 creator_id，短链或无法推导时立即失败。成功后展示 delivery.local_file_link；preview 是未核验原始数据，不是合格名单。",
         parameters: {
           type: "object",
           additionalProperties: false,
-          required: ["requirement_id"],
+          required: ["requirement_id", "platform"],
           oneOf: [
-            { required: ["rows"], not: { required: ["preview_file_path"] } },
-            { required: ["preview_file_path", "platform"], not: { required: ["rows"] } },
+            { required: ["links_csv_path"], not: { required: ["preview_file_path"] } },
+            { required: ["preview_file_path"], not: { required: ["links_csv_path"] } },
           ],
           properties: {
             requirement_id: {
               type: "string",
               minLength: 1,
               description: "当前 requirement_id",
+            },
+            links_csv_path: {
+              type: "string",
+              minLength: 1,
+              description:
+                "当前 requirement 的 ypscan_save_artifact(manual_creator_links) 返回的本地绝对路径",
             },
             preview_file_path: {
               type: "string",
@@ -111,25 +117,13 @@ export default {
                 "当前 requirement 的 ypscan_save_artifact(mcn_creator_preview) 返回的本地绝对路径",
             },
             platform: { type: "string", enum: ["xiaohongshu", "douyin"] },
-            rows: {
-              type: "array",
-              minItems: 1,
-              items: {
-                type: "object",
-                required: ["creator_id", "url"],
-                properties: {
-                  source_record_id: { type: "string" },
-                  creator_id: { type: "string", minLength: 1 },
-                  url: { type: "string", minLength: 1 },
-                },
-              },
-            },
           },
         },
         async execute(_id, params) {
           const result = await saveCreatorLinks(params, {
             workspaceDir: context?.workspaceDir,
             allowedPreviews: hookRuntime.previewFilesFor,
+            allowedLinksCsvs: hookRuntime.linksCsvPathsFor,
           });
           const filePath = result?.details?.file_path;
           if (filePath) {

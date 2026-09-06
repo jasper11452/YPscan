@@ -9,7 +9,7 @@ Call once after all platform-native creator-completion batches finish. This tool
 - `requirement_id`: current requirement only.
 - `platform`: `xiaohongshu` or `douyin`.
 - `flow`: `manual_source`, `mcn_rank`, or `mcn_complete_only`.
-- `links_csv_path`: absolute local path of the current links CSV. In the manual-sourcing chain this is the path returned by `ypscan_save_artifact` for `manual_creator_links`; in the institutional inquiry-retrieval chain it is the path returned by `ypscan_save_creator_links` (derived from the read preview Excel).
+- `links_csv_path`: absolute local path of the current links CSV. In both chains this is the path returned by `ypscan_save_creator_links` (the normalized three-column links CSV derived from the saved Provider links CSV or the read preview Excel). Never pass the raw Provider CSV saved by `ypscan_save_artifact`.
 - `completion_csv_paths`: non-empty list containing every successful completion batch CSV from the current requirement and platform.
 
 Input CSV paths must be absolute and have no leading or trailing whitespace; ambiguous whitespace paths are rejected before reading or uploading.

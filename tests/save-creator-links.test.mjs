@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import test from "node:test";
 
 import { saveCreatorLinks } from "../src/tools/save-creator-links.js";
@@ -20,68 +27,303 @@ function workspaceFixture(t) {
   return workspaceDir;
 }
 
-test("saveCreatorLinks writes a deduplicated source_record_id,creator_id,url CSV", async (t) => {
-  const workspaceDir = workspaceFixture(t);
-  const result = await saveCreatorLinks(
-    {
-      requirement_id: "req-links",
-      rows: [
-        { source_record_id: "s1", creator_id: "c1", url: "https://example.com/1" },
-        { creator_id: "c2", url: "https://example.com/2" },
-        { source_record_id: "s3", creator_id: "c1", url: "https://example.com/1" },
-      ],
-    },
-    { workspaceDir },
+function csvFixture(t, content, { workspaceDir } = {}) {
+  const dir = workspaceDir ?? workspaceFixture(t);
+  const path = join(dir, "provider-links.csv");
+  writeFileSync(path, content);
+  return { workspaceDir: dir, path };
+}
+
+test("CSV mode derives creator ids from homepage urls and keeps Provider order", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    [
+      "url",
+      "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+      "https://www.xiaohongshu.com/user/profile/def456",
+      "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+    ].join("\n"),
+  );
+  const result = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-csv", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
   );
 
-  const parsed = payload(result);
-  assert.equal(parsed.success, true);
-  assert.equal(parsed.data.row_count, 2);
-  assert.match(parsed.data.file_name, /^mcn-links-req-links-[a-f0-9]{8}\.csv$/u);
-  assert.match(parsed.delivery.local_file_link, /mcn-links-req-links-/u);
+  assert.equal(result.success, true);
+  assert.equal(result.data.row_count, 2);
+  assert.match(result.data.file_name, /^mcn-links-req-csv-[a-f0-9]{8}\.csv$/u);
   assert.equal(
-    readFileSync(parsed.data.file_path, "utf8"),
-    "source_record_id,creator_id,url\ns1,c1,https://example.com/1\n2,c2,https://example.com/2",
+    readFileSync(result.data.file_path, "utf8"),
+    "source_record_id,creator_id,url\n" +
+      "1,abc123,https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123\n" +
+      "2,def456,https://www.xiaohongshu.com/user/profile/def456",
   );
 });
 
-test("saveCreatorLinks rejects rows with a missing creator_id or url", async (t) => {
-  const workspaceDir = workspaceFixture(t);
-  const result = await saveCreatorLinks(
-    {
-      requirement_id: "req-bad-rows",
-      rows: [
-        { creator_id: "c1", url: "https://example.com/1" },
-        { creator_id: "", url: "https://example.com/2" },
-        { creator_id: "c3", url: "" },
-      ],
-    },
-    { workspaceDir },
+test("CSV mode passes through a three-column Provider CSV preserving source_record_id", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    [
+      "source_record_id,creator_id,url",
+      'src-a,abc123,https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123',
+    ].join("\n"),
+  );
+  const result = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-three-column", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
   );
 
-  const parsed = payload(result);
-  assert.equal(parsed.success, false);
-  assert.equal(parsed.error.code, "YPSCAN_CREATOR_LINKS_INVALID_ROWS");
-  assert.equal(parsed.error.details.problems.length, 2);
+  assert.equal(result.success, true);
+  assert.equal(
+    readFileSync(result.data.file_path, "utf8"),
+    "source_record_id,creator_id,url\n" +
+      "src-a,abc123,https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+  );
 });
 
-test("saveCreatorLinks rejects an empty row set", async (t) => {
-  const workspaceDir = workspaceFixture(t);
-  const result = await saveCreatorLinks(
-    { requirement_id: "req-empty", rows: [] },
-    { workspaceDir },
+test("CSV mode accepts Douyin xingtu homepage urls", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    [
+      "url",
+      "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/7324533389695025215",
+    ].join("\n"),
+  );
+  const result = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-douyin", platform: "douyin", links_csv_path: path },
+      { workspaceDir },
+    ),
   );
 
-  const parsed = payload(result);
-  assert.equal(parsed.success, false);
-  assert.equal(parsed.error.code, "YPSCAN_CREATOR_LINKS_INVALID_INPUT");
+  assert.equal(result.success, true);
+  assert.match(readFileSync(result.data.file_path, "utf8"), /7324533389695025215/u);
 });
 
-test("saveCreatorLinks is idempotent for identical content", async (t) => {
-  const workspaceDir = workspaceFixture(t);
+test("CSV mode rejects short links that cannot be resolved to a creator id", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    ["url", "https://xhslink.com/a/abc"].join("\n"),
+  );
+  const result = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-shortlink", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "YPSCAN_CREATOR_LINKS_INVALID_ROWS");
+  assert.deepEqual(result.error.details.problems, [
+    { row: 1, field: "creator_id", reason: "无法从主页 url 推导 creator_id" },
+  ]);
+});
+
+test("CSV mode rejects a creator_id mismatching the homepage url", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    [
+      "creator_id,url",
+      "other-id,https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+    ].join("\n"),
+  );
+  const result = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-mismatch", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "YPSCAN_CREATOR_LINKS_INVALID_ROWS");
+  assert.deepEqual(result.error.details.problems, [
+    { row: 1, field: "creator_id", reason: "creator_id 与主页 url 不匹配" },
+  ]);
+});
+
+test("CSV mode rejects a missing or duplicated url column", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    ["creator_id", "abc123"].join("\n"),
+  );
+  const missing = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-no-url", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
+  );
+  assert.equal(missing.success, false);
+  assert.equal(missing.error.code, "YPSCAN_CREATOR_LINKS_INVALID_CSV");
+  assert.match(missing.error.message, /缺少 url 列/u);
+
+  writeFileSync(path, ["url,url", "a,b"].join("\n"));
+  const duplicated = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-no-url", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
+  );
+  assert.equal(duplicated.success, false);
+  assert.equal(duplicated.error.code, "YPSCAN_CREATOR_LINKS_INVALID_CSV");
+  assert.match(duplicated.error.message, /url 列重复/u);
+});
+
+test("CSV mode rejects unparseable CSV content", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    'url\n"unclosed',
+  );
+  const result = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-bad-quote", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "YPSCAN_CREATOR_LINKS_INVALID_CSV");
+});
+
+test("CSV mode rejects empty url cells, control characters and empty row sets", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    ["source_record_id,url", "src-a,", "src-b,https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123"].join("\n"),
+  );
+  const emptyCell = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-empty-cell", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
+  );
+  assert.equal(emptyCell.success, false);
+  assert.equal(emptyCell.error.code, "YPSCAN_CREATOR_LINKS_INVALID_ROWS");
+  assert.deepEqual(emptyCell.error.details.problems, [
+    { row: 1, field: "url", reason: "url 不能为空" },
+  ]);
+
+  writeFileSync(
+    path,
+    "source_record_id,url\nsrc\u0001a,https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+  );
+  const control = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-empty-cell", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
+  );
+  assert.equal(control.success, false);
+  assert.equal(control.error.code, "YPSCAN_CREATOR_LINKS_INVALID_ROWS");
+  assert.deepEqual(control.error.details.problems, [{ row: 1, reason: "包含控制字符" }]);
+
+  writeFileSync(path, "url");
+  const headerOnly = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-empty-cell", platform: "xiaohongshu", links_csv_path: path },
+      { workspaceDir },
+    ),
+  );
+  assert.equal(headerOnly.success, false);
+  assert.equal(headerOnly.error.code, "YPSCAN_CREATOR_LINKS_EMPTY");
+});
+
+test("CSV mode requires platform and rejects the removed rows input", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    "url\nhttps://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+  );
+  const noPlatform = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-no-platform", links_csv_path: path },
+      { workspaceDir },
+    ),
+  );
+  assert.equal(noPlatform.success, false);
+  assert.equal(noPlatform.error.code, "YPSCAN_CREATOR_LINKS_INVALID_INPUT");
+
+  const legacyRows = payload(
+    await saveCreatorLinks(
+      {
+        requirement_id: "req-legacy-rows",
+        platform: "xiaohongshu",
+        rows: [{ creator_id: "c1", url: "https://example.com/1" }],
+      },
+      { workspaceDir },
+    ),
+  );
+  assert.equal(legacyRows.success, false);
+  assert.equal(legacyRows.error.code, "YPSCAN_CREATOR_LINKS_INVALID_INPUT");
+});
+
+test("CSV mode refuses files outside the workspace or symbolic links", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    "url\nhttps://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+  );
+  const outside = join(tmpdir(), `ypscan-outside-${Date.now()}.csv`);
+  writeFileSync(outside, "url\nhttps://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123");
+  t.after(() => rmSync(outside, { force: true }));
+  const outsideResult = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-outside", platform: "xiaohongshu", links_csv_path: outside },
+      { workspaceDir },
+    ),
+  );
+  assert.equal(outsideResult.success, false);
+  assert.equal(outsideResult.error.code, "YPSCAN_CREATOR_LINKS_SOURCE_NOT_ALLOWED");
+
+  const linkPath = join(workspaceDir, "linked.csv");
+  symlinkSync(path, linkPath);
+  const symlinkResult = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req-outside", platform: "xiaohongshu", links_csv_path: linkPath },
+      { workspaceDir },
+    ),
+  );
+  assert.equal(symlinkResult.success, false);
+  assert.equal(symlinkResult.error.code, "YPSCAN_CREATOR_LINKS_SOURCE_NOT_ALLOWED");
+});
+
+test("CSV mode requires a registered artifact path when the source gate is provided", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    "url\nhttps://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+  );
+  const params = {
+    requirement_id: "req-gate",
+    platform: "xiaohongshu",
+    links_csv_path: path,
+  };
+  const foreign = payload(
+    await saveCreatorLinks(params, {
+      workspaceDir,
+      allowedLinksCsvs: (id) => (id === "req-gate" ? ["/other/links.csv"] : []),
+    }),
+  );
+  assert.equal(foreign.success, false);
+  assert.equal(foreign.error.code, "YPSCAN_CREATOR_LINKS_SOURCE_NOT_ALLOWED");
+
+  const registered = payload(
+    await saveCreatorLinks(params, {
+      workspaceDir,
+      allowedLinksCsvs: (id) => (id === "req-gate" ? [normalize(path)] : []),
+    }),
+  );
+  assert.equal(registered.success, true);
+});
+
+test("CSV mode is idempotent for identical content", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    "url\nhttps://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+  );
   const params = {
     requirement_id: "req-idempotent",
-    rows: [{ creator_id: "c1", url: "https://example.com/1" }],
+    platform: "xiaohongshu",
+    links_csv_path: path,
   };
   const first = payload(await saveCreatorLinks(params, { workspaceDir }));
   const second = payload(await saveCreatorLinks(params, { workspaceDir }));
@@ -91,11 +333,15 @@ test("saveCreatorLinks is idempotent for identical content", async (t) => {
   assert.equal(first.data.file_path, second.data.file_path);
 });
 
-test("saveCreatorLinks refuses an existing symbolic link", async (t) => {
-  const workspaceDir = workspaceFixture(t);
+test("CSV mode refuses an existing symbolic link at the output path", async (t) => {
+  const { workspaceDir, path } = csvFixture(
+    t,
+    "url\nhttps://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/abc123",
+  );
   const params = {
     requirement_id: "req-symlink",
-    rows: [{ creator_id: "c1", url: "https://example.com/1" }],
+    platform: "xiaohongshu",
+    links_csv_path: path,
   };
   const first = payload(await saveCreatorLinks(params, { workspaceDir }));
   const outsidePath = join(workspaceDir, "outside.csv");
@@ -151,7 +397,7 @@ test("preview input rejects foreign requirements, changed content, and mixed inp
   assert.equal(
     payload(
       await saveCreatorLinks(
-        { ...params, rows: [{ creator_id: "c", url: "https://example.com" }] },
+        { ...params, links_csv_path: join(workspaceDir, "other.csv") },
         options,
       ),
     ).error.code,
@@ -331,6 +577,66 @@ test("preview-derived links pass source checks for manual-source upload with moc
   assert.equal(result.data.data_row_count, 1);
   assert.equal(result.data.missing_creator_ids.length, 2);
   assert.match(result.data.csv_file_path, /^https:\/\//u);
+});
+
+test("handoff url-only Provider links CSV normalizes and merges without file_bridge failure", async (t) => {
+  const workspaceDir = workspaceFixture(t);
+  const ids = ["aaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccc"];
+  const rawPath = join(workspaceDir, "provider-links.csv");
+  writeFileSync(
+    rawPath,
+    [
+      "url",
+      ...ids.map(
+        (id) => `https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/${id}`,
+      ),
+    ].join("\n"),
+  );
+  const hooks = new Map();
+  const runtime = registerFlowDirectiveHooks({
+    on(name, handler) {
+      hooks.set(name, handler);
+    },
+  });
+  runtime.recordSavedCsvArtifact("manual_creator_links", "req-trace", { details: { file_path: rawPath } }, workspaceDir);
+  const linked = payload(
+    await saveCreatorLinks(
+      {
+        requirement_id: "req-trace",
+        platform: "xiaohongshu",
+        links_csv_path: rawPath,
+      },
+      { workspaceDir, allowedLinksCsvs: runtime.linksCsvPathsFor },
+    ),
+  );
+  assert.equal(linked.success, true);
+  assert.equal(linked.data.row_count, 3);
+  runtime.recordLinksCsv("req-trace", linked.data.file_path, workspaceDir);
+
+  const completion = join(workspaceDir, "completion.csv");
+  writeFileSync(
+    completion,
+    [
+      "creator_id,nickname",
+      ...ids.map((id, index) => `${id},达人${index + 1}`),
+    ].join("\n"),
+  );
+  const result = payload(
+    await fileBridge(
+      {
+        requirement_id: "req-trace",
+        platform: "xiaohongshu",
+        flow: "mcn_complete_only",
+        links_csv_path: linked.data.file_path,
+        completion_csv_paths: [completion],
+      },
+      { workspaceDir, allowedLinksCsvPaths: runtime.linksCsvPathsFor },
+    ),
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.data.data_row_count, 3);
+  assert.deepEqual(result.data.missing_creator_ids, []);
+  assert.match(readFileSync(result.data.file_path, "utf8"), /source_record_id,creator_id,url,nickname/u);
 });
 
 test("registered save -> preview read -> merge works and reset requires re-registration", async (t) => {

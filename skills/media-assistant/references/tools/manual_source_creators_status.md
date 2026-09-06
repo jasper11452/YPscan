@@ -24,6 +24,6 @@
 ## Result
 
 - `BATCH_NOT_READY`（含远端 status `0`）表示任务仍在处理中，是预期中间态，不代表 batch ID 传错；按上面的轮询循环继续。
-- 成功优先消费当前 Provider 响应中的 `creator_links_csv_url`。拿到后立即调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_creator_links"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 传为 `file_url`；保存成功后先展示 `delivery.local_file_link`，再按平台分 20 个 author 一批调用原生达人补全工具，并继续 `file_bridge（内部合并并上传）→ score_manual_source_csv → score_manual_source_csv_status → 保存最终 Excel`。merged CSV 数据行超过 500 时 `file_bridge` 必须跳过上传并交付本地文件；返回匿名不可读 URL 时同样必须停止打分，但仍展示本地文件。
+- 成功优先消费当前 Provider 响应中的 `creator_links_csv_url`。拿到后立即调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_creator_links"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 传为 `file_url`；保存成功后先展示 `delivery.local_file_link`（该文件是原始 Provider 下载物，可能只有 url 列），再调用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 归一化为受控三列 links CSV（短链或无法推导 creator_id 时立即失败并停止，不进入原生补全），然后按平台分 20 个 author 一批调用原生达人补全工具，并继续 `file_bridge（内部合并并上传）→ score_manual_source_csv → score_manual_source_csv_status → 保存最终 Excel`。merged CSV 数据行超过 500 时 `file_bridge` 必须跳过上传并交付本地文件；返回匿名不可读 URL 时同样必须停止打分，但仍展示本地文件。
 - 若旧 Provider 仅返回 HTTPS `excel_file_url`，则作为兼容降级路径立即调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 传为 `file_url`；保存成功后先展示 `delivery.local_file_link` 作为本轮真实手动拓展结果，不调用 `rank_creators` 或 `create_submission_batch`。
 - 其他失败：原样展示原始 code 和 message 后停止，不得换 ID 重试或重新提交任务。

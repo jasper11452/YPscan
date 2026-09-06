@@ -18,7 +18,7 @@ The caller cannot choose a destination or filename. The tool derives a safe name
 - The URL must use HTTPS on `eshypdata.com` or one of its subdomains, with the default port and no credentials or fragment.
 - Redirects are forbidden. The total budget is 20 seconds and the maximum size is 20 MiB.
 - Publication never overwrites different content and rejects symbolic-link or unsafe paths. Identical existing content is an idempotent success.
-- Workbook contents are not parsed or treated as a source of creator IDs.
+- Workbook and CSV contents are not parsed or treated as a source of creator IDs.
 
 ## Result
 
@@ -28,7 +28,7 @@ On success, show the returned absolute `delivery.local_file_link` at the point r
 
 - `mcn_ranking` may return `delivery.next_tool="AskUserQuestion"` and `delivery.next_args`; call it after showing the local link.
 - `mcn_creator_preview` registers its path and SHA-256 for this requirement. Ask whether to complete, then call `ypscan_save_creator_links` with `preview_file_path` and confirmed `platform` to directly parse xlsx and derive links. Generic text `read` does not parse xlsx.
-- `manual_creator_links` continues the manual-sourcing completion branch after the local CSV link is shown. `mcn_creator_links` is a legacy kind no longer produced by the formal flow.
+- `manual_creator_links` saves the raw Provider links CSV download; normalize it with `ypscan_save_creator_links` before platform-native completion. `mcn_creator_links` is a legacy kind no longer produced by the formal flow.
 - `manual_source` is the final scored-and-sorted delivery (scored workbook or compatibility Excel path); do not route it into `rank_creators` or any enrichment flow.
 - `ranked_submission` is a legacy final submission workbook kind; the formal flow no longer produces it.
 

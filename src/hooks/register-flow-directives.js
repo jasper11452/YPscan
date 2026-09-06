@@ -606,7 +606,7 @@ function manualSourceCreatorsDirective(
   const creatorLinksCsvUrl = providerCsvUrl(result);
   if (creatorLinksCsvUrl && requirementId) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已返回本轮手动拓展 links CSV。立即保存 links CSV，原样展示本地链接后按 20 个一批做原生达人补全，再调用 file_bridge 合并并上传 OSS，最后调用 score_manual_source_csv。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已返回本轮手动拓展 links CSV。立即保存 links CSV；保存成功后按保存结果指令调用 ypscan_save_creator_links 归一化为受控三列 links CSV，原样展示本地链接后按 20 个一批做原生达人补全，再调用 file_bridge 合并并上传 OSS，最后调用 score_manual_source_csv。",
       `SAVE_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_creator_links",
         artifact_id: requirementId,
@@ -657,7 +657,7 @@ function manualSourceCreatorsStatusDirective(
   if (result?.success === true && creatorLinksCsvUrl) {
     if (!requirementId) return flowPauseDirective("手动拓展结果查询", message);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。优先消费当前 Provider 响应中的 creator_links_csv_url：立即保存 links CSV，原样展示本地链接后继续原生达人补全、调用 file_bridge 合并并上传 OSS，再调用 score_manual_source_csv。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。优先消费当前 Provider 响应中的 creator_links_csv_url：立即保存 links CSV；保存成功后按保存结果指令调用 ypscan_save_creator_links 归一化为受控三列 links CSV，原样展示本地链接后继续原生达人补全、调用 file_bridge 合并并上传 OSS，再调用 score_manual_source_csv。",
       `SAVE_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_creator_links",
         artifact_id: requirementId,
@@ -799,9 +799,9 @@ function creatorLinksSaveDirective(message, _params = {}) {
     firstString(result?.delivery?.local_file_link) ?? localFileMarkdownLink(filePath);
   if (!localFileLink) return flowPauseDirective("受控 links CSV 生成", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=受控 links CSV 已生成并登记为当前 requirement 的合法 links 来源。原样展示本地链接后，按 20/批调用当前平台 YP Action 原生达人补全工具，再调用 file_bridge（flow=manual_source）→ score_manual_source_csv。",
-    `MCN_CREATOR_LINKS_LOCAL_PATH=${filePath}`,
-    `MCN_CREATOR_LINKS_LOCAL_LINK=${localFileLink}`,
+    "YPSCAN_FLOW_DIRECTIVE=受控 links CSV 已生成并登记为当前 requirement 的合法 links 来源。原样展示本地链接后，按 20/批把该 CSV 的 author 标识传给当前平台 YP Action 原生达人补全工具，再调用 file_bridge（flow=manual_source）→ score_manual_source_csv。",
+    `CREATOR_LINKS_LOCAL_PATH=${filePath}`,
+    `CREATOR_LINKS_LOCAL_LINK=${localFileLink}`,
   ].join("\n");
 }
 
@@ -1195,10 +1195,18 @@ function artifactSaveDirective(
     firstString(result?.delivery?.local_file_link) ?? localFileMarkdownLink(filePath);
   if (!localFileLink) return flowPauseDirective(stage, message);
   if (artifactKind === "manual_creator_links") {
+    const platform = requirementPlatformLookup(params.artifact_id) ?? recordedPlatform;
     return [
-      "YPSCAN_FLOW_DIRECTIVE=手动拓展 links CSV 已保存。原样展示本地链接后，按 20 个一批使用当前平台对应的 YP Action 原生达人补全工具；补全完成后调用 file_bridge 合并并上传 OSS，再调用 score_manual_source_csv。",
+      "YPSCAN_FLOW_DIRECTIVE=手动拓展 links CSV 已保存（原始 Provider 下载物，尚未归一化）。立即使用 SAVE_CREATOR_LINKS_ARGS 调用 ypscan_save_creator_links 归一化为受控三列 links CSV；归一化成功后再按 20 个一批使用当前平台对应的 YP Action 原生达人补全工具，补全完成后调用 file_bridge 合并并上传 OSS，再调用 score_manual_source_csv。不得把该原始 CSV 直接传给 file_bridge。",
       `MANUAL_CREATOR_LINKS_LOCAL_PATH=${filePath}`,
       `MANUAL_CREATOR_LINKS_LOCAL_LINK=${localFileLink}`,
+      ...(platform
+        ? [
+            `SAVE_CREATOR_LINKS_ARGS=${JSON.stringify({ requirement_id: params.artifact_id, platform, links_csv_path: filePath })}`,
+          ]
+        : [
+            "当前缺少已确认的平台，无法生成 ypscan_save_creator_links 必填参数；暂停，不猜测 platform。",
+          ]),
     ].join("\n");
   }
   if (artifactKind === "manual_source") {
@@ -1550,7 +1558,7 @@ export function registerFlowDirectiveHooks(api) {
           "机构回填预览链路先保存预览表，再让用户选择是否补全；选“补全并打分排序”时继续 ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全（20/批）→ file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。回收不足时不自动放宽，交付真实结果。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。字段映射固定：排名=rank_no（缺省按响应顺序）、机构=agency_name、覆盖达人=candidate_count、返点=rebate_rate、综合分=rank_score。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
-          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 与 manual_source_creators_status 的 num 位置以当前环境 live schema 为准：测试基线是启动工具不带 num、状态查询带 num；若生产 schema 漂移，则只允许按 live schema 做确定性调整，不能靠连续试错。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具；每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 file_bridge 和打分。补全完成后调用 file_bridge（flow=manual_source）完成合并和上传，再调用 score_manual_source_csv；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成才保存最终手动拓展 Excel；score 仍同步返回 Excel 时直接保存。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。结果不足且用户确认放宽后重建搜索时，manual_source_creators.demand 传应用了已确认放宽值的有效搜索文本（原文对应字段替换为放宽后值），搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导。",
+          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 与 manual_source_creators_status 的 num 位置以当前环境 live schema 为准：测试基线是启动工具不带 num、状态查询带 num；若生产 schema 漂移，则只允许按 live schema 做确定性调整，不能靠连续试错。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再用 ypscan_save_creator_links 归一化为受控三列 links CSV，再按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具；每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 file_bridge 和打分。补全完成后调用 file_bridge（flow=manual_source）完成合并和上传，再调用 score_manual_source_csv；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成才保存最终手动拓展 Excel；score 仍同步返回 Excel 时直接保存。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。结果不足且用户确认放宽后重建搜索时，manual_source_creators.demand 传应用了已确认放宽值的有效搜索文本（原文对应字段替换为放宽后值），搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导。",
           "原生达人补全工具由宿主 YP Action 提供、不在 ypscan 白名单内：小红书 get_xhs_author_business_card 且固定 page_count=1，抖音 get_douyin_author_business_card。宿主未开放对应工具时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。",
           MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ORIGINAL_TEXT_RULE,
