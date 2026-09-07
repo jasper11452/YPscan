@@ -77,6 +77,204 @@ test("invalid or past Chinese deadlines never pass validation", () => {
   }
 });
 
+test("abbreviated Chinese years normalize and remain valid original or clarification evidence", () => {
+  const now = new Date(2026, 8, 5, 12);
+  for (const [date, expected] of [
+    ["26年9月26日 16:00", "2026-09-26 16:00:00"],
+    ["26年09月26日16：00：35", "2026-09-26 16:00:35"],
+  ]) {
+    for (const source of ["original", "clarifications"]) {
+      const params = completeValidateParams();
+      if (source === "original") {
+        params.rawMessagesJson.original = params.rawMessagesJson.original.replace(
+          "2026-08-25 12:00:00",
+          date,
+        );
+      } else {
+        params.rawMessagesJson.clarifications = { submissionDeadlineAt: date };
+      }
+      for (const input of [date, expected]) {
+        params.submissionDeadlineAt = input;
+        const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+        assert.equal(normalized.submissionDeadlineAt, expected);
+        assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
+        assert.deepEqual(normalized.rawMessagesJson, params.rawMessagesJson);
+      }
+    }
+  }
+});
+
+test("abbreviated deadline evidence cannot authorize invalid, expired or conflicting times", () => {
+  const now = new Date(2026, 8, 5, 12);
+  for (const date of [
+    "26年2月30日16:00",
+    "26年9月26日24:00",
+    "26年9月26日16:60",
+    "26年9月4日16:00",
+    "26年9月26日",
+    "26年9月27日16:00",
+    "26年9月26日16:00:35",
+    "126年9月26日16:00",
+    "1926年9月26日16:00",
+  ]) {
+    const params = completeValidateParams();
+    params.submissionDeadlineAt = "2026-09-26 16:00:00";
+    params.rawMessagesJson.clarifications = { submissionDeadlineAt: date };
+    assert.ok(
+      validateRequirementPreflight(params, { now }).some(
+        (issue) => issue.field === "submissionDeadlineAt",
+      ),
+      date,
+    );
+    if (date !== "26年9月27日16:00" && date !== "26年9月26日16:00:35") {
+      params.submissionDeadlineAt = date;
+      const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+      assert.ok(
+        validateRequirementPreflight(normalized, { now }).some(
+          (issue) => issue.field === "submissionDeadlineAt",
+        ),
+        date,
+      );
+    }
+  }
+});
+
+test("equivalent deadline spellings share normalization and evidence validation", () => {
+  const now = new Date(2026, 8, 5, 10, 30);
+  for (const [text, expected] of [
+    ["2026-09-26T16:00", "2026-09-26 16:00:00"],
+    ["2026/9/26 16:00", "2026-09-26 16:00:00"],
+    ["26年9月26日16点", "2026-09-26 16:00:00"],
+    ["2026年9月26日16点30分35秒", "2026-09-26 16:30:35"],
+    ["明天16:00", "2026-09-06 16:00:00"],
+    ["12点前", "2026-09-05 12:00:00"],
+  ]) {
+    for (const input of [text, expected]) {
+      const params = completeValidateParams();
+      params.submissionDeadlineAt = input;
+      params.rawMessagesJson.clarifications = { submissionDeadlineAt: text };
+      const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+      assert.equal(normalized.submissionDeadlineAt, expected, text);
+      assert.deepEqual(validateRequirementPreflight(normalized, { now }), [], text);
+    }
+  }
+});
+
+test("common quantity wording remains explicit creator-count evidence", () => {
+  for (const wording of ["30人", "三十位达人", "三十人", "３０位达人"]) {
+    const params = completeValidateParams();
+    params.rawMessagesJson.original = params.rawMessagesJson.original.replace("30位", wording);
+    assert.deepEqual(
+      validateRequirementPreflight(params, { now: new Date(2026, 7, 20) }),
+      [],
+      wording,
+    );
+  }
+});
+
+test("quantity evidence does not match a suffix or an unrelated amount", () => {
+  for (const wording of ["一百三十位达人", "130人", "预算30万元", "三十万元预算", "30%返点"]) {
+    const params = completeValidateParams();
+    params.rawMessagesJson.original = params.rawMessagesJson.original.replace("30位", wording);
+    assert.ok(
+      validateRequirementPreflight(params, { now: new Date(2026, 7, 20) }).some(
+        (i) => i.field === "quantityTotal",
+      ),
+      wording,
+    );
+  }
+});
+
+test("relative deadline evidence works in the original and across calendar boundaries", () => {
+  const now = new Date(2026, 11, 31, 10);
+  const params = completeValidateParams();
+  params.submissionDeadlineAt = "明天16:00";
+  params.rawMessagesJson.original = params.rawMessagesJson.original.replace(
+    "2026-08-25 12:00:00",
+    "明天16:00",
+  );
+  const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+  assert.equal(normalized.submissionDeadlineAt, "2027-01-01 16:00:00");
+  assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
+  params.submissionDeadlineAt = "2027-01-01 17:00:00";
+  assert.ok(
+    validateRequirementPreflight(params, { now }).some((i) => i.field === "submissionDeadlineAt"),
+  );
+});
+
+test("new date spellings reject invalid clocks, dates and unrelated relative events", () => {
+  const now = new Date(2026, 8, 5, 10, 30);
+  for (const text of [
+    "2026/2/30 16:00",
+    "26年9月26日24点",
+    "明天16:60",
+    "明天",
+    "昨天16:00",
+    "今天10点前",
+  ]) {
+    const params = completeValidateParams();
+    params.submissionDeadlineAt = text;
+    params.rawMessagesJson.clarifications = { submissionDeadlineAt: text };
+    assert.ok(
+      validateRequirementPreflight(
+        normalizeToolCallParams("validate_requirement", params, { now }),
+        { now },
+      ).some((i) => i.field === "submissionDeadlineAt"),
+      text,
+    );
+  }
+  const params = completeValidateParams();
+  params.submissionDeadlineAt = "2026-09-06 16:00:00";
+  params.rawMessagesJson.original = params.rawMessagesJson.original.replace(
+    "提报截止2026-08-25 12:00:00",
+    "明天16:00开始直播",
+  );
+  assert.ok(
+    validateRequirementPreflight(params, { now }).some((i) => i.field === "submissionDeadlineAt"),
+  );
+});
+
+test("review regressions reject money words and timezone prefixes as evidence", () => {
+  for (const wording of ["30人民币", "30人均报价5万元"]) {
+    const params = completeValidateParams();
+    params.rawMessagesJson.original = params.rawMessagesJson.original.replace("30位", wording);
+    assert.ok(
+      validateRequirementPreflight(params, { now: new Date(2026, 7, 20) }).some(
+        (i) => i.field === "quantityTotal",
+      ),
+      wording,
+    );
+  }
+  for (const suffix of ["+08:00", "-05:00", "Z"]) {
+    const params = completeValidateParams();
+    params.submissionDeadlineAt = "2026-09-26 16:00:00";
+    params.rawMessagesJson.clarifications = { submissionDeadlineAt: `2026-09-26T16:00${suffix}` };
+    assert.ok(
+      validateRequirementPreflight(params, { now: new Date(2026, 8, 5) }).some(
+        (i) => i.field === "submissionDeadlineAt",
+      ),
+      suffix,
+    );
+  }
+});
+
+test("relative deadline evidence accepts punctuation and postposed submission context", () => {
+  const now = new Date(2026, 8, 5, 10, 30);
+  for (const [wording, expected] of [
+    ["提报截止明天16:00，其他要求不变", "2026-09-06 16:00:00"],
+    ["请在明天16:00前提交", "2026-09-06 16:00:00"],
+    ["截止时间：12点前，其他不变", "2026-09-05 12:00:00"],
+  ]) {
+    const params = completeValidateParams();
+    params.submissionDeadlineAt = expected;
+    params.rawMessagesJson.original = params.rawMessagesJson.original.replace(
+      "提报截止2026-08-25 12:00:00",
+      wording,
+    );
+    assert.deepEqual(validateRequirementPreflight(params, { now }), [], wording);
+  }
+});
+
 test("validate_requirement drops non-positive or malformed quantityTotal values", () => {
   assert.equal(
     Object.hasOwn(

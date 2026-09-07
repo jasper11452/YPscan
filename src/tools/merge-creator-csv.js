@@ -4,16 +4,21 @@ import { isAbsolute, join } from "node:path";
 import { nonemptyString } from "../util/value.js";
 
 const FLOW_VALUES = Object.freeze(["manual_source", "mcn_rank", "mcn_complete_only"]);
-// 宿主原生补全 CSV 用「请求kw_uid」作为输入 kw_uid 的回显列，与 links CSV 的 creator_id 对齐。
-const COMPLETION_ID_HEADER_CANDIDATES = Object.freeze([
-  "creator_id",
-  "请求kw_uid",
-  "kw_uid",
-  "xt_id",
-  "author_id",
-  "authorid",
-  "id",
-]);
+// 按平台选择与 links creator_id 同源的 ID；仅缺少优先列时兼容旧表头，不按匹配率猜列。
+const COMPLETION_ID_HEADER_CANDIDATES = Object.freeze({
+  douyin: [
+    "creator_id",
+    "请求星图ID",
+    "星图ID",
+    "xt_id",
+    "请求kw_uid",
+    "kw_uid",
+    "author_id",
+    "authorid",
+    "id",
+  ],
+  xiaohongshu: ["creator_id", "请求kw_uid", "kw_uid", "xt_id", "author_id", "authorid", "id"],
+});
 const RESERVED_HEADERS = new Set(["source_record_id", "creator_id", "url"]);
 
 export function parseCsv(value) {
@@ -123,10 +128,10 @@ function sanitizeSegment(value, fallback) {
   return text.replace(/[^a-zA-Z0-9_-]+/gu, "-").replace(/^-+|-+$/gu, "") || fallback;
 }
 
-function preferredCompletionIdHeader(headers) {
+function preferredCompletionIdHeader(headers, platform) {
   const normalizedHeaders = new Map(headers.map((header) => [normalizeCsvHeader(header), header]));
-  for (const candidate of COMPLETION_ID_HEADER_CANDIDATES) {
-    const header = normalizedHeaders.get(candidate);
+  for (const candidate of COMPLETION_ID_HEADER_CANDIDATES[platform]) {
+    const header = normalizedHeaders.get(normalizeCsvHeader(candidate));
     if (header) return header;
   }
   return null;
@@ -202,17 +207,19 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
     /** @type {string[]} */
     const detailHeaders = [];
     const seenDetailHeaders = new Set();
+    const completionIdColumns = [];
 
     for (const completionCsvPath of completionCsvPaths) {
       const completionCsv = await readFileImpl(completionCsvPath, "utf8");
       const parsedCompletion = parseCsv(completionCsv);
-      const idHeader = preferredCompletionIdHeader(parsedCompletion.headers);
+      const idHeader = preferredCompletionIdHeader(parsedCompletion.headers, platform);
       if (!idHeader) {
         return failure(
           "YPSCAN_COMPLETION_CSV_INVALID",
           `补全 CSV 缺少可识别的 creator_id 列：${completionCsvPath}`,
         );
       }
+      completionIdColumns.push({ file_path: completionCsvPath, id_column: idHeader.trim() });
       for (const header of completionDetailHeaders(parsedCompletion.headers, idHeader)) {
         if (seenDetailHeaders.has(header)) continue;
         seenDetailHeaders.add(header);
@@ -293,6 +300,7 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
         matched_creator_ids: [...matchedCreatorIds],
         missing_creator_ids: [...missingCreatorIds],
         completion_csv_paths: completionCsvPaths.map(String),
+        completion_id_columns: completionIdColumns,
         links_csv_path: String(linksCsvPath),
         sha256,
       },

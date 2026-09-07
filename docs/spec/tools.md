@@ -95,11 +95,12 @@
 - links/补全输入拒绝首尾空白路径，不对歧义路径 trim 后授权再读原路径。CSV 输入仍要求绝对路径；来源登记可把无首尾空白的宿主相对路径按 workspaceDir 规范化。
 
 - links CSV 必含 `source_record_id`、`creator_id`、`url` 三列（表头归一化匹配，`-`/空格/大小写不敏感）。
-- 每批补全 CSV 必须含可识别的 creator ID 列（候选：`creator_id`、`请求kw_uid`、`kw_uid`、`xt_id`、`author_id`、`authorid`、`id`）；按 ID 去重取首条。
+- 每批补全 CSV 按平台选择第一个存在的 ID 列：抖音 `creator_id → 请求星图ID → 星图ID → xt_id → 请求kw_uid → kw_uid → author_id → authorid → id`；小红书保留 `creator_id → 请求kw_uid → kw_uid → xt_id → author_id → authorid → id`。表头归一化同 links（首尾 BOM 由 trim 去除）；优先列存在但值为空或不匹配时，不逐行回退或按匹配率猜列。
+- ID 始终按字符串关联，按 ID 去重取首条；19 位星图 ID 不转换为 Number。
 - 输出保持 links 原顺序；headers = `source_record_id, creator_id, url` + 各补全 CSV 的非保留详情列（排除 ID 列与 `source_record_id`/`creator_id`/`url`）。
 - 未匹配到的 creator_id 计入 `missing_creator_ids`（不中断）。
 - 输出文件名：`<flow 前缀>-<平台>-<requirement_id>-<sha256 前 8 位>.csv`，前缀映射 `manual_source→manual-source`、`mcn_rank→mcn-rank`、`mcn_complete_only→mcn-complete`；同名文件内容一致则复用，不一致报 `YPSCAN_CREATOR_CSV_MERGE_CONFLICT`。
-- merged CSV 没有数据行时返回 `YPSCAN_FILE_BRIDGE_EMPTY`，但仍通过 `delivery.local_file_link` 交付本地文件。
+- merged CSV 没有数据行时返回 `YPSCAN_FILE_BRIDGE_EMPTY`（`retriable=false`），不上传；`error.details` 保留完整合并详情（含行数、匹配/未匹配 ID 和关联列诊断），仍通过 `delivery.local_file_link` 交付本地文件。
 - `flow=mcn_complete_only` 时合并完成即返回，不读取 OSS 配置、不上传。
 - `manual_source`/`mcn_rank` 数据行超过 500 时返回合并成功和本地文件，`upload_skipped="row_limit_exceeded"`，不上传、不进入后续打分或精排。
 
@@ -115,7 +116,7 @@
 
 ### 输出（成功）
 
-- `data` 始终包含：`requirement_id`、`platform`、`flow`、`file_name`、`file_path`、`data_row_count`、`matched_creator_ids`、`missing_creator_ids`、`completion_csv_paths`、`links_csv_path`、`sha256`。
+- `data` 始终包含：`requirement_id`、`platform`、`flow`、`file_name`、`file_path`、`data_row_count`、`matched_creator_ids`、`missing_creator_ids`、`completion_csv_paths`、`completion_id_columns`、`links_csv_path`、`sha256`。`completion_id_columns` 按输入文件顺序记录 `{file_path, id_column}`，列名仅为展示去除首尾空白/BOM。
 - 上传成功时额外包含 `csv_file_path`、`object_key`；超过 500 行时额外包含 `upload_skipped`、`upload_limit`。
 - `delivery` 始终包含本地 `local_file_path` 与 `local_file_link`；合并后上传或公网校验失败时，错误结果也保留该本地交付信息。
 

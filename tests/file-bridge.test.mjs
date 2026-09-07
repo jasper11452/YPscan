@@ -28,7 +28,7 @@ test("loadFileBridgeConfig does not implicitly consume host environment credenti
   );
   assert.deepEqual(JSON.parse(output), { ok: false });
 });
-import { mergeCreatorCsvFiles } from "../src/tools/merge-creator-csv.js";
+import { mergeCreatorCsvFiles, parseCsv } from "../src/tools/merge-creator-csv.js";
 
 function payload(result) {
   return JSON.parse(result.content[0].text);
@@ -135,6 +135,127 @@ test("merge recognizes the host native completion CSV 请求kw_uid id column", a
     readFileSync(merged.details.file_path, "utf8"),
     "source_record_id,creator_id,url,用户ID,nickname\nsource-1,creator-1,https://example.com/1,user-red-id,达人一",
   );
+});
+
+for (const bom of ["", "\uFEFF"]) {
+  for (const idHeader of ["请求星图ID", "星图ID", "xt_id"]) {
+    test(`douyin merges native ${idHeader} ahead of kw_uid (BOM=${Boolean(bom)})`, async (t) => {
+      const { workspaceDir, params } = createMergeFixture(t, { flow: "mcn_complete_only" });
+      // Adjacent 19-digit IDs must remain distinct strings, even across batches.
+      const ids = ["7034098729766354985", "7034098729766354986"];
+      writeFileSync(
+        params.links_csv_path,
+        [
+          "source_record_id,creator_id,url",
+          ...[...ids]
+            .reverse()
+            .map(
+              (id, index) =>
+                `source-${index + 1},${id},https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/${id}`,
+            ),
+          "source-missing,missing-id,https://example.com/missing",
+        ].join("\n"),
+      );
+      const headers = [idHeader, "请求kw_uid", "kw_uid", "nickname"];
+      if (idHeader === "请求星图ID") headers.push("星图ID", "xt_id");
+      params.completion_csv_paths = ids.map((id, index) => {
+        const path = join(workspaceDir, `native-${index}.csv`);
+        const row = [id, `request-kw-${index}`, `kw-${index}`, `达人${index}`];
+        if (idHeader === "请求星图ID") row.push(`returned-${index}`, `xt-${index}`);
+        writeFileSync(
+          path,
+          bom +
+            [headers, row, row]
+              .map((cells) => cells.map((cell) => `"${cell}"`).join(","))
+              .join("\r\n"),
+        );
+        return path;
+      });
+      const result = payload(await fileBridge(params, { workspaceDir }));
+      assert.equal(result.success, true);
+      assert.equal(result.data.data_row_count, 2);
+      assert.deepEqual(result.data.matched_creator_ids, [...ids].reverse());
+      assert.deepEqual(result.data.missing_creator_ids, ["missing-id"]);
+      assert.deepEqual(
+        result.data.completion_id_columns,
+        params.completion_csv_paths.map((path) => ({
+          file_path: path,
+          id_column: idHeader,
+        })),
+      );
+      const csv = parseCsv(readFileSync(result.data.file_path, "utf8"));
+      assert.deepEqual(
+        csv.rows.map((row) => row[1]),
+        [...ids].reverse(),
+      );
+      assert.deepEqual(
+        csv.rows.map((row) => row[csv.headers.indexOf("nickname")]),
+        ["达人1", "达人0"],
+      );
+      assert.deepEqual(
+        csv.rows.map((row) => row[csv.headers.indexOf("kw_uid")]),
+        ["kw-1", "kw-0"],
+      );
+    });
+  }
+}
+
+for (const [platform, headers, selected] of [
+  ["douyin", ["creator_id", "请求星图ID", "星图ID", "kw_uid"], "creator_id"],
+  ["xiaohongshu", ["请求kw_uid", "kw_uid", "请求星图ID", "星图ID", "xt_id"], "请求kw_uid"],
+  ["xiaohongshu", ["kw_uid", "星图ID", "xt_id"], "kw_uid"],
+]) {
+  test(`${platform} preserves ${selected} priority`, async (t) => {
+    const { workspaceDir, params } = createMergeFixture(t, {
+      flow: "mcn_complete_only",
+      rowCount: 1,
+    });
+    writeFileSync(
+      params.completion_csv_paths[0],
+      [
+        headers.join(","),
+        headers.map((header) => (header === selected ? "creator-1" : "other-id")).join(","),
+      ].join("\n"),
+    );
+    const result = payload(await fileBridge({ ...params, platform }, { workspaceDir }));
+    assert.equal(result.success, true);
+    assert.equal(result.data.data_row_count, 1);
+    assert.equal(result.data.completion_id_columns[0].id_column, selected);
+  });
+}
+
+test("douyin zero matches reports the chosen native ID column without falling back or uploading", async (t) => {
+  const { workspaceDir, params } = createMergeFixture(t, { rowCount: 1 });
+  // kw_uid matches, but must not override the authoritative request ID column.
+  writeFileSync(
+    params.completion_csv_paths[0],
+    '\uFEFF"请求星图ID","kw_uid"\n"other-id","creator-1"',
+  );
+  let uploads = 0;
+  const result = payload(
+    await fileBridge(params, {
+      workspaceDir,
+      bundled: null,
+      createClient: () => {
+        uploads += 1;
+        throw new Error("unexpected upload");
+      },
+    }),
+  );
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "YPSCAN_FILE_BRIDGE_EMPTY");
+  assert.equal(result.error.retriable, false);
+  assert.equal(result.error.details.data_row_count, 0);
+  assert.deepEqual(result.error.details.matched_creator_ids, []);
+  assert.deepEqual(result.error.details.missing_creator_ids, ["creator-1"]);
+  assert.deepEqual(result.error.details.completion_id_columns, [
+    {
+      file_path: params.completion_csv_paths[0],
+      id_column: "请求星图ID",
+    },
+  ]);
+  assert.ok(result.delivery.local_file_link);
+  assert.equal(uploads, 0);
 });
 
 test("loadFileBridgeConfig prefers pluginConfig over explicitly injected env", async () => {

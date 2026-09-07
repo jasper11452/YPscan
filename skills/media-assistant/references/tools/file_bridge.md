@@ -16,7 +16,13 @@ Input CSV paths must be absolute and have no leading or trailing whitespace; amb
 
 Do not pre-merge files, pass a `merged_csv_path`, mix requirements/platforms, or omit successful batches.
 
+## ID matching
+
+The tool chooses the first available ID column per file. For Douyin the priority is `creator_id → 请求星图ID → 星图ID → xt_id → 请求kw_uid → kw_uid → author_id → authorid → id`; Xiaohongshu keeps `creator_id → 请求kw_uid → kw_uid → xt_id → author_id → authorid → id`. Header matching ignores case and trims whitespace/BOM; IDs remain strings. An existing higher-priority column is not replaced just because its values fail to match. Do not rename columns or repair business CSVs manually.
+
 ## Result
+
+`completion_id_columns` reports each completion file's `file_path` and selected `id_column` (trimmed for display). On `YPSCAN_FILE_BRIDGE_EMPTY`, `error.details` retains the merge details, including `data_row_count`, `matched_creator_ids`, `missing_creator_ids`, and `completion_id_columns`. No upload occurs; show the local link and report the mismatch rather than guessing a BOM issue or retrying unchanged inputs.
 
 Always show `delivery.local_file_link` when present.
 

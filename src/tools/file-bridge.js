@@ -432,7 +432,7 @@ export async function fileBridge(
     return failure(
       "YPSCAN_FILE_BRIDGE_EMPTY",
       "merged CSV 没有可处理的数据行",
-      {},
+      mergedDetails,
       false,
       filePath,
     );

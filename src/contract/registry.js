@@ -513,18 +513,39 @@ function parseLocalDateTime(value) {
   ).getTime();
 }
 
+const DEADLINE_CLOCK = String.raw`(?:\d{1,2}[:：]\d{2}(?:[:：]\d{2})?|\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分)?(?:\s*\d{1,2}\s*秒)?)`;
+const DEADLINE_DATE = String.raw`(?:(?:\d{4}|\d{2})年\s*\d{1,2}月\s*\d{1,2}日\s*|\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T])`;
+
 function normalizedDateTime(value, { now = new Date() } = {}) {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
-  const match =
-    trimmed.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/u) ??
-    trimmed.match(
-      /^(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日\s*(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?$/u,
+  let absolute = trimmed;
+  const relative = trimmed.match(
+    new RegExp(`^(今天|今日|当天|明天)?(${DEADLINE_CLOCK})(前)?$`, "u"),
+  );
+  if (relative && (relative[1] || relative[3])) {
+    const date = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + (relative[1] === "明天" ? 1 : 0),
     );
+    absolute = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()} ${relative[2]}`;
+  }
+  const match = absolute.match(new RegExp(`^(${DEADLINE_DATE})(${DEADLINE_CLOCK})$`, "u"));
   if (!match) return trimmed;
-  const [, year, ...parts] = match;
-  const [month, day, hour, minute, second] = parts.map((part) => (part ?? "00").padStart(2, "0"));
-  const normalized = `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+  const dateParts = match[1].match(/\d+/gu);
+  if (!dateParts) return trimmed;
+  const [year, monthPart, dayPart] = dateParts;
+  const clock =
+    match[2].match(/^(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?$/u) ??
+    match[2].match(/^(\d{1,2})\s*(?:点|时)(?:\s*(\d{1,2})\s*分)?(?:\s*(\d{1,2})\s*秒)?$/u);
+  if (!clock) return trimmed;
+  const [month, day, hour, minute, second] = [monthPart, dayPart, ...clock.slice(1)].map((part) =>
+    (part ?? "00").padStart(2, "0"),
+  );
+  // 中文业务日期的两位年份按 20xx 解释，不随当前时间滚动到下一世纪。
+  const fullYear = year.length === 2 ? `20${year}` : year;
+  const normalized = `${fullYear}-${month}-${day} ${hour}:${minute}:${second}`;
   const timestamp = parseLocalDateTime(normalized);
   if (!Number.isFinite(timestamp)) return trimmed;
   return timestamp > now.getTime() ? normalized : value;
@@ -885,13 +906,38 @@ function regexLiteral(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
+function chineseQuantity(value) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1 || number > 9999) return null;
+  const digits = "零一二三四五六七八九";
+  let result = "";
+  let pendingZero = false;
+  for (const [unit, label] of [
+    [1000, "千"],
+    [100, "百"],
+    [10, "十"],
+    [1, ""],
+  ]) {
+    const digit = Math.floor(number / Number(unit)) % 10;
+    if (digit) {
+      if (pendingZero) result += "零";
+      result += `${digits[digit]}${label}`;
+      pendingZero = false;
+    } else if (result) pendingZero = true;
+  }
+  return result.replace(/^一十/u, "十");
+}
+
 function hasQuantityEvidence(evidence, value) {
   if (typeof value !== "string" || !POSITIVE_INTEGER_STRING.test(value)) return false;
-  const quantity = regexLiteral(value);
+  const chinese = chineseQuantity(value);
+  const quantity = `(?:${regexLiteral(value)}${chinese ? `|${chinese}` : ""})`;
+  const numericChars = "\\d零〇一二两三四五六七八九十百千万";
+  const normalizedEvidence = evidence.normalize("NFKC").replace(/两(?=[百千位名个人])/gu, "二");
   return new RegExp(
-    `(?:数量|提报(?:数量|人数)?|达人(?:数量|人数)?|quantityTotal)[^\\d]{0,12}${quantity}(?!\\d)|(?<!\\d)${quantity}\\s*(?:位|名|个)(?:达人|博主)?`,
+    `(?:数量|提报(?:数量|人数)?|达人(?:数量|人数)?|quantityTotal)[^${numericChars}]{0,12}${quantity}(?![${numericChars}])|(?<![${numericChars}])${quantity}\\s*(?:位|名|个|人(?!民币|均))(?:达人|博主)?`,
     "iu",
-  ).test(evidence);
+  ).test(normalizedEvidence);
 }
 
 function hasSubmissionDeadlineEvidence(evidence, value, now) {
@@ -899,28 +945,24 @@ function hasSubmissionDeadlineEvidence(evidence, value, now) {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/u);
   if (!match) return false;
   const [, year, month, day, hour, minute, second] = match;
-  const colonDates = evidence.matchAll(
-    /(?<!\d)\d{4}年\s*\d{1,2}月\s*\d{1,2}日\s*\d{1,2}[:：]\d{2}(?:[:：]\d{2})?(?!\d|[:：])/gu,
+  const absoluteDates = evidence.matchAll(
+    new RegExp(`(?<!\\d)${DEADLINE_DATE}${DEADLINE_CLOCK}(?![\\d分秒:：Zz+−-])`, "gu"),
   );
-  for (const [date] of colonDates) {
+  for (const [date] of absoluteDates) {
     if (normalizedDateTime(date, { now }) === value) return true;
   }
-  if (new RegExp(`(?<!\\d)${regexLiteral(value)}(?!\\d)`, "u").test(evidence)) return true;
-  const minutePrecision = `${year}-${month}-${day} ${hour}:${minute}`;
-  if (
-    Number(second) === 0 &&
-    new RegExp(`${regexLiteral(minutePrecision)}(?![:\\d])`, "u").test(evidence)
-  ) {
-    return true;
+  const relativeTime = `((?:今天|今日|当天|明天)?${DEADLINE_CLOCK}(?:前)?)`;
+  const relativePatterns = [
+    `(?:^|[，,；;。\\n])\\s*(?:submissionDeadlineAt|提报截止(?:时间)?|截止时间)\\s*[:：]?\\s*${relativeTime}(?=$|[，,；;。\\n])`,
+    `(?:^|[，,；;。\\n])\\s*(?:请)?在?${relativeTime}(?:提交|提报|反馈)(?=$|[，,；;。\\n])`,
+  ];
+  for (const pattern of relativePatterns) {
+    for (const [, date] of evidence.matchAll(new RegExp(pattern, "gu"))) {
+      if (normalizedDateTime(date, { now }) === value) return true;
+    }
   }
   const numericHour = Number(hour);
   const numericMinute = Number(minute);
-  const numericSecond = Number(second);
-  const chineseDateTime = `${Number(year)}年\\s*${Number(month)}月\\s*${Number(day)}日\\s*${numericHour}\\s*点`;
-  const chineseMinute = numericMinute === 0 ? "(?:\\s*0+\\s*分)?" : `\\s*0?${numericMinute}\\s*分`;
-  const chineseSecond = numericSecond === 0 ? "(?:\\s*0+\\s*秒)?" : `\\s*0?${numericSecond}\\s*秒`;
-  const chinesePattern = `${chineseDateTime}${chineseMinute}${chineseSecond}(?![\\d分秒])`;
-  if (new RegExp(chinesePattern, "u").test(evidence)) return true;
 
   const sameDay =
     Number(year) === now.getFullYear() &&
