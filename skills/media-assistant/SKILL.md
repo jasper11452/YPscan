@@ -91,7 +91,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
 - 手动拓展只有在当前 Provider 响应明确给出可信实际数量为 0 或少于 `num` 时，才在交付当前真实 Excel 后进入同一复核和放宽建议；数量未知时不猜测，当前真实交付物即最终结果。
 
-每轮放宽只做建议、不自动执行：先可见地告诉用户实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑。“放宽直到足量”等总体授权不替代后续每轮具体项确认。确认后仍把用户当前完整、未改写的原始需求传给 `ypscan_parse_requirement` 并保存在 `rawMessagesJson.original`；已确认的累计放宽写入 `rawMessagesJson.clarifications` 对应字段和本轮 `validate_requirement` 顶层参数。此前用户已确认的其他澄清答案（含截止时间）同样一并带入 `clarifications`，直接复用、不重复询问。`ypscan_parse_requirement.demand` 与 `rawMessagesJson.original` 保持未改写原文，禁止把放宽值改写进去。随后重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
+每轮放宽只做建议、不自动执行：先可见地告诉用户实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑。“放宽直到足量”等总体授权不替代后续每轮具体项确认。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand 和 manual_source_creators.demand，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。询价机构确认放宽后仍以未改写原文重新解析并保存 original，累计放宽写入 clarifications 和本轮顶层参数。此前用户已确认的其他澄清答案（含截止时间）继续复用，不重复询问。随后重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
 
 放宽必须真实传导到搜索执行。`manual_source_creators` 的实际搜索参数跟随调用时传入的需求文本，读不到落库的放宽字段，因此重跑搜索时 `manual_source_creators.demand` 传入“应用了本轮全部已确认放宽值的有效搜索需求文本”：在原文对应字段的位置替换为放宽后值（例如“预算：3000-20000”改为“预算：2400-24000”），其余原文保持不变；只传原始文本等于没有放宽。搜索响应若回传实际搜索参数，必须与已确认放宽值逐项核对：不一致时如实报告“放宽未传导到搜索、实际参数仍为 X”，不得把结果归因于放宽或宣称放宽成功。
 

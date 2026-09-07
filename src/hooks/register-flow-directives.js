@@ -47,10 +47,10 @@ const REQUIREMENT_CREATION_RULE =
 const FIELD_SELECTION_GATE_RULE =
   "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields，并等待用户为这个 requirement 提交字段页后明确回复“好了”；用户过去对其他 requirement 说过“以后不用再选字段”等不算当前 requirement 的提交证据。字段选择 URL 输出后本轮必须结束并等待，禁止在同一轮试调 manual_source_creators、搜索或打分。";
 const RELAXATION_REVIEW_COMPACT_RULE =
-  "结果差异先核对各轮需求、解析、validate 参数和实际搜索参数；跨 requirement 的 keyword 差异仅是线索。复核通过后只报实际数、目标数、缺口和唯一下一项，提出后结束本轮并等用户确认该项；总体授权不替代逐轮确认。重建时 rawMessagesJson.original 保留未改写原始需求，放宽进 clarifications 和 validate 参数；manual_source_creators.demand 必须携带已应用放宽值的有效搜索文本，搜索返回后核对实际参数与放宽值一致。";
+  "结果差异先核对各轮需求、解析、validate 参数和实际搜索参数；跨 requirement 的 keyword 差异仅是线索。复核通过后只报实际数、目标数、缺口和唯一下一项，提出后结束本轮并等用户确认该项；总体授权不替代逐轮确认。手动拓展放宽后整体替换 rawMessagesJson.original 为累计放宽后的完整需求，同文重新解析，parse_outputs 全量更新；询价机构放宽仍保留未改写原文；放宽同步 clarifications 和 validate 参数；manual_source_creators.demand 必须携带已应用放宽值的有效搜索文本，搜索返回后核对实际参数与放宽值一致。";
 // 只在结果时刻注入（manual_source Excel 交付处）；启动块只保留精简的 SHORTFALL 规则。
 const MANUAL_SOURCE_RELAXATION_RULE =
-  "解释多轮结果差异时必须核对各轮完整有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数；跨 requirement 的 keyword 差异只能作为线索，不能单独断言后台不稳定；Provider 未回传实际搜索参数时明确说无法确认根因，不猜测、不让用户替后台决定不可执行的搜索口径。放宽每轮只展示实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑，“放宽直到足量”等总体授权不替代后续每轮具体项确认。重建时 ypscan_parse_requirement.demand 与 rawMessagesJson.original 仍使用用户当前完整、未改写的原始需求；已确认的累计放宽写入 rawMessagesJson.clarifications 对应字段和本轮 validate_requirement 顶层参数；重跑搜索时 manual_source_creators.demand 必须传应用了已确认放宽值的有效搜索文本（原文对应字段替换为放宽后值），搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导、不得宣称放宽成功。";
+  "解释多轮结果差异时必须核对各轮完整有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数；跨 requirement 的 keyword 差异只能作为线索，不能单独断言后台不稳定；Provider 未回传实际搜索参数时明确说无法确认根因，不猜测、不让用户替后台决定不可执行的搜索口径。放宽每轮只展示实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑，“放宽直到足量”等总体授权不替代后续每轮具体项确认。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand 和 manual_source_creators.demand，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。重跑搜索时 manual_source_creators.demand 必须传应用了已确认放宽值的有效搜索文本（原文对应字段替换为放宽后值），搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导、不得宣称放宽成功。";
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";

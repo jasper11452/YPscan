@@ -70,7 +70,7 @@ export const PARSE_REQUIREMENT_PARAMETERS = Object.freeze({
       type: "string",
       minLength: 1,
       description:
-        "当前单个平台的完整最新用户需求原文；首次解析及用户主动修改任何业务条件后都必传，重传时只合并用户原始表述和后续人工改口，禁止回填历史解析输出、自动放宽值或 Provider 归一化值",
+        "当前单个平台的完整最新用户需求原文；首次解析及用户主动修改任何业务条件后都必传，重传时合并用户原始表述和后续人工改口；手动拓展确认放宽后必须传应用全部已确认放宽值的完整需求全文，与 rawMessagesJson.original 一致；禁止回填历史解析输出、未确认放宽值或其他 Provider 归一化值",
     },
     business_mode: {
       type: "string",

@@ -867,6 +867,8 @@ test("default manual sourcing pauses without a task batch and falls back to para
   });
   assert.match(completedText, /唯一下一项.*本轮必须结束并等待用户明确确认/u);
   assert.match(completedText, /累计放宽写入 rawMessagesJson\.clarifications/u);
+  assert.match(completedText, /整体替换 rawMessagesJson\.original.*同一全文传给 ypscan_parse_requirement\.demand 和 manual_source_creators\.demand/u);
+  assert.match(completedText, /rawMessagesJson\.parse_outputs 全量替换为本次重解析结果/u);
   assert.match(completedText, /跨 requirement 的 keyword 差异只能作为线索/u);
 });
 
@@ -1685,7 +1687,8 @@ test("empty rank result reviews the requirement before relaxation", () => {
   assert.match(text, /实际数、目标数、缺口和唯一下一项/u);
   assert.match(text, /提出后结束本轮并等用户确认该项/u);
   assert.match(text, /总体授权不替代逐轮确认/u);
-  assert.match(text, /rawMessagesJson\.original 保留未改写原始需求/u);
+  assert.match(text, /整体替换 rawMessagesJson\.original/u);
+  assert.match(text, /询价机构放宽仍保留未改写原文/u);
   assert.match(text, /manual_source_creators\.demand 必须携带已应用放宽值的有效搜索文本/u);
   assert.match(text, /搜索返回后核对实际参数与放宽值一致/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);

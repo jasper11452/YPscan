@@ -6,7 +6,7 @@
 
 - `requirement_id`：Provider-required string，本轮唯一必传基础参数，只传当前真实 requirement ID。
 - `num`：仅当当前环境的 live schema 将其列为 required 时传正整数目标数量；测试基线 `https://test-mcp.eshypdata.com/mcp` 当前不要求该字段，生产环境 schema 若漂移，以 live schema 为准。
-- `demand`：可选 string，live schema 支持时才传。无已确认放宽时只透传当前完整、未改写的用户原始需求文本；存在已确认放宽时，传“应用了本轮全部已确认放宽值的有效搜索需求文本”：在原文对应字段的位置替换为放宽后值（如“预算：3000-20000”改为“预算：2400-24000”），其余原文不变。不传解析输出或 `rawMessagesJson`；`rawMessagesJson.original` 与重解析的 `ypscan_parse_requirement.demand` 始终保留未改写原文。
+- `demand`：可选 string，live schema 支持时才传。无已确认放宽时只透传当前完整、未改写的用户原始需求文本；存在已确认放宽时，传“应用了本轮全部已确认放宽值的有效搜索需求文本”：在原文对应字段的位置替换为放宽后值（如“预算：3000-20000”改为“预算：2400-24000”），其余原文不变。不传解析输出或 `rawMessagesJson`；本字段与重解析的 `ypscan_parse_requirement.demand`、`rawMessagesJson.original` 使用同一份调整后的完整需求全文。
 
 `num` 不得靠前台多轮试错探测；只能按当前 live schema 确定性决定是否传入。每批交付数量的业务含义仍由手动拓展目标数量决定。
 
@@ -14,7 +14,7 @@
 
 ## 调用
 
-调用前先读取当前 `manual_source_creators` 的实际 input schema：只按 live schema 传参。如果 schema 明确提供了用于需求原文的可选字段 `demand`，优先把当前完整、未改写的用户原始需求文本放入该字段；只传原文，不传解析输出或 `rawMessagesJson`。如果 schema required 含 `num`，则与 `requirement_id` 一并传入；如果 schema 不含 `num`，则不得附带。未知参数导致的失败最多去掉原文字段重试一次，不得改变 `requirement_id`，也不得用该回退掩盖其他业务错误。不要猜测字段名或强行扩展当前 schema。
+调用前先读取当前 `manual_source_creators` 的实际 input schema：只按 live schema 传参。如果 schema 明确提供了用于需求原文的可选字段 `demand`，把本轮完整有效需求文本（含全部已确认放宽）放入该字段；只传需求文本，不传解析输出或 `rawMessagesJson`。如果 schema required 含 `num`，则与 `requirement_id` 一并传入；如果 schema 不含 `num`，则不得附带。未知参数导致的失败最多去掉原文字段重试一次，不得改变 `requirement_id`，也不得用该回退掩盖其他业务错误。不要猜测字段名或强行扩展当前 schema。
 
 若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` 或 `REQUIREMENT_COLUMNS_UNAVAILABLE`，不得原参数重试；使用同一 requirement 重新进入字段选择，原样展示 URL 后结束本轮等待用户回复“好了”。Provider 应在启动本工具时做该校验并立即返回，不应把缺列错误延迟到打分终态；这是 Provider 侧 fail-fast 契约要求，插件不为此新增 columns 缓存或本地账本。
 
