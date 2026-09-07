@@ -14,6 +14,7 @@
 
 - 每次真正开始新功能都重新解析、复核、创建独立 requirement；同会话、同平台、条件未变也不跨功能复用 requirement 或已提交字段配置；两功能不得并行或中途切换。
 - 复核对照三份内容：用户当前完整有效需求、本次 `data.outputs`、即将发送的 `validate_requirement` 参数；至少检查模式、平台、品牌、数量、截止时间、内容形式、抖音植入/定制类型、粉丝、返点、报价档位、`contentTag`、可选标签、多达人类型是否仍为一个 requirement、是否混入其他平台或旧需求值。
+- 解析器 null/缺失不等于用户未提供：原文或有效澄清唯一确定的数值直接采用（如返点25%以上 → `[0.25,1]`）；粉丝未明确按全量区间、不追问“行业头部”的量级。首次复核一次检查全部必要字段和过期日期，必要问题一次问齐。
 - 检查正确直接落库；发现错误按原需求纠正后重新解析（不算放宽）；歧义用一次 `AskUserQuestion` 收集全部不确定字段，禁止逐字段分轮弹窗；同一字段已确认的澄清答案在本会话后续轮次与 requirement 重建时直接复用，不再重复确认，等价时间表述（今晚8点前/今晚20:00/当天20:00:00）归一为同一值。
 - 需求 ID 优先 `data.requirement_id`，缺失兼容 `data.id`，绝不使用 `data.demand_id`。
 
@@ -60,6 +61,7 @@ validate_requirement → select_inquiry_form_fields（原样展示 URL，等用�
 - 新 requirement 必须重新调用 `select_inquiry_form_fields`；其他 requirement 的字段提交或用户曾说“不再选字段”都不能复用。字段 URL 输出后当前轮次结束，只有用户为该 requirement 提交并明确回复“好了”后才能调用 `manual_source_creators`，不得试调后端探测是否会强制报错。
 - `manual_source_creators` 固定只传 `{requirement_id}`，不传 `demand` 或 `num`，需求由 Provider 从后台读取；完整有效需求、澄清及已确认放宽须先通过 `validate_requirement` 保存。状态查询按当前 live schema 传入 `num`。
 - 异步轮询：提交返回 batch_id 后等 30 秒再第 1 次查询状态工具；当前环境 schema required `num` 时，取当前 requirement 落库 `quantityTotal × 3` 作为取数数量，通过 `MANUAL_SOURCE_TARGET_NUM` 提示并在远端调用时附带，提示值已乘三，不得重复乘三；缺少需求记录时沿用上次查询 num。最终交付目标与不足判断仍使用用户需求人数。之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
+- 状态响应成功且 `completed=true、selected_count=0`（success_count 缺失或为0），无文件时进入零结果复核；不再轮询、不盲目重试、不生成空文件或宣称已交付。参数一致才建议唯一下一项放宽。
 - 打分阶段：`score_manual_source_csv({requirement_id, csv_file_path})` 返回 job_id 后，按 30s×10 轮询 `score_manual_source_csv_status({job_id})`，终态后保存 manual_source Excel。打分提交或状态结果若返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` / `REQUIREMENT_COLUMNS_UNAVAILABLE`（含明确缺少 selected inquiry columns 消息，即使外层包裹通用任务错误也必须识别），停止轮询并为同一 requirement 重新生成字段选择 URL；用户回复“好了”后只用同一 requirement 与本轮 `file_bridge` 原始 `csv_file_path` 重提一次打分——Hook 保留到该可信路径时直接附带精确 `SCORE_MANUAL_SOURCE_CSV_ARGS`，按原样重提，不重搜、不重补全、不重跑 `file_bridge`，也不把 `success_count` 当最终成功。
 - links CSV 到达后：先 `ypscan_save_artifact(artifact_kind="manual_creator_links", file_url=<当前 Provider URL>)` 并原样展示本地链接（原始 Provider 下载物，可能只有 url 列）；再用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 归一化为受控三列 links CSV（缺 `creator_id` 时按平台主页规则从 url 推导，短链或无法推导、ID 与主页不匹配时整份失败停止，不进入补全）；原生补全每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止 file_bridge/打分并报告失败达人。
 - `file_bridge` 接收 links CSV 和所有补全 CSV，一次完成合并与后续处理。merged CSV 数据行 > 500 时跳过上传，如实交付本地文件；未超限才上传并把返回的 `csv_file_path` 传 `score_manual_source_csv`。`csv_file_path` 只接受当前 `file_bridge` 返回值，绝不传本机工作区路径或自行构造的路径；`score_manual_source_csv_status` 轮询终态成功后才保存最终手动拓展 Excel。
@@ -70,6 +72,7 @@ validate_requirement → select_inquiry_form_fields（原样展示 URL，等用�
 ## 5. 结果不足：先复核，再放宽
 
 - 触发点：询价分支 `rank_mcns` 为空；手动拓展仅在 Provider 响应明确给出可信实际数量为 0 或少于目标数量时（数量未知不猜测、不自动放宽，当前交付物即最终结果）。
+- 恢复已确认条件是纠错，不重复索取放宽确认。Agent 参数错误按原意纠正；提交正确但后台执行偏差时报告限制，不承诺盲目重跑可修复。用户明确修改并要求重搜时直接执行，保留未修改澄清；新 requirement 仍须独立字段选择。
 - 禁止直接放宽：先对照当时有效需求、本次解析输出、实际落库参数复核；确认正确后才按固定顺序逐项建议放宽。
 - 固定顺序：刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`；不存在的字段跳过；每项只调一次。`followercount` 为 `[0,999999999]` 时已是全量区间、无法再放宽，直接跳过粉丝范围。
   - 刊例价/CPM/CPE/粉丝：下界 ×0.8、上界 ×1.2，整数上下界向外取整；返点 `[min,1]`→`[min×0.8,1]`；多报价指标每轮只调一个；标签阶段每轮移除一个完整非核心偏好字段。

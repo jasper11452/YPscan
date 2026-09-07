@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { firstString, isRecord, nonemptyString } from "../util/value.js";
 import {
   BUSINESS_MODE_VALUES,
@@ -19,6 +20,10 @@ import {
 import { localFileMarkdownLink } from "../tools/save-artifact.js";
 import { normalizeLocalFilePath } from "../tools/file-bridge.js";
 
+const BUSINESS_SKILL_PATH = fileURLToPath(
+  new URL("../../skills/media-assistant/SKILL.md", import.meta.url),
+);
+
 const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
 const REQUIREMENT_PREFLIGHT_BLOCKED = "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED";
 const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"，且 min < max';
@@ -27,9 +32,9 @@ const MANUAL_SOURCE_ARGUMENT_RULE =
 const SINGLE_REQUIREMENT_TYPE_RULE =
   "同平台多个达人类型只创建一个 requirement：保留用户给出的总量，合并全部类型标签与条件，不拆分子需求、不重复落库、不重复搜索；本规则覆盖任何旧的平均分配或批量子需求指令。";
 const CLARIFICATION_REUSE_RULE =
-  "同一会话内用户已确认的澄清答案（截止时间、粉丝量级、返点、报价等）持续有效：后续轮次和 requirement 重建必须原样带入 rawMessagesJson.clarifications 直接复用，同一字段新答案覆盖旧答案，禁止对同一字段重复询问；只有用户明确修改该字段或与新需求冲突时才重新澄清。等价时间表述（今晚8点前/今晚20:00/当天20:00:00）视为同一值，归一后不再重复确认。";
+  "同一会话内用户已确认的澄清答案（截止时间、粉丝量级、返点、报价等）持续有效：后续轮次和 requirement 重建必须原样带入 rawMessagesJson.clarifications 直接复用，同一字段新答案覆盖旧答案，禁止对同一字段重复询问；用户明确修改该字段且新值唯一时直接采用；只有新值仍有歧义或与新需求冲突时才重新澄清。等价时间表述（今晚8点前/今晚20:00/当天20:00:00）视为同一值，归一后不再重复确认。";
 const PARSED_METRIC_REUSE_RULE =
-  "解析 Workflow 已给出的唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值，必须直接采用，禁止再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。粉丝技术上限溢出由本地截断到 999999999，不弹窗。用户未明确粉丝数或解析为“不限”时默认落库全量区间 [0,999999999]，不省略、不弹窗；历史坏值 [1,999999999] 归一为 [0,999999999]。只有这些字段缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。";
+  "解析 Workflow 已给出的唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值，必须直接采用，禁止再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。粉丝技术上限溢出由本地截断到 999999999，不弹窗。用户未明确粉丝数或解析为“不限”时默认落库全量区间 [0,999999999]，不省略、不弹窗；历史坏值 [1,999999999] 归一为 [0,999999999]。解析器缺失或 null 不等于用户未提供；先核对当前原文与有效澄清，只有仍缺少必要值、多候选或存在冲突时才调用 AskUserQuestion。";
 const REBATE_MINIMUM_QUESTION_RULE =
   '需要澄清返点时只问最低返点：AskUserQuestion 的问题写“最低返点要求是多少”，选项只给单个最低返点百分比（如 20%、25%、30%），禁止给返点区间、上限或“不限”类选项；上限固定按 100% 处理，落库仍为 "[min,1]"。';
 const NUMERIC_CLARIFICATION_QUESTION_RULE =
@@ -51,6 +56,9 @@ const RELAXATION_REVIEW_COMPACT_RULE =
 // 只在结果时刻注入（manual_source Excel 交付处）；启动块只保留精简的 SHORTFALL 规则。
 const MANUAL_SOURCE_RELAXATION_RULE =
   "解释多轮结果差异时必须核对各轮完整有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数；跨 requirement 的 keyword 差异只能作为线索，不能单独断言后台不稳定；Provider 未回传实际搜索参数时明确说无法确认根因，不猜测、不让用户替后台决定不可执行的搜索口径。放宽每轮只展示实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑，“放宽直到足量”等总体授权不替代后续每轮具体项确认。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand，复核后通过 validate_requirement 保存，由 Provider 从后台读取，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。重跑搜索时 manual_source_creators 只传 requirement_id，由 Provider 从后台读取已保存的完整有效需求，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导、不得宣称放宽成功。";
+
+const SEARCH_PARAMETER_REVIEW_RULE =
+  "先对照当前有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数。恢复用户已确认条件不是放宽，不再请求确认；Agent 输入有误且能按原意纠正时，告知后按 Skill 纠正重建，仍遵守新 requirement 字段选择规则。提交参数正确但后台执行不一致时，如实报告参数未传导及当前工具能力限制，不承诺盲目重跑能修复、不让用户接受错误参数或代为排错。用户已明确修改并要求重搜时直接执行，沿用未修改的有效澄清，不再次确认同一值。";
 
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
@@ -307,10 +315,11 @@ function requirementParseSuccessDirective(message, params = {}) {
   const { resolved, missing } = classifyDifyOutputs(parseOutputsFromMessage(message));
   const mode = businessModeFromParams(params);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=data.outputs 仅包含当前 Provider 契约消费的 Workflow 字段；先复核，不得直接调用 Browser、search_creators 或结束。",
+    "YPSCAN_FLOW_DIRECTIVE=data.outputs 仅包含当前 Provider 契约消费的 Workflow 字段；先复核，不得直接调用 Browser。",
     "YPSCAN_NEXT_ACTION=REVIEW_REQUIREMENT",
     `DIFY_RESOLVED_FIELDS=${resolved.join(",")}`,
     `DIFY_MISSING_FIELDS=${missing.join(",")}`,
+    "DIFY_MISSING_FIELDS 只表示解析器未输出，原文/澄清明确则不重问：25%以上→[0.25,1]；粉丝未明确→[0,999999999]。",
     ...(mode
       ? [
           `BUSINESS_MODE=${mode}`,
@@ -320,9 +329,9 @@ function requirementParseSuccessDirective(message, params = {}) {
     "唯一值直接采用；八个可选 Label 有则原样保留、无则省略；禁止整体传解析输出。",
     "YPSCAN_POLICY=按 media-assistant Skill 的“解析后、落库前必须复核”执行。",
     "复核 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3，小红书不使用 L3。缺失或有歧义按 Skill 一次性询问；contentTag 必须来自解析结果，contentTag 缺失时重新解析。",
-    "截止时间由 Agent 对照当前完整有效需求和最新澄清复核；两者均无截止证据须询问，禁止用旧 requirement、默认值或推测。只有日期没有具体时刻必须澄清；不得默认 18:00、23:59:59 或其他时刻，不得宣称“无需补充澄清”。已有明确小时和分钟且未来时间唯一时，秒省略时可补 00，不重复询问。只解析时仍须指出缺失时刻，不得创建需求。",
+    "首次澄清前一次检查缺项和过期日期。截止时间由 Agent 对照当前完整有效需求和最新澄清复核；两者均无截止证据须询问，禁止用旧 requirement、默认值或推测。只有日期没有具体时刻必须澄清；不得默认 18:00、23:59:59 或其他时刻，不得宣称“无需补充澄清”。已有明确小时和分钟且未来时，秒省略时可补 00，不重复询问。只解析仍须指出缺失时刻，不得创建需求。",
+    "确需澄清才问“最低返点要求是多少”；选项只给单个最低返点百分比，禁止给返点区间、上限或“不限”类选项。",
     RAW_MESSAGES_JSON_KEY_CONTRACT,
-    REBATE_MINIMUM_QUESTION_RULE,
   ].join("\n");
 }
 
@@ -679,6 +688,20 @@ function manualSourceCreatorsStatusDirective(
         artifact_id: artifactId,
         file_url: excelFileUrl,
       })}`,
+    ].join("\n");
+  }
+  if (
+    result?.success === true &&
+    result?.data?.completed === true &&
+    result?.data?.selected_count === 0 &&
+    (result.data.success_count === undefined || result.data.success_count === 0)
+  ) {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=搜索已完成，实际数量为 0；没有可保存文件，不生成空表、不宣称已交付。停止轮询，不提供原参数重试/结束弹窗。",
+      "YPSCAN_NEXT_ACTION=REVIEW_EMPTY_MANUAL_SOURCE_RESULT",
+      SEARCH_PARAMETER_REVIEW_RULE,
+      "只有参数复核正确后，才按 Skill 固定顺序提出唯一下一项，说明当前值、建议值、目标数和缺口；不列多个放宽方向让用户排错，不擅自放宽核心标签或关键词。等待该项明确确认后再重建。",
+      MANUAL_SOURCE_RELAXATION_RULE,
     ].join("\n");
   }
   if (result?.error?.code === "BATCH_NOT_READY") {
@@ -1542,6 +1565,7 @@ export function registerFlowDirectiveHooks(api) {
       const scope = scopeKey(event, context);
       const lines = [
         "[YPSCAN 业务模式指令]",
+        `业务规则文件：${BUSINESS_SKILL_PATH}。首次相关操作前必须完整读取；本会话已读则不重复。即使宿主技能目录未列出 media-assistant，也使用此实际安装路径读取，不把 Hook 摘要当完整 Skill。`,
         "业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，必须先逐字调用下方 AskUserQuestion；回答前不得解析或落库。",
         `BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}`,
       ];
@@ -1550,6 +1574,8 @@ export function registerFlowDirectiveHooks(api) {
         startupScopes.add(scope);
         lines.push(
           "[YPscan startup instruction]",
+          "用户已明确的需求或修改直接执行；内部解析、保存和轮询持续推进，不以进度通知索取确认。只在必要输入、业务决策或真实阻塞处停下。面向用户说明正在做什么、是否需要操作和下一步；不主动展示 requirement_id、batch_id、工具名称或落库术语，不把阶段完成说成最终交付。",
+          SEARCH_PARAMETER_REVIEW_RULE,
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
           `选择业务模式后，把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV→原生补全（20/批）→file_bridge（flow=manual_source）→score_manual_source_csv→score_status→保存打分排序 Excel。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存 links CSV→按 20 个一批调用当前平台对应的 YP Action 原生达人补全工具（小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→file_bridge（内部合并并上传）→score_manual_source_csv→score_manual_source_csv_status→保存最终打分排序 Excel。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项；正文保留企微消息原有行结构，只在单行将超过 20 字符时断行，禁止把短分句、字段或项目名拆成多行。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
           REQUIREMENT_CREATION_RULE,

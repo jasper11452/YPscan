@@ -12,6 +12,8 @@
 | `gateway_start`       | index.js                 | 重置瞬态状态                                          |
 | `gateway_stop`        | index.js                 | 重置瞬态状态                                          |
 
+每轮提示插件相对模块解析得到的 `media-assistant/SKILL.md` 实际绝对路径，要求首次相关操作前完整读取（已读不重复），兼容宿主技能目录漏列的情况；这不等于验证宿主已经读取。解析成功提示区分解析器缺失与用户缺失，明确原文数值复用和首次完整澄清。启动指令要求已明确修改直接执行，并使用业务进度文案。
+
 ## 2. 瞬态状态（不持久化）
 
 | 映射                              | 键                     | 值                                 | 写入点                                                                                                                                               |
@@ -91,6 +93,8 @@
 | `ypscan_save_creator_links`                                        | `CREATOR_LINKS_LOCAL_PATH`/`LOCAL_LINK`，提示按 20/批原生补全 → `file_bridge(manual_source)` → 打分                                                                                                                                                                                                       | pause                                                                                                                           |
 | `file_bridge`                                                      | 展示 merged CSV 本地链接；`mcn_complete_only` 直接交付；行数>500 跳过上传并停止；`manual_source` 上传成功后给 `SCORE_MANUAL_SOURCE_CSV_ARGS`；`mcn_rank` 上传成功后给兼容 `RANK_CREATORS_ARGS(requirement_id,csv_file_path)`，仅供 live schema 明确升级后使用                                                 | 合并或上传失败 pause；已有本地文件时仍先展示                                                                                    |
 | 遗留 `ypscan_select_cascade`/`ypscan_set_filter_range`             | Browser 验证/恢复提示                                                                                                                                                                                                                                                                                         | —                                                                                                                               |
+
+手动拓展状态成功、`data.completed=true` 且 `data.selected_count=0`（`success_count` 缺失或为0），并且没有 CSV/Excel 时，追加 `YPSCAN_NEXT_ACTION=REVIEW_EMPTY_MANUAL_SOURCE_RESULT`：停止轮询，先核对参数，再决定纠错或唯一下一项放宽；不附通用重试弹窗或保存参数。CSV/Excel 分支仍优先，未知数量和失败不当作零结果。
 
 失败且无专门处理时：`ypscan_parse_requirement`、`validate_requirement`、`search_creators`、`rank_mcns` 给 `flowPauseDirective`（`YPSCAN_FLOW_DIRECTIVE=<阶段> 已暂停（code）` + `ASK_USER_QUESTION_ARGS` 重试/结束），其余工具返回 null（不追加）。
 

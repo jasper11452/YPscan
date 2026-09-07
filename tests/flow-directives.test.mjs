@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -52,6 +52,104 @@ function canonicalValidateParams(businessMode, quantityTotal = 30) {
     kolOfficialPriceL3: 50000,
   };
 }
+
+test("completed empty manual search reviews requirements instead of offering a blind retry", () => {
+  const { hooks } = registeredPlugin();
+  const payload = {
+    success: true,
+    data: {
+      requirement_id: "req-empty",
+      batch_id: 535,
+      completed: true,
+      selected_count: 0,
+      success_count: 0,
+      no_more_creators: true,
+    },
+  };
+  const result = hooks.get("tool_result_persist")({
+    toolName: "manual_source_creators_status",
+    message: toolMessage(payload),
+  });
+  const text = directiveText(result);
+  assert.match(text, /YPSCAN_NEXT_ACTION=REVIEW_EMPTY_MANUAL_SOURCE_RESULT/u);
+  assert.match(text, /实际数量为 0/u);
+  assert.match(text, /不是放宽/u);
+  assert.doesNotMatch(
+    text,
+    /ASK_USER_QUESTION_ARGS=|SAVE_ARTIFACT_ARGS=|MANUAL_SOURCE_CREATORS_STATUS_ARGS=/u,
+  );
+  assert.deepEqual(JSON.parse(result.message.content[0].text), payload);
+
+  for (const [response, expected] of [
+    [{ ...payload, success: false }, /已暂停/u],
+    [
+      {
+        ...payload,
+        data: { ...payload.data, creator_links_csv_url: "https://eshypdata.com/links.csv" },
+      },
+      /SAVE_ARTIFACT_ARGS=/u,
+    ],
+    [
+      {
+        ...payload,
+        data: { ...payload.data, excel_file_url: "https://eshypdata.com/result.xlsx" },
+      },
+      /SAVE_ARTIFACT_ARGS=/u,
+    ],
+  ]) {
+    const other = directiveText(
+      hooks.get("tool_result_persist")({
+        toolName: "manual_source_creators_status",
+        message: toolMessage(response),
+      }),
+    );
+    assert.match(other, expected);
+    assert.doesNotMatch(other, /REVIEW_EMPTY_MANUAL_SOURCE_RESULT/u);
+  }
+
+  for (const data of [
+    { completed: false, selected_count: 0, success_count: 0 },
+    { completed: true, success_count: 0 },
+    { completed: true, selected_count: 1, success_count: 0 },
+    { completed: true, selected_count: 0, success_count: 1 },
+  ]) {
+    const other = directiveText(
+      hooks.get("tool_result_persist")({
+        toolName: "manual_source_creators_status",
+        message: toolMessage({ success: true, data }),
+      }),
+    );
+    assert.doesNotMatch(other, /REVIEW_EMPTY_MANUAL_SOURCE_RESULT/u);
+  }
+});
+
+test("business skill has a readable installation path even without a host skill catalog", () => {
+  const { hooks } = registeredPlugin();
+  const context = { sessionKey: "missing-skill-catalog" };
+  for (let turn = 0; turn < 2; turn += 1) {
+    const prompt = hooks.get("before_prompt_build")({}, context).prependContext;
+    const path = prompt.match(/业务规则文件：(.+?)。首次相关操作/u)?.[1];
+    assert.ok(path);
+    assert.match(readFileSync(path, "utf8"), /^name: media-assistant$/m);
+    assert.match(prompt, /本会话已读则不重复/u);
+  }
+});
+
+test("parse review distinguishes missing parser output from missing user information", () => {
+  const { hooks } = registeredPlugin();
+  const text = directiveText(
+    hooks.get("tool_result_persist")({
+      toolName: "ypscan_parse_requirement",
+      message: toolMessage({
+        success: true,
+        data: { outputs: { rebate: null, followercount: null } },
+      }),
+    }),
+  );
+  assert.match(text, /DIFY_MISSING_FIELDS 只表示解析器未输出/u);
+  assert.match(text, /25%以上.*\[0\.25,1\]/u);
+  assert.match(text, /一次.*过期/u);
+});
 
 test("flow hooks register the validate_requirement preflight gate", () => {
   const { hooks } = registeredPlugin();
@@ -898,7 +996,10 @@ test("manual source startup only requests requirement_id and delegates demand to
   assert.match(prependContext, /调用 manual_source_creators 只传 requirement_id/u);
   assert.match(prependContext, /不传 demand、num、解析输出或 rawMessagesJson/u);
   assert.match(prependContext, /需求文本由 Provider 从后台读取/u);
-  assert.doesNotMatch(prependContext, /manual_source_creators\.demand|可选需求原文字段|若 schema required 含 num，则 requirement_id 与 num 一并传/u);
+  assert.doesNotMatch(
+    prependContext,
+    /manual_source_creators\.demand|可选需求原文字段|若 schema required 含 num，则 requirement_id 与 num 一并传/u,
+  );
 });
 
 test("status polling without requirement history preserves the already tripled num", () => {

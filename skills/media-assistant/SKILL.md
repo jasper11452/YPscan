@@ -5,6 +5,12 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 # YPscan Media Assistant
 
+## 连续推进与用户交互
+
+用户已明确的需求、修改或继续执行指令直接落实；未修改的有效澄清继续使用，不以“确认后我再执行”重复索取同一决定。解析、复核、保存、补全与轮询等已可执行步骤连续推进，进度通知不成为等待回复的关卡。必要业务选择、发送确认、字段页提交和真实阻塞仍按各分支处理。
+
+面向用户只说当前业务进度、结果、是否需要操作及原因；不主动展示 requirement ID、batch ID、工具名称、“落库”等实现细节。用户要求诊断时才提供必要技术证据。没有文件的零结果如实说未找到达人，不说“已交付”。
+
 ## 进入流程与业务模式
 
 只处理媒介助手范围内的达人筛选、询价和提报任务。工具能力只按宿主完整名称中最后一个 `__` 后的实际工具名判断；单一匹配时使用宿主展示的完整名称，多个同名匹配时才询问用户，无匹配时才报告缺失。
@@ -29,6 +35,9 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 每次 `ypscan_parse_requirement` 成功后，先在内部对照三份内容，再调用 `validate_requirement`：
 
+解析器缺失字段或返回 null 不代表用户未提供。先核对当前原文与有效澄清：例如“返点25%以上”已唯一确定最低返点25%，直接保存 `"[0.25,1]"`，不再问最低返点。粉丝未明确（包括只有“行业头部”描述）按全量区间处理，不追问量级。第一次复核必须一次检查全部必要字段，包括截止时间是否过期；确需澄清时一次问齐，不先问数值再由预检发现日期错误。
+
+
 1. 用户当前完整有效需求；
 2. 本次 `data.outputs`；
 3. 即将发送的完整 `validate_requirement` 参数。
@@ -41,7 +50,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 检查正确时直接落库，不展示复核摘要，不等待用户确认。原文未逐字出现但语义合理、且不与需求冲突的解析标签继续原样采用；不得只因措辞不同删除标签。
 
-需求参数细节按 [解析参考](references/tools/ypscan_parse_requirement.md) 和 [validate_requirement](references/tools/validate_requirement.md) 执行。解析器已有唯一合法品牌、粉丝、返点、报价、CPM 或 CPE 时直接采用；粉丝未明确或“不限”时默认落库全量区间 `[0,999999999]`、不询问，其余字段缺失、多候选、冲突或用户明确改口时才询问。八个 Dify Label 解析契约保持不变，`talentTypeLabel` 不是 Dify 字段。`validate_requirement` schema 中的 `talentTypeLabel`、`refNickname`、`refUrl` 属于 Provider 可选字段：只有用户明确提供且语义唯一时才传，绝不推断。抖音 L2=植入视频、L3=定制视频，不使用 L1。所有数值区间使用无空格字符串 `"[min,max]"` 且 `min < max`。用户未明确粉丝数、或写“不限/不限粉丝数/无要求”等时，`followercount` 落库全量区间 `"[0,999999999]"`（零到最大值），不省略字段、不为此弹窗；历史坏值 `[1,999999999]` 同样归一为 `[0,999999999]`。同平台多个达人类型合并为一个 requirement，保留总量，不拆分人数。
+需求参数细节按 [解析参考](references/tools/ypscan_parse_requirement.md) 和 [validate_requirement](references/tools/validate_requirement.md) 执行。解析器已有唯一合法品牌、粉丝、返点、报价、CPM 或 CPE 时直接采用；粉丝未明确或“不限”时默认落库全量区间 `[0,999999999]`、不询问，其余必要字段在核对原文、有效澄清与解析结果后仍缺失、多候选或冲突时才询问；用户明确改口且新值唯一时直接采用，不重复确认。八个 Dify Label 解析契约保持不变，`talentTypeLabel` 不是 Dify 字段。`validate_requirement` schema 中的 `talentTypeLabel`、`refNickname`、`refUrl` 属于 Provider 可选字段：只有用户明确提供且语义唯一时才传，绝不推断。抖音 L2=植入视频、L3=定制视频，不使用 L1。所有数值区间使用无空格字符串 `"[min,max]"` 且 `min < max`。用户未明确粉丝数、或写“不限/不限粉丝数/无要求”等时，`followercount` 落库全量区间 `"[0,999999999]"`（零到最大值），不省略字段、不为此弹窗；历史坏值 `[1,999999999]` 同样归一为 `[0,999999999]`。同平台多个达人类型合并为一个 requirement，保留总量，不拆分人数。
 
 需求 ID 优先取 `data.requirement_id`，缺失时兼容 `data.id`；绝不使用 `data.demand_id`。
 
@@ -82,6 +91,8 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 若 `score_manual_source_csv` 或 `score_manual_source_csv_status` 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`、`REQUIREMENT_COLUMNS_UNAVAILABLE` 或明确消息 `customer demand has no selected inquiry columns`，不得把 `success_count` 当作最终打分成功，也不得重搜、重做原生补全或重跑 `file_bridge`。使用同一 requirement 调用 `select_inquiry_form_fields`，原样展示 URL 后结束本轮；用户提交并回复“好了”后，若缺列指令已附带 `SCORE_MANUAL_SOURCE_CSV_ARGS` 则原样使用该参数重提一次 `score_manual_source_csv`，不得改写路径；否则只用同一 requirement 和本轮 `file_bridge` 返回的原始 `csv_file_path` 重提，当前对话无法取得该可信路径时如实说明并停止，不自行构造 URL。报告时明确区分 Agent 跳步、Provider 失败与用户操作，不把 Agent 可避免的返工描述成纯系统要求。
 
 ## 结果不足：先复核，再放宽
+
+恢复用户已确认条件属于纠错，不是放宽，不要求用户再次确认该条件。Agent 传参错误且可按原意纠正时，告知后按本节纠错流程重建；若传给 Provider 的参数正确但实际搜索参数不一致，则报告偏差和当前工具无法落实的部分，不承诺重跑即可修复、不让用户接受后台错误值或代为决定排错参数。用户已明确修改并要求重搜时直接执行，沿用未修改的有效澄清，仍遵守独立建需与字段选择规则。
 
 结果不足时禁止直接放宽。先重新对照当时有效需求、本次解析输出、实际传给 `validate_requirement` 的参数和当前结果。解释多轮结果差异时还必须核对每轮完整有效需求与 Provider 实际搜索参数；不同 requirement 的 keyword 差异只能作为线索，不能单独证明后台不稳定。Provider 未回传实际搜索参数时明确说无法确认根因，不猜测，也不让用户替后台决定无法由当前工具落实的搜索口径。发现漏检错误时按原需求纠正、重新解析、创建新 requirement 并按原模式重跑；歧义时询问用户。只有确认解析和落库参数正确后，才允许放宽。
 
