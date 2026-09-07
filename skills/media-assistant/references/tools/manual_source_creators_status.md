@@ -4,15 +4,15 @@
 
 ## Remote arguments
 
-| Argument         | Constraint                                                                                                 |
-| ---------------- | ---------------------------------------------------------------------------------------------------------- |
-| `requirement_id` | Provider-required string；只传本轮 `manual_source_creators` 同一真实 requirement ID                        |
-| `batch_id`       | Provider-required integer；只传本轮 `manual_source_creators` 返回的任务 batch ID                           |
-| `num`            | 仅当当前环境 live schema 将其列为 required 时传正整数；表示本轮目标交付数量，也是每批应取 links URL 的数量 |
+| Argument         | Constraint                                                                                                  |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| `requirement_id` | Provider-required string；只传本轮 `manual_source_creators` 同一真实 requirement ID                         |
+| `batch_id`       | Provider-required integer；只传本轮 `manual_source_creators` 返回的任务 batch ID                            |
+| `num`            | 仅当当前环境 live schema 将其列为 required 时传正整数；表示用户需求人数的 3 倍，即每批应取 links URL 的数量 |
 
 不得传 `size`、平台、达人 ID 或任何猜测字段；`batch_id` 是任务 ID，不需要任何转换或推导。
 
-`num` 的确定性来源是当前 requirement 落库的 `quantityTotal`：Hook 会在指令里通过 `MANUAL_SOURCE_TARGET_NUM` 提供或提示该值；与用户最新确认的目标数量不同时以最新确认为准。当前环境 schema 不接受 `num` 时不得附带，避免无效重试。
+`num = quantityTotal × 3`，需求 30 人时传 90。Hook 通过 `MANUAL_SOURCE_TARGET_NUM` 提供的已是三倍取数数量，直接使用，不得重复乘三。有当前 requirement 需求记录时始终由该人数计算；缺少记录时沿用上一轮已发送的 `num`。最终交付目标与不足判断仍按用户需求人数，不能按三倍取数数量判断。当前环境 schema 不接受 `num` 时不得附带，避免无效重试。
 
 ## Polling
 

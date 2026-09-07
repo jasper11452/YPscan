@@ -447,12 +447,12 @@ test("quantityTotal stays per requirement and never feeds a later requirement", 
     namedArgsFromDirective(manualSource(reqA, 7), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: reqA, batch_id: 7 },
   );
-  assert.match(manualSource(reqA, 7), /MANUAL_SOURCE_TARGET_NUM=30/u);
+  assert.match(manualSource(reqA, 7), /MANUAL_SOURCE_TARGET_NUM=90/u);
   assert.deepEqual(
     namedArgsFromDirective(manualSource(reqB, 8), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: reqB, batch_id: 8 },
   );
-  assert.match(manualSource(reqB, 8), /MANUAL_SOURCE_TARGET_NUM=10/u);
+  assert.match(manualSource(reqB, 8), /MANUAL_SOURCE_TARGET_NUM=30/u);
 });
 
 test("derived creator links CSV records are scoped per requirement", () => {
@@ -669,7 +669,7 @@ test("host call IDs restore quantity, score and ingest params without persist pa
   });
   assert.match(
     call("manual_source_creators", "manual", { requirement_id: "req-A" }, { batch_id: 9 }),
-    /MANUAL_SOURCE_TARGET_NUM=42/u,
+    /MANUAL_SOURCE_TARGET_NUM=126/u,
   );
   call("score_manual_source_csv", "score", { requirement_id: "req-A" }, { job_id: "score-job" });
   assert.equal(
@@ -890,4 +890,25 @@ test("failed business or native results cannot change completion provenance", ()
   }
   assert.deepEqual(transientState.completionCsvPathsFor("req-good"), ["/tmp/success.csv"]);
   assert.deepEqual(transientState.completionCsvPathsFor("req-failed"), []);
+});
+
+test("manual source demand includes confirmed clarifications from the first search", () => {
+  const { hooks } = registeredPlugin();
+  const { prependContext } = hooks.get("before_prompt_build")({}, { runId: "effective-demand" });
+  assert.match(prependContext, /首次搜索就以当前 rawMessagesJson.original 为基础/u);
+  assert.match(prependContext, /合并 rawMessagesJson.clarifications 中已确认的补充和纠正/u);
+  assert.match(prependContext, /同一字段采用最新有效答案，替换冲突旧值并保留其他有效条件/u);
+  assert.doesNotMatch(prependContext, /无已确认放宽时只传当前完整、未改写/u);
+});
+
+test("status polling without requirement history preserves the already tripled num", () => {
+  const { hooks } = registeredPlugin();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = hooks.get("tool_result_persist")({
+      toolName: "manual_source_creators_status",
+      params: { requirement_id: "req-resumed", batch_id: 7, num: 90 },
+      message: toolMessage({ success: false, error: { code: "BATCH_NOT_READY" } }),
+    });
+    assert.match(directiveText(result), /MANUAL_SOURCE_TARGET_NUM=90/u);
+  }
 });

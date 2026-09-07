@@ -69,9 +69,9 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 手动拓展分支
 
-`validate_requirement` 成功后先调用 `select_inquiry_form_fields`；生成字段选择 URL 后原样展示并结束本轮，禁止用“若系统强制会提示”等试错理由提前调用后续工具。用户为该 `requirement_id` 提交字段页并明确回复“好了”后，按 [manual_source_creators](references/tools/manual_source_creators.md) 使用同一 `requirement_id`，以及 schema 支持时可选透传的 `demand` 提交后端任务；提交不再携带 `num`。
+`validate_requirement` 成功后先调用 `select_inquiry_form_fields`；生成字段选择 URL 后原样展示并结束本轮，禁止用“若系统强制会提示”等试错理由提前调用后续工具。用户为该 `requirement_id` 提交字段页并明确回复“好了”后，按 [manual_source_creators](references/tools/manual_source_creators.md) 使用同一 `requirement_id`，以及 schema 支持时可选透传的 `demand` 提交后端任务；首次搜索的 `demand` 就从当前 `rawMessagesJson.original` 合并 `clarifications` 中已确认的补充和纠正，最新有效答案替换冲突旧值，保留其他条件，生成完整需求文本；有已确认放宽时一并应用，不能只传最初不完整的原文或整个 JSON。提交不再携带 `num`。
 
-若提交响应同步直接返回 links CSV，则立即保存并归一化 links CSV（见下文），再进入原生达人补全；若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID、`batch_id` 和本轮目标交付数量 `num`（正整数，即每批取 links URL 的数量）第 1 次查询。Hook 会通过 `MANUAL_SOURCE_TARGET_NUM` 提示当前 requirement 落库的 `quantityTotal`；当前环境 live schema required `num` 时再把该值并入状态查询，与用户最新确认的目标数量不同时以最新确认为准。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 requirement ID、batch ID 和当前环境 live schema 对应的目标数量参数开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
+若提交响应同步直接返回 links CSV，则立即保存并归一化 links CSV（见下文），再进入原生达人补全；若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID、`batch_id` 和用户需求人数三倍的 `num`（正整数，即每批取 links URL 的数量）第 1 次查询。Hook 会通过 `MANUAL_SOURCE_TARGET_NUM` 提示当前 requirement 落库的 `quantityTotal × 3`（需求 30 人则取 90）；当前环境 live schema required `num` 时直接把该值并入状态查询，不得再次乘三。缺少需求记录时沿用上一轮已发送的 `num`。最终交付目标仍为用户需求人数。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 requirement ID、batch ID 和当前环境 live schema 对应的目标数量参数开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
 
 拿到 links CSV 后，先调用 `ypscan_save_artifact` 保存为 `manual_creator_links`（原始 Provider 下载物，可能只有 url 列），原样展示本地链接；再用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 读取该文件并归一化为受控三列 links CSV（`source_record_id,creator_id,url`：只有 url 列时按平台主页规则推导 creator_id；短链或无法推导时立即失败并停止，不进入原生补全）。归一化成功后再按当前平台分 20 个 author 一批调用原生达人补全工具。小红书使用 `get_xhs_author_business_card` 且固定 `page_count=1`，抖音使用 `get_douyin_author_business_card`；两者均由宿主 YP Action 提供、不在 ypscan 白名单内，宿主未开放时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；若某批 `csv_file` 缺失则停止后续 file_bridge 和打分，并原样报告失败达人。
 
@@ -89,7 +89,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 - 询价分支：`search_creators` 为 0 仍先执行 `rank_mcns`；只有 `rank_mcns` 为空时进入复核和放宽。
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
-- 手动拓展只有在当前 Provider 响应明确给出可信实际数量为 0 或少于 `num` 时，才在交付当前真实 Excel 后进入同一复核和放宽建议；数量未知时不猜测，当前真实交付物即最终结果。
+- 手动拓展只有在当前 Provider 响应明确给出可信实际数量为 0 或少于用户需求人数 `quantityTotal` 时，才在交付当前真实 Excel 后进入同一复核和放宽建议；数量未知时不猜测，当前真实交付物即最终结果。
 
 每轮放宽只做建议、不自动执行：先可见地告诉用户实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑。“放宽直到足量”等总体授权不替代后续每轮具体项确认。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand 和 manual_source_creators.demand，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。询价机构确认放宽后仍以未改写原文重新解析并保存 original，累计放宽写入 clarifications 和本轮顶层参数。此前用户已确认的其他澄清答案（含截止时间）继续复用，不重复询问。随后重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
 

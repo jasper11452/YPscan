@@ -643,10 +643,10 @@ test("manual source status args prefill num from the validated requirement quant
     requirement_id: "req-num",
     batch_id: 7,
   });
-  assert.match(sourceText, /MANUAL_SOURCE_TARGET_NUM=30/u);
+  assert.match(sourceText, /MANUAL_SOURCE_TARGET_NUM=90/u);
   assert.match(sourceText, /num 只在当前环境 live schema required 时才传/u);
 
-  // 轮询续接：上一轮实际使用的 num（用户最新确认）优先于落库 quantityTotal。
+  // 轮询续接：有需求记录时以 quantityTotal 的三倍纠正旧 num，不能把旧 num 再乘三。
   const continued = persist(
     {
       toolName: "ypmcn__manual_source_creators_status",
@@ -662,9 +662,9 @@ test("manual source status args prefill num from the validated requirement quant
     namedArgsFromDirective(directiveText(continued), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: "req-num", batch_id: 7 },
   );
-  assert.match(directiveText(continued), /MANUAL_SOURCE_TARGET_NUM=25/u);
+  assert.match(directiveText(continued), /MANUAL_SOURCE_TARGET_NUM=90/u);
 
-  // 未带 num 时回落到落库 quantityTotal。
+  // 未带 num 时仍取落库 quantityTotal 的三倍。
   const resumed = persist(
     {
       toolName: "ypmcn__manual_source_creators_status",
@@ -680,7 +680,7 @@ test("manual source status args prefill num from the validated requirement quant
     namedArgsFromDirective(directiveText(resumed), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: "req-num", batch_id: 7 },
   );
-  assert.match(directiveText(resumed), /MANUAL_SOURCE_TARGET_NUM=30/u);
+  assert.match(directiveText(resumed), /MANUAL_SOURCE_TARGET_NUM=90/u);
 });
 
 test("native completion pins the file bridge flow to the validated business mode", () => {

@@ -23,7 +23,7 @@ const HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 };
 const REQUIREMENT_PREFLIGHT_BLOCKED = "YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED";
 const REQUIREMENT_RANGE_FORMAT = '无空格 JSON 区间字符串 "[min,max]"，且 min < max';
 const MANUAL_SOURCE_ORIGINAL_TEXT_RULE =
-  "调用 default manual_source_creators 前先读取实际 input schema：按当前环境 live schema 传参。若 schema required 含 num，则 requirement_id 与 num 一并传；若 schema 不要求 num，则不得附带。若 schema 明确提供用于需求原文的可选字段 demand：无已确认放宽时只传当前完整、未改写的用户原始需求文本；已确认放宽时必须传应用了本轮全部已确认放宽值的有效搜索需求文本（在原文对应字段的位置替换为放宽后值，其余原文不变），确保放宽真实传导到搜索。不传解析输出或 rawMessagesJson；schema 不支持 demand 时不得猜字段名。";
+  "调用 default manual_source_creators 前先读取实际 input schema：按当前环境 live schema 传参。若 schema required 含 num，则 requirement_id 与 num 一并传；若 schema 不要求 num，则不得附带。若 schema 明确提供用于需求原文的可选字段 demand：首次搜索就以当前 rawMessagesJson.original 为基础，合并 rawMessagesJson.clarifications 中已确认的补充和纠正，同一字段采用最新有效答案，替换冲突旧值并保留其他有效条件，生成完整需求文本作为 demand，不能只用最初不完整的原文；已确认放宽时必须传应用了本轮全部已确认放宽值的有效搜索需求文本（在原文对应字段的位置替换为放宽后值，其余原文不变），确保放宽真实传导到搜索。不传解析输出或 rawMessagesJson；schema 不支持 demand 时不得猜字段名。";
 const SINGLE_REQUIREMENT_TYPE_RULE =
   "同平台多个达人类型只创建一个 requirement：保留用户给出的总量，合并全部类型标签与条件，不拆分子需求、不重复落库、不重复搜索；本规则覆盖任何旧的平均分配或批量子需求指令。";
 const CLARIFICATION_REUSE_RULE =
@@ -55,10 +55,10 @@ const MANUAL_SOURCE_RELAXATION_RULE =
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
 const MANUAL_SOURCE_STATUS_NUM_RULE =
-  "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传：取本轮目标交付数量（正整数）。Hook 会用 MANUAL_SOURCE_TARGET_NUM 提供或提示该值；与用户最新确认的目标数量不同时以最新确认为准。schema 不接受 num 时不得附带，避免无效重试。";
+  "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传：取用户需求人数 quantityTotal 的 3 倍（正整数），例如需求 30 人则 num=90。Hook 的 MANUAL_SOURCE_TARGET_NUM 已是三倍取数数量，直接使用，不得再次乘三；最终交付目标和不足判断仍使用用户需求人数。schema 不接受 num 时不得附带，避免无效重试。";
 const SCORE_MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 score_manual_source_csv，也不得猜测或更换 job_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
-const MANUAL_SOURCE_SHORTFALL_RULE = `只在当前 Provider 响应明确给出可信实际数量时与本轮目标数量比较，不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确确认当前唯一放宽项后才按该项重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。`;
+const MANUAL_SOURCE_SHORTFALL_RULE = `只在当前 Provider 响应明确给出可信实际数量时与用户需求人数 quantityTotal 比较（三倍取数 num 不是交付目标），不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确确认当前唯一放宽项后才按该项重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。`;
 const CREATOR_CSV_LIMIT = 500;
 const MANUAL_SOURCE_FLOW = "manual_source";
 const MCN_COMPLETE_ONLY_FLOW = "mcn_complete_only";
@@ -632,7 +632,7 @@ function manualSourceCreatorsDirective(
   if (batchId == null || !requirementId) return flowPauseDirective("手动拓展", message);
   const statusArgs = { requirement_id: requirementId, batch_id: batchId };
   const targetNumLine = manualSourceTargetNumLine(
-    quantityTotalLookup(requirementId) ?? params?.num,
+    positiveInteger(quantityTotalLookup(requirementId) * 3) ?? params?.num,
   );
   return [
     `YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已提交后台任务（仅返回 batch_id）。先告知用户“后台手动拓展耗时较长，您可以先不用管，我会继续轮询。”，再按当前环境 live schema 使用 MANUAL_SOURCE_CREATORS_STATUS_ARGS 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
@@ -684,9 +684,9 @@ function manualSourceCreatorsStatusDirective(
   if (result?.error?.code === "BATCH_NOT_READY") {
     if (batchId == null || !requirementId) return flowPauseDirective("手动拓展结果查询", message);
     const statusArgs = { requirement_id: requirementId, batch_id: batchId };
-    // 上一轮实际使用的 num 是用户最新确认值，优先于落库 quantityTotal；是否并入远端参数由 live schema 决定。
+    // 从需求人数计算三倍；缺少需求记录时沿用已发送的取数数量，不能重复乘三。
     const targetNumLine = manualSourceTargetNumLine(
-      positiveInteger(params?.num) ?? quantityTotalLookup(requirementId),
+      positiveInteger(quantityTotalLookup(requirementId) * 3) ?? positiveInteger(params?.num),
     );
     return [
       `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY）。由当前对话累计查询次数；未到第 10 次时等待 30 秒后继续使用同一 ID 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
@@ -1731,7 +1731,7 @@ export function registerFlowDirectiveHooks(api) {
         );
         if (requirementId) {
           if (platform) platformByRequirement.set(String(requirementId), platform);
-          // 持久化 validate 调用参数里的目标交付数量，作为 manual_source_creators_status 的 num 确定性来源。
+          // 持久化 validate 调用参数里的目标交付数量，作为 manual_source_creators_status 三倍取数数量的确定性来源。
           const quantityTotal = positiveInteger(params?.quantityTotal);
           if (quantityTotal != null)
             quantityTotalByRequirement.set(String(requirementId), quantityTotal);
