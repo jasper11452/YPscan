@@ -106,7 +106,7 @@ test("manual sourcing shares the reviewed relaxation policy and recreates requir
   assert.match(skill, /字段选择 URL 输出后本轮必须结束并等待/u);
   assert.match(skill, /“放宽直到足量”等总体授权不替代后续每轮具体项确认/u);
   assert.match(skill, /不同 requirement 的 keyword 差异只能作为线索/u);
-  assert.match(skill, /整体替换 rawMessagesJson\.original.*同一全文传给 ypscan_parse_requirement\.demand 和 manual_source_creators\.demand/u);
+  assert.match(skill, /整体替换 rawMessagesJson\.original.*同一全文传给 ypscan_parse_requirement\.demand，复核后通过 validate_requirement 保存/u);
   assert.match(skill, /rawMessagesJson\.parse_outputs 全量替换为本次重解析结果/u);
   assert.match(manual, /creator_links_csv_url/u);
   assert.match(manual, /20 个 author 一批/u);

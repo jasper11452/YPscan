@@ -42,7 +42,7 @@
 3. **复核先于放宽**：询价机构不足禁止直接放宽，先复核当前有效需求、解析输出与实际落库参数；确认正确后才按 SKILL 固定顺序逐项放宽，每项只调一次并提前告知。平台、品牌、数量、截止时间、内容形式等永不自动放宽。手动拓展 Excel 保存后即为最终手动拓展结果，不再精排、生成提报表或触发放宽。
 4. **Provider 边界**：企微发送确认、机构名匹配、合并去重、同 requirement/机构幂等全部由 Provider 负责；插件不预检发送、不缓存发送状态、不暴露已弃用的查询工具。
 5. **结果归属**：所有结果、链接、文件只用当前 requirement、当前平台、本轮真实 Provider 证据；不跨需求/平台/账号/历史 run 混用或补齐。
-6. **数值与字段契约**：区间一律无空格字符串 `"[min,max]"` 且 `min < max`；返点 `"[min,1]"`；抖音报价/CPM/CPE 只用 L2=植入、L3=定制；未知字段省略。粉丝数未明确或明确“不限/无要求”时，`followercount` 落库全量区间 `"[0,999999999]"`（零到最大值），不省略字段、不为此弹窗；历史坏值 `"[1,999999999]"` 同样归一为 `"[0,999999999]"`。已确认放宽值必须写进 `manual_source_creators.demand` 的有效搜索文本并在搜索返回后核对实际搜索参数，不一致时如实报告未传导；手动拓展确认放宽后，`ypscan_parse_requirement.demand`、`rawMessagesJson.original` 与搜索 demand 使用同一份应用全部已确认放宽的完整需求全文，`parse_outputs` 全量替换为本次重解析结果。
+6. **数值与字段契约**：区间一律无空格字符串 `"[min,max]"` 且 `min < max`；返点 `"[min,1]"`；抖音报价/CPM/CPE 只用 L2=植入、L3=定制；未知字段省略。粉丝数未明确或明确“不限/无要求”时，`followercount` 落库全量区间 `"[0,999999999]"`（零到最大值），不省略字段、不为此弹窗；历史坏值 `"[1,999999999]"` 同样归一为 `"[0,999999999]"`。已确认放宽值必须通过 `validate_requirement` 保存，由 Provider 从后台读取（`manual_source_creators` 只传 `requirement_id`，不传 `demand` 或 `num`）并在搜索返回后核对实际搜索参数，不一致时如实报告未传导；手动拓展确认放宽后，`ypscan_parse_requirement.demand` 与 `rawMessagesJson.original` 使用同一份应用全部已确认放宽的完整需求全文，`parse_outputs` 全量替换为本次重解析结果。
 7. **上传边界**：`file_bridge` 只上传合法 CSV；links CSV 必须是当前 requirement 受控保存的产物（`manual_creator_links`/`mcn_creator_links`）、补全 CSV 必须来自当前 requirement 的 YP Action 原生补全工具返回的 `csv_file`，否则 `YPSCAN_FILE_BRIDGE_SOURCE_NOT_ALLOWED` 且不上传。OSS 凭据按插件配置 → 打包内置读取，不隐式读取宿主环境变量；内部测试/集成可显式注入环境变量。真实 AK/SK 只由 prepack（`scripts/prepare-oss-bundle.mjs`）注入 gitignored bundle，不进入仓库、补丁或日志。
 8. **分析 vs 修改**：默认只做分析评审，用户明确要求才改代码；改动最小化，不顺手重构或重排无关文件。
 9. **不增多余机制**：不新增无必要的状态、缓存、账本、校验实体或权限门禁；共同逻辑保持共享。
@@ -61,11 +61,18 @@
 
 - **npm `EPERM`（cache root-owned）**：本机 `~/.npm` 有 root 属主残留，用 `--cache /tmp/ypscan-npm-cache` 绕过，不要 `sudo chown`。
 - **`*.tgz` 是发布产物**：已被 `.gitignore` 忽略，不要提交；发布用 `npm pack`（`files` 已裁剪），产物命名沿用 `ypscan-<version>.tgz`。
-- **版本同步**：发布前必须让 `openclaw.plugin.json.version` 与 `package.json.version` 一致，否则 smoke 直接失败。
+- **版本同步**：发布前必须让 `package.json`、`openclaw.plugin.json`、`package-lock.json`（顶层与 `packages[""]` 两处）三处 `version` 一致；smoke 只校验前两者，lock 靠发布流程手工核对，历史多次漏更。
 - **typecheck 靠 JSDoc**：新增解构参数/对象字面量时若 tsc 报 Property/excess property，先补 `@param` 类型，不要关 `checkJs`。
 - **playwright-core 别误用**：它是遗留依赖，当前插件不注册任何 browser 工具；勿把 `manual-browser-*` 工具加回 `index.js`。
 - **`docs/`、`benchmarks/` 已入库**：`docs/review-checklist.md` 是用户验收清单，勿擅自删除。
 - **`src/tools/file-bridge-oss-defaults.json` 是密钥载体**：由 `npm pack` 自动触发的 prepack 脚本生成、被 `.gitignore` 忽略，只随安装包发布，勿提交、勿在日志/补丁中打印其内容；本机没有凭据时 prepack 跳过注入并警告，打包仍继续。
+
+## 发布/打包流程（用户要求发版时执行）
+
+1. **版本号同步三处**，一处漏掉就会漂移：`package.json` → `version`；`openclaw.plugin.json` → `version`（smoke 校验与 package.json 一致）；`package-lock.json` → 顶层 `version` 与 `packages[""]` 里的 `version` 两处。
+2. 跑「验证清单」第 1–5 项：lint / typecheck / test / smoke / `npm pack --dry-run`。
+3. `npm pack --cache /tmp/ypscan-npm-cache` 产出 `ypscan-<version>.tgz`（prepack 自动注入 OSS 凭据 bundle；tgz 已 gitignore）。`tar -tzf` 核对：包内无 tests、无遗留 browser 工具，且含 `src/tools/file-bridge-oss-defaults.json`；`git status` 确认 bundle 与 tgz 都不在待提交列表。
+4. 用户明确要求时提交 git，提交信息沿用 `release <version>: <变更摘要>`；未经要求不推送。
 
 ## 验证清单（改完必做）
 

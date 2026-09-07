@@ -56,7 +56,7 @@
 - 每次真正开始新的询价机构或手动拓展都重新调用本工具。即使同一会话、同一平台、条件未变，或前一功能刚完成/明确停止后只改用另一功能，也必须重新解析、复核并调用 `validate_requirement` 创建新 requirement；不得跨功能复用旧 requirement 或已提交字段配置。
 - 例外：当前 requirement 已完成 `rank_mcns` 并展示机构列表后，用户选择“暂不询价”、关闭/取消机构选择弹窗或当轮未回答，之后在同一会话明确要求给该列表中的机构发询价，且未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，属于恢复原询价分支。继续使用该 requirement 和当前列表，不调用本工具，也不重新 `validate_requirement`、`search_creators` 或 `rank_mcns`。
 - 用户主动修改任何业务条件时，无论是否已经生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销此前全部自动放宽，形成新的完整单平台 `demand`。
-- 手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand 和 manual_source_creators.demand，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。询价机构放宽仍使用未改写原文重解析，累计放宽写入 clarifications 与本轮顶层参数。
+- 手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand，复核后通过 validate_requirement 保存，由 Provider 从后台读取，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。询价机构放宽仍使用未改写原文重解析，累计放宽写入 clarifications 与本轮顶层参数。
 - 重新调用本工具，复核新输出和待提交参数，创建新的 requirement，并从用户当前要求的功能起点重新执行；不得复用旧 requirement、机构、询价、达人、batch 或 Excel。
 - 重新解析后不得把旧解析字段与新响应拼接。
 - 同一会话内用户已确认的澄清答案（截止时间、粉丝量级、返点、报价等）持续有效：重解析、重建 requirement 时全部原样带入新 `rawMessagesJson.clarifications`，同一字段新答案覆盖旧答案，禁止重复询问；只有用户明确修改该字段或与新需求冲突时才重新澄清。等价时间表述（今晚8点前/今晚20:00/当天20:00:00）归一为同一值，不重复确认。

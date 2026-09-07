@@ -892,13 +892,13 @@ test("failed business or native results cannot change completion provenance", ()
   assert.deepEqual(transientState.completionCsvPathsFor("req-failed"), []);
 });
 
-test("manual source demand includes confirmed clarifications from the first search", () => {
+test("manual source startup only requests requirement_id and delegates demand to Provider", () => {
   const { hooks } = registeredPlugin();
-  const { prependContext } = hooks.get("before_prompt_build")({}, { runId: "effective-demand" });
-  assert.match(prependContext, /首次搜索就以当前 rawMessagesJson.original 为基础/u);
-  assert.match(prependContext, /合并 rawMessagesJson.clarifications 中已确认的补充和纠正/u);
-  assert.match(prependContext, /同一字段采用最新有效答案，替换冲突旧值并保留其他有效条件/u);
-  assert.doesNotMatch(prependContext, /无已确认放宽时只传当前完整、未改写/u);
+  const { prependContext } = hooks.get("before_prompt_build")({}, { runId: "provider-demand" });
+  assert.match(prependContext, /调用 manual_source_creators 只传 requirement_id/u);
+  assert.match(prependContext, /不传 demand、num、解析输出或 rawMessagesJson/u);
+  assert.match(prependContext, /需求文本由 Provider 从后台读取/u);
+  assert.doesNotMatch(prependContext, /manual_source_creators\.demand|可选需求原文字段|若 schema required 含 num，则 requirement_id 与 num 一并传/u);
 });
 
 test("status polling without requirement history preserves the already tripled num", () => {

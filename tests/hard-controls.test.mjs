@@ -422,7 +422,7 @@ test("default manual sourcing polls its status before saving the final artifact"
   const persist = registeredHooks().get("tool_result_persist");
   const sourced = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-manual", num: 10, demand: "抖音科技耳机手动拓展 10 位" },
+    params: { requirement_id: "req-manual" },
     message: toolMessage({
       success: true,
       requirement_id: "req-manual",
@@ -446,7 +446,7 @@ test("default manual sourcing polls its status before saving the final artifact"
 
   const immediate = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-manual", num: 10, demand: "抖音科技耳机手动拓展 10 位" },
+    params: { requirement_id: "req-manual" },
     message: toolMessage({
       success: true,
       data: {
@@ -844,7 +844,7 @@ test("default manual sourcing pauses without a task batch and falls back to para
   const persist = registeredHooks().get("tool_result_persist");
   const sourced = persist({
     toolName: "ypmcn__manual_source_creators",
-    params: { requirement_id: "req-nobatch", num: 10, demand: "抖音科技耳机手动拓展 10 位" },
+    params: { requirement_id: "req-nobatch" },
     message: toolMessage({ success: true, requirement_id: "req-nobatch" }),
   });
   const sourceText = directiveText(sourced);
@@ -867,7 +867,7 @@ test("default manual sourcing pauses without a task batch and falls back to para
   });
   assert.match(completedText, /唯一下一项.*本轮必须结束并等待用户明确确认/u);
   assert.match(completedText, /累计放宽写入 rawMessagesJson\.clarifications/u);
-  assert.match(completedText, /整体替换 rawMessagesJson\.original.*同一全文传给 ypscan_parse_requirement\.demand 和 manual_source_creators\.demand/u);
+  assert.match(completedText, /整体替换 rawMessagesJson\.original.*同一全文传给 ypscan_parse_requirement\.demand，复核后通过 validate_requirement 保存/u);
   assert.match(completedText, /rawMessagesJson\.parse_outputs 全量替换为本次重解析结果/u);
   assert.match(completedText, /跨 requirement 的 keyword 差异只能作为线索/u);
 });
@@ -1689,7 +1689,7 @@ test("empty rank result reviews the requirement before relaxation", () => {
   assert.match(text, /总体授权不替代逐轮确认/u);
   assert.match(text, /整体替换 rawMessagesJson\.original/u);
   assert.match(text, /询价机构放宽仍保留未改写原文/u);
-  assert.match(text, /manual_source_creators\.demand 必须携带已应用放宽值的有效搜索文本/u);
+  assert.match(text, /已确认放宽值必须通过 validate_requirement 保存，由 Provider 从后台读取/u);
   assert.match(text, /搜索返回后核对实际参数与放宽值一致/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.doesNotMatch(text, /恢复当前询价分支|前 5 家/u);
@@ -2470,7 +2470,7 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
     /sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV/u,
   );
   assert.match(startup.prependContext, /score_manual_source_csv→score_manual_source_csv_status/u);
-  assert.match(startup.prependContext, /num 的位置必须以当前环境 live schema 为准/u);
+  assert.match(startup.prependContext, /状态查询按 live schema 传 num/u);
   assert.match(startup.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
   assert.match(
     startup.prependContext,
@@ -2479,13 +2479,13 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   assert.match(startup.prependContext, /不再提供浏览器详细拓展分支，也不追加完成弹窗/u);
   assert.match(
     startup.prependContext,
-    /调用 default manual_source_creators 前先读取实际 input schema/u,
+    /调用 manual_source_creators 只传 requirement_id/u,
   );
-  assert.match(startup.prependContext, /用于需求原文的可选字段 demand/u);
-  assert.match(startup.prependContext, /schema 不支持 demand 时不得猜字段名/u);
+  assert.match(startup.prependContext, /不传 demand、num、解析输出或 rawMessagesJson/u);
+  assert.match(startup.prependContext, /需求文本由 Provider 从后台读取/u);
   assert.match(
     startup.prependContext,
-    /若 schema required 含 num，则 requirement_id 与 num 一并传/u,
+    /首次搜索及放宽重跑均遵守此规则/u,
   );
   assert.doesNotMatch(startup.prependContext, /只传 requirement_id 和 num/u);
 
