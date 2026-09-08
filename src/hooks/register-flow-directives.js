@@ -704,7 +704,10 @@ function manualSourceCreatorsStatusDirective(
       MANUAL_SOURCE_RELAXATION_RULE,
     ].join("\n");
   }
-  if (result?.error?.code === "BATCH_NOT_READY") {
+  if (
+    result?.error?.code === "BATCH_NOT_READY" ||
+    (result?.success === true && result?.data?.completed !== true)
+  ) {
     if (batchId == null || !requirementId) return flowPauseDirective("手动拓展结果查询", message);
     const statusArgs = { requirement_id: requirementId, batch_id: batchId };
     // 从需求人数计算三倍；缺少需求记录时沿用已发送的取数数量，不能重复乘三。
@@ -712,7 +715,7 @@ function manualSourceCreatorsStatusDirective(
       positiveInteger(quantityTotalLookup(requirementId) * 3) ?? positiveInteger(params?.num),
     );
     return [
-      `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY）。由当前对话累计查询次数；未到第 10 次时等待 30 秒后继续使用同一 ID 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
+      `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY/status 0）。由当前对话累计查询次数；未到第 10 次时等待 30 秒后继续使用同一 ID 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
       ...(targetNumLine ? [targetNumLine] : []),
       `MANUAL_SOURCE_CREATORS_STATUS_ARGS=${JSON.stringify(statusArgs)}`,
     ].join("\n");
@@ -1817,18 +1820,47 @@ export function registerFlowDirectiveHooks(api) {
           const set = completionCsvPathsByRequirement.get(requirementId) ?? new Set();
           set.add(path);
           completionCsvPathsByRequirement.set(requirementId, set);
+        }
+        // 全失败批次（csv_file=null）同样登记失败名单，避免汇总把失败达人重新排批。
+        if (requirementId) {
           const sources = manualScoreSourcesByRequirement.get(requirementId);
           if (sources) {
-            const record = {
-              file_path: path,
-              platform: bare === "get_xhs_author_business_card" ? "xiaohongshu" : "douyin",
-              successful_author_ids: completionAuthorIds(result, "successful_author_ids"),
-              failed_author_ids: completionAuthorIds(result, "failed_author_ids"),
-            };
-            const previous = sources.completion_results.get(path);
-            if (previous && JSON.stringify(previous) !== JSON.stringify(record))
+            const successfulIds = completionAuthorIds(result, "successful_author_ids") ?? [];
+            const failedIds = completionAuthorIds(result, "failed_author_ids") ?? [];
+            const successful = new Set(successfulIds.map((value) => String(value)));
+            const failed = new Set(failedIds.map((value) => String(value)));
+            if ([...successful].some((id) => failed.has(id))) sources.source_conflict = true;
+            // 重试成功取代旧失败；同一达人已成功后又出现在失败名单才是冲突。
+            const previousSuccessful = new Set();
+            for (const [key, previous] of [...sources.completion_results]) {
+              for (const id of previous?.successful_author_ids ?? [])
+                previousSuccessful.add(String(id));
+              const previousFailed = previous?.failed_author_ids ?? [];
+              const remaining = previousFailed.filter((id) => !successful.has(String(id)));
+              if (remaining.length !== previousFailed.length) {
+                const next = { ...previous, failed_author_ids: remaining };
+                if (remaining.length === 0 && !next.file_path) {
+                  sources.completion_results.delete(key);
+                } else {
+                  sources.completion_results.set(key, next);
+                }
+              }
+            }
+            if ([...failed].some((id) => previousSuccessful.has(id)))
               sources.source_conflict = true;
-            sources.completion_results.set(path, record);
+            if (path || successful.size || failed.size) {
+              const record = {
+                file_path: path,
+                platform: bare === "get_xhs_author_business_card" ? "xiaohongshu" : "douyin",
+                successful_author_ids: successfulIds,
+                failed_author_ids: failedIds,
+              };
+              const recordKey = path ?? `no-csv:${JSON.stringify([...failed])}`;
+              const previous = sources.completion_results.get(recordKey);
+              if (previous && JSON.stringify(previous) !== JSON.stringify(record))
+                sources.source_conflict = true;
+              sources.completion_results.set(recordKey, record);
+            }
           }
         }
       }

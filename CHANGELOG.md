@@ -1,5 +1,9 @@
 # 更新日志
 
+## 1.0.14 — 2026-09-08
+
+- 修复桌面 E2E 实测暴露的两个 Hook 缺陷：`manual_source_creators_status` 的 live 中间态（success + completed=false）不再误注入暂停弹窗指令，改按 BATCH_NOT_READY 继续轮询；原生补全全失败批次（csv_file=null）现在同样登记失败名单，汇总不再重排失败达人，同一达人重试成功后以成功记录取代旧失败。
+
 ## 1.0.13 — 2026-09-08
 
 - 手动拓展增加本地评分汇总：最多三倍候选、20人/批，逐批补全/上传/评分，去重“推荐”人数达标或候选耗尽后交付汇总表；机构回收仍全量处理。新增 `ypscan_summarize_manual_scores` 和 `manual_score_batch`，本地注册改为5工具、5 Hook；未知结论或来源缺失时停止。

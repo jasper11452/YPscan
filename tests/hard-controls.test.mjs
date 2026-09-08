@@ -683,6 +683,50 @@ test("manual source status args prefill num from the validated requirement quant
   assert.match(directiveText(resumed), /MANUAL_SOURCE_TARGET_NUM=90/u);
 });
 
+test("manual source status live intermediate state keeps polling without a pause popup", () => {
+  const hooks = registeredHooks();
+  const before = hooks.get("before_tool_call");
+  const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "manual-status-live" };
+  const validateParams = completeValidateParams();
+  before({ toolName: "ypmcn__validate_requirement", params: validateParams }, context);
+  persist(
+    {
+      toolName: "ypmcn__validate_requirement",
+      params: validateParams,
+      message: toolMessage({ success: true, data: { requirement_id: "req-live" } }),
+    },
+    context,
+  );
+  // live schema 的中间态是 success:true + completed:false，没有 error.code=BATCH_NOT_READY。
+  const pending = persist(
+    {
+      toolName: "ypmcn__manual_source_creators_status",
+      params: { requirement_id: "req-live", batch_id: 9, num: 30 },
+      message: toolMessage({
+        success: true,
+        data: {
+          requirement_id: "req-live",
+          batch_id: 9,
+          status: 0,
+          completed: false,
+          selected_count: 0,
+        },
+      }),
+    },
+    context,
+  );
+  const text = directiveText(pending);
+  assert.match(text, /仍在处理中/u);
+  assert.match(text, /继续使用同一 ID 轮询/u);
+  assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS/u);
+  assert.deepEqual(
+    namedArgsFromDirective(text, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
+    { requirement_id: "req-live", batch_id: 9 },
+  );
+  assert.match(text, /MANUAL_SOURCE_TARGET_NUM=90/u);
+});
+
 test("native completion requires manual source context and preserves inquiry bridge flow", () => {
   const hooks = registeredHooks();
   const before = hooks.get("before_tool_call");

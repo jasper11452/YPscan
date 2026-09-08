@@ -182,3 +182,31 @@ test("inquiry uses all completion batches and final artifact, never manual early
   const summary = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.equal(summary.payload.success, false);
 });
+
+test("registered tools: an all-failed batch is registered and a successful retry supersedes it", async (t) => {
+  const f = await setup(t);
+  const { ids, local, remote, workspaceDir } = f;
+  remote("get_douyin_author_business_card", {}, {
+    csv_file: null,
+    successful_author_ids: [],
+    failed_author_ids: ids.slice(0, 20),
+  });
+  const next = await local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(next.payload.success, true, JSON.stringify(next.payload));
+  assert.equal(next.payload.data.completion_failed_count, 20);
+  assert.deepEqual(next.payload.data.next_author_ids, ids.slice(20));
+
+  // 用户明确要求后重试同一批成功：失败记录被成功取代，不产生成功/失败名单冲突。
+  const retryPath = join(workspaceDir, "completion-retry.csv");
+  await writeFile(retryPath, "creator_id\n" + ids.slice(0, 20).join("\n"));
+  remote("get_douyin_author_business_card", {}, {
+    csv_file: retryPath,
+    successful_author_ids: ids.slice(0, 20),
+    failed_author_ids: [],
+  });
+  const after = await local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(after.payload.success, true, JSON.stringify(after.payload));
+  assert.equal(after.payload.data.completion_failed_count, 0);
+  assert.equal(after.payload.data.next_action, "await_scores");
+  assert.deepEqual(after.payload.data.pending_score_author_ids, ids.slice(0, 20));
+});

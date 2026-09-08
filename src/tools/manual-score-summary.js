@@ -166,7 +166,7 @@ async function saveSummaryWorkbook(workspaceDir, requirementId, headers, rows, t
  *   business_mode: string, platform: string, quantityTotal: number,
  *   source_conflict?: boolean,
  *   links_file: {file_path: string, sha256: string},
- *   completion_results: {file_path: string, platform: string, successful_author_ids: string[], failed_author_ids: string[]}[],
+ *   completion_results: {file_path: (string|null), platform: string, successful_author_ids: string[], failed_author_ids: string[]}[],
  *   score_files: {file_path: string, sha256: string}[],
  * }}} options
  */
