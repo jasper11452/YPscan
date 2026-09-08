@@ -615,7 +615,7 @@ function manualSourceCreatorsDirective(
   const creatorLinksCsvUrl = providerCsvUrl(result);
   if (creatorLinksCsvUrl && requirementId) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已返回本轮手动拓展 links CSV。立即保存 links CSV；保存成功后按保存结果指令调用 ypscan_save_creator_links 归一化为受控三列 links CSV，原样展示本地链接后按 20 个一批做原生达人补全，再调用 file_bridge 合并并上传 OSS，最后调用 score_manual_source_csv。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已返回本轮手动拓展 links CSV。立即保存 links CSV（内部产物，不主动向用户展示）；保存成功后按保存结果指令调用 ypscan_save_creator_links 归一化为受控三列 links CSV，再按 20 个一批做原生达人补全，然后调用 file_bridge 合并并上传 OSS，最后调用 score_manual_source_csv。",
       `SAVE_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_creator_links",
         artifact_id: requirementId,
@@ -666,7 +666,7 @@ function manualSourceCreatorsStatusDirective(
   if (result?.success === true && creatorLinksCsvUrl) {
     if (!requirementId) return flowPauseDirective("手动拓展结果查询", message);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。优先消费当前 Provider 响应中的 creator_links_csv_url：立即保存 links CSV；保存成功后按保存结果指令调用 ypscan_save_creator_links 归一化为受控三列 links CSV，原样展示本地链接后继续原生达人补全、调用 file_bridge 合并并上传 OSS，再调用 score_manual_source_csv。",
+      "YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 已完成。优先消费当前 Provider 响应中的 creator_links_csv_url：立即保存 links CSV（内部产物，不主动向用户展示）；保存成功后按保存结果指令调用 ypscan_save_creator_links 归一化为受控三列 links CSV，再继续原生达人补全、调用 file_bridge 合并并上传 OSS，最后调用 score_manual_source_csv。",
       `SAVE_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind: "manual_creator_links",
         artifact_id: requirementId,
@@ -811,13 +811,13 @@ function manualSourceCompletionDirective(message, params = {}, recordedMode = nu
     if (!params.requirement_id || !params.links_csv_path || !params.platform)
       return flowPauseDirective("当前批补全缺少可信需求或 links 来源", message);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=本批达人原生补全成功。立即只合并上传当前批 csv_file 并评分，评分结束前不补全下一批；部分成功保留当前 CSV，不重试整批。missing_creator_ids 包含尚未处理者，不能当作补全失败名单。",
+      "YPSCAN_FLOW_DIRECTIVE=本批达人原生补全成功。立即只合并上传当前批 csv_file 并评分，评分结束前不补全下一批；部分成功保留当前 CSV，不重试整批。补全 CSV 是内部中间产物，不主动向用户展示表格或链接。missing_creator_ids 包含尚未处理者，不能当作补全失败名单。",
       `FILE_BRIDGE_ARGS=${JSON.stringify({ requirement_id: params.requirement_id, platform: params.platform, flow: MANUAL_SOURCE_FLOW, links_csv_path: params.links_csv_path, completion_csv_paths: [csvFilePath] })}`,
       `FAILED_AUTHOR_IDS=${JSON.stringify(failedAuthorIds)}`,
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=本批达人原生补全成功。记录本批 csv_file，汇总全部补全批次后调用一次 file_bridge（flow=manual_source）合并并上传，再调用 score_manual_source_csv 打分。部分成功保留成功 CSV，不自动重试整批。",
+    "YPSCAN_FLOW_DIRECTIVE=本批达人原生补全成功。记录本批 csv_file，汇总全部补全批次后调用一次 file_bridge（flow=manual_source）合并并上传，再调用 score_manual_source_csv 打分。补全 CSV 是内部中间产物，不主动向用户展示表格或链接；部分成功保留成功 CSV，不自动重试整批。",
     `COMPLETION_CSV_FILE=${csvFilePath}`,
     `SUCCESSFUL_AUTHOR_IDS=${JSON.stringify(successfulAuthorIds.map((value) => String(value)))}`,
     `FAILED_AUTHOR_IDS=${JSON.stringify(failedAuthorIds.map((value) => String(value)))}`,
@@ -830,20 +830,16 @@ function creatorLinksSaveDirective(message, params = {}, recordedMode = null) {
   if (result?.success !== true) return flowPauseDirective("受控 links CSV 生成", message);
   const filePath = firstString(result?.data?.file_path, result?.delivery?.local_path);
   if (!filePath) return flowPauseDirective("受控 links CSV 生成", message);
-  const localFileLink =
-    firstString(result?.delivery?.local_file_link) ?? localFileMarkdownLink(filePath);
-  if (!localFileLink) return flowPauseDirective("受控 links CSV 生成", message);
   if (recordedMode === BUSINESS_MODE_MANUAL) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=手动拓展受控 links CSV 已生成。原样展示本地链接后立即调用 ypscan_summarize_manual_scores，使用其 next_author_ids 决定首批，不自行扩大候选池或提前补全全部达人。",
-      `CREATOR_LINKS_LOCAL_LINK=${localFileLink}`,
+      "YPSCAN_FLOW_DIRECTIVE=手动拓展受控 links CSV 已生成（内部产物，不主动向用户展示）。立即调用 ypscan_summarize_manual_scores，使用其 next_author_ids 决定首批，不自行扩大候选池或提前补全全部达人。",
+      `CREATOR_LINKS_LOCAL_PATH=${filePath}`,
       `SUMMARIZE_MANUAL_SCORES_ARGS=${JSON.stringify({ requirement_id: params.requirement_id })}`,
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=受控 links CSV 已生成并登记为当前 requirement 的合法 links 来源。原样展示本地链接后，按 20/批把该 CSV 的 author 标识传给当前平台 YP Action 原生达人补全工具，再调用 file_bridge（flow=manual_source）→ score_manual_source_csv。",
+    "YPSCAN_FLOW_DIRECTIVE=受控 links CSV 已生成并登记为当前 requirement 的合法 links 来源（内部产物，不主动向用户展示）。按 20/批把该 CSV 的 author 标识传给当前平台 YP Action 原生达人补全工具，再调用 file_bridge（flow=manual_source）→ score_manual_source_csv。",
     `CREATOR_LINKS_LOCAL_PATH=${filePath}`,
-    `CREATOR_LINKS_LOCAL_LINK=${localFileLink}`,
   ].join("\n");
 }
 
@@ -857,16 +853,7 @@ function fileBridgeDirective(message, params = {}) {
   const localFileLink =
     firstString(result?.delivery?.local_file_link) ?? localFileMarkdownLink(mergedCsvPath);
   if (result?.success !== true) {
-    return [
-      ...(localFileLink
-        ? [
-            "file_bridge 已生成 merged CSV，但后续处理失败。先原样展示本地链接，再让用户选择重试或结束。",
-            `MERGED_CSV_LOCAL_PATH=${mergedCsvPath}`,
-            `MERGED_CSV_LOCAL_LINK=${localFileLink}`,
-          ]
-        : []),
-      flowPauseDirective("file_bridge", message),
-    ].join("\n");
+    return flowPauseDirective("file_bridge", message);
   }
   const requirementId = firstString(
     params?.requirement_id,
@@ -888,9 +875,8 @@ function fileBridgeDirective(message, params = {}) {
   }
   if (Number.isFinite(dataRowCount) && dataRowCount > CREATOR_CSV_LIMIT) {
     return [
-      `YPSCAN_FLOW_DIRECTIVE=merged CSV 数据行超过 ${CREATOR_CSV_LIMIT}，file_bridge 已跳过上传。原样展示本地链接并停止后续打分或精排。`,
+      `YPSCAN_FLOW_DIRECTIVE=merged CSV 数据行超过 ${CREATOR_CSV_LIMIT}，file_bridge 已跳过上传。如实报告行数并停止后续打分或精排；merged CSV 是内部中间产物，不主动向用户展示。`,
       `MERGED_CSV_LOCAL_PATH=${mergedCsvPath}`,
-      `MERGED_CSV_LOCAL_LINK=${localFileLink}`,
       `MERGED_DATA_ROW_COUNT=${dataRowCount}`,
     ].join("\n");
   }
@@ -900,8 +886,7 @@ function fileBridgeDirective(message, params = {}) {
   if (!csvFilePath) return flowPauseDirective("file_bridge 缺少 csv_file_path", message);
   if (flow === MANUAL_SOURCE_FLOW) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=file_bridge 已合并并完成 OSS 上传。先原样展示本地链接，再调用 score_manual_source_csv；成功后按其指令保存评分 Excel，手动拓展的单批表仍须汇总决定下一步。",
-      `MERGED_CSV_LOCAL_LINK=${localFileLink}`,
+      "YPSCAN_FLOW_DIRECTIVE=file_bridge 已合并并完成 OSS 上传。立即调用 score_manual_source_csv；merged CSV 是内部中间产物，不主动向用户展示。成功后按其指令保存评分 Excel，手动拓展的单批表仍须汇总决定下一步。",
       `SCORE_MANUAL_SOURCE_CSV_ARGS=${JSON.stringify({
         requirement_id: requirementId,
         csv_file_path: csvFilePath,
@@ -909,8 +894,7 @@ function fileBridgeDirective(message, params = {}) {
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=file_bridge 已合并并完成 OSS 上传。先原样展示本地链接；该结果只用于当前环境 live rank_creators schema 已明确支持 csv_file_path 的机构精排兼容分支；当前测试 Provider 仍默认保留 rank_creators(requirement_id,inquiry_ids) 旧链路（inquiry_ids 来自本轮 sync）。",
-    `MERGED_CSV_LOCAL_LINK=${localFileLink}`,
+    "YPSCAN_FLOW_DIRECTIVE=file_bridge 已合并并完成 OSS 上传。merged CSV 是内部中间产物，不主动向用户展示；该结果只用于当前环境 live rank_creators schema 已明确支持 csv_file_path 的机构精排兼容分支；当前测试 Provider 仍默认保留 rank_creators(requirement_id,inquiry_ids) 旧链路（inquiry_ids 来自本轮 sync）。",
     `RANK_CREATORS_ARGS=${JSON.stringify({
       requirement_id: requirementId,
       csv_file_path: csvFilePath,
@@ -976,7 +960,7 @@ function scoreManualSourceCsvDirective(
   if (result?.success !== true) return flowPauseDirective("达人打分", message);
   if (scoredCount !== null && scoredCount <= 0) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv 全部行打分失败。不生成空 Excel；如实报告失败，并可交付已补全的 merged CSV 作为降级结果。",
+      "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv 全部行打分失败。不生成空 Excel；如实报告失败后停止，不把内部 merged CSV 当交付物展示。",
       ...(requirementId ? [`REQUIREMENT_ID=${requirementId}`] : []),
     ].join("\n");
   }
@@ -1198,7 +1182,7 @@ function rankCreatorsDirective(message, params = {}) {
   if (result?.success !== true) return flowPauseDirective("rank_creators", message);
   if (scoredCount !== null && scoredCount <= 0) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=rank_creators 全部行精排失败。不生成空提报表；如实报告失败，并可交付已补全的 merged CSV 作为降级结果。",
+      "YPSCAN_FLOW_DIRECTIVE=rank_creators 全部行精排失败。不生成空提报表；如实报告失败后停止，不把内部 merged CSV 当交付物展示。",
       ...(requirementId ? [`RANK_REQUIREMENT_ID=${requirementId}`] : []),
     ].join("\n");
   }
@@ -1247,9 +1231,8 @@ function artifactSaveDirective(
   if (artifactKind === "manual_creator_links") {
     const platform = requirementPlatformLookup(params.artifact_id) ?? recordedPlatform;
     return [
-      "YPSCAN_FLOW_DIRECTIVE=手动拓展 links CSV 已保存（原始 Provider 下载物，尚未归一化）。立即使用 SAVE_CREATOR_LINKS_ARGS 调用 ypscan_save_creator_links 归一化为受控三列 links CSV；归一化成功后先调用 ypscan_summarize_manual_scores，按其 next_author_ids 逐批补全、上传和评分。不得把该原始 CSV 直接传给 file_bridge。",
+      "YPSCAN_FLOW_DIRECTIVE=手动拓展 links CSV 已保存（原始 Provider 下载物，尚未归一化；内部产物，不主动向用户展示）。立即使用 SAVE_CREATOR_LINKS_ARGS 调用 ypscan_save_creator_links 归一化为受控三列 links CSV；归一化成功后先调用 ypscan_summarize_manual_scores，按其 next_author_ids 逐批补全、上传和评分。不得把该原始 CSV 直接传给 file_bridge。",
       `MANUAL_CREATOR_LINKS_LOCAL_PATH=${filePath}`,
-      `MANUAL_CREATOR_LINKS_LOCAL_LINK=${localFileLink}`,
       ...(platform
         ? [
             `SAVE_CREATOR_LINKS_ARGS=${JSON.stringify({ requirement_id: params.artifact_id, platform, links_csv_path: filePath })}`,
@@ -1650,6 +1633,7 @@ export function registerFlowDirectiveHooks(api) {
         lines.push(
           "[YPscan startup instruction]",
           "用户已明确的需求或修改直接执行；内部解析、保存和轮询持续推进，不以进度通知索取确认。只在必要输入、业务决策或真实阻塞处停下。面向用户说明正在做什么、是否需要操作和下一步；不主动展示 requirement_id、batch_id、工具名称或落库术语，不把阶段完成说成最终交付。",
+          "用户可见的表格只有评分表、汇总表、MCN 排名表和机构回填预览表；links CSV、补全 CSV 和 merged CSV 都是内部中间产物，不主动展示表格、下载链接或本地文件路径，也不作为交付物报告；用户明确索取或要求诊断时除外。",
           SEARCH_PARAMETER_REVIEW_RULE,
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
           `选择业务模式后，把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV→原生补全（20/批）→file_bridge（flow=manual_source）→score_manual_source_csv→score_status→保存打分排序 Excel。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存并归一化 links CSV→ypscan_summarize_manual_scores 取得当前批→原生补全（最多20人，小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→file_bridge（仅当前批）→score_manual_source_csv→score_manual_source_csv_status→保存单批表→再次汇总（达标交付，否则下一批）。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项；正文保留企微消息原有行结构，只在单行将超过 20 字符时断行，禁止把短分句、字段或项目名拆成多行。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,

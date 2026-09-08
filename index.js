@@ -38,7 +38,7 @@ export default {
         return {
           name: "ypscan_save_artifact",
           description:
-            "将 eshypdata.com 主域下的 Excel 或 links CSV 受控保存到当前项目；格式由 artifact_kind 唯一决定。成功后必须向用户原样展示 delivery.local_file_link Markdown 超链接，不得只输出裸 file_path；临时下载故障采用有限重试。",
+            "将 eshypdata.com 主域下的 Excel 或 links CSV 受控保存到当前项目；格式由 artifact_kind 唯一决定。Excel 结果成功后必须向用户原样展示 delivery.local_file_link Markdown 超链接，不得只输出裸 file_path；manual_creator_links/mcn_creator_links 的 CSV 是内部中间产物，不主动向用户展示；临时下载故障采用有限重试。",
           parameters: {
             type: "object",
             additionalProperties: false,
@@ -90,7 +90,7 @@ export default {
       (context) => ({
         name: "ypscan_save_creator_links",
         description:
-          "把当前 requirement 的 Provider links CSV（ypscan_save_artifact 保存的原始下载物）或机构回填预览 xlsx 归一化为受控三列 links CSV（source_record_id,creator_id,url）；links_csv_path 与 preview_file_path 互斥。links CSV 只有 url 列时按平台主页规则推导 creator_id，短链或无法推导时立即失败。成功后展示 delivery.local_file_link；preview 是未核验原始数据，不是合格名单。",
+          "把当前 requirement 的 Provider links CSV（ypscan_save_artifact 保存的原始下载物）或机构回填预览 xlsx 归一化为受控三列 links CSV（source_record_id,creator_id,url）；links_csv_path 与 preview_file_path 互斥。links CSV 只有 url 列时按平台主页规则推导 creator_id，短链或无法推导时立即失败。成功后不主动向用户展示该 CSV，直接继续补全与打分；preview 是未核验原始数据，不是合格名单。",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -145,7 +145,7 @@ export default {
       (context) => ({
         name: "file_bridge",
         description:
-          "将当前 requirement 的 links CSV 与一批或多批达人补全 CSV 合并为本地文件；manual_source、mcn_rank 在不超过 500 行时继续上传 OSS 并返回 csv_file_path，mcn_complete_only 只交付本地文件。",
+          "将当前 requirement 的 links CSV 与一批或多批达人补全 CSV 合并为本地文件；manual_source、mcn_rank 在不超过 500 行时继续上传 OSS 并返回 csv_file_path，merged CSV 属内部中间产物、不主动向用户展示；仅遗留 mcn_complete_only 只交付本地文件并展示链接。",
         parameters: {
           type: "object",
           additionalProperties: false,

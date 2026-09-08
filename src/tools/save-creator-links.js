@@ -20,17 +20,17 @@ function failure(code, message, details = {}) {
 }
 
 function success(details) {
-  const localFileLink = localFileMarkdownLink(details.file_path);
   return hostToolResult(
     {
       success: true,
       data: details,
       delivery: {
         local_path: details.file_path,
-        local_file_link: localFileLink,
-        display_required: true,
-        display_before_next_action: true,
-        user_visible_message: `已完成：links CSV 已保存到本地。\n本地文件：${localFileLink}`,
+        local_file_link: localFileMarkdownLink(details.file_path),
+        display_required: false,
+        display_before_next_action: false,
+        user_visible_message:
+          "links CSV 已归一化并保存到本地，作为补全与合并的内部输入，不主动向用户展示。",
       },
     },
     { details },

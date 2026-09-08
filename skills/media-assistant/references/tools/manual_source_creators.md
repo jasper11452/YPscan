@@ -20,7 +20,7 @@
 
 ## 提交后三态
 
-- 同步 links CSV：提交响应直接返回 `creator_links_csv_url` 时，立刻调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_creator_links"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 原样传为 `file_url` 保存到当前项目。原样展示保存结果中的 `delivery.local_file_link` Markdown 超链接（不得只输出裸 `file_path`）；该文件是原始 Provider 下载物（可能只有 url 列），不得直接用于补全或 file_bridge，必须先按下方归一化步骤处理。
+- 同步 links CSV：提交响应直接返回 `creator_links_csv_url` 时，立刻调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_creator_links"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 原样传为 `file_url` 保存到当前项目。保存结果中的 CSV 是内部中间产物，不主动展示表格、链接或本地路径；该文件是原始 Provider 下载物（可能只有 url 列），不得直接用于补全或 file_bridge，必须先按下方归一化步骤处理。
 - 异步 batch：提交响应返回 `batch_id` 时，先输出进度提示，再等待 30 秒，用同一 `requirement_id` 和返回的整数 `batch_id` 第 1 次调用 `manual_source_creators_status`（见该工具卡）。Hook 会额外提供 `MANUAL_SOURCE_TARGET_NUM`；只有当前环境 live schema required `num` 时，才把该值并入状态查询。轮询成功拿到 `creator_links_csv_url` 后，同样先保存到当前项目并归一化。
 - 兼容 Excel：若提交响应只返回兼容 Excel URL，则立刻调用 `ypscan_save_artifact`，使用 `artifact_kind="manual_source"`、同一 `requirement_id` 作为 `artifact_id`，并把该 URL 原样传为 `file_url` 保存到当前项目，作为旧链路降级结果。该降级路径不进入 CSV 补全/打分链路。
 

@@ -110,6 +110,8 @@ test("successful saves expose a clickable local file link with an encoded target
   );
 
   assert.equal(result.success, true);
+  assert.equal(result.delivery.display_required, true);
+  assert.equal(result.delivery.display_before_next_action, true);
   assert.match(result.delivery.local_file_link, /^\[\/.*达人 排名 1\.xlsx\]\(<file:\/\/\//u);
   assert.match(
     result.delivery.local_file_link,
@@ -237,7 +239,10 @@ test("CSV artifacts use the same save path and derive a safe format-specific nam
   assert.equal(saved.success, true);
   assert.equal(saved.data.file_name, "creator-links.csv");
   assert.match(saved.delivery.local_file_link, /creator-links\.csv/u);
-  assert.match(saved.delivery.user_visible_message, /CSV 已保存/u);
+  assert.equal(saved.delivery.display_required, false);
+  assert.equal(saved.delivery.display_before_next_action, false);
+  assert.match(saved.delivery.user_visible_message, /不主动向用户展示/u);
+  assert.doesNotMatch(saved.delivery.user_visible_message, /file:\/\//u);
 
   const fallback = JSON.parse(
     (await saveFixture(workspaceDir, "manual_creator_links", "creator-links.xlsx")).content[0].text,

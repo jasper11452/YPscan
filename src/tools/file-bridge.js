@@ -45,14 +45,18 @@ const OSS_DEFAULTS = Object.freeze({
 });
 const PUBLIC_URL_CHECK_RETRY_DELAYS_MS = Object.freeze([500, 1_000, 2_000]);
 
-function localDelivery(filePath, message) {
+// merged CSV 是打分或精排前的内部中间产物，默认不要求展示；只有遗留
+// `mcn_complete_only` 分支的本地 merged CSV 就是该分支的唯一产物。
+function localDelivery(filePath, message, { display = false } = {}) {
   const localFileLink = localFileMarkdownLink(filePath);
   return {
     local_file_path: filePath,
     local_file_link: localFileLink,
-    display_required: true,
-    display_before_next_action: true,
-    user_visible_message: `${message}\n本地文件：${localFileLink}`,
+    display_required: display,
+    display_before_next_action: display,
+    user_visible_message: display
+      ? `${message}\n本地文件：${localFileLink}`
+      : `${message}该 CSV 是内部中间产物，不主动向用户展示。`,
   };
 }
 
@@ -82,7 +86,9 @@ function success(details) {
     {
       success: true,
       data: details,
-      delivery: localDelivery(details.file_path, message),
+      delivery: localDelivery(details.file_path, message, {
+        display: details?.flow === "mcn_complete_only",
+      }),
     },
     { details },
   );

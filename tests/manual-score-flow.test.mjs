@@ -139,6 +139,7 @@ test("registered tools: initial batch, first 20 sufficient, save then summarize 
   assert.deepEqual(first.payload.data.next_author_ids, f.ids.slice(0, 20));
   const batch = await f.score(f.ids.slice(0, 20), 10);
   assert.match(batch.completionDirective, /只合并上传当前批/u);
+  assert.match(batch.completionDirective, /补全 CSV 是内部中间产物，不主动向用户展示表格或链接/u);
   const bridgeArgs = JSON.parse(
     batch.completionDirective
       .split("\n")
@@ -147,6 +148,8 @@ test("registered tools: initial batch, first 20 sufficient, save then summarize 
   );
   assert.equal(bridgeArgs.completion_csv_paths.length, 1);
   assert.equal(batch.args.artifact_kind, "manual_score_batch");
+  assert.match(batch.savedScore.directive, /SCORE_BATCH_LOCAL_LINK=/u);
+  assert.match(batch.savedScore.directive, /展示本地链接/u);
   assert.match(batch.savedScore.directive, /SUMMARIZE_MANUAL_SCORES_ARGS=/u);
   const last = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.equal(last.payload.success, true);
@@ -154,6 +157,7 @@ test("registered tools: initial batch, first 20 sufficient, save then summarize 
   assert.equal(last.payload.data.next_action, "deliver");
   assert.deepEqual(last.payload.data.next_author_ids, []);
   assert.match(last.directive, /禁止继续补全或评分/u);
+  assert.match(last.directive, /展示最终汇总/u);
 });
 
 test("registered tools: 6 plus 4 recommendations advance exactly once and deliver 30 scored", async (t) => {

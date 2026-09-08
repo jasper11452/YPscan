@@ -573,6 +573,7 @@ test("manual links artifact save chains into ypscan_save_creator_links normaliza
   const text = directiveText(saved);
   assert.match(text, /原始 Provider 下载物，尚未归一化/u);
   assert.match(text, /不得把该原始 CSV 直接传给 file_bridge/u);
+  assert.doesNotMatch(text, /LOCAL_LINK=|原样展示/u);
   assert.deepEqual(namedArgsFromDirective(text, "SAVE_CREATOR_LINKS_ARGS"), {
     requirement_id: "req-manual-chain",
     platform: "xiaohongshu",
@@ -799,6 +800,7 @@ test("native completion requires manual source context and preserves inquiry bri
   });
   const unknownText = directiveText(unknownCompletion);
   assert.match(unknownText, /^FILE_BRIDGE_FLOW=manual_source$/mu);
+  assert.match(unknownText, /补全 CSV 是内部中间产物，不主动向用户展示/u);
   assert.doesNotMatch(unknownText, /已暂停|ASK_USER_QUESTION_ARGS/u);
 });
 
@@ -829,6 +831,7 @@ test("file_bridge delivers local-only and over-limit merged CSVs without downstr
   const overLimitText = directiveText(overLimit);
   assert.match(overLimitText, /已跳过上传/u);
   assert.match(overLimitText, /MERGED_DATA_ROW_COUNT=501/u);
+  assert.doesNotMatch(overLimitText, /MERGED_CSV_LOCAL_LINK=|原样展示/u);
   assert.doesNotMatch(overLimitText, /SCORE_MANUAL_SOURCE_CSV_ARGS/u);
 });
 
@@ -1281,6 +1284,7 @@ test("file_bridge returns score args for manual_source and compatibility rank ar
   const text = directiveText(result);
   assert.match(text, /已合并并完成 OSS 上传/u);
   assert.match(text, /live rank_creators schema 已明确支持 csv_file_path/u);
+  assert.doesNotMatch(text, /MERGED_CSV_LOCAL_LINK=|原样展示/u);
   assert.match(
     text,
     /当前测试 Provider 仍默认保留 rank_creators\(requirement_id,inquiry_ids\) 旧链路/u,
@@ -1312,6 +1316,8 @@ test("file_bridge returns score args for manual_source and compatibility rank ar
       csv_file_path: "/provider/merged.csv",
     },
   );
+  assert.match(directiveText(manualUpload), /不主动向用户展示/u);
+  assert.doesNotMatch(directiveText(manualUpload), /MERGED_CSV_LOCAL_LINK=|原样展示/u);
 });
 
 test("institutional retrieval syncs, ingests and polls before preview save", () => {
@@ -1417,6 +1423,7 @@ test("institutional retrieval syncs, ingests and polls before preview save", () 
   const linksText = directiveText(linksGenerated);
   assert.match(linksText, /受控 links CSV 已生成/u);
   assert.match(linksText, /CREATOR_LINKS_LOCAL_PATH=\/workspace\/mcn-links\.csv/u);
+  assert.doesNotMatch(linksText, /CREATOR_LINKS_LOCAL_LINK=|原样展示/u);
 });
 
 test("scored Excel delivery keeps inquiry and manual shortfall policies separate", () => {
@@ -1437,6 +1444,7 @@ test("scored Excel delivery keeps inquiry and manual shortfall policies separate
     );
     const text = directiveText(saved);
     assert.match(text, /MANUAL_SOURCE_LOCAL_LINK=/u);
+    assert.match(text, /原样展示/u);
     if (mode === "询价机构") {
       assert.match(text, /说明缺口后结束/u);
       assert.doesNotMatch(text, /APPLY_MANUAL_SOURCE_RESULT_POLICY|向用户建议|再向用户建议/u);
@@ -2116,6 +2124,11 @@ test("startup instruction selects and preserves one business mode", () => {
     first.prependContext,
     /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u,
   );
+  assert.match(
+    first.prependContext,
+    /links CSV、补全 CSV 和 merged CSV 都是内部中间产物，不主动展示表格、下载链接或本地文件路径/u,
+  );
+  assert.match(first.prependContext, /用户明确索取或要求诊断时除外/u);
   assert.match(first.prependContext, /该工具由后台 API 完成搜索和落库/u);
   assert.match(first.prependContext, /数量未知时交付当前 Excel 并结束/u);
   assert.match(first.prependContext, /实际数量为 0 或少于目标数量.*建议.*放宽/u);

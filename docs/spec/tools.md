@@ -72,7 +72,7 @@
 ### 输出（成功）
 
 - `data`：`artifact_kind`、`artifact_id`（原样回显调用关联元数据）、`file_name`、`file_path`、`byte_count`、`sha256`、`idempotent`、`download_attempts`。
-- `delivery`：`local_path`、`local_file_link`（可点击 Markdown 链接，Agent 必须原样展示，不得只输出裸路径）、`display_required`、`display_before_next_action`、`user_visible_message`；`mcn_ranking` 额外附 `next_tool: "AskUserQuestion"`、`next_args`（收件机构弹窗）、`next_action`。
+- `delivery`：`local_path`、`local_file_link`（可点击 Markdown 链接）、`display_required`、`display_before_next_action`、`user_visible_message`；`mcn_ranking` 额外附 `next_tool: "AskUserQuestion"`、`next_args`（收件机构弹窗）、`next_action`。Excel kind 的 `display_required=true`，Agent 必须原样展示 `local_file_link`，不得只输出裸路径；`manual_creator_links`/`mcn_creator_links` 是内部中间产物，`display_required=false` 且不主动向用户展示表格、链接或本地路径。
 
 ### 错误码
 
@@ -102,7 +102,7 @@
 - 输出保持 links 原顺序；headers = `source_record_id, creator_id, url` + 各补全 CSV 的非保留详情列（排除 ID 列与 `source_record_id`/`creator_id`/`url`）。
 - 未匹配到的 creator_id 计入 `missing_creator_ids`（不中断）。它只表示缺少所传补全 CSV 的匹配行；仅传某批 CSV 时也包含其他未开始批次的达人，不能直接当作失败或待重试名单。
 - 输出文件名：`<flow 前缀>-<平台>-<requirement_id>-<sha256 前 8 位>.csv`，前缀映射 `manual_source→manual-source`、`mcn_rank→mcn-rank`、`mcn_complete_only→mcn-complete`；同名文件内容一致则复用，不一致报 `YPSCAN_CREATOR_CSV_MERGE_CONFLICT`。
-- merged CSV 没有数据行时返回 `YPSCAN_FILE_BRIDGE_EMPTY`（`retriable=false`），不上传；`error.details` 保留完整合并详情（含行数、匹配/未匹配 ID 和关联列诊断），仍通过 `delivery.local_file_link` 交付本地文件。
+- merged CSV 没有数据行时返回 `YPSCAN_FILE_BRIDGE_EMPTY`（`retriable=false`），不上传；`error.details` 保留完整合并详情（含行数、匹配/未匹配 ID 和关联列诊断），`delivery` 仍保留本地文件信息供诊断，但不主动向用户展示。
 - `flow=mcn_complete_only` 时合并完成即返回，不读取 OSS 配置、不上传。
 - `manual_source`/`mcn_rank` 数据行超过 500 时返回合并成功和本地文件，`upload_skipped="row_limit_exceeded"`，不上传、不进入后续打分或精排。
 
@@ -120,7 +120,7 @@
 
 - `data` 始终包含：`requirement_id`、`platform`、`flow`、`file_name`、`file_path`、`data_row_count`、`matched_creator_ids`、`missing_creator_ids`、`completion_csv_paths`、`completion_id_columns`、`links_csv_path`、`sha256`。`completion_id_columns` 按输入文件顺序记录 `{file_path, id_column}`，列名仅为展示去除首尾空白/BOM。
 - 上传成功时额外包含 `csv_file_path`、`object_key`；超过 500 行时额外包含 `upload_skipped`、`upload_limit`。
-- `delivery` 始终包含本地 `local_file_path` 与 `local_file_link`；合并后上传或公网校验失败时，错误结果也保留该本地交付信息。
+- `delivery` 始终包含本地 `local_file_path` 与 `local_file_link`；`manual_source`/`mcn_rank` 与失败结果 `display_required=false`，merged CSV 是内部中间产物、不主动向用户展示；仅遗留 `mcn_complete_only` 分支（本地 merged CSV 即该分支唯一产物）`display_required=true`。
 
 ### 错误码
 
@@ -153,7 +153,7 @@
 
 - `data`：`file_name`、`file_path`、`row_count`、`sha256`。
 - 预览 xlsx 输入额外返回 `data.preview`：file_path、sha256、sheet、header_row、headers、records（最多前 100 条且累计 cells JSON 不超过 256 KiB，含行号及原始 cells）、total_row_count、records_truncated、duplicate_creator_ids、verification_status=unverified。记录数及去重数不等于合格人数。主页须为对应平台支持的主页格式且路径 ID 与所选 ID 一致，未知格式报错而非猜测。
-- `delivery`：`local_path`、`local_file_link`（Agent 必须原样展示）、`display_required`、`display_before_next_action`、`user_visible_message`。
+- `delivery`：`local_path`、`local_file_link`、`display_required=false`、`display_before_next_action=false`、`user_visible_message`；归一化后的 links CSV 是内部中间产物，Agent 不主动向用户展示表格、链接或本地路径，直接继续补全与打分。
 
 ### 错误码
 

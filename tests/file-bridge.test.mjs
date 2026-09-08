@@ -155,6 +155,7 @@ test("fileBridge merges completion batches and returns a local result without up
   assert.deepEqual(parsed.data.matched_creator_ids, ["creator-2", "creator-1"]);
   assert.equal(createClientCalls, 0);
   assert.match(parsed.delivery.local_file_link, /mcn-complete-douyin-req-local-only-/u);
+  assert.equal(parsed.delivery.display_required, true);
   assert.equal(
     readFileSync(parsed.data.file_path, "utf8"),
     "source_record_id,creator_id,url,nickname\nsource-2,creator-2,https://example.com/2,达人二\nsource-1,creator-1,https://example.com/1,达人一",
@@ -308,6 +309,7 @@ test("douyin zero matches reports the chosen native ID column without falling ba
     },
   ]);
   assert.ok(result.delivery.local_file_link);
+  assert.equal(result.delivery.display_required, false);
   assert.equal(uploads, 0);
 });
 
@@ -498,6 +500,8 @@ test("fileBridge uploads the merged CSV and returns an unsigned public URL", asy
   assert.equal(parsed.data.sha256, sha256);
   assert.equal(parsed.data.data_row_count, 2);
   assert.match(parsed.delivery.local_file_link, /manual-source-douyin-req-upload-success-/u);
+  assert.equal(parsed.delivery.display_required, false);
+  assert.doesNotMatch(parsed.delivery.user_visible_message, /file:\/\//u);
   assert.equal(captured.key, `action/manual_source/req-upload-success/${sha256}.csv`);
   assert.equal(String(captured.body), csvText);
   assert.deepEqual(captured.options, {

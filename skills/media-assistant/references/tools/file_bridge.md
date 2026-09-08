@@ -22,12 +22,12 @@ The tool chooses the first available ID column per file. For Douyin the priority
 
 ## Result
 
-`completion_id_columns` reports each completion file's `file_path` and selected `id_column` (trimmed for display). On `YPSCAN_FILE_BRIDGE_EMPTY`, `error.details` retains the merge details, including `data_row_count`, `matched_creator_ids`, `missing_creator_ids`, and `completion_id_columns`. No upload occurs; show the local link and report the mismatch rather than guessing a BOM issue or retrying unchanged inputs.
+`completion_id_columns` reports each completion file's `file_path` and selected `id_column` (trimmed for display). On `YPSCAN_FILE_BRIDGE_EMPTY`, `error.details` retains the merge details, including `data_row_count`, `matched_creator_ids`, `missing_creator_ids`, and `completion_id_columns`. No upload occurs; report the mismatch rather than guessing a BOM issue or retrying unchanged inputs.
 
-Always show `delivery.local_file_link` when present.
+The merged CSV is an internal input for scoring or ranking: do not show its table, link or local path proactively. The only exception is the legacy `mcn_complete_only` flow, whose local merged CSV is that flow's sole output; there, show `delivery.local_file_link`.
 
-- `manual_source`: when `data_row_count` is 1–500, use only the returned `data.csv_file_path` in `score_manual_source_csv`. Above 500, `upload_skipped="row_limit_exceeded"`; deliver the local CSV and stop. This flow is the generic merge-and-upload step for scoring in both chains.
-- `mcn_complete_only`: the local merged CSV is the final result. Do not upload, score, rank, or save an Excel.
+- `manual_source`: when `data_row_count` is 1–500, use only the returned `data.csv_file_path` in `score_manual_source_csv`. Above 500, `upload_skipped="row_limit_exceeded"`; report the row count and stop without showing the CSV. This flow is the generic merge-and-upload step for scoring in both chains.
+- `mcn_complete_only`: the local merged CSV is the final result. Do not upload, score, rank, or save an Excel. This legacy flow is the only one that shows the local link.
 - `mcn_rank`: use the uploaded `data.csv_file_path` only if the live `rank_creators` schema explicitly accepts it. The current test Provider still uses `requirement_id` plus `inquiry_ids` instead.
 
-If merging succeeds but configuration, upload, or anonymous-read verification fails, the error still carries the local merged file link. Show it before offering retry or stop. Never construct a remote path or substitute the local path for `csv_file_path`.
+If merging succeeds but configuration, upload, or anonymous-read verification fails, the error still carries the local merged file info for diagnostics. Report the failure and offer retry or stop without showing the CSV. Never construct a remote path or substitute the local path for `csv_file_path`.

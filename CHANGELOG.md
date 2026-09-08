@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.0.15 — 2026-09-08
+
+- 用户可见产物收敛：只展示评分表、汇总表、MCN 排名表和机构回填预览表；links CSV、补全 CSV、merged CSV 均为内部中间产物，不主动展示表格、下载链接或本地文件路径，也不作为交付物，用户明确索取或要求诊断时除外。
+- 工具层同步：`ypscan_save_artifact` 的 `manual_creator_links`/`mcn_creator_links`、`ypscan_save_creator_links` 和 `file_bridge`（除遗留 `mcn_complete_only` 分支）返回 `display_required=false`，本地路径仍保留供下游使用；Hook 不再注入 CSV 展示链接令牌，改用 `CREATOR_LINKS_LOCAL_PATH` 等路径令牌，并保留评分表、汇总表、排名表和预览表的展示指令。
+- 合并失败、超过 500 行或打分全失败时不再把内部 CSV 当降级交付物，只报告真实原因与行数；`mcn_complete_only` 因当前流程不可达且本地 merged CSV 是其唯一产物，保留展示。
+- 验证：lint/typecheck/test/smoke 全绿，新增展示开关与 Hook 指令回归断言；模型行为与真实宿主展示（含宿主是否自行渲染原生补全附件）尚未验收。
+
 ## 1.0.14 — 2026-09-08
 
 - 修复桌面 E2E 实测暴露的两个 Hook 缺陷：`manual_source_creators_status` 的 live 中间态（success + completed=false）不再误注入暂停弹窗指令，改按 BATCH_NOT_READY 继续轮询；原生补全全失败批次（csv_file=null）现在同样登记失败名单，汇总不再重排失败达人，同一达人重试成功后以成功记录取代旧失败。

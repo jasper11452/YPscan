@@ -49,8 +49,8 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 
 1. **链路固定**：两条业务链路每一步的下一步由 Hook 按真实工具结果动态给出（`*_ARGS` 指令），Agent 不被允许自由发散。
 2. **写入前预检**：`validate_requirement` 在本地完成完整性、格式与证据校验，不通过则阻断，Provider 不收到写入。
-3. **交付受控**：Excel/CSV 只从 `eshypdata.com` 主域 HTTPS 下载、禁止重定向、限量限时、原子发布、同内容幂等，且始终附带可点击的 `local_file_link`。
-4. **CSV 中心链路**：手动拓展 links CSV → 归一化及汇总取得下一批 → 当前批原生补全 → `file_bridge` 仅合并上传当前批 → 打分（`score_manual_source_csv_status` 轮询 job 终态）→ 保存单批表再汇总，推荐人数达标停止；询价回收链 links CSV 由 `ypscan_save_creator_links` 直接读取已受控保存的预览 Excel 派生，之后同样走原生补全 → `file_bridge(manual_source)` → 打分；超过 500 行时只交付本地 merged CSV，不上传。
+3. **交付受控**：Excel/CSV 只从 `eshypdata.com` 主域 HTTPS 下载、禁止重定向、限量限时、原子发布、同内容幂等；Excel 结果始终附带可点击的 `local_file_link`，links CSV/补全 CSV/merged CSV 是内部中间产物，不主动向用户展示。
+4. **CSV 中心链路**：手动拓展 links CSV → 归一化及汇总取得下一批 → 当前批原生补全 → `file_bridge` 仅合并上传当前批 → 打分（`score_manual_source_csv_status` 轮询 job 终态）→ 保存单批表再汇总，推荐人数达标停止；询价回收链 links CSV 由 `ypscan_save_creator_links` 直接读取已受控保存的预览 Excel 派生，之后同样走原生补全 → `file_bridge(manual_source)` → 打分；超过 500 行时跳过上传并停止打分，merged CSV 不主动向用户展示。
 5. **双功能独立建需**：每次真正开始询价机构或手动拓展都重新解析、复核并创建独立 requirement，禁止跨功能复用。
 
 ### 成功标准（可验证）
