@@ -137,6 +137,8 @@ test("registered tools: initial batch, first 20 sufficient, save then summarize 
   assert.match(f.normalized.directive, /SUMMARIZE_MANUAL_SCORES_ARGS=/u);
   const first = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.deepEqual(first.payload.data.next_author_ids, f.ids.slice(0, 20));
+  assert.match(first.directive, /AUTH_PREPARE_TOOL=douyin_auth_prepare/u);
+  assert.match(first.directive, /AUTH_PREPARE_ARGS=\{"action":"ensure"\}/u);
   const batch = await f.score(f.ids.slice(0, 20), 10);
   assert.match(batch.completionDirective, /只合并上传当前批/u);
   assert.match(batch.completionDirective, /补全 CSV 是内部中间产物，不主动向用户展示表格或链接/u);

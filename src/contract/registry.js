@@ -1256,6 +1256,9 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     add("contentTag", "必须是非空字符串数组");
   }
   const rawMessages = payload.rawMessagesJson;
+  // 容器不可读时，依赖它取证的业务值检查只会报“没有证据”的假错误。
+  // 这类证据问题暂不报告；其他可独立判断的缺失和格式问题仍照常聚合。
+  let rawMessagesReadable = false;
   if (!rawMessages || typeof rawMessages !== "object" || Array.isArray(rawMessages)) {
     add("rawMessagesJson", "必须是包含原始需求与解析输出的 JSON 对象");
   } else {
@@ -1268,12 +1271,17 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
       Array.isArray(rawRecord.parse_outputs)
     ) {
       add("rawMessagesJson", "必须包含非空 original 和本次契约内 parse_outputs 对象");
+    } else {
+      rawMessagesReadable = true;
     }
     const businessMode = rawRecord.business_mode;
     if (typeof businessMode !== "string" || !PROVIDER_BUSINESS_MODE_VALUES.includes(businessMode)) {
       add("business_mode", '必须是解析前用户选择的 "询价机构" 或 "手动拓展"');
     }
   }
+  const addEvidenceIssue = (field, reason) => {
+    if (rawMessagesReadable) add(field, reason);
+  };
 
   for (const field of invalidPlatformArrayFields(payload)) {
     add(field, "当前平台要求非空字符串数组");
@@ -1326,7 +1334,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   );
   const parsedBrandMatches = Boolean(submittedBrand && submittedBrand === parsedBrand);
   if (!parsedBrandMatches && !clarifiedBrandMatches && !explicitBrandMatches) {
-    add(
+    addEvidenceIssue(
       "brandName",
       "必须原样使用当前平台唯一 Dify 解析品牌；仅在解析缺失或多候选时使用最新弹窗答案",
     );
@@ -1341,13 +1349,13 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
       "提报人数",
     ]) ?? evidence;
   if (!hasQuantityEvidence(quantityEvidence, payload.quantityTotal)) {
-    add("quantityTotal", "原始需求或弹窗澄清记录中没有与提交值一致的达人数量证据");
+    addEvidenceIssue("quantityTotal", "原始需求或弹窗澄清记录中没有与提交值一致的达人数量证据");
   }
   if (
     !hasUniqueParsedRangeEvidence(rawMessages, "rebate", payload.rebate, payload.platform) &&
     !/(?:返点|返佣|佣金|rebate)/iu.test(evidence)
   ) {
-    add("rebate", "原始需求或弹窗澄清记录中没有返点证据，且 Dify 未给出唯一返点区间");
+    addEvidenceIssue("rebate", "原始需求或弹窗澄清记录中没有返点证据，且 Dify 未给出唯一返点区间");
   }
   const hasParsedPrice = PRICE_FIELDS.some(
     (field) =>
@@ -1355,7 +1363,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
       hasUniqueParsedRangeEvidence(rawMessages, field, payload[field], payload.platform),
   );
   if (!hasParsedPrice && !/(?:单价|报价|预算|费用|价格|kolOfficialPrice)/iu.test(evidence)) {
-    add(
+    addEvidenceIssue(
       "kolOfficialPriceL1/L2/L3",
       "原始需求或弹窗澄清记录中没有报价证据，且 Dify 未给出唯一报价区间",
     );
@@ -1368,7 +1376,10 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
       "截止时间",
     ]) ?? evidence;
   if (!hasSubmissionDeadlineEvidence(deadlineEvidence, payload.submissionDeadlineAt, now)) {
-    add("submissionDeadlineAt", "原始需求或弹窗澄清记录中没有与提交值一致的明确截止时间证据");
+    addEvidenceIssue(
+      "submissionDeadlineAt",
+      "原始需求或弹窗澄清记录中没有与提交值一致的明确截止时间证据",
+    );
   }
   if (
     payload.platform === "douyin" &&
@@ -1396,7 +1407,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
         !supportedTiers.has(field.slice(-2)),
     );
     if (mismatchedFields.length > 0) {
-      add(
+      addEvidenceIssue(
         "douyinVideoType",
         `抖音报价、CPM 或 CPE 字段与明确视频类型不匹配（${mismatchedFields.join(",")}）；L2 仅表示植入视频，L3 仅表示定制视频`,
       );
@@ -1420,7 +1431,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     if (!isCanonicalProjectDate(payload[field])) {
       add(field, "只能传明确的 YYYY-MM-DD 或 ISO 本地日期时间；模糊档期必须弹窗确认或省略");
     } else if (!hasProjectDateEvidence(fieldEvidence, payload[field])) {
-      add(field, "原始需求或弹窗澄清记录中没有对应的明确项目日期证据");
+      addEvidenceIssue(field, "原始需求或弹窗澄清记录中没有对应的明确项目日期证据");
     }
   }
   const projectStart = projectDateTimestamp(payload.projectStartStart);

@@ -49,7 +49,7 @@
 - `rebate`、`followercount`、`kolOfficialPriceL1/L2/L3`、`cpmL1/L2/L3`、`cpeL1/L2/L3`，以及 `interactionRate`、`clickMedium`、`viewMedium`、`photoView`、`videoInteract`、`photoInteract`、`userlikecount`、`likeIncrement`、`avgview`、`avglike`、`avgcomment`、`avgcollect`、`avginteract`、`femaleRate`、`age1Rate` 至 `age6Rate`，全部使用无空格 JSON 区间字符串 `"[min,max]"`。
 - 禁止把这些字段作为 JSON 数组、对象、单个数字、百分号文本或“以上/以下”等自然语言传给 Provider。
 - 返点表示最低要求，固定为 `"[min,1]"`；比例字段范围为 0–1；所有数值区间必须满足 `0 ≤ min < max`，禁止 `[v,v]`。
-- 本地 `before_tool_call` 只做一次确定性格式规范化与完整预检；仍有缺失、非法或需要语义选择的字段时会阻断写入，Agent 必须弹窗，不得换一种表达继续试。
+- 本地 `before_tool_call` 只做一次确定性格式规范化与完整预检；仍有缺失、非法或需要语义选择的字段时会阻断写入，Agent 必须弹窗，不得换一种表达继续试。`rawMessagesJson` 容器结构错误本身只要求用对象形式重发并保留已有业务值，不得仅因该错误弹窗或新增澄清；同时列出的其他独立问题仍按对应原因处理。
 
 ## 后续修改与重解析
 

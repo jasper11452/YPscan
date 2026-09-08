@@ -17,7 +17,7 @@
 ## 这是什么
 
 - `ypscan`（悦普识星）是 OpenClaw 插件（`id: ypscan`，`private: true`）：客户端集成层，注册 5 个本地工具，通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`）。
-- 当前主线形态（`feat/rank_creators`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成）。手动拓展固定链路为 `links CSV → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全 → file_bridge 只上传当前批 → score_manual_source_csv → 保存 manual_score_batch → 再汇总`（最多三倍候选、20/批，去重推荐人数达标或候选耗尽后交付最终汇总表）；机构回填固定 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 → ypscan_save_creator_links → 原生补全 → file_bridge → score_manual_source_csv`；`mcn_rank` 仅保留兼容接入。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
+- 当前主线形态（`feat/rank_creators`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成）。手动拓展固定链路为 `links CSV → 归一化 → ypscan_summarize_manual_scores → 每批先调平台登录准备工具（pgy_auth_prepare/douyin_auth_prepare，action=ensure）→ 当前批原生补全 → file_bridge 只上传当前批 → score_manual_source_csv → 保存 manual_score_batch → 再汇总`（最多三倍候选、20/批，去重推荐人数达标或候选耗尽后交付最终汇总表）；机构回填固定 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 → ypscan_save_creator_links → 登录准备 → 原生补全 → file_bridge → score_manual_source_csv`；`mcn_rank` 仅保留兼容接入。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type": "module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。运行时依赖为 `ali-oss`、`read-excel-file`、`write-excel-file`、`fflate`、`xml2js` 与 `playwright-core`（后者仅为遗留 browser 工具保留，当前插件未注册任何 browser 工具）。
 
 ## 常用命令（仓库根执行）
@@ -44,7 +44,7 @@
   - `manual-browser-*`、`manual-research-*`、`select-cascade.js`、`set-filter-range.js` — **遗留 native Browser 手扒工具**：保留在仓库但不在 `index.js` 注册、不在发布包 `files` 内。不要重新注册。
 - `src/contract/registry.js` — 参数归一化、平台别名、`business_mode` 常量与 `validate_requirement` 预检。
 - `src/hooks/register-flow-directives.js` — 注入双功能链路、独立建需与交付指令；`before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或企微发送确认门禁。
-- `skills/media-assistant/` — **业务行为权威**：`SKILL.md`（固定链路、复核、放宽顺序、Provider 幂等规则）+ `references/`（工具卡）。涉及达人/询价/手扒/提报的任务，首次相关操作前必须完整读一遍。
+- `skills/media-assistant/` — **业务行为权威**：`SKILL.md`（固定链路、复核、放宽顺序、Provider 幂等规则）+ `references/`（工具卡）。涉及达人/询价/手扒/提报的任务，首次相关操作前必须完整读一遍。宿主 YP Action 提供原生达人补全（`get_xhs_author_business_card`/`get_douyin_author_business_card`）与前置登录准备（`pgy_auth_prepare`/`douyin_auth_prepare`），均不在插件白名单；每批补全前必须先登录准备（`{"action":"ensure"}`），只有用户明确要求重新登录或 Cookie 已失效才用 `relogin`。
 - `docs/review-checklist.md` — 用户维护的验收清单；改业务链路后核对相关条目。
 - `docs/wiki/` — 工程资料入口、开发验证方法、文档同步矩阵与发布流程；不重复业务 Skill。
 - `tests/requirement-parser.test.mjs` — 当前仓库的解析器回归测试；历史评测记录只有实际存在时才可引用。

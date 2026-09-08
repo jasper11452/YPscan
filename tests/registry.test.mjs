@@ -511,20 +511,45 @@ test("validate_requirement preflight blocks a renamed rawMessagesJson original k
   const { original, ...rest } = renamed.rawMessagesJson;
   renamed.rawMessagesJson = { ...rest, original_demand: original };
 
+  // 容器不可读时只报结构错误：不把同一结构问题级联成业务值“没有证据”的假错误，
+  // 否则调用方会转去澄清本来正确的数量、返点、报价和截止时间。
   assert.deepEqual(
     validateRequirementPreflight(renamed, { now }).map((issue) => issue.field),
-    [
-      "rawMessagesJson",
-      "quantityTotal",
-      "rebate",
-      "kolOfficialPriceL1/L2/L3",
-      "submissionDeadlineAt",
-      "douyinVideoType",
-    ],
+    ["rawMessagesJson"],
   );
 
   const restored = { ...renamed, rawMessagesJson: { ...rest, original } };
   assert.deepEqual(validateRequirementPreflight(restored, { now }), []);
+});
+
+test("preflight reports only the container error for an unusable rawMessagesJson", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const canonical = completeValidateParams();
+  for (const rawMessagesJson of [
+    JSON.stringify(JSON.stringify(canonical.rawMessagesJson)),
+    "not-json",
+    [],
+    { ...canonical.rawMessagesJson, parse_outputs: null },
+  ]) {
+    const issues = validateRequirementPreflight({ ...canonical, rawMessagesJson }, { now });
+    assert.deepEqual(
+      issues.map((issue) => issue.field),
+      ["rawMessagesJson"],
+      JSON.stringify(rawMessagesJson).slice(0, 60),
+    );
+  }
+});
+
+test("preflight keeps independent issues when rawMessagesJson is unusable", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = completeValidateParams();
+  params.rawMessagesJson = "not-json";
+  params.submissionDeadlineAt = undefined;
+
+  assert.deepEqual(
+    validateRequirementPreflight(params, { now }).map((issue) => issue.field),
+    ["submissionDeadlineAt", "rawMessagesJson"],
+  );
 });
 
 test("validate_requirement rejects non-string values for every scalar parameter", () => {

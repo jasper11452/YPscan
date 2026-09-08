@@ -27,7 +27,7 @@ validate_requirement → search_creators → rank_mcns → 输出五列表格
 → 回收：sync_mcn_inquiry_status(requirement_id, project_id, supplierIds) → 用返回的 inquiry_ids 直接 ingest_mcn_submissions
 → get_ingest_job（轮询至 succeeded/partially_succeeded）
 → ypscan_save_artifact(mcn_creator_preview) → 询问是否补全
-→ ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全(20/批)
+→ ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 登录检查(pgy_auth_prepare/douyin_auth_prepare，action=ensure) → 原生补全(20/批)
 → file_bridge(manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询
 → 保存打分排序 Excel（最终交付）
 ```
@@ -39,7 +39,7 @@ validate_requirement → search_creators → rank_mcns → 输出五列表格
 - 收件机构：只在用户选中弹窗机构、选“询价全部机构”或输入机构名时成立；机构名仅在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；命中非空 `supplier_id` 传 `supplierIds`，未命中或无 ID 原名传 `supplier_name`；`supplierIds`/`supplier_name` 始终为数组。不模糊匹配、不跨轮复用。
 - 发送确认：`AskUserQuestion` 一题两选项 `确认发送`/`返回修改`，不设 multiSelect；最终机构名单与完整企微消息写入问题正文，保留企微消息原有行结构、只在单行将超过 20 字符时断行；只有“确认发送”或无条件肯定回复才调 `create_with_distributions`（`description` 与 `wechat_notification_message` 一致）。机构匹配、去重、幂等由 Provider 负责。
 - 回收：用户确认机构已回填后第一步调 `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})`，用其返回的 `data.inquiries[].inquiry_id` 直接调 `ingest_mcn_submissions({inquiry_ids})`，不依赖 `get_workflow_state`。随后 `get_ingest_job` 用同一 `job_id` 轮询至 `succeeded`/`partially_succeeded`（单轮最多 10 次）；终态只回一份预览 Excel（`excel_file_url` + `excel_columns`，没有 links CSV），先保存预览表，再询问用户是否补全。
-- 补全分支：选“补全并打分排序”时 `ypscan_save_creator_links({requirement_id, preview_file_path, platform})` 直接读取受控预览并派生 links CSV → 按 20/批调平台原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）→ `file_bridge(flow=manual_source)` 合并并上传 → `score_manual_source_csv` → `score_manual_source_csv_status` 轮询 → 保存打分排序 Excel。
+- 补全分支：选“补全并打分排序”时 `ypscan_save_creator_links({requirement_id, preview_file_path, platform})` 直接读取受控预览并派生 links CSV → 每批先调对应平台登录准备工具（小红书 `pgy_auth_prepare`、抖音 `douyin_auth_prepare`，`{"action":"ensure"}`）检查登录 → 按 20/批调平台原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）→ `file_bridge(flow=manual_source)` 合并并上传 → `score_manual_source_csv` → `score_manual_source_csv_status` 轮询 → 保存打分排序 Excel。
 - `partially_succeeded`：如实报告哪些机构 pending、哪些已回填，让用户选“补全并打分排序 / 暂不补全”，不把部分成功当全部完成。摘要中的 `inquiry_id` 兼容字符串和安全整数。
 - 回收后达人不足：交付当前真实结果并说明缺口，不自动发起新一轮询价、不自动放宽。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export`。
 
@@ -49,7 +49,7 @@ validate_requirement → search_creators → rank_mcns → 输出五列表格
 validate_requirement → select_inquiry_form_fields（原样展示 URL，等用户回复“好了”）
 → manual_source_creators(requirement_id)
 → 同步 links CSV：ypscan_save_artifact(manual_creator_links) → ypscan_save_creator_links 归一化
-  → ypscan_summarize_manual_scores 取得当前批 → 原生补全(最多20人) → file_bridge(manual_source，仅当前批)
+  → ypscan_summarize_manual_scores 取得当前批 → 登录检查(action=ensure) → 原生补全(最多20人) → file_bridge(manual_source，仅当前批)
   → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存 manual_score_batch
   → 再次 ypscan_summarize_manual_scores（达标交付汇总表，否则下一批）
 → batch_id：提示后台耗时 → manual_source_creators_status({requirement_id, batch_id, num}) 30s×10 轮询
@@ -64,7 +64,7 @@ validate_requirement → select_inquiry_form_fields（原样展示 URL，等用�
 - 异步轮询：提交返回 batch_id 后等 30 秒再第 1 次查询状态工具；当前环境 schema required `num` 时，取当前 requirement 落库 `quantityTotal × 3` 作为取数数量，通过 `MANUAL_SOURCE_TARGET_NUM` 提示并在远端调用时附带，提示值已乘三，不得重复乘三；缺少需求记录时沿用上次查询 num。最终交付目标与不足判断仍使用用户需求人数。之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
 - 状态响应成功且 `completed=true、selected_count=0`（success_count 缺失或为0），无文件时进入零结果复核；不再轮询、不盲目重试、不生成空文件或宣称已交付。参数一致才按下文优先调整关键词和人设；仍不足再提示其他条件并等待该项确认。
 - 打分阶段：`score_manual_source_csv({requirement_id, csv_file_path})` 返回 job_id 后，按 30s×10 轮询 `score_manual_source_csv_status({job_id})`，终态后保存 manual_score_batch，再调用本地汇总工具决定下一步。打分提交或状态结果若返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` / `REQUIREMENT_COLUMNS_UNAVAILABLE`（含明确缺少 selected inquiry columns 消息，即使外层包裹通用任务错误也必须识别），停止轮询并为同一 requirement 重新生成字段选择 URL；用户回复“好了”后只用同一 requirement 与本轮 `file_bridge` 原始 `csv_file_path` 重提一次打分——Hook 保留到该可信路径时直接附带精确 `SCORE_MANUAL_SOURCE_CSV_ARGS`，按原样重提，不重搜、不重补全、不重跑 `file_bridge`，也不把 `success_count` 当最终成功。
-- links CSV 到达后：先 `ypscan_save_artifact(artifact_kind="manual_creator_links", file_url=<当前 Provider URL>)`（内部产物，不主动向用户展示）；再用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 归一化为受控三列 links CSV（缺 `creator_id` 时按平台主页规则从 url 推导，短链或无法推导、ID 与主页不匹配时整份失败停止，不进入补全）；原生补全每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止 file_bridge/打分并报告失败达人，该批失败名单已登记，汇总不再重排；用户明确要求重试且成功后以成功记录继续。
+- links CSV 到达后：先 `ypscan_save_artifact(artifact_kind="manual_creator_links", file_url=<当前 Provider URL>)`（内部产物，不主动向用户展示）；再用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 归一化为受控三列 links CSV（缺 `creator_id` 时按平台主页规则从 url 推导，短链或无法推导、ID 与主页不匹配时整份失败停止，不进入补全）；每批原生补全前先调对应平台登录准备工具（`pgy_auth_prepare`/`douyin_auth_prepare`，`{"action":"ensure"}`），登录失效时由该工具打开专用登录窗口，登录完成后继续本次补全；宿主未开放对应登录准备工具时如实报告并停止补全链路。原生补全每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止 file_bridge/打分并报告失败达人，该批失败名单已登记，汇总不再重排；用户明确要求重试且成功后以成功记录继续。
 - 手动拓展先调用 `ypscan_summarize_manual_scores({requirement_id})` 获取下一批（最多20人，候选池不超过三倍需求）；`file_bridge` 接收完整受控 links CSV 和仅当前批补全 CSV，禁止累计重评。merged CSV 数据行 > 500 时跳过上传并停止打分（merged CSV 是内部中间产物，不主动向用户展示）；未超限才上传并把返回的 `csv_file_path` 传 `score_manual_source_csv`。`csv_file_path` 只接受当前 `file_bridge` 返回值，绝不传本机工作区路径或自行构造的路径；`score_manual_source_csv_status` 终态后保存单批表并汇总，去重推荐人数达到原始 N 或候选耗尽才生成最终汇总表。
 - `file_bridge` 成功后返回未签名 OSS URL；若对象虽已上传但匿名不可读，则返回 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，不得继续把该 URL 传给 `score_manual_source_csv`。
 - 降级路径：旧 Provider 同步/异步返回 Excel 时，仅保存并交付当前 Excel，不进 CSV 补全/打分链路，不调 `manual_source_creators_status`、`rank_creators` 或 `create_submission_batch`，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 `xlsx` 强行补链路。

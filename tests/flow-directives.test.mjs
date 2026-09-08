@@ -651,6 +651,55 @@ test("host-shaped completion result without a success field still emits success 
   assert.deepEqual(transientState.completionCsvPathsFor("req-host-shape"), ["/tmp/host-shape.csv"]);
 });
 
+test("native completion directives require the platform login check first", () => {
+  const { hooks } = registeredPlugin();
+  const context = { sessionKey: "login-check-directive" };
+  const persist = (event) => hooks.get("tool_result_persist")(event, context);
+  hooks.get("before_tool_call")(
+    {
+      toolName: "validate_requirement",
+      toolCallId: "validate",
+      params: canonicalValidateParams("手动拓展"),
+    },
+    context,
+  );
+  persist({
+    toolName: "validate_requirement",
+    toolCallId: "validate",
+    message: toolMessage({ success: true, data: { requirement_id: "req-login" } }),
+  });
+
+  const statusText = directiveText(
+    persist({
+      toolName: "manual_source_creators_status",
+      message: toolMessage({
+        success: true,
+        requirement_id: "req-login",
+        creator_links_csv_url: "https://eshypdata.com/links.csv",
+      }),
+    }),
+  );
+  assert.match(statusText, /AUTH_PREPARE_TOOL=douyin_auth_prepare/u);
+  assert.match(statusText, /AUTH_PREPARE_ARGS=\{"action":"ensure"\}/u);
+  assert.match(statusText, /不自行打开登录页/u);
+
+  const summaryText = directiveText(
+    persist({
+      toolName: "ypscan_summarize_manual_scores",
+      message: toolMessage({
+        success: true,
+        data: {
+          next_action: "complete_next_batch",
+          platform: "xiaohongshu",
+          next_author_ids: ["creator-1"],
+        },
+      }),
+    }),
+  );
+  assert.match(summaryText, /AUTH_PREPARE_TOOL=pgy_auth_prepare/u);
+  assert.match(summaryText, /NATIVE_COMPLETION_TOOL=get_xhs_author_business_card/u);
+});
+
 test("YP Action completion CSV provenance remains isolated between sessions", () => {
   const { hooks, transientState } = registeredPlugin();
   const persist = hooks.get("tool_result_persist");

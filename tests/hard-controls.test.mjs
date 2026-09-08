@@ -2407,12 +2407,57 @@ test("preflight block result requires grouped popup clarification instead of ret
   const text = directiveText(result);
 
   assert.match(text, /Provider 未执行写入/u);
-  assert.match(text, /已经回答但漏传的字段补回 rawMessagesJson.clarifications/u);
+  assert.match(text, /已经回答但漏传的值补回 rawMessagesJson.clarifications/u);
   assert.match(text, /同一字段已确认答案直接复用，不得重复询问/u);
   assert.match(text, /同一次 AskUserQuestion 中成组收集/u);
   assert.match(text, /禁止自主选择、默认补值/u);
   assert.match(text, /projectName 由 Agent 根据当前需求自行总结生成/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
+});
+
+test("rawMessagesJson structure errors block alone and ask for the object form, not clarifications", () => {
+  const before = registeredHooks().get("before_tool_call");
+  const persist = registeredHooks().get("tool_result_persist");
+  const params = completeValidateParams();
+  // 双层序列化的容器无法被规范化解开，必须只报结构错误。
+  params.rawMessagesJson = JSON.stringify(params.rawMessagesJson);
+
+  const blocked = before({ toolName: "validate_requirement", params });
+  assert.equal(blocked.block, true);
+  assert.match(blocked.blockReason, /rawMessagesJson: 必须是包含原始需求与解析输出的 JSON 对象/u);
+  assert.match(blocked.blockReason, /用对象形式重发 original、parse_outputs 和 business_mode/u);
+  assert.match(blocked.blockReason, /不得仅因该结构错误弹窗或新增、改写 clarifications/u);
+  // 容器不可读时不得把结构问题级联成业务值“没有证据”的假错误。
+  for (const field of [
+    "quantityTotal",
+    "rebate",
+    "kolOfficialPriceL1/L2/L3",
+    "submissionDeadlineAt",
+  ]) {
+    assert.doesNotMatch(blocked.blockReason, new RegExp(`${field}: 原始需求`, "u"), field);
+  }
+
+  const text = directiveText(
+    persist({
+      toolName: "validate_requirement",
+      message: toolMessage({
+        success: false,
+        error: { code: "TOOL_CALL_BLOCKED", message: blocked.blockReason },
+      }),
+    }),
+  );
+  assert.match(text, /rawMessagesJson 结构错误只靠重发对象形式修正/u);
+  assert.match(text, /不得仅因该结构错误弹窗/u);
+  assert.match(text, /对工具明确列出的业务字段/u);
+  assert.doesNotMatch(text, /不重新澄清数量、返点、报价或截止时间/u);
+
+  const mixed = before({
+    toolName: "validate_requirement",
+    params: { ...params, submissionDeadlineAt: undefined },
+  });
+  assert.equal(mixed.block, true);
+  assert.match(mixed.blockReason, /submissionDeadlineAt: 缺失或为空/u);
+  assert.match(mixed.blockReason, /一次性修正项另列其他字段时，仍按对应原因处理/u);
 });
 
 test("verified range fallback returns control to Playwright without stale refs", () => {
