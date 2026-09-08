@@ -51,7 +51,7 @@
 - 续办规则：`rank_mcns` 列表后“暂不询价”等未回答状态可在同会话恢复原询价分支，不重新解析/落库/搜索/排名。
 - 弹窗规范：每行最多 20 个 Unicode 字符，只在整行将超过 20 字符时断行（先填满接近 20），禁止逐分句拆行；发送确认弹窗固定一题两选项 `确认发送`/`返回修改`，正文保留企微消息原有行结构、只对超 20 字符单行断行。
 - 数值格式锁：`validate_requirement` 数值字段全部用无空格 `"[min,max]"`（`min < max`），返点 `"[min,1]"`。
-- 原生补全登录前置：每批原生达人补全前先调对应平台登录准备工具（小红书 `pgy_auth_prepare`、抖音 `douyin_auth_prepare`，`{"action":"ensure"}`）；只有用户明确要求重新登录或 Cookie 已失效才传 `relogin`。
+- 原生补全工具调用：每批按 20 人调用当前平台补全工具（小红书 `get_xhs_author_business_card` 固定 `page_count=1`，抖音 `get_douyin_author_business_card`）；登录窗口与 Cookie 由宿主工具内部处理，Hook 不注入登录准备指令。
 - 澄清规则：Dify 已给的唯一数值直接采用不再问；八个可选 Label 有则原样保留、无则省略；`contentTag` 必须来自解析结果，缺失时重新解析。
 
 细节以 `skills/media-assistant/SKILL.md` 为权威；Hook 指令是其运行时投影。
@@ -95,7 +95,7 @@
 | `file_bridge`                                                      | merged CSV 为内部产物、不主动展示；`mcn_complete_only`（遗留）交付本地链接；行数>500 跳过上传并停止；`manual_source` 上传成功后给 `SCORE_MANUAL_SOURCE_CSV_ARGS`；`mcn_rank` 上传成功后给兼容 `RANK_CREATORS_ARGS(requirement_id,csv_file_path)`，仅供 live schema 明确升级后使用                                                 | 合并或上传失败 pause；如实报告失败原因，不主动展示内部 CSV                                                                            |
 | 遗留 `ypscan_select_cascade`/`ypscan_set_filter_range`             | Browser 验证/恢复提示                                                                                                                                                                                                                                                                                         | —                                                                                                                               |
 
-引导原生达人补全的指令（`ypscan_summarize_manual_scores` 的 `complete_next_batch`、`ypscan_save_creator_links`、`ypscan_save_artifact(mcn_creator_preview)`、`get_ingest_job` 终态，以及 `manual_source_creators(_status)` 返回 links CSV 时）同时注入登录前置指令：平台已知时附 `AUTH_PREPARE_TOOL`（小红书 `pgy_auth_prepare` / 抖音 `douyin_auth_prepare`）与 `AUTH_PREPARE_ARGS={"action":"ensure"}`，平台未知时只注入通用登录规则文本。Hook 不为登录准备工具本身登记状态或生成后续指令，补全结果仍按原有 `csv_file`/成功失败名单链路处理。
+引导原生达人补全的指令（`ypscan_summarize_manual_scores` 的 `complete_next_batch`、`ypscan_save_creator_links`、`ypscan_save_artifact(mcn_creator_preview)`、`get_ingest_job` 终态，以及 `manual_source_creators(_status)` 返回 links CSV 时）只给出补全工具、名单与下一批参数；登录窗口与 Cookie 由宿主补全工具内部处理，Hook 不注入登录准备指令，也不为登录状态登记状态。补全结果仍按原有 `csv_file`/成功失败名单链路处理。
 
 手动拓展状态成功、`data.completed=true` 且 `data.selected_count=0`（`success_count` 缺失或为0），并且没有 CSV/Excel 时，追加 `YPSCAN_NEXT_ACTION=REVIEW_EMPTY_MANUAL_SOURCE_RESULT`：停止轮询，先核对参数，再决定纠错或调整同主题关键词、减少非核心人设限定；优先阶段其他搜索条件保持原值，用户已明确要求放宽时直接执行，未授权时等待确认；调整后仍不足再提示其他可放宽条件并等待该项确认；不附通用重试弹窗或保存参数。CSV/Excel 分支仍优先，未知数量和失败不当作零结果。
 

@@ -679,9 +679,8 @@ test("native completion directives require the platform login check first", () =
       }),
     }),
   );
-  assert.match(statusText, /AUTH_PREPARE_TOOL=douyin_auth_prepare/u);
-  assert.match(statusText, /AUTH_PREPARE_ARGS=\{"action":"ensure"\}/u);
-  assert.match(statusText, /不自行打开登录页/u);
+  assert.doesNotMatch(statusText, /auth_prepare/u);
+  assert.match(statusText, /原生达人补全/u);
 
   const summaryText = directiveText(
     persist({
@@ -696,7 +695,7 @@ test("native completion directives require the platform login check first", () =
       }),
     }),
   );
-  assert.match(summaryText, /AUTH_PREPARE_TOOL=pgy_auth_prepare/u);
+  assert.doesNotMatch(summaryText, /auth_prepare/u);
   assert.match(summaryText, /NATIVE_COMPLETION_TOOL=get_xhs_author_business_card/u);
 });
 

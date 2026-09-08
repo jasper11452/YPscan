@@ -41,7 +41,7 @@ OpenClaw 宿主
 - **插件负责**：链路编排指令、`validate_requirement` 本地预检与参数归一化、交付物受控保存与合并、上传校验、弹窗载荷构造。
 - **Provider 负责**：搜索/排名/打分/入库/企微发送，机构名匹配、合并去重、同 requirement/机构幂等，字段配置持久化（`select_inquiry_form_fields`）。
 - **Dify 负责**：需求文本解析，返回 32 个契约内输出字段（8 个可选 Label + `contentTag` + 品牌/粉丝/返点 + 报价/CPM/CPE 及平台、档位变体）。
-- **宿主 YP Action 负责**：原生达人补全（小红书 `get_xhs_author_business_card`、抖音 `get_douyin_author_business_card`）与补全前的登录准备（小红书 `pgy_auth_prepare`、抖音 `douyin_auth_prepare`）；插件只在指令中固定“先登录准备、再补全”的调用顺序和参数，登录窗口、Cookie 与内部回调地址均不由插件处理。
+- **宿主 YP Action 负责**：原生达人补全（小红书 `get_xhs_author_business_card`、抖音 `get_douyin_author_business_card`）；登录窗口、Cookie 与内部回调地址均由宿主工具内部处理，插件不干预。
 - **Agent 负责**：需求文本整理、复核解析结果、按指令调用工具、弹窗答案的收集与写回。
 
 ## 4. 数据流
@@ -55,7 +55,7 @@ OpenClaw 宿主
 → create_with_distributions → sync_mcn_inquiry_status（返回 inquiry_ids）
 → ingest_mcn_submissions → get_ingest_job（轮询至 succeeded/partially_succeeded）
 → ypscan_save_artifact(mcn_creator_preview) → 询问是否补全
-→ ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 登录检查(pgy_auth_prepare/douyin_auth_prepare，action=ensure) → 原生补全(20/批)
+→ ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全(20/批)
 → file_bridge(manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询
 → 保存打分排序 Excel（最终交付）
 ```
@@ -65,7 +65,7 @@ OpenClaw 宿主
 ```
 业务模式确定 → ypscan_parse_requirement → 复核 → validate_requirement（预检+归一化）
 → select_inquiry_form_fields → manual_source_creators(requirement_id)
-→ 同步返回 links CSV：保存 manual_creator_links → 归一化 → ypscan_summarize_manual_scores → 登录检查(action=ensure) → 当前批原生补全(最多20人)
+→ 同步返回 links CSV：保存 manual_creator_links → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全(最多20人)
   → file_bridge(manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 30s×10 轮询
   → 保存 manual_score_batch → ypscan_summarize_manual_scores（达标交付汇总表，否则下一批）
 → 返回 batch_id：提示后台耗时 → manual_source_creators_status 30s×10 轮询（`num` 的位置按当前环境 live schema required 决定）→ 同上 CSV 链路

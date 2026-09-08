@@ -4,10 +4,6 @@ Risk tier: automatic host operation.
 
 抖音原生达人补全。本工具由宿主 YP Action 提供，不在 ypscan 插件白名单内：宿主未开放该工具时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。
 
-## 前置登录检查
-
-每批补全前先调用 `douyin_auth_prepare`，参数固定 `{"action":"ensure"}`：已登录直接复用；未登录或登录失效时由该工具打开星图登录窗口，等用户完成登录后立即继续本次补全，不重复调用。只有用户明确要求重新登录或明确表示 Cookie 已失效时才传 `{"action":"relogin"}`。不得自行打开登录页、读取 Cookie 或调用宿主本地回调地址；宿主未开放 `douyin_auth_prepare` 时如实报告并停止补全链路，不猜测内部 HTTP 地址。
-
 ## Arguments
 
 - 手动拓展传入 `ypscan_summarize_manual_scores` 返回的 `next_author_ids`；机构回收传入当前 links CSV 中按20个一批切出的 author 标识（按宿主实际 schema 传参）。

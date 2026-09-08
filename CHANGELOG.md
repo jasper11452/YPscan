@@ -2,11 +2,10 @@
 
 ## 1.0.16 — 2026-09-08
 
-- 原生达人补全前强制登录检查：每批调用 `get_xhs_author_business_card`/`get_douyin_author_business_card` 前，先调用对应平台的 `pgy_auth_prepare`/`douyin_auth_prepare`（参数固定 `{"action":"ensure"}`）；已登录直接复用，未登录由该工具打开专用登录窗口，只有用户明确要求重新登录或 Cookie 失效才用 `relogin`。宿主未开放登录准备工具时如实报告并停止补全链路，不自行打开登录页、不读 Cookie、不改用 Browser。
-- Hook 在手动拓展 `manual_source_creators`/`manual_source_creators_status` 返回 links、`ypscan_save_creator_links` 归一化、`ypscan_summarize_manual_scores` 的 `complete_next_batch`、机构回填预览与发送成功等节点注入 `AUTH_PREPARE_TOOL`/`AUTH_PREPARE_ARGS`，并在启动指令声明该规则；SKILL 流程、两张新工具卡（`douyin_auth_prepare.md`/`pgy_auth_prepare.md`）与 Spec、验收清单同步。
+- 取消原生达人补全前的登录准备提示：不再要求 Agent 每批先调用 `pgy_auth_prepare`/`douyin_auth_prepare`。宿主 YP Action 的补全工具（`get_xhs_author_business_card`/`get_douyin_author_business_card`）自身处理登录态、按需打开登录窗口；插件不再注入 `AUTH_PREPARE_TOOL`/`AUTH_PREPARE_ARGS`，也不保留两张登录准备工具卡。SKILL、工具卡、Hook、Spec、验收清单与测试同步。
 - `validate_requirement` 本地预检修正：`rawMessagesJson` 结构不可读时，不再连带误报依赖它取证的 brandName/quantityTotal/rebate 等证据缺失，只报告可独立判断的缺失与格式问题。
-- 验证：`lint`/`typecheck`/`test`/`smoke` 全绿。真实桌面 E2E 两轮（抖音、小红书手动拓展）：补全前均调用登录准备工具，抖音参数 `{"action":"ensure"}`、返回“已完成抖音星图登录，共获取 5 个接口 Cookie”，小红书返回“已复用现有小红书蒲公英登录态，共获取 14 个 Cookie”；交付表均通过 ypscan 真实消费方校验。
-- 已知边界：小红书一轮 `pgy_auth_prepare` 省略了 `action`（宿主默认 ensure，行为一致）；宿主内置补全工具描述仍写着“Do not call pgy_auth_prepare first”，与插件规则相反，属宿主侧待同步项；Provider 报价上限未传导（确认 5000、实际检索 6000）为 Provider 侧问题，本轮未修。
+- 验证：`lint`/`typecheck`/`test`/`smoke` 全绿；回归断言改为确认补全指令不再包含 `auth_prepare`。真实桌面 E2E（抖音、小红书手动拓展）在 1.0.15 规则下已验证补全与交付链路本身可用；取消登录准备提示后的宿主补全路径以宿主工具自述的“内部处理登录”为准，未在登录失效场景下复测。
+- 已知边界：Provider 报价上限未传导（确认值与实际检索值不一致）为 Provider 侧问题，本轮未修。
 
 ## 1.0.15 — 2026-09-08
 
