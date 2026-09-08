@@ -35,7 +35,7 @@
 - [ ] **Agent 调 `file_bridge`**：空 CSV 与数据行 >500 在上传前阻断；配置读取顺序固定为插件配置 `fileBridgeOss` → 打包内置凭据（prepack 注入的 `src/tools/file-bridge-oss-defaults.json`），不隐式读取宿主进程环境变量（内部测试/集成可显式注入）；`region`/`bucket`/`objectPrefix` 回落到内置非敏感默认值；links 与补全路径必须都是 `.csv`（否则 `YPSCAN_FILE_BRIDGE_INVALID_INPUT`），merged 内容必须合法 CSV（否则 `YPSCAN_FILE_BRIDGE_INVALID_CSV`），links CSV 必须是当前 requirement 受控保存的产物（`ypscan_save_artifact` 保存的 `manual_creator_links` 或 `ypscan_save_creator_links` 生成的 links CSV）、补全 CSV 必须来自当前 requirement 的 YP Action 原生补全工具（否则 `YPSCAN_FILE_BRIDGE_SOURCE_NOT_ALLOWED`，均不上传）；对象键固定为 `<Object 前缀>/<flow>/<requirement_id>/<sha256>.csv`；上传后必须校验返回的未签名 OSS URL 可匿名读取，失败时报 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，不得把坏链接继续传给下游。
 - [ ] **Agent 需要用户输入或决策**：必须用 `AskUserQuestion` 弹窗，提供简短可执行选项——数值澄清正文先说明原需求为何无法确定该值，再提示“请选择或自定义输入”，不得只问“报价上限是多少”或展示“落库”等内部术语；每题 3 个互斥且可直接回答该字段的具体值、显式 `multiSelect:false`，禁用“1 个数值 + 返回修改/取消”二按钮结构；`header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符，只在整行将超过 20 字符时断行（先填满接近 20，断行时优先语义边界），禁止逐分句、逐字段拆行；长机构名换行在匹配前还原；不得用普通聊天问句停住流程。界面按该载荷渲染。
 - [ ] **Agent 调 `create_with_distributions`**（required=`requirement_id`、`description`、`wechat_notification_message`）：发送前必须弹警示确认——一次 `AskUserQuestion` 只一个问题、恰好两个选项“确认发送/返回修改”、不设 `multiSelect`；最终机构名单与完整企微消息写入问题正文、保留消息原有行结构（只对超 20 字符单行断行），不得拆成选项；`description` 与 `wechat_notification_message` 内容一致；`supplierIds` 与 `supplier_name` 始终为数组、空侧传 `[]`、至少一侧非空。本地 `before_tool_call` 只做 `validate_requirement` 预检，不做发送内容确认门禁；后端执行发送。
-- [ ] **Agent 发现机构/达人结果不足**：禁止直接放宽——先复核原需求、解析输出、实际落库参数和各轮可见实际搜索参数；跨 requirement 的 keyword 差异只能作为线索。确认正确后才按固定顺序向用户逐项建议放宽（刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`），每轮只展示实际数量/目标数量/缺口和唯一下一项；提出该项后本轮结束，用户明确确认后才建新 requirement 重跑，总体授权不替代逐轮确认。平台、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag` 与主达人类型标签永不放宽；手动拓展重跑的 `ypscan_parse_requirement.demand`/`rawMessagesJson.original` 全文替换为应用全部已确认放宽的完整需求，`parse_outputs` 全量使用本轮新结果；询价机构仍保留未改写原文，累计放宽进 clarifications 和本轮顶层参数；已确认放宽值必须通过 `validate_requirement` 保存，由 Provider 从后台读取，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导；足量后界面在结果前汇总全部放宽记录。
+- [ ] **Agent 发现机构/达人结果不足**：禁止直接放宽——先复核原需求、解析输出、实际落库参数和各轮可见实际搜索参数；跨 requirement 的 keyword 差异只能作为线索。放宽优先在原有搜索条件上替换同主题关键词、减少非核心人设限定（kolPersonaLabel）；这一阶段报价、CPM、CPE、粉丝范围、返点及其他条件保持原值。用户明确要求放宽即按此优先范围执行，不重复要求逐项确认；未授权时先提出具体关键词和人设调整建议并等待确认。调整后仍不足，复核正确后再按刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → contentFeatureLabel → contentThemeLabel → industryTagLabel 的顺序建议其他可放宽条件，跳过未设置或已无放宽空间的项；每轮说明实际数量、目标数量、缺口及下一项的当前值和建议值，等待用户明确确认该项后才重跑，不自动改动其他条件。平台、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag` 与主达人类型标签永不放宽；手动拓展重跑的 `ypscan_parse_requirement.demand`/`rawMessagesJson.original` 全文替换为应用全部已确认放宽的完整需求，`parse_outputs` 全量使用本轮新结果；询价机构仍保留未改写原文，累计放宽进 clarifications 和本轮顶层参数；已确认放宽值必须通过 `validate_requirement` 保存，由 Provider 从后台读取，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导；足量后界面在结果前汇总全部放宽记录。
 
 ## 三、后端结果触发
 
@@ -73,6 +73,6 @@
 - [ ] N=10，首批20人有10位“推荐”：生成最终汇总表，剩余10人补全/评分调用均为0；首批6位、次批4位：只新增处理后10人，累计10位后交付；全部耗尽仍不足：交付真实结果并说明推荐缺口。
 - [ ] “不推荐”、未知结论、重复达人、其他需求/平台以及处理成功数不能误计推荐。来源文件变化、结论冲突、已终态评分缺行、Gateway 上下文丢失时停止，保留已保存文件，不自动重评。
 - [ ] 全失败补全批次登记 `failed_author_ids`，失败达人不再被重新排批；用户明确要求重试且成功后，以成功记录取代旧失败。
-- [ ] 单批表为中间产物，最终汇总含推荐达人和全部已评分达人；不把未评分者写成“不推荐”。机构回收仍全量补全评分。
+- [ ] 单批表为中间产物，最终汇总沿用 Provider 单表模板，保留工作表名、标题、需求信息、分组表头、列宽、颜色、数字格式、冻结行和全部评分行，更新评分数量，不截断推荐前N人；不把未评分者写成“不推荐”。机构回收仍全量补全评分。
 
 代码回归覆盖上述调度指令和注册工具衔接；勾选仍要求真实模型/宿主验收，不能以单元测试代替桌面通过。

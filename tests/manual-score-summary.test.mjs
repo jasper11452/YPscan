@@ -5,9 +5,105 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import readXlsxFile from "read-excel-file/node";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { Builder, parseStringPromise } from "xml2js";
 
 import { summarizeManualScores } from "../src/tools/manual-score-summary.js";
 import { previewFixture } from "./helpers/creator-preview-fixture.mjs";
+
+async function decorateWorkbook(source, change) {
+  const archive = unzipSync(await readFile(source.file_path));
+  const document = await parseStringPromise(strFromU8(archive["xl/worksheets/sheet1.xml"]));
+  await change(document.worksheet, archive);
+  archive["xl/worksheets/sheet1.xml"] = strToU8(new Builder().buildObject(document));
+  const buffer = Buffer.from(zipSync(archive));
+  await writeFile(source.file_path, buffer);
+  source.sha256 = hash(buffer);
+  return { archive, sheet: document.worksheet };
+}
+
+test("merged workbook preserves template parts, numeric types, row styles and literal text", async (t) => {
+  const f = await fixture(t, { count: 2, quantityTotal: 2 });
+  const sources = [
+    f.batch([f.ids[0]], 1, {
+      rows: [["douyin", f.ids[0], { number: "80.25" }, "推荐", '$1 r="99"']],
+    }),
+    f.batch([f.ids[1]], 1, { rows: [["douyin", f.ids[1], { number: "95.5" }, "推荐", "=1+1"]] }),
+  ];
+  const originals = [];
+  for (const [index, source] of sources.entries()) {
+    originals.push(
+      await decorateWorkbook(source, (sheet, archive) => {
+        sheet.dimension = [{ $: { ref: "A1:E3" } }];
+        sheet.sheetViews = [
+          {
+            sheetView: [
+              {
+                $: { workbookViewId: "0", showGridLines: "0" },
+                pane: [{ $: { ySplit: "2", topLeftCell: "A3", state: "frozen" } }],
+              },
+            ],
+          },
+        ];
+        sheet.cols = [{ col: [{ $: { min: "1", max: "5", width: "24", customWidth: "1" } }] }];
+        sheet.mergeCells = [{ $: { count: "1" }, mergeCell: [{ $: { ref: "D1:E1" } }] }];
+        sheet.autoFilter = [{ $: { ref: "A2:E3" } }];
+        sheet.sheetData[0].row[0].c.push(
+          { $: { r: "C1", t: "inlineStr" }, is: [{ t: ["评分数量"] }] },
+          { $: { r: "D1", t: "inlineStr" }, is: [{ t: ["1"] }] },
+        );
+        sheet.sheetData[0].row[2].$ = { r: "3", ht: String(40 + index), customHeight: "1" };
+        sheet.sheetData[0].row[2].c[2].$.s = "1";
+        archive["xl/styles.xml"] = strToU8(
+          '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf/><xf numFmtId="2" fontId="0" fillId="1" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>',
+        );
+      }),
+    );
+  }
+  const result = await f.summarize();
+  assert.equal(result.success, true, JSON.stringify(result.error));
+  const archive = unzipSync(await readFile(result.data.file_path));
+  for (const [part, bytes] of Object.entries(originals[0].archive)) {
+    if (part !== "xl/worksheets/sheet1.xml") assert.deepEqual(archive[part], bytes, part);
+  }
+  const { worksheet: sheet } = await parseStringPromise(
+    strFromU8(archive["xl/worksheets/sheet1.xml"]),
+  );
+  for (const key of ["cols", "sheetViews", "mergeCells"])
+    assert.deepEqual(sheet[key], originals[0].sheet[key]);
+  assert.equal(sheet.dimension[0].$.ref, "A1:E4");
+  assert.equal(sheet.autoFilter[0].$.ref, "A2:E4");
+  assert.equal(sheet.sheetData[0].row[2].$.ht, "41");
+  assert.deepEqual(sheet.sheetData[0].row[2].c[2], { $: { r: "C3", t: "n", s: "1" }, v: ["95.5"] });
+  const [output] = await readXlsxFile(result.data.file_path);
+  assert.equal(output.data[0][3], "2");
+  assert.deepEqual(
+    output.data.slice(2).map((row) => row[1]),
+    [f.ids[1], f.ids[0]],
+  );
+  assert.equal(output.data[2][4], "=1+1");
+  assert.equal(output.data[3][4], '$1 r="99"');
+});
+
+for (const variant of ["formula", "merged_data", "different_styles"]) {
+  test(`unsafe template ${variant} stops without delivering a corrupted workbook`, async (t) => {
+    const f = await fixture(t, { count: 2 });
+    f.batch([f.ids[0]], 1);
+    const source = f.batch([f.ids[1]], 1);
+    await decorateWorkbook(source, (sheet, archive) => {
+      if (variant === "formula") sheet.sheetData[0].row[2].c[2].f = ["1+1"];
+      if (variant === "merged_data") sheet.mergeCells = [{ mergeCell: [{ $: { ref: "D3:E3" } }] }];
+      if (variant === "different_styles")
+        archive["xl/styles.xml"] = strToU8(
+          '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>',
+        );
+    });
+    const result = await f.summarize();
+    assert.equal(result.success, false);
+    assert.equal(result.error.code, "YPSCAN_MANUAL_SCORE_TEMPLATE");
+    assert.equal(result.delivery, undefined);
+  });
+}
 
 const payload = (result) => JSON.parse(result.content[0].text);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -98,12 +194,14 @@ for (const platform of ["douyin", "xiaohongshu"]) {
     assert.equal(result.data.stop_reason, "target_reached");
     assert.deepEqual(result.data.next_author_ids, []);
     const sheets = await readXlsxFile(result.data.file_path);
+    const original = await readXlsxFile(f.sourceContext.score_files[0].file_path);
     assert.deepEqual(
       sheets.map((sheet) => sheet.sheet),
-      ["推荐达人", "已评分达人"],
+      original.map((sheet) => sheet.sheet),
     );
-    assert.equal(sheets[0].data.length, 11);
-    assert.equal(sheets[1].data.length, 21);
+    assert.equal(sheets[0].data.length, 22);
+    assert.deepEqual(sheets[0].data[0].slice(0, 2), ["需求ID", "req"]);
+    assert.deepEqual(sheets[0].data, original[0].data);
   });
 }
 
@@ -144,8 +242,7 @@ test("zero recommendations still preserve all scored rows without counting proce
   assert.equal(result.data.shortfall, 10);
   assert.equal(result.data.next_action, "deliver");
   const sheets = await readXlsxFile(result.data.file_path);
-  assert.equal(sheets[0].data.length, 1);
-  assert.equal(sheets[1].data.length, 3);
+  assert.equal(sheets[0].data.length, 4);
 });
 
 test("completion failures are not rescheduled or counted as unstarted authors", async (t) => {
@@ -241,7 +338,7 @@ test("score IDs remain exact strings and spreadsheet-like text cannot become a f
   const result = await f.summarize();
   assert.equal(result.success, true);
   const sheets = await readXlsxFile(result.data.file_path, { parseNumber: (value) => value });
-  assert.equal(sheets[0].data[1][1], id);
-  assert.equal(sheets[0].data[1][4], "=1+1");
+  assert.equal(sheets[0].data[2][1], id);
+  assert.equal(sheets[0].data[2][4], "=1+1");
   assert.equal((await readFile(result.data.file_path)).length > 0, true);
 });

@@ -2,7 +2,7 @@
 
 ## 1. 系统形态
 
-ypscan 是 OpenClaw 插件（`private: true`，ESM，无 TypeScript 源文件，类型安全靠 JSDoc + `tsc --checkJs`）。运行时依赖为 `ali-oss`、`read-excel-file`（受控预览/评分解析）、`write-excel-file`（最终汇总表写入）、`fflate`（ZIP 元数据预检）与 `playwright-core`（仅为遗留 browser 工具保留，当前未注册任何 browser 工具）。
+ypscan 是 OpenClaw 插件（`private: true`，ESM，无 TypeScript 源文件，类型安全靠 JSDoc + `tsc --checkJs`）。运行时依赖为 `ali-oss`、`read-excel-file`（受控预览/评分解析）、`write-excel-file`（保留的 Excel 写入依赖）、`fflate`（ZIP 预检及模板打包）、`xml2js`（评分模板 XML 解析与合并）与 `playwright-core`（仅为遗留 browser 工具保留，当前未注册任何 browser 工具）。
 
 ```
 OpenClaw 宿主

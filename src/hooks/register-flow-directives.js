@@ -52,10 +52,10 @@ const REQUIREMENT_CREATION_RULE =
 const FIELD_SELECTION_GATE_RULE =
   "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields，并等待用户为这个 requirement 提交字段页后明确回复“好了”；用户过去对其他 requirement 说过“以后不用再选字段”等不算当前 requirement 的提交证据。字段选择 URL 输出后本轮必须结束并等待，禁止在同一轮试调 manual_source_creators、搜索或打分。";
 const RELAXATION_REVIEW_COMPACT_RULE =
-  "结果差异先核对各轮需求、解析、validate 参数和实际搜索参数；跨 requirement 的 keyword 差异仅是线索。复核通过后只报实际数、目标数、缺口和唯一下一项，提出后结束本轮并等用户确认该项；总体授权不替代逐轮确认。手动拓展放宽后整体替换 rawMessagesJson.original 为累计放宽后的完整需求，同文重新解析，parse_outputs 全量更新；询价机构放宽仍保留未改写原文；放宽同步 clarifications 和 validate 参数；已确认放宽值必须通过 validate_requirement 保存，由 Provider 从后台读取，搜索返回后核对实际参数与放宽值一致。";
+  "先复核各轮需求、解析、validate 和实际搜索参数；跨 requirement 的 keyword 差异仅是线索。优先替换同主题关键词、减少非核心人设限定；其他搜索条件保持原值，不扩大数值区间。用户明确要求放宽即执行；未授权时提出具体方案并等待确认。调整后仍不足且复核正确，再按 Skill 顺序提示其他可放宽条件；等待用户明确确认该项后才重跑，不自动改动。手动拓展放宽后整体替换 rawMessagesJson.original 为累计放宽后的完整需求，同文重新解析，parse_outputs 全量更新；询价机构放宽仍保留未改写原文；放宽同步 clarifications 和 validate 参数；已确认放宽值必须通过 validate_requirement 保存，由 Provider 从后台读取，搜索返回后核对实际参数与放宽值一致。";
 // 只在结果时刻注入（manual_source Excel 交付处）；启动块只保留精简的 SHORTFALL 规则。
 const MANUAL_SOURCE_RELAXATION_RULE =
-  "解释多轮结果差异时必须核对各轮完整有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数；跨 requirement 的 keyword 差异只能作为线索，不能单独断言后台不稳定；Provider 未回传实际搜索参数时明确说无法确认根因，不猜测、不让用户替后台决定不可执行的搜索口径。放宽每轮只展示实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑，“放宽直到足量”等总体授权不替代后续每轮具体项确认。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand，复核后通过 validate_requirement 保存，由 Provider 从后台读取，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。重跑搜索时 manual_source_creators 只传 requirement_id，由 Provider 从后台读取已保存的完整有效需求，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导、不得宣称放宽成功。";
+  "解释多轮结果差异时必须核对各轮完整有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数；跨 requirement 的 keyword 差异只能作为线索，不能单独断言后台不稳定；Provider 未回传实际搜索参数时明确说无法确认根因，不猜测、不让用户替后台决定不可执行的搜索口径。放宽优先在原有搜索条件上替换同主题关键词、减少非核心人设限定（kolPersonaLabel）；这一阶段其他搜索条件保持原值，不扩大数值区间。用户明确要求放宽即执行；未授权时提出具体方案并等待确认。调整后仍不足且复核正确，再按 Skill 顺序提示其他可放宽条件，说明当前值、建议值和人数缺口；等待用户明确确认该项后才重跑，不自动改动。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand，复核后通过 validate_requirement 保存，由 Provider 从后台读取，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。重跑搜索时 manual_source_creators 只传 requirement_id，由 Provider 从后台读取已保存的完整有效需求，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导、不得宣称放宽成功。";
 
 const SEARCH_PARAMETER_REVIEW_RULE =
   "先对照当前有效需求、解析输出、validate_requirement 参数和 Provider 实际搜索参数。恢复用户已确认条件不是放宽，不再请求确认；Agent 输入有误且能按原意纠正时，告知后按 Skill 纠正重建，仍遵守新 requirement 字段选择规则。提交参数正确但后台执行不一致时，如实报告参数未传导及当前工具能力限制，不承诺盲目重跑能修复、不让用户接受错误参数或代为排错。用户已明确修改并要求重搜时直接执行，沿用未修改的有效澄清，不再次确认同一值。";
@@ -66,7 +66,7 @@ const MANUAL_SOURCE_STATUS_NUM_RULE =
   "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传：取用户需求人数 quantityTotal 的 3 倍（正整数），例如需求 30 人则 num=90。Hook 的 MANUAL_SOURCE_TARGET_NUM 已是三倍取数数量，直接使用，不得再次乘三；最终交付目标和不足判断仍使用用户需求人数。schema 不接受 num 时不得附带，避免无效重试。";
 const SCORE_MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 score_manual_source_csv，也不得猜测或更换 job_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
-const MANUAL_SOURCE_SHORTFALL_RULE = `本条数量策略仅用于旧链路直接返回的 manual_source Excel；分批评分必须通过 ypscan_summarize_manual_scores 统计推荐人数并决定下一步，不用处理成功数判断足量。只在当前 Provider 响应明确给出可信实际数量时与用户需求人数 quantityTotal 比较（三倍取数 num 不是交付目标），不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确确认当前唯一放宽项后才按该项重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。`;
+const MANUAL_SOURCE_SHORTFALL_RULE = `本条数量策略仅用于旧链路直接返回的 manual_source Excel；分批评分必须通过 ypscan_summarize_manual_scores 统计推荐人数并决定下一步，不用处理成功数判断足量。只在当前 Provider 响应明确给出可信实际数量时与用户需求人数 quantityTotal 比较（三倍取数 num 不是交付目标），不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确要求放宽后优先调整同主题关键词、减少非核心人设限定；调整后仍不足再按 Skill 提示其他条件并等待该项确认，随后重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。`;
 const CREATOR_CSV_LIMIT = 500;
 const MANUAL_SOURCE_FLOW = "manual_source";
 const MCN_COMPLETE_ONLY_FLOW = "mcn_complete_only";
@@ -700,7 +700,7 @@ function manualSourceCreatorsStatusDirective(
       "YPSCAN_FLOW_DIRECTIVE=搜索已完成，实际数量为 0；没有可保存文件，不生成空表、不宣称已交付。停止轮询，不提供原参数重试/结束弹窗。",
       "YPSCAN_NEXT_ACTION=REVIEW_EMPTY_MANUAL_SOURCE_RESULT",
       SEARCH_PARAMETER_REVIEW_RULE,
-      "只有参数复核正确后，才按 Skill 固定顺序提出唯一下一项，说明当前值、建议值、目标数和缺口；不列多个放宽方向让用户排错，不擅自放宽核心标签或关键词。等待该项明确确认后再重建。",
+      "只有参数复核正确后，才按 Skill 提出关键词替换和人设精简方案，说明当前值、建议值、目标数和缺口；首轮优先调整同主题关键词和非核心人设限定，保留其他搜索条件；调整后仍不足再提示其他可放宽条件并等待该项确认。用户已明确要求首轮放宽时直接按优先范围重建。",
       MANUAL_SOURCE_RELAXATION_RULE,
     ].join("\n");
   }
@@ -1400,7 +1400,7 @@ function manualScoreSummaryDirective(message) {
       `MANUAL_SCORE_COUNTS=${JSON.stringify({ scored_count: data.scored_count, recommended_count: data.recommended_count, target_count: data.target_count, unprocessed_count: data.unprocessed_count, completion_failed_count: data.completion_failed_count, shortfall: data.shortfall, stop_reason: data.stop_reason })}`,
       ...(data.shortfall > 0
         ? [
-            "先交付真实汇总结果并说明推荐人数缺口，再按 Skill 提出唯一下一项放宽建议；等待用户明确确认，不自动重跑。",
+            "先交付真实汇总结果并说明推荐人数缺口，再按 Skill 优先建议替换关键词、减少人设限定；该阶段用户已明确要求放宽时直接执行，否则等待确认。调整后仍不足再提示其他条件并等待该项确认。",
             MANUAL_SOURCE_RELAXATION_RULE,
           ]
         : []),

@@ -104,7 +104,12 @@ test("manual sourcing shares the reviewed relaxation policy and recreates requir
   assert.match(skill, /手动修改需求 \/ 改用询价机构 \/ 结束/u);
   assert.match(skill, /用户过去对其他 requirement.*不算当前 requirement 已提交字段的证据/u);
   assert.match(skill, /字段选择 URL 输出后本轮必须结束并等待/u);
-  assert.match(skill, /“放宽直到足量”等总体授权不替代后续每轮具体项确认/u);
+  assert.match(skill, /用户明确要求放宽即按此优先范围执行，不重复要求逐项确认/u);
+  assert.match(skill, /替换同主题关键词、减少非核心人设限定/u);
+  assert.match(skill, /报价、CPM、CPE、粉丝范围、返点及其他条件保持原值/u);
+  assert.match(skill, /调整后仍不足，复核正确后再按刊例价.*顺序建议其他可放宽条件/u);
+  assert.match(skill, /等待用户明确确认该项后才重跑，不自动改动其他条件/u);
+  assert.doesNotMatch(skill, /下界乘|min×0.8/u);
   assert.match(skill, /不同 requirement 的 keyword 差异只能作为线索/u);
   assert.match(skill, /整体替换 rawMessagesJson\.original.*同一全文传给 ypscan_parse_requirement\.demand，复核后通过 validate_requirement 保存/u);
   assert.match(skill, /rawMessagesJson\.parse_outputs 全量替换为本次重解析结果/u);

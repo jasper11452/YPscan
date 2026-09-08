@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, open, readFile, realpath, unlink } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
-import { unzipSync, zipSync } from "fflate";
+import { unzipSync, zipSync, strFromU8, strToU8 } from "fflate";
 import readXlsxFile from "read-excel-file/node";
-import writeXlsxFile from "write-excel-file/node";
+import { Builder, parseStringPromise } from "xml2js";
 import { parseCsv } from "./merge-creator-csv.js";
 import { localFileMarkdownLink, publishWithoutOverwrite } from "./save-artifact.js";
 import { hostToolResult } from "./tool-result.js";
@@ -92,8 +92,41 @@ export async function readManualScoreWorkbook(source, { workspaceDir, requiremen
   const platformColumn = headers.indexOf("平台");
   const scoreColumn = headers.indexOf("综合得分");
   const verdictColumn = headers.indexOf("推荐结论");
+  const archive = unzipSync(buffer);
+  const sheetPaths = Object.keys(archive).filter((path) =>
+    /^xl\/worksheets\/[^/]+\.xml$/u.test(path),
+  );
+  if (sheetPaths.length !== 1) fail("TEMPLATE", "评分模板必须只有一张工作表");
+  const sheetPath = sheetPaths[0];
+  const document = await parseStringPromise(strFromU8(archive[sheetPath]));
+  const sheet = document.worksheet;
+  // Moving formulas or linked objects also requires rewriting their references.
+  const xmlRows = new Map((sheet?.sheetData?.[0]?.row ?? []).map((row) => [Number(row.$.r), row]));
+  if (
+    [
+      "hyperlinks",
+      "tableParts",
+      "drawing",
+      "conditionalFormatting",
+      "dataValidations",
+      "legacyDrawing",
+    ].some((key) => sheet[key]) ||
+    [...xmlRows.values()].some((row) => row.c?.some((cell) => cell.f))
+  )
+    fail("TEMPLATE", "评分模板含无法安全移动的公式或关联对象，保留原表并停止合并");
+  for (const merge of sheet.mergeCells?.[0]?.mergeCell ?? []) {
+    if (Number(merge.$.ref.split(":").at(-1).replace(/[A-Z]/gu, "")) > index + 1)
+      fail("TEMPLATE", "评分数据区含合并单元格，不能安全排序");
+  }
+  const countCells = [];
+  for (let r = 0; r < index; r += 1) {
+    for (let c = 0; c < grid[r].length; c += 1) {
+      if (text(grid[r][c]).trim() === "评分数量") countCells.push(`${columnName(c + 1)}${r + 1}`);
+    }
+  }
+  const template = { archive, sheetPath, document, headerRow: index + 1, countCells };
   const rows = [];
-  for (const row of grid.slice(index + 1)) {
+  for (const [offset, row] of grid.slice(index + 1).entries()) {
     const cells = Array.from({ length: headers.length }, (_, col) => text(row[col]));
     if (cells.every((cell) => !cell.trim())) continue;
     const creatorId = cells[idColumn].trim();
@@ -106,39 +139,52 @@ export async function readManualScoreWorkbook(source, { workspaceDir, requiremen
     const score = Number(cells[scoreColumn]);
     if (!cells[scoreColumn].trim() || !Number.isFinite(score))
       fail("INVALID_SCORE", "综合得分缺失或不是有效数值");
-    rows.push({ creator_id: creatorId, recommended: verdict === "推荐", score, cells });
+    const rowXml = xmlRows.get(index + offset + 2);
+    if (!rowXml) fail("TEMPLATE", "评分行与原始模板坐标不一致");
+    rows.push({ creator_id: creatorId, recommended: verdict === "推荐", score, cells, rowXml });
   }
-  return { headers, rows };
+  return { headers, rows, template };
 }
 
-async function saveSummaryWorkbook(workspaceDir, requirementId, headers, rows, target) {
-  const headerCells = headers.map((value) => ({
-    value,
-    fontWeight: "bold",
-    backgroundColor: "#E8F1EE",
-    wrap: true,
-  }));
-  const sheet = (name, selected) => ({
-    sheet: name,
-    data: [
-      headerCells,
-      ...selected.map((row) => row.cells.map((value) => ({ value, type: String, wrap: true }))),
-    ],
-    columns: headers.map((header) => ({
-      width: /理由|优势|劣势|介绍/u.test(header) ? 52 : /ID|主页/u.test(header) ? 28 : 18,
-    })),
-    stickyRowsCount: 1,
-    orientation: /** @type {const} */ ("landscape"),
+function columnName(index) {
+  let name = "";
+  for (let value = index + 1; value > 0; value = Math.floor((value - 1) / 26))
+    name = String.fromCharCode(65 + ((value - 1) % 26)) + name;
+  return name;
+}
+
+async function saveSummaryWorkbook(workspaceDir, requirementId, template, rows) {
+  const { archive, sheetPath, document, headerRow, countCells } = template;
+  const sheet = document.worksheet;
+  const prefix = sheet.sheetData[0].row.filter((row) => Number(row.$.r) <= headerRow);
+  const body = rows.map((row, index) => {
+    const moved = structuredClone(row.rowXml);
+    moved.$.r = String(headerRow + index + 1);
+    for (const cell of moved.c ?? []) cell.$.r = cell.$.r.replace(/\d+$/u, moved.$.r);
+    return moved;
   });
-  const generated = await writeXlsxFile(
-    [
-      sheet("推荐达人", rows.filter((row) => row.recommended).slice(0, target)),
-      sheet("已评分达人", rows),
-    ],
-    { fontFamily: "Calibri", fontSize: 11 },
-  ).toBuffer();
-  // Normalize ZIP timestamps so identical summaries have identical content and paths.
-  const buffer = Buffer.from(zipSync(unzipSync(generated), { mtime: new Date(1980, 0, 1) }));
+  for (const row of prefix) {
+    for (const cell of row.c ?? []) {
+      if (!countCells.includes(cell.$.r)) continue;
+      // Preserve the Provider's count-cell style and storage type.
+      if (cell.$.t === "inlineStr") cell.is = [{ t: [String(rows.length)] }];
+      else {
+        cell.$.t = "n";
+        delete cell.is;
+        cell.v = [String(rows.length)];
+      }
+    }
+  }
+  sheet.sheetData[0].row = [...prefix, ...body];
+  for (const key of ["dimension", "autoFilter"]) {
+    if (sheet[key]?.[0]?.$.ref)
+      sheet[key][0].$.ref = sheet[key][0].$.ref.replace(/\d+$/u, String(headerRow + rows.length));
+  }
+  archive[sheetPath] = strToU8(
+    new Builder({ renderOpts: { pretty: false } }).buildObject(document),
+  );
+  // Keep every original template part, including styles, sheet name and print settings.
+  const buffer = Buffer.from(zipSync(archive, { mtime: new Date(1980, 0, 1) }));
   const sha256 = hash(buffer);
   const fileName = `manual-score-summary-${hash(requirementId).slice(0, 16)}-${sha256.slice(0, 16)}.xlsx`;
   const path = join(await realpath(workspaceDir), fileName);
@@ -224,6 +270,7 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
       fail("COMPLETION_INVALID", "同一达人同时出现在补全成功与失败名单中");
     const scoredById = new Map();
     let headers = null;
+    let template = null;
     const files = new Map(sourceContext.score_files.map((file) => [file.file_path, file]));
     for (const source of files.values()) {
       const parsed = await readManualScoreWorkbook(source, {
@@ -233,6 +280,14 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
       });
       if (headers && JSON.stringify(headers) !== JSON.stringify(parsed.headers))
         fail("HEADERS", "各批评分表列配置不一致，停止汇总，不猜测或丢弃字段");
+      if (template) {
+        for (const part of ["xl/styles.xml", "xl/sharedStrings.xml"]) {
+          if (text(template.archive[part]) !== text(parsed.template.archive[part]))
+            fail("TEMPLATE", "各批评分模板样式或共享字符串不一致，不能直接合并");
+        }
+        if (template.headerRow !== parsed.template.headerRow)
+          fail("TEMPLATE", "各批评分表头位置不一致");
+      } else template = parsed.template;
       headers = parsed.headers;
       for (const row of parsed.rows) {
         if (!successful.has(row.creator_id))
@@ -276,7 +331,7 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
     if (data.next_action !== "deliver" || !rows.length) {
       return hostToolResult({ success: true, data }, { details: data });
     }
-    const saved = await saveSummaryWorkbook(workspaceDir, requirementId, headers, rows, target);
+    const saved = await saveSummaryWorkbook(workspaceDir, requirementId, template, rows);
     const details = { ...data, ...saved };
     const delivery = {
       local_path: saved.file_path,

@@ -165,9 +165,9 @@
 
 实现 `src/tools/manual-score-summary.js`，入口只接受 `{requirement_id}`，来源由 Hook 与本地保存工具登记，不接受模型传入文件路径或推荐人数。模式必须为手动拓展；N 使用 validate 成功调用的 quantityTotal。候选按归一化 links 顺序去重，最多 3N，下一批最多20人。评分表必须含唯一“需求ID”元数据与“平台”、当前平台 ID（星图ID/蒲公英ID）、“综合得分”、“推荐结论”列；只接受精确“推荐”/“不推荐”。跨表按达人 ID 去重，相同达人不同结果报错，不挑高分覆盖。
 
-返回 `next_action`（complete_next_batch / await_scores / deliver）、`next_author_ids`、`recommended_count`、`scored_count`、`target_count`、`candidate_count`、`completion_failed_count`、`failed_author_ids`、`pending_score_author_ids`、`unprocessed_count`、`shortfall`、`target_reached`、`stop_reason`（target_reached / candidates_exhausted / null）。成功汇总终态且有评分行时生成“推荐达人”（已评分推荐者前N位）和“已评分达人”两表，并返回受控本地链接；文件内容哈希命名、重复幂等、不覆盖异内容。所有单批原表保留；Excel 单元格按文本输出，ID 不丢精度、不执行公式。
+返回 `next_action`（complete_next_batch / await_scores / deliver）、`next_author_ids`、`recommended_count`、`scored_count`、`target_count`、`candidate_count`、`completion_failed_count`、`failed_author_ids`、`pending_score_author_ids`、`unprocessed_count`、`shortfall`、`target_reached`、`stop_reason`（target_reached / candidates_exhausted / null）。成功汇总终态且有评分行时沿用 Provider 单表模板，保留工作表名、标题、需求信息、分组表头、列宽、颜色、数字格式、冻结行及全部评分行，更新评分数量，按综合得分排序，不过滤不推荐者或截断前N人，并返回受控本地链接；文件内容哈希命名、重复幂等、不覆盖异内容。所有单批原表保留；通过 xml2js 解析工作表 XML、移动原始行和单元格坐标，保留原单元格类型与样式引用，ID 不经过浮点转换、文本不转为公式。各批样式或共享字符串不一致、表头位置不同、数据区合并、公式或关联对象无法安全移动时返回 TEMPLATE 错误并停止，不输出损坏表。
 
-文件限制：20 MiB，ZIP 声明解压40 MiB/1000项，最多10000行/200列；只读项目内哈希未变的已登记普通文件。错误前缀 `YPSCAN_MANUAL_SCORE_`，包括 CONTEXT_UNAVAILABLE、SOURCE_NOT_ALLOWED、SOURCE_CHANGED、SOURCE_MISMATCH、HEADERS、UNKNOWN_VERDICT、INVALID_SCORE、CONFLICTING_RESULTS、COMPLETION_INVALID、LIMIT、READ_FAILED、SAVE_FAILED 等。缺少上下文（含 Gateway 重置）时停止，不自动重建需求或重评。机构回收拒绝使用此工具。
+文件限制：20 MiB，ZIP 声明解压40 MiB/1000项，最多10000行/200列；只读项目内哈希未变的已登记普通文件。错误前缀 `YPSCAN_MANUAL_SCORE_`，包括 CONTEXT_UNAVAILABLE、SOURCE_NOT_ALLOWED、SOURCE_CHANGED、SOURCE_MISMATCH、HEADERS、UNKNOWN_VERDICT、INVALID_SCORE、CONFLICTING_RESULTS、COMPLETION_INVALID、TEMPLATE、LIMIT、READ_FAILED、SAVE_FAILED 等。缺少上下文（含 Gateway 重置）时停止，不自动重建需求或重评。机构回收拒绝使用此工具。
 
 测试环境 2026-09-08 的一个合成需求、两份不重叠 CSV、每份两人已分别返回独立任务及对应 Excel；四人均为“不推荐”。这证明该次测试的任务独立性和抖音负例表结构，不证明生产行为、跨批评分尺度、正例枚举全覆盖或模型/宿主已验收。当前自动回归用合成表验证两平台计数与 registered tool/Hook 衔接（tests/manual-score-summary.test.mjs、tests/manual-score-flow.test.mjs）。
 

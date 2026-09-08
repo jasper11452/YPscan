@@ -88,7 +88,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 每批补全完成后，按 [file_bridge](references/tools/file_bridge.md) 调用 `file_bridge(flow=manual_source)`，传入完整受控 links CSV 与**仅当前批**补全 CSV；工具内部只输出匹配的达人。禁止累计传入之前已评分的补全 CSV，否则会重复评分。`missing_creator_ids` 包括未开始的后续候选，不等于补全失败名单；失败只认原生工具的 `failed_author_ids`。若 merged CSV 数据行超过 500，工具跳过上传并如实交付本地文件，必须停止后续打分。未超限时把返回的服务器侧 `csv_file_path` 传给 `score_manual_source_csv({requirement_id, csv_file_path})`；`csv_file_path` 只接受当前 `file_bridge` 返回值（当前实现为未签名 OSS URL），绝不传本机工作区路径或自行构造的路径。响应返回 `job_id` 时按 [score_manual_source_csv_status](references/tools/score_manual_source_csv_status.md) 每隔 30 秒轮询（单轮最多 10 次），成功后以 `artifact_kind="manual_score_batch"`、`artifact_id=当前 requirement_id` 保存本批 workbook；同步返回 Excel 时同样按单批保存。这是中间结果，保存并展示链接后立即调用 [ypscan_summarize_manual_scores](references/tools/ypscan_summarize_manual_scores.md)，禁止直接当作最终交付。若 OSS 对象虽已上传但匿名公网地址不可读，则 `file_bridge` 会返回 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，但仍保留本地 merged CSV 链接；不得继续打分。
 
-汇总工具精确识别评分表的“推荐结论”：仅“推荐”计数，“不推荐”不计数；未知结论、身份/需求/平台不一致、来源文件变化或相同达人结论冲突时停止，不猜测。`next_action=complete_next_batch` 时只补全返回的下一批；`await_scores` 时只等待当前已提交评分任务，若任务已终态但缺行则报告并停止，禁止自动重评或开始下一批；`deliver` 时展示汇总 Excel 并停止，不再处理剩余候选。主表是已评分推荐者按综合得分排序后的前 N 位，另一张表保留全部已评分结果；不保证未评分者中没有更优人选。候选耗尽仍不足时先交付真实结果、说明推荐人数和缺口，再按下文复核和建议放宽。没有实际文件时不得宣称交付。
+汇总工具精确识别评分表的“推荐结论”：仅“推荐”计数，“不推荐”不计数；未知结论、身份/需求/平台不一致、来源文件变化或相同达人结论冲突时停止，不猜测。`next_action=complete_next_batch` 时只补全返回的下一批；`await_scores` 时只等待当前已提交评分任务，若任务已终态但缺行则报告并停止，禁止自动重评或开始下一批；`deliver` 时展示汇总 Excel 并停止，不再处理剩余候选。汇总沿用 Provider 单表模板，保留工作表名、标题、需求信息、分组表头、列宽、颜色、数字格式、冻结行及全部评分行，更新评分数量，按综合得分排序，不按推荐结论筛掉或截断行；不保证未评分者中没有更优人选。候选耗尽仍不足时先交付真实结果、说明推荐人数和缺口，再按下文复核和建议放宽。没有实际文件时不得宣称交付。
 
 来源登记仅在当前插件生命周期内保留；Gateway 重置后缺少可信上下文时停止，不通过重新建需、重新评分或临时脚本猜测恢复。机构回收仍全部补全后一次上传评分，不使用本节分批早停。
 
@@ -108,16 +108,11 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
 - 手动拓展在分批汇总终态 `recommended_count` 少于 `quantityTotal` 时；旧 Excel 降级路径只有在当前 Provider 响应明确给出可信实际数量为 0 或少于用户需求人数 `quantityTotal` 时，才在交付当前真实 Excel 后进入同一复核和放宽建议；数量未知时不猜测，当前真实交付物即最终结果。
 
-每轮放宽只做建议、不自动执行：先可见地告诉用户实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑。“放宽直到足量”等总体授权不替代后续每轮具体项确认。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand，复核后通过 validate_requirement 保存，由 Provider 从后台读取，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。询价机构确认放宽后仍以未改写原文重新解析并保存 original，累计放宽写入 clarifications 和本轮顶层参数。此前用户已确认的其他澄清答案（含截止时间）继续复用，不重复询问。随后重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
+放宽优先在原有搜索条件上替换同主题关键词、减少非核心人设限定（kolPersonaLabel）；这一阶段报价、CPM、CPE、粉丝范围、返点及其他条件保持原值。用户明确要求放宽即按此优先范围执行，不重复要求逐项确认；未授权时先提出具体关键词和人设调整建议并等待确认。调整后仍不足，复核正确后再按刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → contentFeatureLabel → contentThemeLabel → industryTagLabel 的顺序建议其他可放宽条件，跳过未设置或已无放宽空间的项；每轮说明实际数量、目标数量、缺口及下一项的当前值和建议值，等待用户明确确认该项后才重跑，不自动改动其他条件。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand，复核后通过 validate_requirement 保存，由 Provider 从后台读取，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。询价机构确认放宽后仍以未改写原文重新解析并保存 original，累计放宽写入 clarifications 和本轮顶层参数。此前用户已确认的其他澄清答案（含截止时间）继续复用，不重复询问。随后重新解析、复核、创建新 requirement 并按原模式重跑。不跨 requirement 混合结果。
 
 放宽必须真实传导到搜索执行。先将应用全部已确认放宽的完整需求、澄清和本次解析结果通过 `validate_requirement` 保存；`manual_source_creators` 只传新 `requirement_id`，由 Provider 从后台读取，不传 `demand`。搜索响应若回传实际搜索参数，必须与已确认放宽值逐项核对：不一致时如实报告“放宽未传导到搜索、实际参数仍为 X”，不得把结果归因于放宽或宣称放宽成功。
 
-放宽顺序固定为刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → `contentFeatureLabel` → `contentThemeLabel` → `kolPersonaLabel` → `industryTagLabel`。不存在的字段跳过（`followercount` 为 `[0,999999999]` 时已是全量区间、无法再放宽，直接跳过粉丝范围）。
-
-- 刊例价、CPM、CPE、粉丝范围：下界乘 `0.8`，上界乘 `1.2`；整数上下界向外取整。
-- 返点 `[min,1]` 改为 `[min×0.8,1]`。
-- 同时有多个报价指标时每轮只调整一个。
-- 标签阶段每轮移除一个完整的非核心偏好字段。
+复核新参数时，未调整的搜索条件必须沿用上一轮已确认的值；解析器重新输出不得改变这些条件。
 
 平台、模式、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag`、`pgyBloggerTypeLabel`、`xtTalentTypeLabel`、`growBloggerTypeLabel` 和 `growTalentTypeLabel` 永不自动放宽。
 

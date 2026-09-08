@@ -94,7 +94,7 @@
 | `file_bridge`                                                      | 展示 merged CSV 本地链接；`mcn_complete_only` 直接交付；行数>500 跳过上传并停止；`manual_source` 上传成功后给 `SCORE_MANUAL_SOURCE_CSV_ARGS`；`mcn_rank` 上传成功后给兼容 `RANK_CREATORS_ARGS(requirement_id,csv_file_path)`，仅供 live schema 明确升级后使用                                                 | 合并或上传失败 pause；已有本地文件时仍先展示                                                                                    |
 | 遗留 `ypscan_select_cascade`/`ypscan_set_filter_range`             | Browser 验证/恢复提示                                                                                                                                                                                                                                                                                         | —                                                                                                                               |
 
-手动拓展状态成功、`data.completed=true` 且 `data.selected_count=0`（`success_count` 缺失或为0），并且没有 CSV/Excel 时，追加 `YPSCAN_NEXT_ACTION=REVIEW_EMPTY_MANUAL_SOURCE_RESULT`：停止轮询，先核对参数，再决定纠错或唯一下一项放宽；不附通用重试弹窗或保存参数。CSV/Excel 分支仍优先，未知数量和失败不当作零结果。
+手动拓展状态成功、`data.completed=true` 且 `data.selected_count=0`（`success_count` 缺失或为0），并且没有 CSV/Excel 时，追加 `YPSCAN_NEXT_ACTION=REVIEW_EMPTY_MANUAL_SOURCE_RESULT`：停止轮询，先核对参数，再决定纠错或调整同主题关键词、减少非核心人设限定；优先阶段其他搜索条件保持原值，用户已明确要求放宽时直接执行，未授权时等待确认；调整后仍不足再提示其他可放宽条件并等待该项确认；不附通用重试弹窗或保存参数。CSV/Excel 分支仍优先，未知数量和失败不当作零结果。
 
 失败且无专门处理时：`ypscan_parse_requirement`、`validate_requirement`、`search_creators`、`rank_mcns` 给 `flowPauseDirective`（`YPSCAN_FLOW_DIRECTIVE=<阶段> 已暂停（code）` + `ASK_USER_QUESTION_ARGS` 重试/结束），其余工具返回 null（不追加）。
 

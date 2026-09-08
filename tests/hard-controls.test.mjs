@@ -910,7 +910,7 @@ test("default manual sourcing pauses without a task batch and falls back to para
     artifact_id: "req-nobatch",
     file_url: "https://files.eshypdata.com/exports/fallback.xlsx",
   });
-  assert.match(completedText, /唯一下一项.*本轮必须结束并等待用户明确确认/u);
+  assert.match(completedText, /替换同主题关键词、减少非核心人设限定/u);
   assert.match(completedText, /累计放宽写入 rawMessagesJson\.clarifications/u);
   assert.match(completedText, /整体替换 rawMessagesJson\.original.*同一全文传给 ypscan_parse_requirement\.demand，复核后通过 validate_requirement 保存/u);
   assert.match(completedText, /rawMessagesJson\.parse_outputs 全量替换为本次重解析结果/u);
@@ -1729,9 +1729,11 @@ test("empty rank result reviews the requirement before relaxation", () => {
   assert.match(text, /YPSCAN_NEXT_ACTION=REVIEW_BEFORE_RELAXATION/u);
   assert.match(text, /media-assistant Skill.*结果不足：先复核，再放宽/u);
   assert.match(text, /不得保存空排名表/u);
-  assert.match(text, /实际数、目标数、缺口和唯一下一项/u);
-  assert.match(text, /提出后结束本轮并等用户确认该项/u);
-  assert.match(text, /总体授权不替代逐轮确认/u);
+  assert.match(text, /其他搜索条件保持原值，不扩大数值区间/u);
+  assert.match(text, /未授权时提出具体方案并等待确认/u);
+  assert.match(text, /用户明确要求放宽即执行/u);
+  assert.match(text, /调整后仍不足且复核正确，再按 Skill 顺序提示其他可放宽条件/u);
+  assert.match(text, /等待用户明确确认该项后才重跑，不自动改动/u);
   assert.match(text, /整体替换 rawMessagesJson\.original/u);
   assert.match(text, /询价机构放宽仍保留未改写原文/u);
   assert.match(text, /已确认放宽值必须通过 validate_requirement 保存，由 Provider 从后台读取/u);

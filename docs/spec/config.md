@@ -31,7 +31,7 @@
 - `openclaw.plugin.json.skills = ["./skills"]` 声明随插件启用的业务技能目录，供宿主发现 `media-assistant`。`package.json.files` 中的 `skills` 仅控制打包，不能替代该加载声明；smoke 同时检查声明和 Skill 文件存在。
 - `type: module`（ESM）；`private: true`。
 - `engines.node >= 22.22.2`；peerDependencies `openclaw >= 2026.7.1`（optional）。
-- 运行时依赖为 `ali-oss`、`read-excel-file`、`write-excel-file`、`fflate` 与 `playwright-core`（后者仅为遗留 browser 工具保留，当前插件未注册任何 browser 工具，勿误用）。
+- 运行时依赖为 `ali-oss`、`read-excel-file`、`write-excel-file`、`fflate`、`xml2js` 与 `playwright-core`（后者仅为遗留 browser 工具保留，当前插件未注册任何 browser 工具，勿误用）。
 - `file_bridge` 运行时凭据按“插件配置 `fileBridgeOss` → 打包内置凭据（`src/tools/file-bridge-oss-defaults.json`，由 prepack 注入）”读取，不自动读取宿主进程环境变量；内部调用仍可显式注入 `env` 配置用于测试或集成。`region`/`bucket`/`objectPrefix` 未配置时回落到内置非敏感默认值，仅 AK/SK 缺失才报配置缺失。安装包不依赖仓库根 `.env`。
 - 敏感凭据（Dify Workflow Key、OSS AK/SK）不得写入日志、命令参数、补丁或测试快照。
 
