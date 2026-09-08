@@ -1,6 +1,6 @@
 # 本地工具契约
 
-`index.js` 注册 4 个本地工具（`contracts.tools` 同列）。所有工具结果经 `src/tools/tool-result.js` 包装：`content` 为 JSON 文本（成功/失败结构见各工具），失败时附 `isError: true`，需要宿主展示的详情放 `details`。
+`index.js` 注册 5 个本地工具（`contracts.tools` 同列）。所有工具结果经 `src/tools/tool-result.js` 包装：`content` 为 JSON 文本（成功/失败结构见各工具），失败时附 `isError: true`，需要宿主展示的详情放 `details`。
 
 | 工具                        | 职责                                                                  |
 | --------------------------- | --------------------------------------------------------------------- |
@@ -8,6 +8,7 @@
 | `ypscan_save_artifact`      | 按 artifact kind 受控保存 Provider 返回的 Excel 或 links CSV          |
 | `ypscan_save_creator_links` | 归一化受控三列 links CSV（手动拓展传 Provider 原始 links CSV 路径，询价回收传受控预览 xlsx），并登记为合法 links 来源                        |
 | `file_bridge`               | 合并 links CSV 与多批达人补全 CSV；按 flow 决定本地交付或校验上传 OSS |
+| `ypscan_summarize_manual_scores` | 按受控来源累计手动拓展评分，返回下一批或生成最终汇总 Excel |
 
 ## 1. ypscan_parse_requirement
 
@@ -53,19 +54,20 @@
 
 | 字段            | 类型     | 必填 | 约束                                                                                                                                                   |
 | --------------- | -------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `artifact_kind` | string   | 是   | enum：`creator_detail_export`、`mcn_ranking`、`mcn_creator_preview`、`manual_source`、`ranked_submission`、`manual_creator_links`、`mcn_creator_links` |
+| `artifact_kind` | string   | 是   | enum：`creator_detail_export`、`mcn_ranking`、`mcn_creator_preview`、`manual_source`、`manual_score_batch`、`ranked_submission`、`manual_creator_links`、`mcn_creator_links` |
 | `artifact_id`   | string   | 是   | 关联 ID：除 `creator_detail_export` 用 batch/task ID 外，其余用 `requirement_id`                                                                       |
 | `file_url`      | string   | 是   | Provider 返回的原始 Excel 或 CSV 下载 URL                                                                                                              |
 | `mcn_names`     | string[] | 否   | 仅 `mcn_ranking` 使用：当前排序结果中的机构名称，用于保存后生成收件机构选择弹窗                                                                        |
 
 ### 格式与保存约束
 
-- `creator_detail_export`、`mcn_ranking`、`mcn_creator_preview`、`manual_source`、`ranked_submission` 保存为 `.xlsx`；`manual_creator_links`、`mcn_creator_links` 保存为 `.csv`。URL 中没有符合 kind 的文件名时，使用下述确定性回退名称。CSV kind 只做受控下载落盘，不解析内容，不是受控 links 来源；受控三列 links CSV 由 `ypscan_save_creator_links` 归一化产出（见 §4）。
+- `creator_detail_export`、`mcn_ranking`、`mcn_creator_preview`、`manual_source`、`manual_score_batch`、`ranked_submission` 保存为 `.xlsx`；`manual_creator_links`、`mcn_creator_links` 保存为 `.csv`。URL 中没有符合 kind 的文件名时，使用下述确定性回退名称。CSV kind 只做受控下载落盘，不解析内容，不是受控 links 来源；受控三列 links CSV 由 `ypscan_save_creator_links` 归一化产出（见 §4）。
 - URL 必须是 `https:` 且 hostname 为 `eshypdata.com` 或其子域，无端口、无用户信息、无 hash。
 - 下载 `redirect: "error"`（重定向即失败）；总预算 20s；内容上限 20 MiB。
 - 有限重试（间隔为 `[1000, 2000, 4000]` ms，带抖动），仅对 `429/500/502/503/504`、超时与下载失败重试；遵守 `retry-after`。
 - 文件名从 URL `file_path` 参数或 pathname 推导；Excel 兼容 base64 `file_path`。没有明确文件名时回退为 `<artifact_kind>-<sha256 前 16 位>.<格式扩展名>`。
-- 保存到 `workspaceDir`（宿主提供的绝对路径，`realpath` 校验为目录）：临时文件 0600 写入 → `link()` 原子发布；目标已存在且 sha256 相同视为幂等成功，不同则 `YPSCAN_ARTIFACT_SAVE_CONFLICT`，拒绝覆盖。
+- 保存到 `workspaceDir`（宿主提供的绝对路径，`realpath` 校验为目录）：临时文件 0600 写入 → `link()` 原子发布；目标已存在且 sha256 相同视为幂等成功，任何路径均不覆盖不同内容、不接受符号链接。
+- 仅 `manual_source` / `manual_score_batch`：URL 推导的文件名已存在且内容不同时，改用 `<artifact_kind>-<artifact_id 的 SHA-256 前 16 位>-<内容 SHA-256>.xlsx` 再原子发布一次，保留原文件，兼容不同评分导出同名或复用下载 URL。回退路径同内容幂等成功，内容不同仍报 `YPSCAN_ARTIFACT_SAVE_CONFLICT`，不安全路径仍报错。其他 kind 的同名异内容继续直接报冲突。保存工具只解决碰撞；推荐计数、跨批汇总和下一批决策由评分汇总工具负责。
 
 ### 输出（成功）
 
@@ -78,7 +80,7 @@
 
 ## 3. file_bridge
 
-⚠️ 破坏性变更：原 `ypscan_merge_creator_csv` 已移除。合并能力保留为 `file_bridge` 的内部步骤，调用方直接传 links CSV 与全部补全 CSV，不再传中间 `merged_csv_path`。
+⚠️ 破坏性变更：原 `ypscan_merge_creator_csv` 已移除。合并能力保留为 `file_bridge` 的内部步骤，调用方直接传 links CSV 与本次补全 CSV（手动拓展仅当前批，机构回收全部批次），不再传中间 `merged_csv_path`。
 
 ### 参数
 
@@ -98,7 +100,7 @@
 - 每批补全 CSV 按平台选择第一个存在的 ID 列：抖音 `creator_id → 请求星图ID → 星图ID → xt_id → 请求kw_uid → kw_uid → author_id → authorid → id`；小红书保留 `creator_id → 请求kw_uid → kw_uid → xt_id → author_id → authorid → id`。表头归一化同 links（首尾 BOM 由 trim 去除）；优先列存在但值为空或不匹配时，不逐行回退或按匹配率猜列。
 - ID 始终按字符串关联，按 ID 去重取首条；19 位星图 ID 不转换为 Number。
 - 输出保持 links 原顺序；headers = `source_record_id, creator_id, url` + 各补全 CSV 的非保留详情列（排除 ID 列与 `source_record_id`/`creator_id`/`url`）。
-- 未匹配到的 creator_id 计入 `missing_creator_ids`（不中断）。
+- 未匹配到的 creator_id 计入 `missing_creator_ids`（不中断）。它只表示缺少所传补全 CSV 的匹配行；仅传某批 CSV 时也包含其他未开始批次的达人，不能直接当作失败或待重试名单。
 - 输出文件名：`<flow 前缀>-<平台>-<requirement_id>-<sha256 前 8 位>.csv`，前缀映射 `manual_source→manual-source`、`mcn_rank→mcn-rank`、`mcn_complete_only→mcn-complete`；同名文件内容一致则复用，不一致报 `YPSCAN_CREATOR_CSV_MERGE_CONFLICT`。
 - merged CSV 没有数据行时返回 `YPSCAN_FILE_BRIDGE_EMPTY`（`retriable=false`），不上传；`error.details` 保留完整合并详情（含行数、匹配/未匹配 ID 和关联列诊断），仍通过 `delivery.local_file_link` 交付本地文件。
 - `flow=mcn_complete_only` 时合并完成即返回，不读取 OSS 配置、不上传。
@@ -159,6 +161,16 @@
 
 预览 xlsx 输入错误前缀为 `YPSCAN_CREATOR_PREVIEW_`，后缀：SOURCE_NOT_ALLOWED、SOURCE_CHANGED、LIMIT、HEADERS、ROWS、EMPTY、READ_FAILED。
 
-## 5. 弹窗载荷（供工具与 Hook 共用）
+## 5. ypscan_summarize_manual_scores
+
+实现 `src/tools/manual-score-summary.js`，入口只接受 `{requirement_id}`，来源由 Hook 与本地保存工具登记，不接受模型传入文件路径或推荐人数。模式必须为手动拓展；N 使用 validate 成功调用的 quantityTotal。候选按归一化 links 顺序去重，最多 3N，下一批最多20人。评分表必须含唯一“需求ID”元数据与“平台”、当前平台 ID（星图ID/蒲公英ID）、“综合得分”、“推荐结论”列；只接受精确“推荐”/“不推荐”。跨表按达人 ID 去重，相同达人不同结果报错，不挑高分覆盖。
+
+返回 `next_action`（complete_next_batch / await_scores / deliver）、`next_author_ids`、`recommended_count`、`scored_count`、`target_count`、`candidate_count`、`completion_failed_count`、`failed_author_ids`、`pending_score_author_ids`、`unprocessed_count`、`shortfall`、`target_reached`、`stop_reason`（target_reached / candidates_exhausted / null）。成功汇总终态且有评分行时生成“推荐达人”（已评分推荐者前N位）和“已评分达人”两表，并返回受控本地链接；文件内容哈希命名、重复幂等、不覆盖异内容。所有单批原表保留；Excel 单元格按文本输出，ID 不丢精度、不执行公式。
+
+文件限制：20 MiB，ZIP 声明解压40 MiB/1000项，最多10000行/200列；只读项目内哈希未变的已登记普通文件。错误前缀 `YPSCAN_MANUAL_SCORE_`，包括 CONTEXT_UNAVAILABLE、SOURCE_NOT_ALLOWED、SOURCE_CHANGED、SOURCE_MISMATCH、HEADERS、UNKNOWN_VERDICT、INVALID_SCORE、CONFLICTING_RESULTS、COMPLETION_INVALID、LIMIT、READ_FAILED、SAVE_FAILED 等。缺少上下文（含 Gateway 重置）时停止，不自动重建需求或重评。机构回收拒绝使用此工具。
+
+测试环境 2026-09-08 的一个合成需求、两份不重叠 CSV、每份两人已分别返回独立任务及对应 Excel；四人均为“不推荐”。这证明该次测试的任务独立性和抖音负例表结构，不证明生产行为、跨批评分尺度、正例枚举全覆盖或模型/宿主已验收。当前自动回归用合成表验证两平台计数与 registered tool/Hook 衔接（tests/manual-score-summary.test.mjs、tests/manual-score-flow.test.mjs）。
+
+## 6. 弹窗载荷（供工具与 Hook 共用）
 
 `src/tools/popup-questions.js` 构造 `AskUserQuestion` 载荷：`{ questions: [...] }`，1–4 题；每题 `header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符（语义换行优先），选项 2–4 个且标签去重（忽略换行）。固定载荷：业务模式选择、流程重试/结束、入库恢复、Browser 验证、MCN 收件机构选择（单选快捷项 + 宿主自定义输入，内置 `询价全部机构` / `暂不询价`，必要时补少量当前机构快捷项）、回填后续分叉（`补全并打分排序`/`暂不补全`）。

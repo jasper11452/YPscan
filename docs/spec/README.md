@@ -2,18 +2,20 @@
 
 > 本目录是 ypscan（悦普识星）的项目 Spec：描述系统当前形态、边界、契约与关键设计取舍。与代码同仓库、同提交维护，是评审与变更的参照，不是运行时指令或用户文档。
 >
-> 撰写基准：`feat/rank_creators` 分支工作区代码（2026-09-04），即 4 个本地工具 + 5 个 Hook 的 CSV 中心链路形态。此后代码变更应同步更新对应章节（见「维护约定」）。
+> 撰写基准：`feat/rank_creators` 分支工作区代码（2026-09-08），即 5 个本地工具 + 5 个 Hook 的 CSV 中心链路形态。此后代码变更应同步更新对应章节（见「维护约定」）。
 
 ## 一句话结论
 
-ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`），在本地注册 4 个工具与 5 个 Hook，把「询价机构」和「手动拓展」两条业务链路固定为确定的步骤序列，并在 `validate_requirement` 写入前做本地完整性预检，通过单一 artifact 工具把 Excel/CSV 交付物受控保存到当前项目。
+ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`），在本地注册 5 个工具与 5 个 Hook，把「询价机构」和「手动拓展」两条业务链路固定为确定的步骤序列，并在 `validate_requirement` 写入前做本地完整性预检，通过单一 artifact 工具把 Excel/CSV 交付物受控保存到当前项目。
 
 ## 文档地图
+
+工程资料导航、最小修复与文档同步流程见 [项目开发 Wiki](../wiki/README.md)；修改后按 [同步矩阵](../wiki/sync-and-release.md) 核对受影响章节。
 
 | 文档                                 | 内容                                                     | 对应代码                                                    |
 | ------------------------------------ | -------------------------------------------------------- | ----------------------------------------------------------- |
 | [architecture.md](./architecture.md) | 组件地图、边界、数据流、设计取舍与风险                   | `index.js`、`openclaw.plugin.json`、`src/**`                |
-| [tools.md](./tools.md)               | 4 个本地工具的接口契约（参数、返回、错误码、安全约束）   | `src/tools/*.js`                                            |
+| [tools.md](./tools.md)               | 5 个本地工具的接口契约（参数、返回、错误码、安全约束）   | `src/tools/*.js`                                            |
 | [hooks.md](./hooks.md)               | 5 个 Hook 的行为契约与瞬态状态语义                       | `src/hooks/register-flow-directives.js`                     |
 | [contracts.md](./contracts.md)       | 参数归一化、预检规则、平台/模式常量、Provider 工具白名单 | `src/contract/registry.js`、manifest `toolFilter`           |
 | [flows.md](./flows.md)               | 两条固定业务链路、放宽、续办、回收与降级规则             | Hook 指令 + `skills/media-assistant/SKILL.md`               |
@@ -23,7 +25,7 @@ ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远�
 
 ### 当前现状
 
-- Provider MCP 提供达人搜索、机构排名、询价发送、手动拓展、异步入库等后端能力，插件侧只做白名单接入（manifest `toolFilter` 暴露 14 个 Provider 工具）。
+- Provider MCP 提供达人搜索、机构排名、询价发送、手动拓展、异步入库等后端能力，插件侧只做白名单接入（manifest `toolFilter` 暴露 13 个 Provider 工具）。
 - 需求解析由固定 Dify Workflow 完成（`ypscan_parse_requirement` 直连代理，不落本地库）。
 - 交付物（Excel、CSV）由 Provider 返回下载 URL，插件负责受控下载与本地保存。
 
@@ -48,12 +50,12 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 1. **链路固定**：两条业务链路每一步的下一步由 Hook 按真实工具结果动态给出（`*_ARGS` 指令），Agent 不被允许自由发散。
 2. **写入前预检**：`validate_requirement` 在本地完成完整性、格式与证据校验，不通过则阻断，Provider 不收到写入。
 3. **交付受控**：Excel/CSV 只从 `eshypdata.com` 主域 HTTPS 下载、禁止重定向、限量限时、原子发布、同内容幂等，且始终附带可点击的 `local_file_link`。
-4. **CSV 中心链路**：手动拓展 links CSV → 原生达人补全 → `file_bridge` 内部合并并上传 OSS → 打分（`score_manual_source_csv_status` 轮询 job 终态）；询价回收链 links CSV 由 `ypscan_save_creator_links` 直接读取已受控保存的预览 Excel 派生，之后同样走原生补全 → `file_bridge(manual_source)` → 打分；超过 500 行时只交付本地 merged CSV，不上传。
+4. **CSV 中心链路**：手动拓展 links CSV → 归一化及汇总取得下一批 → 当前批原生补全 → `file_bridge` 仅合并上传当前批 → 打分（`score_manual_source_csv_status` 轮询 job 终态）→ 保存单批表再汇总，推荐人数达标停止；询价回收链 links CSV 由 `ypscan_save_creator_links` 直接读取已受控保存的预览 Excel 派生，之后同样走原生补全 → `file_bridge(manual_source)` → 打分；超过 500 行时只交付本地 merged CSV，不上传。
 5. **双功能独立建需**：每次真正开始询价机构或手动拓展都重新解析、复核并创建独立 requirement，禁止跨功能复用。
 
 ### 成功标准（可验证）
 
-- `npm run smoke` 断言：本地工具 `tools=4`、Hook `hooks=5`、清单版本与包版本一致、白名单含新链路工具且不含已弃用工具（见 `scripts/smoke-test.mjs`）。
+- `npm run smoke` 断言：本地工具 `tools=5`、Hook `hooks=5`、package、manifest 与 lock 两处根包版本一致、白名单含新链路工具且不含已弃用工具（见 `scripts/smoke-test.mjs`）。
 - `npm run lint && npm run typecheck && npm test` 全绿（CI 同样执行）。
 - 违反预检的 `validate_requirement` 调用被 `before_tool_call` 阻断（`YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED`），测试覆盖。
 - `docs/review-checklist.md` 中与本形态相关的条目逐条成立。
@@ -80,7 +82,7 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 
 ### In scope
 
-- 插件注册形态：4 个本地工具、5 个 Hook、Provider MCP 白名单与超时配置。
+- 插件注册形态：5 个本地工具、5 个 Hook、Provider MCP 白名单与超时配置。
 - 参数归一化与 `validate_requirement` 预检（`src/contract/registry.js`）。
 - Excel/CSV 受控保存、CSV 合并与上传校验。
 - 固定链路指令注入与瞬态状态管理。
@@ -101,9 +103,9 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 ## 6. 验证与验收
 
 - **CI**（`.github/workflows/ci.yml`）：`npm ci` → `lint` → `typecheck` → `test` → `smoke`。
-- **Smoke**：版本同步、MCP 端点与 transport、白名单 include/exclude、工具参数枚举、`tools=4, hooks=5`、弃用工具未注册。
-- **行为验收**：逐条核对 `docs/review-checklist.md`；解析器评测见 `benchmarks/requirement-parser/RESULTS.md`。
-- **发布**：`npm pack --dry-run --cache /tmp/ypscan-npm-cache` 确认发布包只含 `files` 白名单内容。
+- **Smoke**：版本同步、MCP 端点与 transport、白名单 include/exclude、工具参数枚举、`tools=5, hooks=5`、弃用工具未注册。
+- **行为验收**：逐条核对 `docs/review-checklist.md`，按 [开发与验证](../wiki/development.md) 区分代码、模型和真实宿主层；当前 CI 不执行模型跑批或桌面验收。解析器代码回归见 `tests/requirement-parser.test.mjs`。
+- **发布**：按 [同步与发布](../wiki/sync-and-release.md) 核对四处版本、CHANGELOG、发布包和安装结果；`npm pack --dry-run` 会触发 prepack，不是完全只读检查。
 
 ## 7. 风险与未决问题
 
@@ -119,6 +121,6 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 ## 8. 维护约定
 
 - **版本绑定**：Spec 与代码同仓库同提交更新，不单独发版。
-- **变更后同步**：代码语义变化时更新对应章节；只写可被代码证实的内容，不推断动机；不确定处标为待确认。
+- **变更后同步**：按 [同步矩阵](../wiki/sync-and-release.md) 同任务更新受影响的 Skill/工具卡、Hook/契约、Spec、README、AGENTS、验收清单和测试；不适用项说明原因，不机械修改所有文档。只写可被代码或真实证据证实的内容，不确定处标为待确认。
 - **不覆盖人工内容**：更新只触及受影响的章节，保留人工补充的背景与说明。
 - **业务权威优先**：业务行为冲突时以 `skills/media-assistant/SKILL.md` 和用户最新要求为准，Spec 仅描述工程形态。

@@ -22,6 +22,17 @@ function readJsonFile(path) {
 
 const packageJson = readJsonFile(fileURLToPath(new URL("../package.json", import.meta.url)));
 const manifest = readJsonFile(fileURLToPath(new URL("../openclaw.plugin.json", import.meta.url)));
+const packageLock = readJsonFile(fileURLToPath(new URL("../package-lock.json", import.meta.url)));
+assert.equal(
+  packageLock.version,
+  packageJson.version,
+  "package-lock top-level and package versions must stay in sync",
+);
+assert.equal(
+  packageLock.packages?.[""]?.version,
+  packageJson.version,
+  "package-lock root package and package versions must stay in sync",
+);
 assert.equal(
   manifest.version,
   packageJson.version,
@@ -161,6 +172,7 @@ try {
     "mcn_ranking",
     "mcn_creator_preview",
     "manual_source",
+    "manual_score_batch",
     "ranked_submission",
     "manual_creator_links",
     "mcn_creator_links",
@@ -191,7 +203,9 @@ try {
     "mcn_complete_only",
   ]);
   assert.equal(toolNames.includes("ypscan__select_inquiry_form_fields"), false);
-  assert.equal(toolNames.length, 4);
+  assert.equal(toolNames.length, 5);
+  assert.ok(toolNames.includes("ypscan_summarize_manual_scores"));
+  assert.equal(packageJson.files.includes("src/tools/manual-score-summary.js"), true);
   assert.equal(toolNames.includes("ypscan_runtime_status"), false);
   assert.equal(toolNames.includes("ypscan_capture_field_selection"), false);
   assert.equal(toolNames.includes("ypscan_import_manual_source_excel"), false);

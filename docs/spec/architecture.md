@@ -2,18 +2,18 @@
 
 ## 1. 系统形态
 
-ypscan 是 OpenClaw 插件（`private: true`，ESM，无 TypeScript 源文件，类型安全靠 JSDoc + `tsc --checkJs`）。运行时依赖为 `ali-oss`、`read-excel-file`（受控预览解析）、`fflate`（ZIP 元数据预检）与 `playwright-core`（仅为遗留 browser 工具保留，当前未注册任何 browser 工具）。
+ypscan 是 OpenClaw 插件（`private: true`，ESM，无 TypeScript 源文件，类型安全靠 JSDoc + `tsc --checkJs`）。运行时依赖为 `ali-oss`、`read-excel-file`（受控预览/评分解析）、`write-excel-file`（最终汇总表写入）、`fflate`（ZIP 元数据预检）与 `playwright-core`（仅为遗留 browser 工具保留，当前未注册任何 browser 工具）。
 
 ```
 OpenClaw 宿主
   └─ index.js（插件入口）
-       ├─ 注册 4 个本地工具（src/tools/*）
+       ├─ 注册 5 个本地工具（src/tools/*）
        ├─ 注册 3 个流程 Hook + 2 个 Gateway 生命周期 Hook
        ├─ manifest 声明 Provider MCP 连接与工具白名单
        └─ skills/media-assistant（业务行为权威，随包发布）
 
 远端：
-  ├─ Provider MCP  https://mcp.eshypdata.com/mcp（Streamable HTTP，14 个白名单工具）
+  ├─ Provider MCP  https://mcp.eshypdata.com/mcp（Streamable HTTP，13 个白名单工具）
   └─ Dify Workflow  https://dfi.eshypdata.com/v1/workflows/run（需求解析）
 ```
 
@@ -21,10 +21,11 @@ OpenClaw 宿主
 
 | 组件                                                                                              | 职责                         | 关键事实                                                                                                                                                                                       |
 | ------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.js`                                                                                        | 入口：注册工具与 Hook        | 3 工具、5 Hook；`gateway_start`/`gateway_stop` 调 `resetTransientState()`                                                                                                                      |
-| `openclaw.plugin.json`                                                                            | 插件清单                     | Provider MCP 白名单 14 工具；`connectionTimeoutMs: 5000`、`requestTimeoutMs: 330000`；`configSchema` 含 `testMode` / `testAdapterBaseUrl` / `fileBridgeOss`；`contracts.tools` 列 4 个本地工具 |
+| `index.js`                                                                                        | 入口：注册工具与 Hook        | 5 工具、5 Hook；`gateway_start`/`gateway_stop` 调 `resetTransientState()`                                                                                                                      |
+| `openclaw.plugin.json`                                                                            | 插件清单                     | Provider MCP 白名单 13 工具；`connectionTimeoutMs: 5000`、`requestTimeoutMs: 330000`；`configSchema` 含 `testMode` / `testAdapterBaseUrl` / `fileBridgeOss`；`contracts.tools` 列 5 个本地工具 |
 | `src/tools/parse-requirement.js`                                                                  | 需求解析代理                 | 直连 Dify（blocking 模式，60s 超时），`data.outputs` 只返回契约消费字段                                                                                                                        |
-| `src/tools/save-artifact.js`                                                                      | Excel/links CSV 受控保存     | 单一工具、7 种 artifact_kind；kind 决定扩展名，共用主域校验、下载限制、重试、原子发布与幂等逻辑                                                                                                |
+| `src/tools/save-artifact.js`                                                                      | Excel/links CSV 受控保存     | 单一工具、8 种 artifact_kind；kind 决定扩展名，共用主域校验、下载限制、重试、原子发布与幂等逻辑                                                                                                |
+| `src/tools/manual-score-summary.js`                                                               | 手动拓展评分汇总             | 从哈希校验的受控来源重算进度，精确累计推荐人数，返回下一批或生成最终两表 Excel                                                                                                                    |
 | `src/tools/merge-creator-csv.js`                                                                  | `file_bridge` 的内部合并实现 | 非公开工具；包含 CSV 编解码，保持 links 原顺序，输出名含 flow/平台/需求/哈希                                                                                                                   |
 | `src/tools/file-bridge.js`                                                                        | CSV 合并与可选上传           | 调内部合并实现；mcn_complete_only/超限只本地交付，其余按插件配置 `fileBridgeOss` → 打包内置凭据读取（内部测试/集成可显式注入 env）并上传，再校验公网可读 URL                                     |
 | `src/tools/popup-questions.js`                                                                    | AskUserQuestion 统一弹窗载荷 | 每行最多 20 个 Unicode 字符；每题 2–4 选项、1–4 题                                                                                                                                             |
@@ -63,9 +64,9 @@ OpenClaw 宿主
 ```
 业务模式确定 → ypscan_parse_requirement → 复核 → validate_requirement（预检+归一化）
 → select_inquiry_form_fields → manual_source_creators(requirement_id)
-→ 同步返回 links CSV：保存 manual_creator_links → 原生补全(20/批)
+→ 同步返回 links CSV：保存 manual_creator_links → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全(最多20人)
   → file_bridge(manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 30s×10 轮询
-  → 保存 manual_source Excel（最终交付）
+  → 保存 manual_score_batch → ypscan_summarize_manual_scores（达标交付汇总表，否则下一批）
 → 返回 batch_id：提示后台耗时 → manual_source_creators_status 30s×10 轮询（`num` 的位置按当前环境 live schema required 决定）→ 同上 CSV 链路
 → 旧 Provider 返回 Excel：降级路径，保存即交付，不进 CSV 链路
 ```
@@ -92,7 +93,7 @@ OpenClaw 宿主
 
 ### 5.4 CSV 中心链路（替代旧 Excel 直接链路）
 
-- **选择**：links CSV 是达人补全与排序的正式中间产物；`file_bridge` 直接接收 links CSV 与全部补全 CSV，在内部合并并按 flow 决定是否上传，不暴露单独的合并工具或 `merged_csv_path` 中间参数。`score_manual_source_csv` 消费它返回的 OSS `csv_file_path`，是手动拓展与询价回收两链路共用的通用打分步骤；询价回收链的 links CSV 由 `ypscan_save_creator_links` 直接读取已受控保存的 Excel 派生。`rank_creators`、`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export` 已从正式链路移除。
+- **选择**：links CSV 是达人补全与排序的正式中间产物；`file_bridge` 接收 links CSV 与当前手动拓展批次（机构回收为全部批次）的补全 CSV，在内部合并并按 flow 决定是否上传，不暴露单独的合并工具或 `merged_csv_path` 中间参数。`score_manual_source_csv` 消费它返回的 OSS `csv_file_path`，是手动拓展与询价回收两链路共用的通用打分步骤；询价回收链的 links CSV 由 `ypscan_save_creator_links` 直接读取已受控保存的 Excel 派生。`rank_creators`、`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export` 已从正式链路移除。
 - **为什么**：达人补全结果需要可合并、可校验行数；CSV 显式上传后打分/精排，交付物与评分口径一致。
 - **代价**：合并与上传共享一个工具边界，单独重跑上传需重新执行幂等合并；旧 Provider 返回 Excel 时保留降级保存路径。
 
@@ -107,8 +108,8 @@ OpenClaw 宿主
 | 风险           | 说明                                                                                                                    | 缓解                                                                                                |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | 契约漂移       | 工具卡、Hook 指令、Provider MCP schema 三处手工对齐；`rank_creators` 已废弃但仍暴露于 Provider | smoke + 行为回归用例 + `scripts/audit-provider-tools.mjs` 审计；长期看自动 schema 校验              |
-| 预检过严/过松  | 证据门禁（品牌/数量/截止/粉丝/返点/报价）误伤合法需求或放过编造值                                                       | `benchmarks/requirement-parser/RESULTS.md` 回归评测；`docs/review-checklist.md` 逐条核对            |
-| 瞬态状态丢失   | 映射在 gateway 启停时清空，长会话依赖宿主不重启                                                                         | 指令设计保证模式/平台可从参数与结果再推导，不把映射当唯一真相                                       |
+| 预检过严/过松  | 证据门禁（品牌/数量/截止/粉丝/返点/报价）误伤合法需求或放过编造值                                                       | `tests/registry.test.mjs` 与 `tests/requirement-parser.test.mjs` 代码回归；`docs/review-checklist.md` 行为验收（不能以代码测试替代）            |
+| 瞬态状态丢失   | 映射和手动评分来源在 gateway 启停时清空，长会话依赖宿主不重启                                                                         | 常规路由仍从参数/结果推导；评分汇总缺少来源时显式停止并保留已有文件，不猜测恢复或重复外部调用                                       |
 | testMode 误开  | `testMode=true` 允许受控读取 loopback adapter                                                                           | `resolveTestAdapterBaseUrl` 强制校验 loopback origin（无凭据、无 query/hash）                       |
 | OSS 匿名读策略 | 对象上传成功但 Bucket/账号策略仍可能阻断未签名访问，导致下游拿到坏链接                                                  | `file_bridge` 上传后立即匿名 `HEAD/GET` 校验；失败即返回 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE` |
 | 遗留代码误用   | 遗留 browser 工具被重新注册或进包                                                                                       | smoke 断言未注册、`npm pack --dry-run` 核对 `files` 白名单                                          |

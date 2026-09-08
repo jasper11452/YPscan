@@ -109,12 +109,13 @@ test("manual sourcing shares the reviewed relaxation policy and recreates requir
   assert.match(skill, /整体替换 rawMessagesJson\.original.*同一全文传给 ypscan_parse_requirement\.demand，复核后通过 validate_requirement 保存/u);
   assert.match(skill, /rawMessagesJson\.parse_outputs 全量替换为本次重解析结果/u);
   assert.match(manual, /creator_links_csv_url/u);
-  assert.match(manual, /20 个 author 一批/u);
-  assert.match(manual, /file_bridge（内部合并并上传）→ score_manual_source_csv/u);
+  assert.match(manual, /最多20人\/批/u);
+  assert.match(manual, /ypscan_summarize_manual_scores/u);
+  assert.match(manual, /file_bridge（仅当前批 CSV）→ score_manual_source_csv/u);
   assert.match(manual, /不得试调本工具探测 Provider 是否会强制报错/u);
   assert.match(manual, /Provider 应在启动本工具时做该校验并立即返回/u);
   assert.match(status, /creator_links_csv_url/u);
-  assert.match(status, /20 个 author 一批/u);
+  assert.match(status, /仅按返回的下一批名单原生补全/u);
   assert.match(status, /兼容降级路径/u);
 });
 

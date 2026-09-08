@@ -63,6 +63,59 @@ function createMergeFixture(t, { requirementId, flow = "manual_source", rowCount
   };
 }
 
+for (const platform of ["douyin", "xiaohongshu"]) {
+  for (const failedCount of [0, 2]) {
+    test(`fileBridge isolates 20+10 ${platform} batches with ${failedCount} first-batch failures`, async (t) => {
+      const { workspaceDir, params } = createMergeFixture(t, { rowCount: 30 });
+      params.platform = platform;
+      const ids = Array.from({ length: 30 }, (_, index) => `creator-${index + 1}`);
+      const firstPath = params.completion_csv_paths[0];
+      const secondPath = join(workspaceDir, "second-batch.csv");
+      const idHeader = platform === "douyin" ? "请求星图ID" : "请求kw_uid";
+      const firstIds = ids.slice(0, 20 - failedCount);
+      const secondIds = ids.slice(20);
+      for (const [path, selected] of [
+        [firstPath, firstIds],
+        [secondPath, secondIds],
+      ]) {
+        writeFileSync(path, [idHeader, ...selected].join("\n"));
+      }
+      const uploads = [];
+      const options = {
+        workspaceDir,
+        bundled: null,
+        pluginConfig: {
+          fileBridgeOss: { accessKeyId: "test-ak", accessKeySecret: "test-sk" },
+        },
+        allowedLinksCsvPaths: () => [params.links_csv_path],
+        allowedCompletionCsvPaths: () => [firstPath, secondPath],
+        createClient: () => ({
+          put: async (_key, buffer) => {
+            uploads.push(parseCsv(buffer.toString("utf8")).rows.map((row) => row[1]));
+            return { res: { statusCode: 200 } };
+          },
+        }),
+        fetchImpl: async () => new Response(null, { status: 200 }),
+        retryDelaysMs: [],
+      };
+      const first = payload(await fileBridge(params, options));
+      const second = payload(
+        await fileBridge({ ...params, completion_csv_paths: [secondPath] }, options),
+      );
+      assert.equal(first.success, true);
+      assert.equal(second.success, true);
+      assert.deepEqual(uploads, [firstIds, secondIds]);
+      assert.equal(first.data.data_row_count, 20 - failedCount);
+      assert.equal(second.data.data_row_count, 10);
+      assert.notEqual(first.data.csv_file_path, second.data.csv_file_path);
+      assert.equal(new Set(uploads.flat()).size, 30 - failedCount);
+      // Missing includes both the failed first-batch authors and the unstarted second batch.
+      assert.deepEqual(first.data.missing_creator_ids, ids.slice(20 - failedCount));
+      assert.deepEqual(second.data.missing_creator_ids, ids.slice(0, 20));
+    });
+  }
+}
+
 test("fileBridge merges completion batches and returns a local result without uploading", async (t) => {
   const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-file-bridge-merge-"));
   t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));

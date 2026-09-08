@@ -11,9 +11,9 @@ Submit the current merged creator CSV for scoring and sorting. This is a generic
 
 ## Result
 
-The response is asynchronous: it returns a `job_id`. Copy the exact `job_id` to `score_manual_source_csv_status` and poll it every 30 seconds, at most 10 queries in one run, until the final workbook URL is returned; then save it immediately with `ypscan_save_artifact` using `artifact_kind="manual_source"`, the current `requirement_id` as `artifact_id`, and the exact workbook URL as `file_url`. A `job_id` alone is not a completed score.
+The response is asynchronous: it returns a `job_id`. Copy the exact `job_id` to `score_manual_source_csv_status` and poll it every 30 seconds, at most 10 queries in one run, until the final workbook URL is returned; then save it immediately with `ypscan_save_artifact` using `artifact_kind="manual_score_batch"` for manual sourcing, or `artifact_kind="manual_source"` for inquiry retrieval, with, the current `requirement_id` as `artifact_id`, and the exact workbook URL as `file_url`. For manual sourcing this is an intermediate batch: immediately call `ypscan_summarize_manual_scores({requirement_id})`; only its `deliver` action finishes the flow. A `job_id` alone is not a completed score.
 
-If an older Provider synchronously returns the final Excel workbook instead, save it directly as the compatible result; do not poll a status tool in that case.
+If an older Provider synchronously returns the final Excel workbook instead, save it using the same mode-specific artifact kind and follow the same summary/delivery rule; do not poll a status tool in that case.
 
 ## Upload availability
 

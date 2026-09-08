@@ -1,0 +1,184 @@
+import assert from "node:assert/strict";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import plugin from "../index.js";
+import { previewFixture } from "./helpers/creator-preview-fixture.mjs";
+
+function canonicalValidateParams(businessMode, quantityTotal = 30) {
+  return {
+    platform: "douyin",
+    brandName: ["测试品牌"],
+    projectName: "测试项目",
+    quantityTotal,
+    submissionDeadlineAt: "2099-08-25 12:00:00",
+    rebate: "25%以上",
+    followercount: [0, 999999999],
+    contentTag: ["科技", "耳机"],
+    rawMessagesJson: JSON.stringify({
+      original: `抖音项目：测试项目；品牌：测试品牌；定制视频；${quantityTotal}位；单价5万元；返点25%以上；粉丝不限；提报截止2099-08-25 12:00:00；科技耳机方向。`,
+      parse_outputs: { dybrandName: ["测试品牌"] },
+      business_mode: businessMode,
+    }),
+    kolOfficialPriceL3: 50000,
+  };
+}
+
+async function setup(t, mode = "手动拓展") {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-score-flow-"));
+  t.after(() => rm(workspaceDir, { recursive: true, force: true }));
+  const context = { workspaceDir, sessionKey: "score-flow" };
+  const hooks = new Map();
+  const tools = new Map();
+  const downloads = new Map();
+  plugin.register({
+    fetch: async (url) => new Response(downloads.get(String(url)), { status: 200 }),
+    registerTool(tool) {
+      const value = typeof tool === "function" ? tool(context) : tool;
+      tools.set(value.name, value);
+    },
+    on(name, fn) {
+      hooks.set(name, fn);
+    },
+  });
+  let seq = 0;
+  function before(name, params) {
+    const toolCallId = `call-${++seq}`;
+    const result = hooks.get("before_tool_call")({ toolName: name, params, toolCallId }, context);
+    assert.notEqual(result?.block, true, result?.blockReason);
+    return { toolName: name, toolCallId, params: result?.params ?? params };
+  }
+  function persist(event, result) {
+    const message = result.content
+      ? { role: "toolResult", ...result }
+      : { role: "toolResult", content: [{ type: "text", text: JSON.stringify(result) }] };
+    const amended = hooks.get("tool_result_persist")({ ...event, message }, context);
+    return amended?.message?.content?.at(-1)?.text ?? "";
+  }
+  function remote(name, params, result) {
+    return persist(before(name, params), result);
+  }
+  async function local(name, params) {
+    const event = before(name, params);
+    const result = await tools.get(name).execute(event.toolCallId, params);
+    return { payload: JSON.parse(result.content[0].text), directive: persist(event, result) };
+  }
+  remote("validate_requirement", canonicalValidateParams(mode, 10), {
+    success: true,
+    data: { requirement_id: "req" },
+  });
+  const ids = Array.from({ length: 30 }, (_, i) => `7324533389695025${String(i).padStart(3, "0")}`);
+  const links = [
+    "source_record_id,creator_id,url",
+    ...ids.map(
+      (id, i) => `${i},${id},https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/${id}`,
+    ),
+  ].join("\n");
+  downloads.set("https://eshypdata.com/links.csv", links);
+  const saved = await local("ypscan_save_artifact", {
+    artifact_kind: "manual_creator_links",
+    artifact_id: "req",
+    file_url: "https://eshypdata.com/links.csv",
+  });
+  assert.equal(saved.payload.success, true);
+  const normalized = await local("ypscan_save_creator_links", {
+    requirement_id: "req",
+    platform: "douyin",
+    links_csv_path: saved.payload.data.file_path,
+  });
+  assert.equal(normalized.payload.success, true, JSON.stringify(normalized.payload));
+  let batch = 0;
+  async function score(selected, recommended) {
+    batch++;
+    const path = join(workspaceDir, `completion-${batch}.csv`);
+    await writeFile(path, "creator_id\n" + selected.join("\n"));
+    const completionDirective = remote(
+      "get_douyin_author_business_card",
+      {},
+      { csv_file: path, successful_author_ids: selected, failed_author_ids: [] },
+    );
+    remote(
+      "score_manual_source_csv",
+      { requirement_id: "req", csv_file_path: `https://example.invalid/batch-${batch}.csv` },
+      { success: true, data: { job_id: `job-${batch}` } },
+    );
+    const url = `https://eshypdata.com/score-${batch}.xlsx`;
+    const resultDirective = remote(
+      "score_manual_source_csv_status",
+      { job_id: `job-${batch}` },
+      { success: true, data: { excel_file_url: url } },
+    );
+    const args = JSON.parse(
+      resultDirective
+        .split("\n")
+        .find((line) => line.startsWith("SAVE_ARTIFACT_ARGS="))
+        .slice("SAVE_ARTIFACT_ARGS=".length),
+    );
+    const workbook = previewFixture(workspaceDir, {
+      name: `fixture-${batch}.xlsx`,
+      rows: [
+        ["需求ID", "req"],
+        ["平台", "星图ID", "综合得分", "推荐结论"],
+        ...selected.map((id, i) => ["douyin", id, "80", i < recommended ? "推荐" : "不推荐"]),
+      ],
+    });
+    const { readFile } = await import("node:fs/promises");
+    downloads.set(url, await readFile(workbook.file_path));
+    const savedScore = await local("ypscan_save_artifact", args);
+    assert.equal(savedScore.payload.success, true);
+    return { completionDirective, args, savedScore };
+  }
+  return { ids, normalized, score, local, hooks, remote, context, workspaceDir };
+}
+
+test("registered tools: initial batch, first 20 sufficient, save then summarize and stop", async (t) => {
+  const f = await setup(t);
+  assert.match(f.normalized.directive, /SUMMARIZE_MANUAL_SCORES_ARGS=/u);
+  const first = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.deepEqual(first.payload.data.next_author_ids, f.ids.slice(0, 20));
+  const batch = await f.score(f.ids.slice(0, 20), 10);
+  assert.match(batch.completionDirective, /只合并上传当前批/u);
+  const bridgeArgs = JSON.parse(
+    batch.completionDirective
+      .split("\n")
+      .find((s) => s.startsWith("FILE_BRIDGE_ARGS="))
+      .slice("FILE_BRIDGE_ARGS=".length),
+  );
+  assert.equal(bridgeArgs.completion_csv_paths.length, 1);
+  assert.equal(batch.args.artifact_kind, "manual_score_batch");
+  assert.match(batch.savedScore.directive, /SUMMARIZE_MANUAL_SCORES_ARGS=/u);
+  const last = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(last.payload.success, true);
+  assert.equal(last.payload.data.recommended_count, 10);
+  assert.equal(last.payload.data.next_action, "deliver");
+  assert.deepEqual(last.payload.data.next_author_ids, []);
+  assert.match(last.directive, /禁止继续补全或评分/u);
+});
+
+test("registered tools: 6 plus 4 recommendations advance exactly once and deliver 30 scored", async (t) => {
+  const f = await setup(t);
+  await f.score(f.ids.slice(0, 20), 6);
+  const next = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(next.payload.success, true);
+  assert.deepEqual(next.payload.data.next_author_ids, f.ids.slice(20));
+  await f.score(f.ids.slice(20), 4);
+  const last = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(last.payload.data.scored_count, 30);
+  assert.equal(last.payload.data.recommended_count, 10);
+  assert.equal(last.payload.data.next_action, "deliver");
+  await f.hooks.get("gateway_stop")();
+  const reset = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(reset.payload.success, false);
+});
+
+test("inquiry uses all completion batches and final artifact, never manual early stop", async (t) => {
+  const f = await setup(t, "询价机构");
+  assert.doesNotMatch(f.normalized.directive, /SUMMARIZE_MANUAL_SCORES_ARGS=/u);
+  const batch = await f.score(f.ids.slice(0, 20), 10);
+  assert.match(batch.completionDirective, /汇总全部补全批次/u);
+  assert.equal(batch.args.artifact_kind, "manual_source");
+  assert.doesNotMatch(batch.savedScore.directive, /SUMMARIZE_MANUAL_SCORES_ARGS=/u);
+  const summary = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(summary.payload.success, false);
+});

@@ -12,6 +12,7 @@ const ARTIFACT_EXTENSIONS = {
   mcn_ranking: ".xlsx",
   mcn_creator_preview: ".xlsx",
   manual_source: ".xlsx",
+  manual_score_batch: ".xlsx",
   ranked_submission: ".xlsx",
   manual_creator_links: ".csv",
   mcn_creator_links: ".csv",
@@ -277,7 +278,7 @@ async function existingFileState(targetPath, expectedSha256) {
   }
 }
 
-async function publishWithoutOverwrite(tempPath, targetPath, sha256) {
+export async function publishWithoutOverwrite(tempPath, targetPath, sha256) {
   const existing = await existingFileState(targetPath, sha256);
   if (!existing.ok || existing.idempotent) return existing;
   try {
@@ -328,7 +329,7 @@ export async function saveArtifact(
     );
   }
   const format = extension === ".xlsx" ? "Excel" : "CSV";
-  const fileName = artifactFileNameFromDownloadUrl(fileUrl, artifactKind, extension);
+  let fileName = artifactFileNameFromDownloadUrl(fileUrl, artifactKind, extension);
   if (!nonemptyString(workspaceDir) || !isAbsolute(workspaceDir)) {
     return failure("YPSCAN_WORKSPACE_UNAVAILABLE", "宿主未提供可信的当前项目目录");
   }
@@ -346,7 +347,7 @@ export async function saveArtifact(
     return failure("YPSCAN_WORKSPACE_UNAVAILABLE", "当前项目目录不可用");
   }
 
-  const targetPath = join(workspacePath, fileName);
+  let targetPath = join(workspacePath, fileName);
   const tempPath = join(workspacePath, `.${fileName}.ypscan-${randomUUID()}.tmp`);
   let tempCreated = false;
   try {
@@ -393,7 +394,18 @@ export async function saveArtifact(
     } finally {
       await tempHandle.close();
     }
-    const published = await publishWithoutOverwrite(tempPath, targetPath, sha256);
+    let published = await publishWithoutOverwrite(tempPath, targetPath, sha256);
+    if (
+      !published.ok &&
+      published.code === "YPSCAN_ARTIFACT_SAVE_CONFLICT" &&
+      (artifactKind === "manual_source" || artifactKind === "manual_score_batch")
+    ) {
+      // Separate scoring exports may reuse a basename; preserve both without overwriting.
+      const requirementHash = createHash("sha256").update(artifactId).digest("hex").slice(0, 16);
+      fileName = `${artifactKind}-${requirementHash}-${sha256}.xlsx`;
+      targetPath = join(workspacePath, fileName);
+      published = await publishWithoutOverwrite(tempPath, targetPath, sha256);
+    }
     if (!published.ok) {
       return failure(
         published.code,

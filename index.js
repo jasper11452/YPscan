@@ -5,6 +5,7 @@ import {
   PARSE_REQUIREMENT_PARAMETERS,
 } from "./src/tools/parse-requirement.js";
 import { ARTIFACT_KINDS, saveArtifact } from "./src/tools/save-artifact.js";
+import { summarizeManualScores } from "./src/tools/manual-score-summary.js";
 import { fileBridge } from "./src/tools/file-bridge.js";
 import { saveCreatorLinks } from "./src/tools/save-creator-links.js";
 import { resolveTestAdapterBaseUrl } from "./src/tools/test-adapter.js";
@@ -127,7 +128,12 @@ export default {
           });
           const filePath = result?.details?.file_path;
           if (filePath) {
-            hookRuntime.recordLinksCsv(params.requirement_id, filePath, context?.workspaceDir);
+            hookRuntime.recordLinksCsv(
+              params.requirement_id,
+              filePath,
+              context?.workspaceDir,
+              result.details.sha256,
+            );
           }
           return result;
         },
@@ -173,6 +179,27 @@ export default {
         },
       }),
       { name: "file_bridge" },
+    );
+
+    api.registerTool(
+      (context) => ({
+        name: "ypscan_summarize_manual_scores",
+        description:
+          "仅手动拓展：读取当前需求已登记的候选与各批评分 Excel，精确累计去重后的推荐人数；返回下一批最多20人的 next_author_ids，达标或候选耗尽时生成最终汇总 Excel。不得用模型估算推荐人数。",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          required: ["requirement_id"],
+          properties: { requirement_id: { type: "string", minLength: 1 } },
+        },
+        async execute(_id, params) {
+          return summarizeManualScores(params, {
+            workspaceDir: context?.workspaceDir,
+            sourceContext: hookRuntime.manualScoreContextFor(params.requirement_id),
+          });
+        },
+      }),
+      { name: "ypscan_summarize_manual_scores" },
     );
 
     api.on("gateway_start", async () => {

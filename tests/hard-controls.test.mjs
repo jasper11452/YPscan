@@ -683,7 +683,7 @@ test("manual source status args prefill num from the validated requirement quant
   assert.match(directiveText(resumed), /MANUAL_SOURCE_TARGET_NUM=90/u);
 });
 
-test("native completion pins the file bridge flow to the validated business mode", () => {
+test("native completion requires manual source context and preserves inquiry bridge flow", () => {
   const hooks = registeredHooks();
   const before = hooks.get("before_tool_call");
   const persist = hooks.get("tool_result_persist");
@@ -696,7 +696,7 @@ test("native completion pins the file bridge flow to the validated business mode
     },
   });
 
-  // 手动拓展分支：flow=manual_source。
+  // 手动拓展缺少可信调用坐标与归一化 links，必须停止而不是猜测上传来源。
   const manualContext = { sessionKey: "completion-flow-manual" };
   const manualParams = completeValidateParamsForMode("手动拓展");
   before({ toolName: "ypmcn__validate_requirement", params: manualParams }, manualContext);
@@ -716,7 +716,8 @@ test("native completion pins the file bridge flow to the validated business mode
     },
     manualContext,
   );
-  assert.match(directiveText(manualCompletion), /^FILE_BRIDGE_FLOW=manual_source$/mu);
+  assert.match(directiveText(manualCompletion), /缺少可信需求或 links 来源/u);
+  assert.doesNotMatch(directiveText(manualCompletion), /FILE_BRIDGE_ARGS=|FILE_BRIDGE_FLOW=/u);
 
   // 询价机构分支：flow=manual_source（补全后统一打分排序）。
   const inquiryContext = { sessionKey: "completion-flow-inquiry" };

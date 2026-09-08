@@ -2,7 +2,7 @@
 
 Risk tier: local merge with conditional network upload.
 
-Call once after all platform-native creator-completion batches finish. This tool replaces the former separate merge step: it merges the current links CSV with all completion CSVs, saves the merged CSV locally, and decides from `flow` whether to upload it.
+For manual sourcing, call after each native completion batch with only that batch’s CSV, then score and summarize before starting another batch. For inquiry retrieval, call once after all completion batches finish with all their CSVs. The existing merge outputs only matched creators, saves the CSV locally, and decides from `flow` whether to upload it.
 
 ## Arguments
 
@@ -10,11 +10,11 @@ Call once after all platform-native creator-completion batches finish. This tool
 - `platform`: `xiaohongshu` or `douyin`.
 - `flow`: `manual_source`, `mcn_rank`, or `mcn_complete_only`.
 - `links_csv_path`: absolute local path of the current links CSV. In both chains this is the path returned by `ypscan_save_creator_links` (the normalized three-column links CSV derived from the saved Provider links CSV or the read preview Excel). Never pass the raw Provider CSV saved by `ypscan_save_artifact`.
-- `completion_csv_paths`: non-empty list containing every successful completion batch CSV from the current requirement and platform.
+- `completion_csv_paths`: non-empty list containing only the current batch CSV for manual sourcing, or all successful batch CSVs for inquiry retrieval. Never resubmit previously scored batches.
 
 Input CSV paths must be absolute and have no leading or trailing whitespace; ambiguous whitespace paths are rejected before reading or uploading.
 
-Do not pre-merge files, pass a `merged_csv_path`, mix requirements/platforms, or omit successful batches.
+Do not pre-merge files, pass a `merged_csv_path`, mix requirements/platforms, or omit successful files within the batch being submitted. In manual sourcing, `missing_creator_ids` also includes future candidates and is not the native completion failure list.
 
 ## ID matching
 

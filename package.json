@@ -1,6 +1,6 @@
 {
   "name": "ypscan",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "悦普识星客户端集成层：业务模式前置，支持机构询价与后台手动拓展双分支。",
   "type": "module",
   "private": true,
@@ -13,6 +13,7 @@
     "src/hooks/register-flow-directives.js",
     "src/tools/manual-research/platform-cascade-routes.json",
     "src/tools/file-bridge.js",
+    "src/tools/manual-score-summary.js",
     "src/tools/file-bridge-oss-defaults.json",
     "src/tools/merge-creator-csv.js",
     "src/tools/parse-requirement.js",
@@ -60,7 +61,8 @@
   "dependencies": {
     "ali-oss": "^6.23.0",
     "fflate": "0.8.3",
+    "playwright-core": "1.62.1",
     "read-excel-file": "9.3.10",
-    "playwright-core": "1.62.1"
+    "write-excel-file": "4.1.1"
   }
 }

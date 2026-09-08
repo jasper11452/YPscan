@@ -25,7 +25,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 询价机构：`ypscan_parse_requirement → 复核 → validate_requirement → search_creators → rank_mcns → MCN 排名表 → 选择收件机构 → 选择字段 → 发送确认 → create_with_distributions → 用户说机构已回填 → sync_mcn_inquiry_status(requirement_id, project_id, supplierIds) → 用其返回的 inquiry_ids 直接 ingest_mcn_submissions → get_ingest_job（到 succeeded/partially_succeeded）→ 保存机构达人预览表 → 询问用户是否补全 → ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生达人补全(20/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存打分排序 Excel`
 
-手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators(requirement_id) → 同步 links CSV 直接保存，或 manual_source_creators_status(requirement_id, batch_id, num) 轮询 → 保存 links CSV → 原生达人补全(20/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存并交付最终手动拓展表`
+手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators(requirement_id) → 同步 links CSV 直接保存，或 manual_source_creators_status(requirement_id, batch_id, num) 轮询 → 保存并归一化 links CSV → ypscan_summarize_manual_scores 取得当前批 → 原生达人补全(最多20人/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，仅合并上传当前批) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存单批 manual_score_batch → 再汇总（达标交付，否则下一批）`
 
 每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement。即使同一会话、同一平台、业务条件未变，或询价完成/停止后改用手动拓展（反之亦然），也必须重新调用 `ypscan_parse_requirement`、按下文复核并调用 `validate_requirement`；不得跨功能复用 requirement 或已提交字段配置，新 requirement 必须重新调用 `select_inquiry_form_fields`。两个功能不得并行执行，也不得复用旧机构、达人、batch、CSV 或 Excel。用户过去对其他 requirement 说过“以后不用再选字段”等不算当前 requirement 已提交字段的证据。字段选择 URL 输出后本轮必须结束并等待；只有用户为这个 requirement 提交字段页并明确回复“好了”后才恢复原分支，禁止同一轮试调搜索、手动拓展或打分。
 
@@ -71,6 +71,8 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 用户说机构已回填时，回收第一步固定调用 `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})`，用其返回的 `inquiry_ids` 直接调用 `ingest_mcn_submissions({inquiry_ids})`，不依赖 `get_workflow_state`。随后轮询 `get_ingest_job` 到 `succeeded` 或 `partially_succeeded`，保存机构达人预览表，再询问用户是否补全。`get_ingest_job` 终态只回一份预览 Excel（`excel_file_url` + `excel_columns`），没有 links CSV。
 
+保存机构达人预览表时，必须使用 `ypscan_save_artifact(artifact_kind="mcn_creator_preview", artifact_id=当前 requirement_id, file_url=本次终态预览 Excel URL)`。本次 ingest 的 `job_id` 仅用于 `get_ingest_job` 查询，绝不得作为 `artifact_id`；保存前核对 `artifact_id` 是当前需求 ID，后续 `ypscan_save_creator_links.requirement_id` 必须与其一致。
+
 - 保存预览表后询问用户是否补全；选“补全并打分排序”时：`ypscan_save_creator_links({requirement_id, preview_file_path, platform})` 直接读取已受控保存的预览 xlsx 并派生 links CSV，返回的原始字段仅供核验，不是合格名单 → 按 20 个一批调用对应平台的原生达人补全工具（小红书 `get_xhs_author_business_card` 且固定 `page_count=1`；抖音 `get_douyin_author_business_card`。两者均由宿主 YP Action 提供、不在 ypscan 白名单内，宿主未开放时如实报告并停止补全，不得改用 Browser 或其他手扒工具）→ 全部批次完成后调用 `file_bridge(flow=manual_source)` 合并并上传 → `score_manual_source_csv` → `score_manual_source_csv_status` 轮询 → 保存打分排序 Excel。
 - `partially_succeeded` 时如实报告哪些机构 pending、哪些已回填，让用户选择“补全并打分排序 / 暂不补全”，不把部分成功当全部完成。
 
@@ -82,9 +84,13 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 若提交响应同步直接返回 links CSV，则立即保存并归一化 links CSV（见下文），再进入原生达人补全；若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID、`batch_id` 和用户需求人数三倍的 `num`（正整数，即每批取 links URL 的数量）第 1 次查询。Hook 会通过 `MANUAL_SOURCE_TARGET_NUM` 提示当前 requirement 落库的 `quantityTotal × 3`（需求 30 人则取 90）；当前环境 live schema required `num` 时直接把该值并入状态查询，不得再次乘三。缺少需求记录时沿用上一轮已发送的 `num`。最终交付目标仍为用户需求人数。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 requirement ID、batch ID 和当前环境 live schema 对应的目标数量参数开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
 
-拿到 links CSV 后，先调用 `ypscan_save_artifact` 保存为 `manual_creator_links`（原始 Provider 下载物，可能只有 url 列），原样展示本地链接；再用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 读取该文件并归一化为受控三列 links CSV（`source_record_id,creator_id,url`：只有 url 列时按平台主页规则推导 creator_id；短链或无法推导时立即失败并停止，不进入原生补全）。归一化成功后再按当前平台分 20 个 author 一批调用原生达人补全工具。小红书使用 `get_xhs_author_business_card` 且固定 `page_count=1`，抖音使用 `get_douyin_author_business_card`；两者均由宿主 YP Action 提供、不在 ypscan 白名单内，宿主未开放时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；若某批 `csv_file` 缺失则停止后续 file_bridge 和打分，并原样报告失败达人。
+拿到 links CSV 后，先调用 `ypscan_save_artifact` 保存为 `manual_creator_links`（原始 Provider 下载物，可能只有 url 列），原样展示本地链接；再用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 读取该文件并归一化为受控三列 links CSV（`source_record_id,creator_id,url`：只有 url 列时按平台主页规则推导 creator_id；短链或无法推导时立即失败并停止，不进入原生补全）。归一化成功后调用 `ypscan_summarize_manual_scores({requirement_id})`，从当前真实候选中按原顺序去重、最多使用 `quantityTotal × 3` 人，按返回的 `next_author_ids` 调用当前平台原生达人补全工具，每批最多 20 人。候选少于三倍时按实际候选处理，不伪造或保证搜够三倍。小红书使用 `get_xhs_author_business_card` 且固定 `page_count=1`，抖音使用 `get_douyin_author_business_card`；两者均由宿主 YP Action 提供、不在 ypscan 白名单内，宿主未开放时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；若某批 `csv_file` 缺失则停止后续 file_bridge 和打分，并原样报告失败达人。
 
-全部补全批次完成后，按 [file_bridge](references/tools/file_bridge.md) 调用一次 `file_bridge(flow=manual_source)`，传入 `ypscan_save_creator_links` 归一化后的受控 links CSV 与全部补全 CSV；工具内部保持 links 原顺序合并。若 merged CSV 数据行超过 500，工具跳过上传并如实交付本地文件，必须停止后续打分。未超限时把返回的服务器侧 `csv_file_path` 传给 `score_manual_source_csv({requirement_id, csv_file_path})`；`csv_file_path` 只接受当前 `file_bridge` 返回值（当前实现为未签名 OSS URL），绝不传本机工作区路径或自行构造的路径。响应返回 `job_id` 时按 [score_manual_source_csv_status](references/tools/score_manual_source_csv_status.md) 每隔 30 秒轮询（单轮最多 10 次），成功后消费最终 workbook URL 并保存最终手动拓展 Excel；若 `score_manual_source_csv` 同步返回 Excel 则直接保存。若 OSS 对象虽已上传但匿名公网地址不可读，则 `file_bridge` 会返回 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，但仍保留本地 merged CSV 链接；不得继续打分。
+每批补全完成后，按 [file_bridge](references/tools/file_bridge.md) 调用 `file_bridge(flow=manual_source)`，传入完整受控 links CSV 与**仅当前批**补全 CSV；工具内部只输出匹配的达人。禁止累计传入之前已评分的补全 CSV，否则会重复评分。`missing_creator_ids` 包括未开始的后续候选，不等于补全失败名单；失败只认原生工具的 `failed_author_ids`。若 merged CSV 数据行超过 500，工具跳过上传并如实交付本地文件，必须停止后续打分。未超限时把返回的服务器侧 `csv_file_path` 传给 `score_manual_source_csv({requirement_id, csv_file_path})`；`csv_file_path` 只接受当前 `file_bridge` 返回值（当前实现为未签名 OSS URL），绝不传本机工作区路径或自行构造的路径。响应返回 `job_id` 时按 [score_manual_source_csv_status](references/tools/score_manual_source_csv_status.md) 每隔 30 秒轮询（单轮最多 10 次），成功后以 `artifact_kind="manual_score_batch"`、`artifact_id=当前 requirement_id` 保存本批 workbook；同步返回 Excel 时同样按单批保存。这是中间结果，保存并展示链接后立即调用 [ypscan_summarize_manual_scores](references/tools/ypscan_summarize_manual_scores.md)，禁止直接当作最终交付。若 OSS 对象虽已上传但匿名公网地址不可读，则 `file_bridge` 会返回 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，但仍保留本地 merged CSV 链接；不得继续打分。
+
+汇总工具精确识别评分表的“推荐结论”：仅“推荐”计数，“不推荐”不计数；未知结论、身份/需求/平台不一致、来源文件变化或相同达人结论冲突时停止，不猜测。`next_action=complete_next_batch` 时只补全返回的下一批；`await_scores` 时只等待当前已提交评分任务，若任务已终态但缺行则报告并停止，禁止自动重评或开始下一批；`deliver` 时展示汇总 Excel 并停止，不再处理剩余候选。主表是已评分推荐者按综合得分排序后的前 N 位，另一张表保留全部已评分结果；不保证未评分者中没有更优人选。候选耗尽仍不足时先交付真实结果、说明推荐人数和缺口，再按下文复核和建议放宽。没有实际文件时不得宣称交付。
+
+来源登记仅在当前插件生命周期内保留；Gateway 重置后缺少可信上下文时停止，不通过重新建需、重新评分或临时脚本猜测恢复。机构回收仍全部补全后一次上传评分，不使用本节分批早停。
 
 若旧 Provider 仍同步或异步返回 Excel，则仅作为兼容降级路径：立即保存并交付当前 Excel，不进入 CSV 补全/打分链路。该降级路径不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
 
@@ -100,7 +106,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 - 询价分支：`search_creators` 为 0 仍先执行 `rank_mcns`；只有 `rank_mcns` 为空时进入复核和放宽。
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
-- 手动拓展只有在当前 Provider 响应明确给出可信实际数量为 0 或少于用户需求人数 `quantityTotal` 时，才在交付当前真实 Excel 后进入同一复核和放宽建议；数量未知时不猜测，当前真实交付物即最终结果。
+- 手动拓展在分批汇总终态 `recommended_count` 少于 `quantityTotal` 时；旧 Excel 降级路径只有在当前 Provider 响应明确给出可信实际数量为 0 或少于用户需求人数 `quantityTotal` 时，才在交付当前真实 Excel 后进入同一复核和放宽建议；数量未知时不猜测，当前真实交付物即最终结果。
 
 每轮放宽只做建议、不自动执行：先可见地告诉用户实际数量、目标数量、缺口和按固定顺序得到的唯一下一项；提出该具体项后本轮必须结束并等待用户明确确认，禁止同一轮解析、落库或重跑。“放宽直到足量”等总体授权不替代后续每轮具体项确认。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand，复核后通过 validate_requirement 保存，由 Provider 从后台读取，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。询价机构确认放宽后仍以未改写原文重新解析并保存 original，累计放宽写入 clarifications 和本轮顶层参数。此前用户已确认的其他澄清答案（含截止时间）继续复用，不重复询问。随后重新解析、复核、创建新 requirement 并按原模式重跑。每项最多调整一次，不跨 requirement 混合结果。
 
@@ -125,4 +131,4 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 业务条件未变、只是前一功能完成或明确停止后要求另一功能时，也必须按当前功能重新解析、复核并创建新 requirement，重新提交字段配置；不得复用前一功能的 requirement、字段配置、机构、达人、batch、CSV 或 Excel。机构列表后的“暂不询价”、弹窗关闭/取消或当轮未回答不属于这里的“明确停止”；满足上文续办条件时继续原询价 requirement。
 
-MCN 排名表和机构达人预览表是询价链路中间产物；merged CSV 可能是最终交付，也可能是进入精排前的中间产物；手动拓展 Excel 和最终提报表是最终交付。所有结果只使用本轮真实 Provider 证据，不跨需求、平台、账号或历史 run 混用。
+MCN 排名表和机构达人预览表是询价链路中间产物；merged CSV 可能是最终交付，也可能是进入精排前的中间产物；手动拓展汇总 Excel（或旧链路兼容 Excel）和最终提报表是最终交付，`manual_score_batch` 是中间产物。所有结果只使用本轮真实 Provider 证据，不跨需求、平台、账号或历史 run 混用。
