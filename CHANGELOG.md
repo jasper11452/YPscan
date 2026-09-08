@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.0.17 — 2026-09-08
+
+- 插件代码与行为无变更；本版作为评分工作流 v3.6 的配套发布标记。
+- 评分工作流 v3.6：代表图上限由 8 张降为 3 张；视觉模型调用关闭思考（`enable_thinking=false`）并把 `max_tokens` 由 800 降到 400。实测视觉节点耗时 14.1s → 3.0s，小红书单次运行 41.4s → 29.2s，回到 Provider 45 秒读超时以内。
+- 验证：`lint`/`typecheck`/`test`/`smoke` 全绿；工作流草稿运行计时 3 次；真实小红书批次重跑 9/9 成功、`last_error=null`，交付表 74 列/9 行、结论二值、分数数值并通过消费方校验。
+- 已知边界：Provider 调 Dify 的 45 秒读超时未变（`score_manual_source_csv` schema 无该参数），仍需后端提高以留余量。
+
 ## 1.0.16 — 2026-09-08
 
 - 取消原生达人补全前的登录准备提示：不再要求 Agent 每批先调用 `pgy_auth_prepare`/`douyin_auth_prepare`。宿主 YP Action 的补全工具（`get_xhs_author_business_card`/`get_douyin_author_business_card`）自身处理登录态、按需打开登录窗口；插件不再注入 `AUTH_PREPARE_TOOL`/`AUTH_PREPARE_ARGS`，也不保留两张登录准备工具卡。SKILL、工具卡、Hook、Spec、验收清单与测试同步。
