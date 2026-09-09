@@ -5,7 +5,7 @@
 - 询价机构：`选择模式 → 解析复核落库 → search_creators → rank_mcns → 选择机构和字段 → 发送确认与企微询价 → sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 Excel → 询问是否补全 → ypscan_save_creator_links 派生 links CSV → 原生补全 → file_bridge 合并上传 → score_manual_source_csv → 保存打分排序 Excel`
 - 手动拓展：`选择模式 → 解析复核落库 → 选择字段 → manual_source_creators → 同步 links CSV 或 manual_source_creators_status 轮询 → 保存并归一化 links CSV → ypscan_summarize_manual_scores 取得当前批 → 原生补全 → file_bridge 仅合并上传当前批 → score_manual_source_csv → 同步 Excel 或 score_manual_source_csv_status 轮询 → 保存 manual_score_batch → 再汇总 → 达标交付或下一批`
 
-当前实现把 `links CSV` 作为达人补全与排序的正式中间产物；两分支按 20 个一批调用当前平台原生达人补全工具（登录态由宿主工具内部处理），再由 `file_bridge(flow=manual_source)` 合并并上传，交给 `score_manual_source_csv` 打分。用户可见的表格只有评分表、汇总表、MCN 排名表和机构回填预览表；links CSV、补全 CSV 和 merged CSV 都是内部中间产物，不主动向用户展示。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`；遗留 flow 只保留兼容接入。每次真正开始询价或手动拓展都必须重新解析、复核并创建独立的新 requirement，不跨功能复用结果或字段配置；当前机构列表后的“暂不询价”续办是例外。完整业务规则及例外以 [Skill](skills/media-assistant/SKILL.md) 为准。
+当前实现把 `links CSV` 作为达人补全与排序的正式中间产物；两分支按 20 个一批调用当前平台原生达人补全工具（登录态由宿主工具内部处理），再由 `file_bridge(flow=manual_source)` 合并并上传，交给 `score_manual_source_csv` 打分。用户可见的表格只有最终评分表、汇总表、MCN 排名表和机构回填预览表；手动拓展单批 `manual_score_batch`、links CSV、补全 CSV 和 merged CSV 都是内部中间产物，不主动向用户展示表格、路径或链接。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`；遗留 flow 只保留兼容接入。每次真正开始询价或手动拓展都必须重新解析、复核并创建独立的新 requirement，不跨功能复用结果；当前机构列表后的“暂不询价”续办是例外。完整业务规则及例外以 [Skill](skills/media-assistant/SKILL.md) 为准。
 
 `file_bridge` 的 OSS 凭据按“插件配置 `fileBridgeOss` → 打包内置凭据”读取，不隐式读取宿主进程环境变量；内部测试或集成仍可显式注入环境变量。`region`/`bucket`/`objectPrefix` 未配置时回落到内置非敏感默认值；官方发布包由 prepack 脚本（`scripts/prepare-oss-bundle.mjs`）把本机 `.env` 的 `AccessKeyId`/`AccessKeySecret` 等注入包内（凭据文件被 gitignore，不进入仓库），凭据成功注入且权限、网络满足要求时，安装后无需额外配置即可上传；本机缺少凭据时 prepack 会警告并继续打包，此类包需配置上传凭据，不能宣称免配置可用。上传前强制校验：links 与补全文件必须都是 `.csv`，merged CSV 必须为合法 CSV 内容；links CSV 必须是当前 requirement 受控保存的产物，补全 CSV 必须来自当前 requirement 的 YP Action 原生补全工具，否则返回 `YPSCAN_FILE_BRIDGE_SOURCE_NOT_ALLOWED` 且不上传。上传对象键固定为 `<Object 前缀>/<flow>/<requirement_id>/<sha256>.csv`，返回未签名 OSS 公网地址，并在交给下游前做匿名可读校验。
 
@@ -48,3 +48,5 @@ Smoke 断言本地工具为 5 个、Hook 为 5 个，并校验 package、manifes
 ## 开发资料
 
 仓库维护者从 [项目开发 Wiki](docs/wiki/README.md) 进入，按 [同步矩阵与发布流程](docs/wiki/sync-and-release.md) 完成相关资料更新和四处版本核对；当前实现见 [Spec](docs/spec/README.md)，体验验收见 [Review Checklist](docs/review-checklist.md)。`docs/` 是仓库工程资料，不在插件发布包内。
+
+字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured 后直接继续；URL 等待提交；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。

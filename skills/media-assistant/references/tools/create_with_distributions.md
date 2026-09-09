@@ -14,7 +14,7 @@ Call once after the user has chosen the inquiry branch, field selection has been
 - `supplier_id` is the first-priority recipient identity. For every institution name supplied or nominated by the user, first inspect only the current requirement and platform's real `rank_mcns.data.mcns` response. When the name has one exact match and that object has a non-empty `supplier_id`, put that ID in `supplierIds` and do not also put the same institution in `supplier_name`.
 - Put the user's original institution name in `supplier_name` only when no current rank object matches it exactly or the matching object has no `supplier_id`. Do not fuzzy-match locally, choose among multiple matching objects, rerun ranking, or read an ID from another requirement, platform, or run. The Provider owns matching for names that remain in `supplier_name`.
 - Both arrays may be non-empty in the same call when some requested institutions resolve to current rank IDs and others remain names.
-- Run [field selection](select_inquiry_form_fields.md) for the exact current requirement when needed. Submission persists the fields in the Provider database; do not retrieve them or carry them through Agent context.
+- Run [field selection](select_inquiry_form_fields.md) for the exact current requirement when needed. Submission or successful inheritance persists the fields in the Provider database; do not retrieve them or carry them through Agent context.
 
 ## Recipient cases
 

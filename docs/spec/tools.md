@@ -72,7 +72,7 @@
 ### 输出（成功）
 
 - `data`：`artifact_kind`、`artifact_id`（原样回显调用关联元数据）、`file_name`、`file_path`、`byte_count`、`sha256`、`idempotent`、`download_attempts`。
-- `delivery`：`local_path`、`local_file_link`（可点击 Markdown 链接）、`display_required`、`display_before_next_action`、`user_visible_message`；`mcn_ranking` 额外附 `next_tool: "AskUserQuestion"`、`next_args`（收件机构弹窗）、`next_action`。Excel kind 的 `display_required=true`，Agent 必须原样展示 `local_file_link`，不得只输出裸路径；`manual_creator_links`/`mcn_creator_links` 是内部中间产物，`display_required=false` 且不主动向用户展示表格、链接或本地路径。
+- `delivery`：`local_path`、`local_file_link`（可点击 Markdown 链接）、`display_required`、`display_before_next_action`、`user_visible_message`；`mcn_ranking` 额外附 `next_tool: "AskUserQuestion"`、`next_args`（收件机构弹窗）、`next_action`。用户可见 Excel kind 的 `display_required=true`，Agent 必须原样展示 `local_file_link`，不得只输出裸路径；`manual_creator_links`/`mcn_creator_links` 与手动拓展单批 `manual_score_batch` 是内部中间产物，`display_required=false` 且不主动向用户展示表格、链接或本地路径。`manual_score_batch` 的展示标记默认仍为 false，`user_visible_message` 明确注明询价误存例外：仅当 Hook 确认当前需求为询价误存并指示最终交付时，展示本次真实评分表。
 
 ### 错误码
 
@@ -177,3 +177,5 @@
 ## 6. 弹窗载荷（供工具与 Hook 共用）
 
 `src/tools/popup-questions.js` 构造 `AskUserQuestion` 载荷：`{ questions: [...] }`，1–4 题；每题 `header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符（语义换行优先），选项 2–4 个且标签去重（忽略换行）。固定载荷：业务模式选择、流程重试/结束、入库恢复、Browser 验证、MCN 收件机构选择（单选快捷项 + 宿主自定义输入，内置 `询价全部机构` / `暂不询价`，必要时补少量当前机构快捷项）、回填后续分叉（`补全并打分排序`/`暂不补全`）。
+
+远端字段选择工具的继承/重选入参与结果处理见 [字段工具卡](../../skills/media-assistant/references/tools/select_inquiry_form_fields.md)。本地工具注册不变。

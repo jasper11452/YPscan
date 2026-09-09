@@ -53,7 +53,7 @@
 
 ## 后续修改与重解析
 
-- 每次真正开始新的询价机构或手动拓展都重新调用本工具。即使同一会话、同一平台、条件未变，或前一功能刚完成/明确停止后只改用另一功能，也必须重新解析、复核并调用 `validate_requirement` 创建新 requirement；不得跨功能复用旧 requirement 或已提交字段配置。
+- 每次真正开始新的询价机构或手动拓展都重新调用本工具。即使同一会话、同一平台、条件未变，或前一功能刚完成/明确停止后只改用另一功能，也必须重新解析、复核并调用 `validate_requirement` 创建新 requirement；不得跨功能复用旧 requirement。
 - 手动拓展首次解析后的澄清若改变当前平台有效需求，先将原始需求与全部最新有效答案合成为无冲突的完整需求全文，再把该全文作为新的 `demand` 重调本工具。`rawMessagesJson.original` 使用完全相同的全文，`parse_outputs` 全量替换为本次输出，其他有效 `clarifications` 保留；不得只在旧原文末尾追加冲突答案。若完整有效需求与最近一次成功解析的 `demand` 相同且输出有效，不重复解析。询价机构放宽继续使用未改写原文与 `clarifications`/顶层参数表达，不套用本规则。
 - 例外：当前 requirement 已完成 `rank_mcns` 并展示机构列表后，用户选择“暂不询价”、关闭/取消机构选择弹窗或当轮未回答，之后在同一会话明确要求给该列表中的机构发询价，且未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，属于恢复原询价分支。继续使用该 requirement 和当前列表，不调用本工具，也不重新 `validate_requirement`、`search_creators` 或 `rank_mcns`。
 - 用户主动修改任何业务条件时，无论是否已经生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销此前全部自动放宽，形成新的完整单平台 `demand`。
@@ -117,3 +117,5 @@
 2. 检查必填、平台、数量、日期、价档和全部 `"[min,max]"` 区间格式；达人数量、截止时间和可选项目日期必须与当前有效用户证据一致，同一字段旧答案不得重新生效；项目名由 Agent 自行总结生成，不要求证据。
 3. 仍缺失、模糊、冲突或需要选择数值映射的数值字段，一次性调用 `AskUserQuestion`；八个可选 Label 和 `contentTag` 都不得触发弹窗，`contentTag` 缺失或无效时重新解析，已确认数值不得重复询问。
 4. 完整参数准备好后直接调用 `validate_requirement`；不展示额外的“确认创建”弹窗，不提前调用 Browser、`search_creators` 或 `rank_mcns`。
+
+字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured 后直接继续；URL 等待提交；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。

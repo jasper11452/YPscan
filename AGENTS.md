@@ -52,7 +52,7 @@
 ## 关键不变量
 
 1. **SKILL.md 优先**：业务行为（模式判定、复核、放宽、交付）一律以 `skills/media-assistant/SKILL.md` 及其 references 为准，本文件只补充工程约束。
-2. **双功能独立建需**：询价机构与手动拓展不得并行或在功能处理中切换；每次真正开始任一新功能都必须重新解析、复核并创建 requirement。即使同会话、同平台、业务条件未变且前一功能完成或明确停止，也不得跨功能复用 requirement 或已提交字段配置；不得复用旧机构、达人、batch 或 Excel。例外仅限当前 `rank_mcns` 列表后的“暂不询价”续办：需求、平台未变且没有更新的功能或 requirement 时，继续原 requirement 和当前机构映射，不重新解析、落库、搜索或排名。
+2. **双功能独立建需**：询价机构与手动拓展不得并行或在功能处理中切换；每次真正开始任一新功能都必须重新解析、复核并创建 requirement。即使同会话、同平台、业务条件未变且前一功能完成或明确停止，也不得跨功能复用 requirement；不得复用旧机构、达人、batch 或 Excel。例外仅限当前 `rank_mcns` 列表后的“暂不询价”续办：需求、平台未变且没有更新的功能或 requirement 时，继续原 requirement 和当前机构映射，不重新解析、落库、搜索或排名。
 3. **复核先于放宽**：不足结果的触发条件、复核、逐项建议与确认、重新建需及禁止放宽项，统一按 SKILL 的“结果不足：先复核，再放宽”执行。手动拓展可信数量不足时可在交付当前真实 Excel 后提出放宽建议，须等待用户确认；机构回收不足只交付真实结果，不自动再询价。
 4. **Provider 边界**：企微发送确认、机构名匹配、合并去重、同 requirement/机构幂等全部由 Provider 负责；插件不预检发送、不缓存发送状态、不暴露已弃用的查询工具。
 5. **结果归属**：所有结果、链接、文件只用当前 requirement、当前平台、本轮真实 Provider 证据；不跨需求/平台/账号/历史 run 混用或补齐。
@@ -95,3 +95,5 @@
 5. 涉及打包/发布：`npm pack --dry-run --cache /tmp/ypscan-npm-cache`，确认发布包只含 `files` 白名单内容（不含遗留 browser 工具与测试文件），确认 prepack 注入的 `src/tools/file-bridge-oss-defaults.json` 在 tgz 内且 git 中不含该文件，发布前核对版本同步。
 6. 涉及业务链路：逐条核对 `docs/review-checklist.md` 中与本次改动相关的条目，并说明结论。
 7. 所有修改：按 Wiki 同步矩阵复核相关资料和最终 diff；报告更新项、不适用项及原因、未验收范围。
+
+字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured 后直接继续；URL 等待提交；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。

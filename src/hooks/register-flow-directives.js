@@ -51,9 +51,11 @@ const INQUIRY_RECIPIENT_RESPONSE_RULE =
 const INQUIRY_RECIPIENT_RESUME_RULE =
   "当前 rank_mcns 列表后，若用户选择“暂不询价”、关闭/取消弹窗或当轮未回答，之后在同一会话明确要求给该列表机构发询价（包括“前 5 家”等可按当前排名唯一确定的表达），且期间未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，属于恢复当前询价分支。继续使用该列表所属 requirement、平台和 rank_mcns 机构映射；不得重新调用 ypscan_parse_requirement、validate_requirement、search_creators 或 rank_mcns。已提交字段配置则复用，否则再调用 select_inquiry_form_fields。“暂不询价”只暂停发送，不算明确停止整个询价功能。";
 const REQUIREMENT_CREATION_RULE =
-  "每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement：即使同一会话、同一平台、业务条件未变，或刚完成/停止另一功能，也必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement。不得跨功能复用 requirement 或已提交字段配置；新 requirement 必须重新调用 select_inquiry_form_fields。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。当前 rank_mcns 列表后的暂不发送再续办按询价恢复规则处理，不属于新功能开始。";
+  "每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement：即使同一会话、同一平台、业务条件未变，或刚完成/停止另一功能，也必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement。不得跨功能复用 requirement；新 requirement 必须重新调用 select_inquiry_form_fields，按字段继承规则配置。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。当前 rank_mcns 列表后的暂不发送再续办按询价恢复规则处理，不属于新功能开始。";
+const FIELD_SELECTION_REUSE_RULE =
+  "字段继承：同一会话新 requirement（含放宽、纠错和跨功能）调用 select_inquiry_form_fields 时，以 SELECT_INQUIRY_FORM_FIELDS_ARGS 为基础，追加 source_requirement_id，来源只取本会话最近一次用户已提交或 Provider 已返回 configured 的真实 requirement；无来源时首次选字段。用户明确要求重新勾选才传 force_reselect=true 并省略来源。来源 ID 不得猜测或跨会话取用，不读取、缓存或传递 columns。继承和重选分别要求 live schema 支持对应新参数；不支持时说明接口未支持并暂停，不盲传、不退回重复勾选。继承失败、平台不兼容或 status=error 时暂停，不自动重选。";
 const FIELD_SELECTION_GATE_RULE =
-  "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields，并等待用户为这个 requirement 提交字段页后明确回复“好了”；用户过去对其他 requirement 说过“以后不用再选字段”等不算当前 requirement 的提交证据。字段选择 URL 输出后本轮必须结束并等待，禁止在同一轮试调 manual_source_creators、搜索或打分。";
+  "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields。success=true 且 status=configured、requirement_id 与当前调用一致时直接按原分支继续，不等待“好了”；返回 selection_required 或旧版有效 URL 时，字段选择 URL 输出后本轮必须结束并等待，用户提交并回复“好了”后才继续，禁止在同一轮试调 manual_source_creators、搜索或打分。";
 const RELAXATION_REVIEW_COMPACT_RULE =
   "先复核各轮需求、解析、validate 和实际搜索参数；跨 requirement 的 keyword 差异仅是线索。优先替换同主题关键词、减少非核心人设限定；其他搜索条件保持原值，不扩大数值区间。用户明确要求放宽即执行；未授权时提出具体方案并等待确认。调整后仍不足且复核正确，再按 Skill 顺序提示其他可放宽条件；等待用户明确确认该项后才重跑，不自动改动。手动拓展放宽后整体替换 rawMessagesJson.original 为累计放宽后的完整需求，同文重新解析，parse_outputs 全量更新；询价机构放宽仍保留未改写原文；放宽同步 clarifications 和 validate 参数；已确认放宽值必须通过 validate_requirement 保存，由 Provider 从后台读取，搜索返回后核对实际参数与放宽值一致。";
 // 只在结果时刻注入（manual_source Excel 交付处）；启动块只保留精简的 SHORTFALL 规则。
@@ -69,7 +71,7 @@ const MANUAL_SOURCE_STATUS_NUM_RULE =
   "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传：按目标人数梯度取数（10 人→30、20 人→50、50 人→100，正整数）。Hook 的 MANUAL_SOURCE_TARGET_NUM 已是该梯度取数数量，直接使用，不得再次乘倍数；最终交付目标和不足判断仍使用用户需求人数。schema 不接受 num 时不得附带，避免无效重试。";
 const SCORE_MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 score_manual_source_csv，也不得猜测或更换 job_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
-const MANUAL_SOURCE_SHORTFALL_RULE = `本条数量策略仅用于旧链路直接返回的 manual_source Excel；分批评分必须通过 ypscan_summarize_manual_scores 统计推荐人数并决定下一步，不用处理成功数判断足量。只在当前 Provider 响应明确给出可信实际数量时与用户需求人数 quantityTotal 比较（梯度取数 num 不是交付目标），不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确要求放宽后优先调整同主题关键词、减少非核心人设限定；调整后仍不足再按 Skill 提示其他条件并等待该项确认，随后重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。`;
+const MANUAL_SOURCE_SHORTFALL_RULE = `本条数量策略仅用于旧链路直接返回的 manual_source Excel；分批评分必须通过 ypscan_summarize_manual_scores 统计推荐人数并决定下一步，不用处理成功数判断足量。只在当前 Provider 响应明确给出可信实际数量时与用户需求人数 quantityTotal 比较（梯度取数 num 不是交付目标），不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确要求放宽后优先调整同主题关键词、减少非核心人设限定；调整后仍不足再按 Skill 提示其他条件并等待该项确认，随后重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、batch 或 Excel。`;
 const CREATOR_CSV_LIMIT = 500;
 const MANUAL_SOURCE_FLOW = "manual_source";
 const MCN_COMPLETE_ONLY_FLOW = "mcn_complete_only";
@@ -395,8 +397,39 @@ function inquiryRecipientNames(mcns) {
   });
 }
 
-function fieldSelectionDirective(message) {
+function fieldSelectionDirective(message, params = {}) {
   const result = parsedToolResult(message);
+  const status = firstString(result?.status, result?.data?.status);
+  const requirementId = firstString(result?.requirement_id, result?.data?.requirement_id);
+  if (status === "error") {
+    return "YPSCAN_FLOW_DIRECTIVE=字段配置失败。说明 Provider 返回的错误原因并暂停，不自动重试、生成字段页或继续下游。";
+  }
+  if (status === "configured") {
+    if (
+      result?.success !== true ||
+      !requirementId ||
+      requirementId !== params?.requirement_id ||
+      params?.force_reselect === true
+    ) {
+      return "YPSCAN_FLOW_DIRECTIVE=字段配置结果缺少成功证据、requirement_id 与当前调用不一致或强制重选未返回字段页。暂停，不把历史配置当作当前需求已配置，不继续下游。";
+    }
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=当前 requirement 字段已配置（existing 或 inherited）。不展示字段页、不等待用户回复“好了”，直接按原分支恢复：手动拓展只用当前 requirement_id 调 manual_source_creators；询价仍先确认收件机构并执行发送前警示弹窗确认；若由打分缺列错误触发，只用此前 SCORE_MANUAL_SOURCE_CSV_ARGS 或同一 requirement 与本轮 file_bridge 原始可信 csv_file_path 重提一次打分，不重搜、不补全、不重跑 file_bridge。缺少可信路径时暂停。不得读取、缓存或传递 columns。",
+      `FIELD_CONFIGURATION_REQUIREMENT_ID=${requirementId}`,
+    ].join("\n");
+  }
+  if (status && status !== "selection_required") {
+    return flowPauseDirective("字段选择返回未知状态", message);
+  }
+  if (params?.source_requirement_id && params?.force_reselect !== true) {
+    return "YPSCAN_FLOW_DIRECTIVE=字段继承未返回 configured，不能确认复制成功。说明接口结果并暂停，不展示字段页、不自动重新勾选、不继续下游。";
+  }
+  if (
+    (status === "selection_required" && !requirementId) ||
+    (requirementId && requirementId !== params?.requirement_id)
+  ) {
+    return "YPSCAN_FLOW_DIRECTIVE=字段页缺少目标需求 ID 或与当前调用不一致。暂停，不展示字段页、不继续下游。";
+  }
   const autoOpenFailed =
     String(firstString(result?.message, result?.error?.message)).trim() ===
     FIELD_SELECTION_AUTO_OPEN_FAILED;
@@ -406,7 +439,12 @@ function fieldSelectionDirective(message) {
   return [
     "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL；若 Provider 已自动打开页面则继续等待提交结果，若仅自动打开失败则如实展示链接。插件当前没有可验证的宿主外链打开能力，不得改写、包装、用 Browser 替代打开或替用户选择字段。",
     `FIELD_SELECTION_URL=${url}`,
-    FIELD_SELECTION_GATE_RULE,
+    "字段选择 URL 输出后本轮必须结束并等待用户提交并回复“好了”，不得试调下游工具。",
+    ...(params?.force_reselect === true
+      ? [
+          "重选提交后的恢复边界：单独重选只更新字段配置；已完成或明确停止的业务不得重启，不重新搜索、打分或发起询价确认。只有当前对话明确存在等待字段配置的未完成步骤，才按下述原分支规则恢复该步骤；无法确定时仅确认字段已更新，不调用下游。",
+        ]
+      : []),
     "Provider 按 validate_requirement 返回的 requirement_id（缺失时兼容 data.id）持久化 columns；不得使用 demand_id、把 columns 放入上下文或调用已弃用的 get_selected_inquiry_form_fields。收到“好了”后按原分支恢复：询价只使用用户明确选中的当前 MCN 或用户明确提供的机构名称；命中本轮榜单且有 supplier_id 的机构走 supplierIds，其他原名走 supplier_name，并做发送前警示弹窗确认；正常手动拓展只使用原 requirement_id 和当前环境 live schema 允许的参数；若本次字段选择由打分缺列错误触发，则只用同一 requirement_id 与本轮 file_bridge 返回的原始 csv_file_path 重提一次 score_manual_source_csv，不重搜、不重做原生补全、不重跑 file_bridge。",
   ].join("\n");
 }
@@ -617,8 +655,9 @@ function manualSourceCreatorsDirective(
       return [
         "YPSCAN_FLOW_DIRECTIVE=manual_source_creators 缺少字段配置。用同一 requirement_id 调用 select_inquiry_form_fields，不得原参数重试。",
         `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
+        FIELD_SELECTION_REUSE_RULE,
         FIELD_SELECTION_GATE_RULE,
-        "原样展示字段选择 URL；收到“好了”后再用原 requirement_id 调用 manual_source_creators；只传 requirement_id，不传 demand 或 num。",
+        "configured 后直接继续；只有 URL 才展示并等“好了”，随后用原 requirement_id 调用 manual_source_creators；只传 requirement_id，不传 demand 或 num。",
       ].join("\n");
     }
     return flowPauseDirective("手动拓展", message);
@@ -942,15 +981,16 @@ function scoreColumnsRecoveryDirective(
   const lines = [
     "YPSCAN_FLOW_DIRECTIVE=达人打分因当前 requirement 缺少已提交字段配置而停止。立即用同一 requirement_id 调用 select_inquiry_form_fields，不得把失败 job 的 success_count 当成最终成功，也不得重新搜索、补全或调用 file_bridge。",
     `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
+    FIELD_SELECTION_REUSE_RULE,
   ];
   if (csvFilePath) {
     lines.push(
       `SCORE_MANUAL_SOURCE_CSV_ARGS=${JSON.stringify({ requirement_id: requirementId, csv_file_path: csvFilePath })}`,
-      "原样展示字段选择 URL并结束本轮等待用户回复“好了”；用户回复后只用上方 SCORE_MANUAL_SOURCE_CSV_ARGS 原样重提一次 score_manual_source_csv，不得重搜、重做原生补全、重跑 file_bridge 或改写该 csv_file_path。",
+      "字段工具返回 configured 后立即恢复；只有返回 URL 时才原样展示字段选择 URL并结束本轮等待用户回复“好了”；恢复后只用上方 SCORE_MANUAL_SOURCE_CSV_ARGS 原样重提一次 score_manual_source_csv，不得重搜、重做原生补全、重跑 file_bridge 或改写该 csv_file_path。",
     );
   } else {
     lines.push(
-      "原样展示字段选择 URL并结束本轮等待用户回复“好了”；随后只使用同一 requirement_id 与本轮 file_bridge 返回的原始 csv_file_path 重提一次 score_manual_source_csv。当前对话无法取得该可信 csv_file_path 时如实说明并停止，禁止自行构造 URL 或重跑前序链路。",
+      "字段工具返回 configured 后立即恢复；只有返回 URL 时才原样展示字段选择 URL并结束本轮等待用户回复“好了”；随后只使用同一 requirement_id 与本轮 file_bridge 返回的原始 csv_file_path 重提一次 score_manual_source_csv。当前对话无法取得该可信 csv_file_path 时如实说明并停止，禁止自行构造 URL 或重跑前序链路。",
     );
   }
   return lines.join("\n");
@@ -991,7 +1031,7 @@ function scoreManualSourceCsvDirective(
   if (!excelFileUrl || !requirementId) return flowPauseDirective("达人打分缺少最终 Excel", message);
   return [
     recordedMode === BUSINESS_MODE_MANUAL
-      ? "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv 成功。按 SAVE_ARTIFACT_ARGS 保存 manual_score_batch 中间表，再汇总决定下一步，不展示 Provider 下载 URL。"
+      ? "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv 成功。按 SAVE_ARTIFACT_ARGS 保存 manual_score_batch 中间表，不展示 Provider 下载 URL、本地路径或链接，再汇总决定下一步。"
       : "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv 成功。立即保存最终打分排序 Excel，不展示 Provider 下载 URL。",
     `SAVE_ARTIFACT_ARGS=${JSON.stringify({
       artifact_kind: recordedMode === BUSINESS_MODE_MANUAL ? "manual_score_batch" : "manual_source",
@@ -1028,7 +1068,7 @@ function scoreManualSourceCsvStatusDirective(
   if (excelFileUrl && requirementId) {
     return [
       recordedMode === BUSINESS_MODE_MANUAL
-        ? "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv_status 已完成。按 SAVE_ARTIFACT_ARGS 保存 manual_score_batch 中间表，再汇总决定下一步，不展示 Provider 下载 URL。"
+        ? "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv_status 已完成。按 SAVE_ARTIFACT_ARGS 保存 manual_score_batch 中间表，不展示 Provider 下载 URL、本地路径或链接，再汇总决定下一步。"
         : "YPSCAN_FLOW_DIRECTIVE=score_manual_source_csv_status 已完成。立即保存最终打分排序 Excel，不展示 Provider 下载 URL。",
       `SAVE_ARTIFACT_ARGS=${JSON.stringify({
         artifact_kind:
@@ -1263,8 +1303,7 @@ function artifactSaveDirective(
   if (artifactKind === "manual_score_batch") {
     if (recordedMode === BUSINESS_MODE_MANUAL) {
       return [
-        "YPSCAN_FLOW_DIRECTIVE=当前批评分表已保存，仅为中间结果。展示本地链接并立即调用 ypscan_summarize_manual_scores 累计推荐人数；不把本批评分成功数当推荐人数，不直接结束或放宽。",
-        `SCORE_BATCH_LOCAL_LINK=${localFileLink}`,
+        "YPSCAN_FLOW_DIRECTIVE=当前批评分表已保存，仅为内部中间结果。不要向用户展示表格、文件路径或本地链接；立即调用 ypscan_summarize_manual_scores 累计推荐人数；不把本批评分成功数当推荐人数，不直接结束或放宽。",
         `SUMMARIZE_MANUAL_SCORES_ARGS=${JSON.stringify({ requirement_id: params.artifact_id })}`,
       ].join("\n");
     }
@@ -1463,7 +1502,7 @@ function flowDirective(
   if (/(?:^|__)ypscan_summarize_manual_scores$/iu.test(normalizedName))
     return manualScoreSummaryDirective(message);
   if (bare === "select_inquiry_form_fields") {
-    return fieldSelectionDirective(message);
+    return fieldSelectionDirective(message, params);
   }
   if (/(?:^|__)ypscan_save_artifact$/iu.test(normalizedName)) {
     return artifactSaveDirective(
@@ -1562,8 +1601,9 @@ function flowDirective(
     }
     const selectArgs = selectInquiryFormFieldsArgs(requirementId, platform);
     return [
-      "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。当前需求只保留一个 requirement，业务模式：手动拓展。立即使用 SELECT_INQUIRY_FORM_FIELDS_ARGS 调用 select_inquiry_form_fields，原样展示 URL 并等待用户提交后回复“好了”；不得调用 search_creators、rank_mcns 或 Browser。",
+      "YPSCAN_FLOW_DIRECTIVE=validate_requirement 成功。当前需求只保留一个 requirement，业务模式：手动拓展。立即使用 SELECT_INQUIRY_FORM_FIELDS_ARGS 调用 select_inquiry_form_fields，按字段继承规则补充参数；configured 后继续，只有字段页 URL 才等待用户提交；不得调用 search_creators、rank_mcns 或 Browser。",
       "只使用本次返回的 data.requirement_id，缺失时兼容 data.id；严禁使用 data.demand_id。",
+      FIELD_SELECTION_REUSE_RULE,
       FIELD_SELECTION_GATE_RULE,
       `SELECT_INQUIRY_FORM_FIELDS_ARGS=${JSON.stringify(selectArgs)}`,
     ].join("\n");
@@ -1682,6 +1722,7 @@ export function registerFlowDirectiveHooks(api) {
           "工具能力只看宿主完整名称中最后一个 __ 后的实际工具名；包括 test 在内的前缀只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
           `选择业务模式后，把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV→原生补全（20/批）→file_bridge（flow=manual_source）→score_manual_source_csv→score_status→保存打分排序 Excel。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存并归一化 links CSV→ypscan_summarize_manual_scores 取得当前批→原生补全（最多20人，小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→file_bridge（仅当前批）→score_manual_source_csv→score_manual_source_csv_status→保存单批表→再次汇总（达标交付，否则下一批）。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项；正文保留企微消息原有行结构，只在单行将超过 20 字符时断行，禁止把短分句、字段或项目名拆成多行。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
           REQUIREMENT_CREATION_RULE,
+          FIELD_SELECTION_REUSE_RULE,
           INQUIRY_RECIPIENT_RESUME_RULE,
           "所有 AskUserQuestion 弹窗的 header、question、label 和 description 只在整行将超过 20 个 Unicode 字符时换行，先连续写满接近 20 再断行（确需断行时优先语义边界），禁止把短分句、字段或项目名单独成行，保留消息原有的行结构；长机构名可为展示插入换行，匹配前移除换行还原原名。",
           "机构回填预览链路先保存预览表，再让用户选择是否补全；选“补全并打分排序”时继续 ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全（20/批）→ file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。回收不足时不自动放宽，交付真实结果。",
@@ -1691,7 +1732,7 @@ export function registerFlowDirectiveHooks(api) {
           "原生达人补全工具由宿主 YP Action 提供、不在 ypscan 白名单内：小红书 get_xhs_author_business_card 且固定 page_count=1，抖音 get_douyin_author_business_card。宿主未开放对应工具时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。",
           MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ARGUMENT_RULE,
-          "手动拓展 Excel 保存成功后原样展示 delivery.local_file_link，不再提供浏览器详细拓展分支，也不追加完成弹窗。",
+          "手动拓展最终汇总 Excel 或旧版兼容 Excel 保存成功后原样展示 delivery.local_file_link；手动拓展的 manual_score_batch 单批中间表不展示表格、路径或链接，不再提供浏览器详细拓展分支，也不追加完成弹窗。",
           "需求澄清规则：解析返回的八个可选 Label 数组是纯解析结果，有什么就原样落库什么，保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认、不询问任何标签内容；可选 Label（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。contentTag 必须是本次解析结果中的非空数组；缺失或无效时重新解析，禁止询问用户或自行补值。数值字段先采用 Dify 唯一解析值，再与最新非空 clarification 合并；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。Dify 已给出唯一 followercount、rebate、报价、CPM、CPE 时禁止再问。只有这些必填数值仍缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。当前平台 Dify 品牌候选唯一、合法且非空时必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为 null、未知等占位值时才询问。项目名由 Agent 根据当前需求自行总结生成，不弹窗确认；调用 validate_requirement 前用一句可见正文告知用户取的项目名。禁止编造标签、默认补数值或普通文本追问。解析 Workflow 唯一合法报价、CPM、CPE 候选直接复用，不因原文单值与 Provider 区间格式差异询问；同平台多个达人类型只保留一个 requirement，总量不变并合并条件，不拆分或追问每类人数。正常成功交付不追加完成弹窗。",
           REQUIREMENT_COMPLETENESS_RULE,
           REBATE_MINIMUM_QUESTION_RULE,

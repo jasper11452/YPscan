@@ -881,8 +881,8 @@ test("default manual sourcing repairs missing field selection before retrying", 
     platform: "douyin",
   });
   assert.match(text, /不得原参数重试/u);
-  assert.match(text, /收到“好了”后/u);
-  assert.match(text, /过去对其他 requirement.*不算当前 requirement 的提交证据/u);
+  assert.match(text, /configured 后直接继续；只有 URL 才展示并等“好了”/u);
+  assert.match(text, /追加 source_requirement_id/u);
   assert.match(text, /字段选择 URL 输出后本轮必须结束并等待/u);
   assert.doesNotMatch(text, /\bsize\b|creator_count|page_url|original_brief/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
@@ -2100,7 +2100,7 @@ test("startup instruction selects and preserves one business mode", () => {
     first.prependContext,
     /必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement/u,
   );
-  assert.match(first.prependContext, /不得跨功能复用 requirement 或已提交字段配置/u);
+  assert.match(first.prependContext, /不得跨功能复用 requirement/u);
   assert.match(first.prependContext, /新 requirement 必须重新调用 select_inquiry_form_fields/u);
   assert.match(first.prependContext, /当前 rank_mcns 列表后的暂不发送再续办/u);
   assert.match(first.prependContext, /属于恢复当前询价分支/u);
@@ -2122,8 +2122,9 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /返回 batch_id 后先等待 30 秒.*轮询/u);
   assert.match(
     first.prependContext,
-    /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u,
+    /手动拓展最终汇总 Excel 或旧版兼容 Excel 保存成功后原样展示 delivery\.local_file_link/u,
   );
+  assert.match(first.prependContext, /manual_score_batch 单批中间表不展示表格、路径或链接/u);
   assert.match(
     first.prependContext,
     /links CSV、补全 CSV 和 merged CSV 都是内部中间产物，不主动展示表格、下载链接或本地文件路径/u,
@@ -2579,8 +2580,9 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   assert.match(startup.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
   assert.match(
     startup.prependContext,
-    /手动拓展 Excel 保存成功后原样展示 delivery\.local_file_link/u,
+    /手动拓展最终汇总 Excel 或旧版兼容 Excel 保存成功后原样展示 delivery\.local_file_link/u,
   );
+  assert.match(startup.prependContext, /manual_score_batch 单批中间表不展示表格、路径或链接/u);
   assert.match(startup.prependContext, /不再提供浏览器详细拓展分支，也不追加完成弹窗/u);
   assert.match(
     startup.prependContext,

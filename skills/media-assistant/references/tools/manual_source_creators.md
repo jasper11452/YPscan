@@ -1,6 +1,6 @@
 # manual_source_creators
 
-手动拓展的默认入口。每次开始手动拓展都先解析、复核并创建独立的新 requirement，再使用该 requirement 调用 `select_inquiry_form_fields`；即使从同一会话已完成或明确停止的询价功能切换而来、且业务条件未变，也不得复用询价 requirement 或字段配置。字段选择 URL 输出后结束本轮，只有用户为这个 requirement 提交字段页并明确回复“好了”后，才使用当前真实 `requirement_id` 提交任务，由 Provider 后台全自动完成手动拓展；用户关于其他 requirement 的“不再选字段”要求不是当前提交证据，不得试调本工具探测 Provider 是否会强制报错。
+手动拓展的默认入口。每次开始手动拓展都先解析、复核并创建独立的新 requirement，再使用该 requirement 调用 `select_inquiry_form_fields`；即使从同一会话已完成或明确停止的询价功能切换而来、且业务条件未变，也不得复用询价 requirement。字段选择 URL 输出后结束本轮，字段已 configured 或用户为这个 requirement 提交字段页并明确回复“好了”后，才使用当前真实 `requirement_id` 提交任务，由 Provider 后台全自动完成手动拓展；用户关于其他 requirement 的“不再选字段”要求不是当前提交证据，不得试调本工具探测 Provider 是否会强制报错。
 
 ## Remote arguments
 
@@ -14,7 +14,7 @@
 
 固定调用 `manual_source_creators({requirement_id})`；不添加需求原文或其他参数，不通过增删 `demand` 重试。
 
-若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` 或 `REQUIREMENT_COLUMNS_UNAVAILABLE`，不得原参数重试；使用同一 requirement 重新进入字段选择，原样展示 URL 后结束本轮等待用户回复“好了”。Provider 应在启动本工具时做该校验并立即返回，不应把缺列错误延迟到打分终态；这是 Provider 侧 fail-fast 契约要求，插件不为此新增 columns 缓存或本地账本。
+若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` 或 `REQUIREMENT_COLUMNS_UNAVAILABLE`，不得原参数重试；使用同一 requirement 按字段继承规则恢复配置；configured 后直接恢复，否则原样展示 URL 后结束本轮等待用户回复“好了”。Provider 应在启动本工具时做该校验并立即返回，不应把缺列错误延迟到打分终态；这是 Provider 侧 fail-fast 契约要求，插件不为此新增 columns 缓存或本地账本。
 
 “手动拓展”“人工拓展”“直接手扒”“手扒”“手捞筛选”都默认指向本 MCP 工具；除“手动拓展”外的旧说法只作为输入别名，用户侧统一称“手动拓展”。
 
@@ -27,3 +27,5 @@
 links CSV 保存成功后，先调用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 归一化：读取保存的原始 CSV，写出受控三列 links CSV（`source_record_id,creator_id,url`）并登记为当前 requirement 的合法 links 来源；只有 url 列时按平台主页规则推导 creator_id，短链或无法推导时立即失败并停止，不进入原生补全。归一化成功后先调用 `ypscan_summarize_manual_scores({requirement_id})`，再仅按返回的 `next_author_ids` 调用当前平台原生达人补全工具（首批不超过 min(20, 需求人数)，之后每批最多 20 人），小红书使用 `get_xhs_author_business_card` 且固定 `page_count=1`，抖音使用 `get_douyin_author_business_card`。每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；每批完成后执行 `file_bridge（仅当前批 CSV）→ score_manual_source_csv → score_manual_source_csv_status → 保存 manual_score_batch → ypscan_summarize_manual_scores`，推荐人数达标或梯度候选池耗尽后交付汇总 Excel，否则再补全下一批。
 
 `file_bridge` 会把 merged CSV 上传到 OSS，并返回当前真实可读的未签名 `csv_file_path`。若上传后匿名地址不可读，则停止后续打分，不得自造 URL 或改走其他上传路径。
+
+字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured 后直接继续；URL 等待提交；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。

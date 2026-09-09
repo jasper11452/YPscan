@@ -4,7 +4,9 @@ Risk tier: internal preparation. This Provider MCP tool creates a field-selectio
 
 ## When to call
 
-Call when the current requirement needs a persisted field configuration. If the same conversation already records that the user submitted the field page for this exact requirement, reuse that Provider-persisted configuration and do not call this tool again. A statement such as “以后不用再选字段” about another requirement is not submission evidence for the current requirement and cannot skip this call. Resuming recipient selection from this requirement's current `rank_mcns` list after `暂不询价`, dialog close/cancel, or no answer keeps the same requirement: reuse submitted fields, or call this tool now if they were not submitted. For institutional inquiry, resolve recipients before asking the user to select fields: choosing the “询价机构” function alone does not nominate a recipient, so first ask the user to identify one or more recipients from the current MCN list, by explicit institution name, or both. Never infer recipients from rank, coverage, rebate, score, or recommendation order; an explicit user request such as `前 5 家` is a recipient selection by the current response order, not an inference. A unique exact current-list match with a non-empty `supplier_id` goes to `supplierIds`; an unmatched or ID-less original name stays in `supplier_name`.
+同一会话首次选择字段；后续新 requirement（含放宽、纠错和跨功能）通过 `select_inquiry_form_fields` 传 `source_requirement_id`，来源只取本会话最近一次用户已提交或 Provider 已确认 `configured` 的真实需求，不跨会话、不猜测 ID。用户明确要求重新勾选时才传 `force_reselect=true` 并省略来源。新参数须为当前 live schema 支持，否则说明接口未支持并暂停。`success=true` 且 `status=configured`、返回需求 ID 与当前调用一致时直接继续；只有字段页 URL 才展示并等待提交及“好了”。继承失败或平台不兼容时暂停，不自动重选；不读取、缓存或传递 `columns`。
+
+Resuming recipient selection from this requirement's current `rank_mcns` list after `暂不询价`, dialog close/cancel, or no answer keeps the same requirement: reuse submitted fields, or call this tool now if they were not submitted. For institutional inquiry, resolve recipients before asking the user to select fields: choosing the “询价机构” function alone does not nominate a recipient, so first ask the user to identify one or more recipients from the current MCN list, by explicit institution name, or both. Never infer recipients from rank, coverage, rebate, score, or recommendation order; an explicit user request such as `前 5 家` is a recipient selection by the current response order, not an inference. A unique exact current-list match with a non-empty `supplier_id` goes to `supplierIds`; an unmatched or ID-less original name stays in `supplier_name`.
 
 ## Call
 
@@ -16,13 +18,27 @@ Call the directly exposed Provider MCP `select_inquiry_form_fields` using its cu
 
 Do not add local-only correlation fields or substitute `runId`, `sessionKey`, institution names, or supplier names for Provider parameters. If the live Provider schema changes, follow that schema rather than this example.
 
+## New parameters and results
+
+| Parameter             | Type    | Required | Meaning                                                     |
+| --------------------- | ------- | -------- | ----------------------------------------------------------- |
+| requirement_id        | string  | yes      | Current target requirement ID                               |
+| platform              | string  | yes      | xiaohongshu or douyin                                       |
+| source_requirement_id | string  | no       | Same-conversation configured source requirement ID          |
+| force_reselect        | boolean | no       | Default false; true opens the field page and ignores source |
+
+Keep existing optional parameters unchanged. Only send new parameters if the live schema supports them; otherwise pause when inheritance or reselection is needed.
+
+Provider precedence: force reselection → retain existing target configuration → copy submitted source configuration after ownership/platform checks → first selection page. Failed inheritance returns an error without generating a page or changing target configuration.
+
+- `success=true, status=configured`: `requirement_id` must match the current call. `configuration_source` is `existing` or `inherited`; inherited results also return `source_requirement_id`. Continue the original branch immediately, without a URL or waiting for “好了”. Do not bypass inquiry recipient selection or sending confirmation. For scoring recovery, resubmit scoring once using the original trusted arguments; do not repeat search/completion/upload.
+- `status=selection_required`: return `url` and `requirement_id` matching the current call; missing or mismatched IDs pause without displaying the page. A legacy response without status or requirement ID may still provide a valid URL; if it includes an ID, that ID must match. If an inheritance call returns a URL instead of configured, pause and report missing inheritance support; do not ask the user to select again. A forced reselection must return a page, not configured.
+- `status=error` or failed inheritance: report `error_code`/`message` and pause, without automatically reopening the page or continuing downstream.
+
 ## Link and persistence
 
-- Extract the real non-empty `url` from the response. When the Provider returns `success=false` with exact message `浏览器打开请求未成功` but the selection URL is valid, treat only the automatic-open action as failed and continue with the generated link.
-- Output the unchanged selection URL once on its own line. Do not wrap it in Markdown, rewrite it, open it with Browser as a substitute, or select fields for the user. The current plugin has no verified host-side external-link opener, so automatic-open failure must be reported honestly rather than papered over with internal workarounds.
-- Submission on the selection page persists the chosen fields in the Provider database under that requirement ID. After outputting the URL, end the current turn and wait; do not trial-run `manual_source_creators`, search, or scoring in the same turn. Resume only after the user submitted the page for this requirement and explicitly replied “好了”. `get_selected_inquiry_form_fields` is deprecated: never call it or poll a callback.
-- Reuse is based only on visible same-conversation evidence that this exact requirement's field page was submitted. Do not create a local cache or query/rebuild `columns`.
-
-## Result
-
-Do not read, reconstruct, validate, cache, or pass `columns` through the Agent context. Downstream Provider tools receive only their published business arguments and resolve the persisted field configuration internally from the requirement association.
+- Output the real URL unchanged once on its own line. Do not wrap it in Markdown, rewrite it, open it with Browser, or select fields for the user.
+- Legacy `success=false` with exact message `浏览器打开请求未成功` and a valid URL means only automatic opening failed; display the link honestly. Explicit `status=error` takes precedence.
+- After outputting the URL, end the turn. Resume only after the user submitted the page and explicitly replied “好了”. Never poll a callback or call deprecated `get_selected_inquiry_form_fields`.
+- For explicit reselection, submission only updates configuration unless the conversation clearly identifies an unfinished step waiting for fields. Resume only that step. Never restart completed/stopped search, scoring or inquiry confirmation; if no pending step is clear, acknowledge the update and stop.
+- The Provider saves or copies configuration under the target requirement. Agent only passes IDs; never read, reconstruct, cache, or pass `columns`. Existing target configuration is not overwritten by inheritance. A newly submitted selection becomes the source for later requirements in this conversation.

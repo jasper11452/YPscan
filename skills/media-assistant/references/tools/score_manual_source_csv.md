@@ -11,7 +11,7 @@ Submit the current merged creator CSV for scoring and sorting. This is a generic
 
 ## Result
 
-The response is asynchronous: it returns a `job_id`. Copy the exact `job_id` to `score_manual_source_csv_status` and poll it every 30 seconds, at most 10 queries in one run, until the final workbook URL is returned; then save it immediately with `ypscan_save_artifact` using `artifact_kind="manual_score_batch"` for manual sourcing, or `artifact_kind="manual_source"` for inquiry retrieval, with, the current `requirement_id` as `artifact_id`, and the exact workbook URL as `file_url`. For manual sourcing this is an intermediate batch: immediately call `ypscan_summarize_manual_scores({requirement_id})`; only its `deliver` action finishes the flow. A `job_id` alone is not a completed score.
+The response is asynchronous: it returns a `job_id`. Copy the exact `job_id` to `score_manual_source_csv_status` and poll it every 30 seconds, at most 10 queries in one run, until the final workbook URL is returned; then save it immediately with `ypscan_save_artifact` using `artifact_kind="manual_score_batch"` for manual sourcing, or `artifact_kind="manual_source"` for inquiry retrieval, with the current `requirement_id` as `artifact_id` and the exact workbook URL as `file_url`. For manual sourcing this is an internal intermediate batch: do not show its table, local link or path; immediately call `ypscan_summarize_manual_scores({requirement_id})`, and only its `deliver` action finishes the flow. A `job_id` alone is not a completed score.
 
 If an older Provider synchronously returns the final Excel workbook instead, save it using the same mode-specific artifact kind and follow the same summary/delivery rule; do not poll a status tool in that case.
 
@@ -21,8 +21,10 @@ If an older Provider synchronously returns the final Excel workbook instead, sav
 
 ## Recoverable missing-columns failure
 
-If this tool or its status tool returns `REQUIREMENT_COLUMNS_NOT_CONFIGURED`, `REQUIREMENT_COLUMNS_UNAVAILABLE`, or the exact message `customer demand has no selected inquiry columns`, the score is not complete even when the payload contains `success_count` or another processed-row count. Call `select_inquiry_form_fields` for the same requirement and platform, output the URL unchanged, then end the turn. After the user submitted the page and explicitly replied “好了”, resubmit this tool once: if the failure directive carries `SCORE_MANUAL_SOURCE_CSV_ARGS`, reuse that exact JSON payload without altering the path; otherwise use the same requirement ID and the exact trusted `csv_file_path` returned by the current `file_bridge`. Do not repeat creator search, native completion, or `file_bridge`; if the trusted path is no longer available in the conversation, report that fact and stop instead of reconstructing a URL.
+If this tool or its status tool returns `REQUIREMENT_COLUMNS_NOT_CONFIGURED`, `REQUIREMENT_COLUMNS_UNAVAILABLE`, or the exact message `customer demand has no selected inquiry columns`, the score is not complete even when the payload contains `success_count` or another processed-row count. Call `select_inquiry_form_fields` for the same requirement and platform, follow the field-selection card to inherit configuration when available. On configured continue immediately; only a field-page URL requires submission and “好了”. Once configured, resubmit this tool once: if the failure directive carries `SCORE_MANUAL_SOURCE_CSV_ARGS`, reuse that exact JSON payload without altering the path; otherwise use the same requirement ID and the exact trusted `csv_file_path` returned by the current `file_bridge`. Do not repeat creator search, native completion, or `file_bridge`; if the trusted path is no longer available in the conversation, report that fact and stop instead of reconstructing a URL.
 
 ## Stop conditions
 
 Stop on any other failed envelope, a missing or untrusted `csv_file_path`, or a `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE` result. Do not resubmit the same CSV through a different path.
+
+字段恢复使用 [字段工具规则](select_inquiry_form_fields.md)：可继承时传 source_requirement_id；configured 后直接按原可信参数重提一次，失败时暂停，不自动要求重选。

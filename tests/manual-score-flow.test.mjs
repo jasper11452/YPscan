@@ -149,8 +149,9 @@ test("registered tools: initial batch respects the target, first batch sufficien
   );
   assert.equal(bridgeArgs.completion_csv_paths.length, 1);
   assert.equal(batch.args.artifact_kind, "manual_score_batch");
-  assert.match(batch.savedScore.directive, /SCORE_BATCH_LOCAL_LINK=/u);
-  assert.match(batch.savedScore.directive, /展示本地链接/u);
+  assert.equal(batch.savedScore.payload.delivery.display_required, false);
+  assert.doesNotMatch(batch.savedScore.directive, /SCORE_BATCH_LOCAL_LINK=|展示本地链接/u);
+  assert.match(batch.savedScore.directive, /不要向用户展示表格、文件路径或本地链接/u);
   assert.match(batch.savedScore.directive, /SUMMARIZE_MANUAL_SCORES_ARGS=/u);
   const last = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.equal(last.payload.success, true);
@@ -199,6 +200,10 @@ test("inquiry mis-saved as a manual batch delivers the saved file without schedu
   assert.equal(saved.payload.data.file_path, batch.savedScore.payload.data.file_path);
   assert.match(saved.directive, /最终交付物/u);
   assert.ok(saved.directive.includes(saved.payload.delivery.local_file_link));
+  assert.match(
+    saved.payload.delivery.user_visible_message,
+    /仅当 Hook 确认当前需求为询价误存并指示最终交付时，展示本次真实评分表/u,
+  );
   assert.doesNotMatch(saved.directive, /SUMMARIZE_MANUAL_SCORES_ARGS|ASK_USER_QUESTION_ARGS/u);
 });
 

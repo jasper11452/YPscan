@@ -241,7 +241,7 @@ test("CSV artifacts use the same save path and derive a safe format-specific nam
   assert.match(saved.delivery.local_file_link, /creator-links\.csv/u);
   assert.equal(saved.delivery.display_required, false);
   assert.equal(saved.delivery.display_before_next_action, false);
-  assert.match(saved.delivery.user_visible_message, /不主动向用户展示/u);
+  assert.match(saved.delivery.user_visible_message, /不向用户展示文件路径、链接或表格/u);
   assert.doesNotMatch(saved.delivery.user_visible_message, /file:\/\//u);
 
   const fallback = JSON.parse(
@@ -249,4 +249,20 @@ test("CSV artifacts use the same save path and derive a safe format-specific nam
   );
   assert.equal(fallback.success, true);
   assert.match(fallback.data.file_name, /^manual_creator_links-[a-f0-9]{16}\.csv$/u);
+});
+
+test("manual score batches are internal artifacts without a user-visible link", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-manual-score-batch-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+
+  const saved = JSON.parse(
+    (await saveFixture(workspaceDir, "manual_score_batch", "batch-score.xlsx")).content[0].text,
+  );
+
+  assert.equal(saved.success, true);
+  assert.equal(saved.delivery.display_required, false);
+  assert.equal(saved.delivery.display_before_next_action, false);
+  assert.match(saved.delivery.user_visible_message, /不向用户展示文件路径、链接或表格/u);
+  assert.doesNotMatch(saved.delivery.user_visible_message, /file:\/\/|本地文件：/u);
+  assert.match(saved.delivery.local_file_link, /batch-score\.xlsx/u);
 });

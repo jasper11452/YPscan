@@ -115,7 +115,7 @@
 | `validate_requirement` | 校验并创建当前单平台需求记录（会写入）。按当前 customer_demands 列契约直接传顶层参数，不用 payload 包装或旧字段名；platform 只接受 xiaohongshu/douyin，需求完整时 status="ready"。成功后取 data.requirement_id 作为需求 ID（缺失时用 data.id；demand_id 不是需求 ID）。 |
 | `search_creators` | 按当前需求的已保存筛选条件检索候选达人并写入候选池，返回实际生效筛选、排除统计与去重候选数。零匹配也是成功结果；本工具不自动切换功能或放宽条件，成功后继续 rank_mcns。 |
 | `rank_mcns` | 按当前需求对候选达人所属机构排序，返回每家机构的排名、独立覆盖达人、返点、综合分与机构 ID，并提供排名 Excel 下载地址。本工具不选择收件机构，也不发送询价。 |
-| `select_inquiry_form_fields` | 为指定需求生成字段选择页面并请求打开浏览器。用户提交后字段直接保存到该需求；本工具不回传字段数组，也不能确认用户是否已提交——展示 URL 后等待该需求的提交确认再继续。 |
+| `select_inquiry_form_fields` | 支持 source_requirement_id 继承和 force_reselect 强制重选；configured 表示当前需求配置成功，selection_required 返回 URL 待提交，error 暂停。不返回字段数组。 |
 | `create_with_distributions` | 按需求已保存的字段配置创建询价项目并向指定机构分发（含企微发送）。成功只代表分发已创建；是否送达以 Provider 回执为准，不要自动重发。 |
 | `sync_mcn_inquiry_status` | 为已分发项目创建或复用机构询价映射。用户报告机构已回填时先调用本工具，用返回的 inquiry_ids 直接调用 ingest_mcn_submissions；同步成功不代表机构已填表。 |
 | `ingest_mcn_submissions` | 对非空询价启动机构回填采集，返回 job_id。用 sync_mcn_inquiry_status 返回的 inquiry_ids 调用；受理后用 get_ingest_job 轮询到 succeeded 或 partially_succeeded。 |
@@ -169,3 +169,5 @@
 本地汇总新增 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE`，区分已登记询价模式与 CONTEXT_UNAVAILABLE；两者均为不可重试错误。恢复行为见 [hooks.md](./hooks.md)，Provider schema 与工具入参不变。
 
 新增 `ypscan_summarize_manual_scores({requirement_id})` 与 `manual_score_batch` Excel kind；工具入参由 index.js 声明，manifest 同步列入 contracts.tools。registry.js 的 Provider 参数归一化保持不变，Provider 评分工具仍使用原始两个参数，状态工具仍仅 job_id。手动拓展每批评分完成后保存为 manual_score_batch，再由本地汇总精确累计推荐数；机构回收仍使用 manual_source。详细返回、停止条件及已验证契约范围见 [tools.md](./tools.md) 的评分汇总章节。
+
+字段选择新契约见 [入参与出参](../../skills/media-assistant/references/tools/select_inquiry_form_fields.md)。插件已适配；2026-09-09 测试环境 tools/list 尚无 source_requirement_id/force_reselect，真实继承未验收。

@@ -15,14 +15,16 @@ Poll the scoring job created by `score_manual_source_csv`. Call only after that 
 
 ## Result
 
-- On success, the response contains the final workbook URL. Save it immediately with `ypscan_save_artifact` using `artifact_kind="manual_score_batch"` for manual sourcing, or `artifact_kind="manual_source"` for inquiry retrieval, with, the current `requirement_id` as `artifact_id`, and the exact workbook URL as `file_url`, then show `delivery.local_file_link`. For manual sourcing this is an intermediate batch: immediately call `ypscan_summarize_manual_scores({requirement_id})` to decide whether to continue or deliver the aggregate workbook. Do not route it into `rank_creators` or any enrichment flow.
+- On success, the response contains the final workbook URL. Save it immediately with `ypscan_save_artifact` using `artifact_kind="manual_score_batch"` for manual sourcing, or `artifact_kind="manual_source"` for inquiry retrieval, with the current `requirement_id` as `artifact_id` and the exact workbook URL as `file_url`. For manual sourcing this is an internal intermediate batch: do not show its table, local link or path; immediately call `ypscan_summarize_manual_scores({requirement_id})` to decide whether to continue or deliver the aggregate workbook. For inquiry retrieval, `manual_source` is the final delivery, so show its local link. Do not route either result into `rank_creators` or any enrichment flow.
 - If the score is still incomplete, continue polling with the same `job_id`.
 - At the 10th query, if the score is still incomplete, stop and truthfully report that background scoring has not finished. Do not query an 11th time. Keep the same `job_id` for a later explicit user request to continue.
 
 ## Recoverable missing-columns failure
 
-If the terminal result is `REQUIREMENT_COLUMNS_NOT_CONFIGURED`, `REQUIREMENT_COLUMNS_UNAVAILABLE`, or includes the exact message `customer demand has no selected inquiry columns`, stop polling and do not treat `success_count` as a successful workbook. Call `select_inquiry_form_fields` for the same requirement and platform, output its URL unchanged, then end the turn. After the user submitted the page and explicitly replied “好了”, submit a new scoring job once: if the failure directive carries `SCORE_MANUAL_SOURCE_CSV_ARGS`, reuse that exact JSON payload without altering the path; otherwise use the same requirement ID and the exact trusted `csv_file_path` returned by the current `file_bridge`. Do not repeat search, native completion, or `file_bridge`.
+If the terminal result is `REQUIREMENT_COLUMNS_NOT_CONFIGURED`, `REQUIREMENT_COLUMNS_UNAVAILABLE`, or includes the exact message `customer demand has no selected inquiry columns`, stop polling and do not treat `success_count` as a successful workbook. Call `select_inquiry_form_fields` for the same requirement and platform using its inheritance rules. On configured resume immediately; only a field-page URL requires submission and “好了”. Once configured, submit a new scoring job once: if the failure directive carries `SCORE_MANUAL_SOURCE_CSV_ARGS`, reuse that exact JSON payload without altering the path; otherwise use the same requirement ID and the exact trusted `csv_file_path` returned by the current `file_bridge`. Do not repeat search, native completion, or `file_bridge`.
 
 ## Stop conditions
 
 Stop on any other failed envelope, a mismatched job ID, or an outcome-unknown result. Do not resubmit the scoring job automatically.
+
+字段恢复使用 [字段工具规则](select_inquiry_form_fields.md)：可继承时传 source_requirement_id；configured 后直接按原可信参数重提一次，失败时暂停，不自动要求重选。

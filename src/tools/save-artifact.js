@@ -40,18 +40,23 @@ function failure(code, message, reason = code, { retriable = false, details = {}
 
 function success(details, artifactKind, params, format) {
   const localFileLink = localFileMarkdownLink(details.file_path);
-  // links CSV 只是补全、合并与上传的中间输入，不要求面向用户展示；Excel 结果仍在
-  // 流程要求的时点展示。
-  const internalOnly = ARTIFACT_EXTENSIONS[artifactKind] === ".csv";
+  // links CSV 是补全、合并与上传的中间输入；manual_score_batch 是分批汇总前的
+  // 单批评分表。默认内部使用；询价误存的最终交付由持有需求模式的 Hook 决定。
+  const internalOnly =
+    ARTIFACT_EXTENSIONS[artifactKind] === ".csv" || artifactKind === "manual_score_batch";
   const delivery = {
     local_path: details.file_path,
     local_file_link: localFileLink,
     display_required: !internalOnly,
     display_before_next_action: !internalOnly,
     user_visible_message: internalOnly
-      ? `${format} 已保存到本地，作为后续步骤的内部输入，不主动向用户展示。`
+      ? `${format} 已保存到本地，作为后续步骤的内部输入，不向用户展示文件路径、链接或表格。`
       : `已完成：${format} 已保存到本地。\n本地文件：${localFileLink}`,
   };
+  if (artifactKind === "manual_score_batch") {
+    delivery.user_visible_message +=
+      "仅当 Hook 确认当前需求为询价误存并指示最终交付时，展示本次真实评分表。";
+  }
   const nextArgs =
     artifactKind === "mcn_ranking" ? mcnRankingRecipientQuestionPayload(params?.mcn_names) : null;
   if (nextArgs) {
