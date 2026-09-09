@@ -1260,12 +1260,17 @@ function artifactSaveDirective(
           ]),
     ].join("\n");
   }
-  if (artifactKind === "manual_score_batch" && recordedMode !== BUSINESS_MODE_INQUIRY) {
-    return [
-      "YPSCAN_FLOW_DIRECTIVE=当前批评分表已保存，仅为中间结果。展示本地链接并立即调用 ypscan_summarize_manual_scores 累计推荐人数；不把本批评分成功数当推荐人数，不直接结束或放宽。",
-      `SCORE_BATCH_LOCAL_LINK=${localFileLink}`,
-      `SUMMARIZE_MANUAL_SCORES_ARGS=${JSON.stringify({ requirement_id: params.artifact_id })}`,
-    ].join("\n");
+  if (artifactKind === "manual_score_batch") {
+    if (recordedMode === BUSINESS_MODE_MANUAL) {
+      return [
+        "YPSCAN_FLOW_DIRECTIVE=当前批评分表已保存，仅为中间结果。展示本地链接并立即调用 ypscan_summarize_manual_scores 累计推荐人数；不把本批评分成功数当推荐人数，不直接结束或放宽。",
+        `SCORE_BATCH_LOCAL_LINK=${localFileLink}`,
+        `SUMMARIZE_MANUAL_SCORES_ARGS=${JSON.stringify({ requirement_id: params.artifact_id })}`,
+      ].join("\n");
+    }
+    if (recordedMode !== BUSINESS_MODE_INQUIRY) {
+      return "YPSCAN_FLOW_DIRECTIVE=manual_score_batch 保存缺少当前 requirement 的已登记业务模式，无法判断是手动拓展中间表还是询价误存；停止，不展示为最终交付，不调用汇总、不重存或重评。";
+    }
   }
   if (artifactKind === "manual_source" || artifactKind === "manual_score_batch") {
     const isInquiry = recordedMode === BUSINESS_MODE_INQUIRY;
@@ -2005,19 +2010,32 @@ export function registerFlowDirectiveHooks(api) {
               : null;
         jobs?.delete(JSON.stringify([scope, String(jobId)]));
       }
+      const directiveRequirementId =
+        bare === "ypscan_save_artifact"
+          ? firstString(
+              directiveParams.artifact_id,
+              directiveParams.requirement_id,
+              matched?.requirementId,
+            )
+          : firstString(
+              directiveParams.requirement_id,
+              directiveParams.artifact_id,
+              matched?.requirementId,
+            );
+      const requirementMode = directiveRequirementId
+        ? (manualScoreSourcesByRequirement.get(String(directiveRequirementId))?.business_mode ??
+          null)
+        : null;
+      const requiresRequirementMode =
+        bare === "ypscan_save_artifact" && directiveParams.artifact_kind === "manual_score_batch";
+      const effectiveMode = requirementMode ?? (requiresRequirementMode ? null : recordedMode);
       return appendDirective(
         event?.message,
         flowDirective(
           toolName,
           event?.message,
           directiveParams,
-          manualScoreSourcesByRequirement.get(
-            firstString(
-              directiveParams.requirement_id,
-              directiveParams.artifact_id,
-              matched?.requirementId,
-            ),
-          )?.business_mode ?? recordedMode,
+          effectiveMode,
           recordedPlatform,
           (requirementId) =>
             nonemptyString(requirementId)

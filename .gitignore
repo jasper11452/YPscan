@@ -23,6 +23,10 @@ dify工作流/
 .ypscan-*/
 .zvec-grep/
 
+# Python
+__pycache__/
+*.pyc
+
 # Logs / coverage
 *.log
 coverage/

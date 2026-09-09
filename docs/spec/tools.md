@@ -172,7 +172,7 @@
 
 测试环境 2026-09-08 的一个合成需求、两份不重叠 CSV、每份两人已分别返回独立任务及对应 Excel；四人均为“不推荐”。这证明该次测试的任务独立性和抖音负例表结构，不证明生产行为、跨批评分尺度、正例枚举全覆盖或模型/宿主已验收。当前自动回归用合成表验证两平台计数与 registered tool/Hook 衔接（tests/manual-score-summary.test.mjs、tests/manual-score-flow.test.mjs）。
 
-询价机构已登记模式返回 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE`（success=false、retriable=false），在读取或修改评分文件前返回；缺少可信上下文仍返回 CONTEXT_UNAVAILABLE。两者的 Hook 均不生成重试弹窗：前者仅引导交付当前需求已有的成功保存结果（没有可信文件则停止），后者停止且不得推断为询价机构或已完成。
+询价机构已登记模式返回 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE`（success=false、retriable=false），在读取或修改评分文件前返回；缺少可信上下文仍返回 CONTEXT_UNAVAILABLE。两者的 Hook 均不生成重试弹窗：前者仅引导交付当前需求已有的成功保存结果（没有可信文件则停止），后者停止且不得推断为询价机构或已完成。保存 `manual_score_batch` 时，Hook 只采用该 artifact_id 对应的已登记模式；该 requirement 缺少模式记录时停止并保留文件，不借用会话级模式，也不展示最终交付、汇总、重存或重评。
 
 ## 6. 弹窗载荷（供工具与 Hook 共用）
 

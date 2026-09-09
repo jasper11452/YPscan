@@ -6,13 +6,14 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 
 import yaml
 
 
 DEFAULT_WORKFLOW = Path("dify工作流/达人评分（完整能力逻辑修正版）.yml")
-EXPECTED_SHA256 = "0c865b2a60fd29a20460afb23762e92c8123a6cdbf737a3edfc5aaa4756b9bcc"
+EXPECTED_SHA256 = "60892b0b9a40b8efe65762cc518c106895154b4adad23150469e1ac210b84567"
 
 
 def load_nodes(path: Path) -> dict[str, dict]:
@@ -24,9 +25,31 @@ def load_nodes(path: Path) -> dict[str, dict]:
             "review the export and replay expectations before updating the baseline"
         )
     workflow = yaml.safe_load(source)
+    assert_no_inline_secrets(source, workflow)
     return {
         node["id"]: node["data"] for node in workflow["workflow"]["graph"]["nodes"]
     }
+
+
+def assert_no_inline_secrets(source: bytes, workflow: dict) -> None:
+    """导出文件不得内嵌 API Key：密钥由部署环境注入。"""
+    text = source.decode("utf-8")
+    if re.search(r"sk-[A-Za-z0-9]{20,}", text):
+        raise AssertionError(
+            "workflow export contains an inline API key; keep environment variables "
+            "empty and inject secrets at deploy time"
+        )
+    for variable in workflow["workflow"].get("environment_variables") or []:
+        name = variable.get("name", "")
+        if name.endswith("_API_KEY") and str(variable.get("value", "")) != "":
+            raise AssertionError(f"{name} must stay empty in the exported workflow")
+    defined = {
+        variable.get("name")
+        for variable in workflow["workflow"].get("environment_variables") or []
+    }
+    for reference in sorted(set(re.findall(r"\{\{#env\.([A-Z0-9_]+)#\}\}", text))):
+        if reference not in defined:
+            raise AssertionError(f"unresolved environment reference: {reference}")
 
 
 def compile_node(nodes: dict[str, dict], node_id: str) -> dict:

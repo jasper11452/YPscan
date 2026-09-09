@@ -101,7 +101,7 @@
 
 失败且无专门处理时：`ypscan_parse_requirement`、`validate_requirement`、`search_creators`、`rank_mcns` 给 `flowPauseDirective`（`YPSCAN_FLOW_DIRECTIVE=<阶段> 已暂停（code）` + `ASK_USER_QUESTION_ARGS` 重试/结束），其余工具返回 null（不追加）。
 
-评分分支误用恢复：`manual_score_batch` 保存成功且当前记录模式为询价机构时，复用 `manual_source` 最终交付指令与本次真实本地链接，不再引导汇总、重存或重评；手动拓展单批汇总与旧版 `manual_source` Excel 交付不变。汇总的 MODE_NOT_APPLICABLE 仅引导交付当前需求已有的成功保存结果，无可信结果时停止；CONTEXT_UNAVAILABLE 只停止，不推断模式或完成状态。两者均不附重试弹窗，不重建需求或重评。
+评分分支误用恢复：`manual_score_batch` 保存成功且当前记录模式为询价机构时，复用 `manual_source` 最终交付指令与本次真实本地链接，不再引导汇总、重存或重评；手动拓展单批汇总与旧版 `manual_source` Excel 交付不变。保存的 `manual_score_batch` 所属 requirement 缺少模式记录时，不借用会话级模式；停止并保留文件，不展示最终交付、不汇总、不重存或重评，也不附重试弹窗。汇总的 MODE_NOT_APPLICABLE 仅引导交付当前需求已有的成功保存结果，无可信结果时停止；CONTEXT_UNAVAILABLE 只停止，不推断模式或完成状态。两者均不附重试弹窗，不重建需求或重评。
 
 ## 6. Gateway 生命周期
 

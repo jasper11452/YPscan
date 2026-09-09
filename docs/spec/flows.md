@@ -88,5 +88,5 @@ validate_requirement → select_inquiry_form_fields（原样展示 URL，等用�
 
 - 用户主动修改任何业务条件：回到原始需求合并最新人工修改，撤销全部放宽，重新解析、复核、创建新 requirement 并沿原模式重跑；不复用旧 requirement/机构/达人/batch/CSV/Excel。
 - 中间产物：MCN 排名表、机构达人预览表、merged CSV、受控 links CSV。
-- 最终交付：手动拓展汇总 Excel；机构评分或旧链路兼容 Excel 使用 `manual_source`。`manual_score_batch` 是手动拓展中间表；已确认询价机构误用该 kind 保存评分表时，仍交付本次真实评分表，不进入汇总。误调汇总的 MODE_NOT_APPLICABLE 不触发重试，只使用当前成功保存的评分表，无可信文件则停止；缺少上下文不视为已完成。`ranked_submission`（最终提报表）已从正式链路移除，仅作遗留 kind 保留。
+- 最终交付：手动拓展汇总 Excel；机构评分或旧链路兼容 Excel 使用 `manual_source`。`manual_score_batch` 是手动拓展中间表；已确认询价机构误用该 kind 保存评分表时，仍交付本次真实评分表，不进入汇总。保存的 `manual_score_batch` 所属 requirement 缺少模式记录时停止并保留文件，不借用会话模式、不展示最终交付、不汇总或重存。误调汇总的 MODE_NOT_APPLICABLE 不触发重试，只使用当前成功保存的评分表，无可信文件则停止；缺少上下文不视为已完成。`ranked_submission`（最终提报表）已从正式链路移除，仅作遗留 kind 保留。
 - 所有结果只用当前 requirement、当前平台、本轮真实 Provider 证据；不跨需求/平台/账号/历史 run 混用或补齐。

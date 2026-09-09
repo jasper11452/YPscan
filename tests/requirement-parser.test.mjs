@@ -122,6 +122,8 @@ test("manual sourcing shares the reviewed relaxation policy and recreates requir
   assert.match(status, /creator_links_csv_url/u);
   assert.match(status, /仅按返回的下一批名单原生补全/u);
   assert.match(status, /兼容降级路径/u);
+  assert.match(status, /\| `num`\s+\|.*目标人数梯度取数/u);
+  assert.doesNotMatch(status, /表示用户需求人数的 3 倍/u);
 });
 
 test("save artifact card binds both formats to one tool and the current requirement", () => {

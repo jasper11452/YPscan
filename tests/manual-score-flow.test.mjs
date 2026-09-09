@@ -202,6 +202,20 @@ test("inquiry mis-saved as a manual batch delivers the saved file without schedu
   assert.doesNotMatch(saved.directive, /SUMMARIZE_MANUAL_SCORES_ARGS|ASK_USER_QUESTION_ARGS/u);
 });
 
+test("manual batch save without its own requirement mode stops instead of inheriting session mode", async (t) => {
+  const f = await setup(t, "询价机构");
+  const batch = await f.score(f.ids.slice(0, 5), 3);
+  const saved = await f.local("ypscan_save_artifact", {
+    ...batch.args,
+    artifact_id: "req-without-mode",
+    artifact_kind: "manual_score_batch",
+  });
+  assert.equal(saved.payload.success, true);
+  assert.match(saved.directive, /缺少当前 requirement 的已登记业务模式/u);
+  assert.match(saved.directive, /停止/u);
+  assert.doesNotMatch(saved.directive, /最终交付物|SUMMARIZE_MANUAL_SCORES_ARGS|ASK_USER_QUESTION_ARGS/u);
+});
+
 test("inquiry summary misuse is distinct from missing context and never requests retry", async (t) => {
   const f = await setup(t, "询价机构");
   const result = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });

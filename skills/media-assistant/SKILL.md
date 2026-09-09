@@ -81,7 +81,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 机构回收后达人不足时仍交付当前真实结果并说明缺口，不自动发起新一轮询价。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`。
 
-询价评分表应保存为 `manual_source`；当前需求模式已确认为询价机构时，即使误存为 `manual_score_batch`，也交付本次成功保存的真实评分表，不再汇总、重存或重评。误调汇总返回 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE` 时，不弹重试窗口，只引用当前需求已有的成功保存结果；没有可信文件时如实停止，不宣称交付。`CONTEXT_UNAVAILABLE` 仅表示可信上下文缺失，不能据此推断为询价机构或已完成；停止且不重试汇总、不重新建需或重评。
+询价评分表应保存为 `manual_source`；当前需求模式已确认为询价机构时，即使误存为 `manual_score_batch`，也交付本次成功保存的真实评分表，不再汇总、重存或重评。保存 `manual_score_batch` 时若所属 requirement 没有已登记模式，不得借用会话中的模式：停止并保留文件，不展示为最终交付，也不调用汇总、重存或重评。误调汇总返回 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE` 时，不弹重试窗口，只引用当前需求已有的成功保存结果；没有可信文件时如实停止，不宣称交付。`CONTEXT_UNAVAILABLE` 仅表示可信上下文缺失，不能据此推断为询价机构或已完成；停止且不重试汇总、不重新建需或重评。
 
 ## 手动拓展分支
 
