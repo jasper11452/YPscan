@@ -26,11 +26,13 @@
 - [ ] **Agent 调 `search_creators` 成功后**：忽略 `creators_export_path` 等表格链接，直接用同一 requirement 调 `rank_mcns({id, platform})`；仅询价分支允许调用 `search_creators`。后端检索单价只按原价下 30%、上 20% 扩展一次；Agent 不得把该扩展区间回写需求参数。
 - [ ] **Agent 调 `select_inquiry_form_fields`**：必须按当前 live schema 传 `platform` 与当前真实 `requirement_id`；新建 requirement（含跨功能切换）必须重新选择，只有同一 requirement 已有提交证据时才复用，其他 requirement 的字段配置或历史“不再选字段”要求不能跳过；原样展示 URL 后本轮结束，用户为该 requirement 提交并明确回复“好了”前不得试调后续搜索、手动拓展或打分；后端持久化字段配置。
 - [ ] **Agent 调 `manual_source_creators`**：只传 `{requirement_id}`，不带 `demand` 或 `num`；需求由 Provider 从后台读取，完整需求、澄清和已确认放宽须先解析、复核并通过 `validate_requirement` 保存；后端异步生成或同步返回 links CSV。
-- [ ] **Agent 调 `manual_source_creators_status`**：`num` 只在当前环境 live schema required 时传（每批 URL 数量，正整数，等于用户需求人数 `quantityTotal × 3`；交付目标仍为用户需求人数）；Hook 先通过 `MANUAL_SOURCE_TARGET_NUM` 提示已乘三的值，轮询不得重复乘三。提交后先等 30 秒再第 1 次查询，之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不查第 11 次、不重复提交或换 ID；后端返回终态 links CSV 后 Agent 保存 `manual_creator_links`，再用 `ypscan_save_creator_links` 归一化为受控三列 CSV（短链或无法推导 creator_id 时报错停止，不进入补全），再按平台分 20 个 author 一批原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）。
+- [ ] **Agent 调 `manual_source_creators_status`**：`num` 只在当前环境 live schema required 时传（每批 URL 数量，正整数，按目标人数梯度取数：10 人→30、20 人→50、50 人→100；交付目标仍为用户需求人数）；Hook 先通过 `MANUAL_SOURCE_TARGET_NUM` 提示梯度值，轮询不得重复乘倍数。提交后先等 30 秒再第 1 次查询，之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不查第 11 次、不重复提交或换 ID；后端返回终态 links CSV 后 Agent 保存 `manual_creator_links`，再用 `ypscan_save_creator_links` 归一化为受控三列 CSV（短链或无法推导 creator_id 时报错停止，不进入补全），再按平台分 20 个 author 一批原生补全（小红书 `get_xhs_author_business_card` 固定 `page_count=1`；抖音 `get_douyin_author_business_card`）。
 - [ ] **Agent 调 `ypscan_save_creator_links`（两链路归一化）**：传当前 `requirement_id`、`platform` 与 `links_csv_path`（手动拓展：`ypscan_save_artifact` 保存的原始 links CSV）或 `preview_file_path`（询价回收：已登记且哈希未变的预览 xlsx），二者互斥；工具解析并归一化出 `source_record_id,creator_id,url` CSV 并登记为当前 requirement 的合法 links 来源：links CSV 只有 url 列时按平台主页规则推导 creator_id，短链或无法推导、ID 与主页不匹配时整份报错停止；归一化 links CSV 是内部中间产物，界面不主动展示其表格、链接或本地路径，随后按 20/批原生补全 → `file_bridge(flow=manual_source)` → 打分；非法行或去重后为空时报错，不得用 Browser/脚本代写。
 - [ ] **Agent 调原生达人补全工具**：每批按 20 人调用当前平台补全工具（小红书 `get_xhs_author_business_card` 固定 `page_count=1`，抖音 `get_douyin_author_business_card`）；登录窗口与 Cookie 由宿主工具内部处理，不自行打开登录页、不读取 Cookie；宿主未开放对应补全工具时如实报告并停止补全链路。补全本身每批只信 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止后续 merge/upload/打分，界面如实报告失败达人。
 - [ ] **Agent 调 `file_bridge`**：手动拓展仅传当前批补全 CSV 与完整 links，机构回收一次传全部补全 CSV 与 links，由工具内部合并；links 与补全文件必须都是 `.csv`，且必须是当前 requirement 受控保存的 links CSV 与 YP Action 原生补全产物，否则工具返回 `YPSCAN_FILE_BRIDGE_SOURCE_NOT_ALLOWED` 且不上传；merged CSV 数据行超过 500 时必须跳过上传并停止打分（merged CSV 是内部中间产物，不主动向用户展示）；未超限才使用返回的服务器侧 `csv_file_path` 调 `score_manual_source_csv({requirement_id, csv_file_path})`。
 - [ ] **Agent 展示表格**：用户可见的表格只有评分表、汇总表、MCN 排名表和机构回填预览表；links CSV、补全 CSV 和 merged CSV 都是内部中间产物，界面不主动展示表格、下载链接或本地文件路径，也不作为交付物报告（用户明确索取或要求诊断时除外）；merged CSV 超过 500 行、上传失败或打分全失败时只报告真实原因和行数，不把内部 CSV 当降级交付物。
+- [ ] **询价评分误入汇总恢复**：已确认询价模式误存 manual_score_batch 后展示本次评分表并结束，不再汇总；误调汇总返回 MODE_NOT_APPLICABLE，不弹重试、不重存/重评/建需。没有当前成功保存结果时不得宣称交付；Gateway 重置后的 CONTEXT_UNAVAILABLE 仍停止，不推断为询价机构。手动拓展正常分批与旧版 manual_source Excel 兼容交付不变。代码回归不代替模型及桌面验收。
+- [ ] **上传后不展示 OSS 地址**：助手正文、进度及最终回复不复述完整或截断 OSS 地址、对象路径或 csv_file_path 参数；评分工具仍收到原始地址。上传后提示“数据已合并上传，正在启动打分。”。原始工具面板显示另由宿主验收。
 - [ ] **保存 `manual_source` / `manual_score_batch` Excel 遇到同名不同内容**：保留原文件，按需求关联 ID 哈希与内容哈希生成确定性回退名称，界面使用本次返回的真实本地链接；重复保存相同内容幂等复用，回退文件被修改或任一路径为符号链接时仍报错。其他 artifact kind 的同名异内容继续报冲突。此项仅验收保存，分批行为另按下一项验收。
 - [ ] **Agent 调 `score_manual_source_csv`**：后端返回 `job_id` 时按 30 秒间隔、单轮最多 10 次轮询 `score_manual_source_csv_status({job_id})`，终态后手动拓展保存 manual_score_batch 再汇总、机构回收保存 manual_source 最终表；后端同步返回 Excel 时直接保存（兼容降级路径，不进 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗）。打分提交/状态返回缺字段配置时不把 `success_count` 当完成、不重搜/补全/file_bridge；同 requirement 重新选择字段，用户回复“好了”后只用本轮原始可信 `csv_file_path` 重提一次打分（Hook 附精确 `SCORE_MANUAL_SOURCE_CSV_ARGS` 时原样使用）。
 - [ ] **Agent 调 `file_bridge`**：空 CSV 与数据行 >500 在上传前阻断；配置读取顺序固定为插件配置 `fileBridgeOss` → 打包内置凭据（prepack 注入的 `src/tools/file-bridge-oss-defaults.json`），不隐式读取宿主进程环境变量（内部测试/集成可显式注入）；`region`/`bucket`/`objectPrefix` 回落到内置非敏感默认值；links 与补全路径必须都是 `.csv`（否则 `YPSCAN_FILE_BRIDGE_INVALID_INPUT`），merged 内容必须合法 CSV（否则 `YPSCAN_FILE_BRIDGE_INVALID_CSV`），links CSV 必须是当前 requirement 受控保存的产物（`ypscan_save_artifact` 保存的 `manual_creator_links` 或 `ypscan_save_creator_links` 生成的 links CSV）、补全 CSV 必须来自当前 requirement 的 YP Action 原生补全工具（否则 `YPSCAN_FILE_BRIDGE_SOURCE_NOT_ALLOWED`，均不上传）；对象键固定为 `<Object 前缀>/<flow>/<requirement_id>/<sha256>.csv`；上传后必须校验返回的未签名 OSS URL 可匿名读取，失败时报 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，不得把坏链接继续传给下游。
@@ -49,9 +51,11 @@
 
 以下为待执行的模型/桌面行为验收；Hook 单元测试通过不等于这些交互已实测通过。
 
-- [ ] **原文写“返点25%以上”，解析 rebate=null**：Agent 直接采用最低25%，不要求用户再回答25%；粉丝只有“行业头部”描述时采用全量区间，不追问量级。
+- [ ] **原文写“返点25%以上”，解析 rebate=null**：Agent 直接采用最低25%，不要求用户再回答25%；粉丝只有“行业头部”等量级描述时须先询问用户具体粉丝区间，不自行换算成数值或按全量区间落库。
 - [ ] **需求同时有过期截止时间及其他必要缺项**：首次复核一次问齐；已明确值不重问，不能先提交过期日期再让用户补救。
 - [ ] **用户已确认10万粉丝，随后说“去掉行业头部，明确粉丝数，重新搜索”**：直接合并修改并重解析；10万和未修改截止时间不再确认，新 requirement 字段选择仍保留。
+- [ ] **手动拓展首次解析后补充/澄清了有效条件**：若当前平台完整有效需求发生变化，Agent 先生成无冲突全文，以同一全文重调解析器并写入 `rawMessagesJson.original`，`parse_outputs` 全量替换；输入未变化且结果有效时不重复解析。询价机构放宽继续保留未改写原文。
+- [ ] **目标10人、当前批补全成功20人、评分只返回19行且已有10人推荐**：汇总返回 `await_scores`、`stop_reason=null`，先展示标注为非最终汇总的阶段性进度，不生成最终交付、不开始下一批；任务仍在跑时只等待当前批，终态仍缺行时报告缺失达人并停止。
 - [ ] **提交粉丝10万，搜索回传50万**：说明实际参数偏差，不能称为放宽、要求用户接受50万或断言这是零结果的唯一根因；当前工具不能修复时如实报告限制。
 - [ ] **状态成功、completed=true、selected_count=0、无文件**：停止轮询并复核；不出现原参数重试弹窗、不宣称交付。参数正确后仅给下一项具体放宽建议，用户确认前不重跑。
 - [ ] **宿主技能目录漏列 media-assistant**：Agent 能从 Hook 提供的当前安装路径读取完整 Skill；同会话已读不重复。
@@ -70,10 +74,11 @@
 
 ## 手动拓展分批评分验收
 
-- [ ] 需求N保持原值，候选最多3N；归一化后先汇总取得最多20位的首批名单；真实候选不足3N时如实报告。
-- [ ] N=10，首批20人有10位“推荐”：生成最终汇总表，剩余10人补全/评分调用均为0；首批6位、次批4位：只新增处理后10人，累计10位后交付；全部耗尽仍不足：交付真实结果并说明推荐缺口。
+- [ ] 需求N保持原值，候选按梯度池上限（10 人→30、20 人→50、50 人→100）；归一化后先汇总取得首批名单（不超过 min(20, N)），之后每批最多 20 人；真实候选不足梯度上限时如实报告。
+- [ ] N=10，首批10人中有10位“推荐”：生成最终汇总表，剩余20人补全/评分调用均为0；首批10人中6位推荐、次批20人中4位推荐：只新增处理后20人，累计10位后交付；全部耗尽仍不足：交付真实结果并说明推荐缺口。
 - [ ] “不推荐”、未知结论、重复达人、其他需求/平台以及处理成功数不能误计推荐。来源文件变化、结论冲突、已终态评分缺行、Gateway 上下文丢失时停止，保留已保存文件，不自动重评。
 - [ ] 全失败补全批次登记 `failed_author_ids`，失败达人不再被重新排批；用户明确要求重试且成功后，以成功记录取代旧失败。
-- [ ] 单批表为中间产物，最终汇总沿用 Provider 单表模板，保留工作表名、标题、需求信息、分组表头、列宽、颜色、数字格式、冻结行和全部评分行，更新评分数量，不截断推荐前N人；不把未评分者写成“不推荐”。机构回收仍全量补全评分。
+- [ ] 评分表含综合分 0 的评分行：不写入最终汇总表、不计推荐、不触发缺行等待、不自动重评；交付时按 `excluded_zero_score_count` 如实说明，不写成未评分或补全失败。全部评分行均为 0 时不生成汇总文件。
+- [ ] 单批表为中间产物，最终汇总沿用 Provider 单表模板，保留工作表名、标题、需求信息、分组表头、列宽、颜色、数字格式、冻结行和非 0 分评分行，更新评分数量，不截断推荐前N人；不把未评分者写成“不推荐”。机构回收仍全量补全评分。
 
 代码回归覆盖上述调度指令和注册工具衔接；勾选仍要求真实模型/宿主验收，不能以单元测试代替桌面通过。

@@ -17,7 +17,7 @@
 ## 这是什么
 
 - `ypscan`（悦普识星）是 OpenClaw 插件（`id: ypscan`，`private: true`）：客户端集成层，注册 5 个本地工具，通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`）。
-- 当前主线形态（`feat/rank_creators`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成）。手动拓展固定链路为 `links CSV → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全 → file_bridge 只上传当前批 → score_manual_source_csv → 保存 manual_score_batch → 再汇总`（最多三倍候选、20/批，去重推荐人数达标或候选耗尽后交付最终汇总表）；机构回填固定 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 → ypscan_save_creator_links → 原生补全 → file_bridge → score_manual_source_csv`；`mcn_rank` 仅保留兼容接入。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
+- 当前主线形态（`feat/rank_creators`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成）。手动拓展固定链路为 `links CSV → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全 → file_bridge 只上传当前批 → score_manual_source_csv → 保存 manual_score_batch → 再汇总`（梯度候选池 10 人→30、20 人→50、50 人→100、20/批，去重推荐人数达标或候选耗尽后交付最终汇总表）；机构回填固定 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 → ypscan_save_creator_links → 原生补全 → file_bridge → score_manual_source_csv`；`mcn_rank` 仅保留兼容接入。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type": "module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。运行时依赖为 `ali-oss`、`read-excel-file`、`write-excel-file`、`fflate`、`xml2js` 与 `playwright-core`（后者仅为遗留 browser 工具保留，当前插件未注册任何 browser 工具）。
 
 ## 常用命令（仓库根执行）

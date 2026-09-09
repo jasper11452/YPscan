@@ -7,6 +7,8 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 连续推进与用户交互
 
+`file_bridge` 上传成功后的用户进度只说“数据已合并上传，正在启动打分。”；OSS 地址（包括省略、截断形式）、对象路径、`csv_file_path` 和后续工具参数只供内部调用，不在正文、进度或最终回复中复述。评分调用仍原样使用工具返回地址。
+
 用户已明确的需求、修改或继续执行指令直接落实；未修改的有效澄清继续使用，不以“确认后我再执行”重复索取同一决定。解析、复核、保存、补全与轮询等已可执行步骤连续推进，进度通知不成为等待回复的关卡。必要业务选择、发送确认、字段页提交和真实阻塞仍按各分支处理。
 
 面向用户只说当前业务进度、结果、是否需要操作及原因；不主动展示 requirement ID、batch ID、工具名称、“落库”等实现细节。用户要求诊断时才提供必要技术证据。没有文件的零结果如实说未找到达人，不说“已交付”。用户可见的表格只有评分表、汇总表、MCN 排名表和机构回填预览表；links CSV、补全 CSV 和 merged CSV 都是内部中间产物，不主动展示表格、下载链接或本地文件路径，也不作为交付物报告；用户明确索取或要求诊断时除外。
@@ -37,6 +39,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 解析器缺失字段或返回 null 不代表用户未提供。先核对当前原文与有效澄清：例如“返点25%以上”已唯一确定最低返点25%，直接保存 `"[0.25,1]"`，不再问最低返点。原文出现粉丝量级描述（头部/肩部/腰部/尾部/行业头部等）时必须询问用户具体粉丝数区间，不得自行换算成数值或按全量区间处理；未提及粉丝或明确“不限/无要求”时按全量区间处理，不追问。第一次复核必须一次检查全部必要字段，包括截止时间是否过期；确需澄清时一次问齐，不先问数值再由预检发现日期错误。
 
+手动拓展的首次澄清若改变当前平台的有效需求，先将原始需求与全部最新有效答案合成无冲突的完整需求全文，再用该全文重新调用 `ypscan_parse_requirement`。本次 `demand` 与 `rawMessagesJson.original` 必须使用同一份全文，`parse_outputs` 全量替换为本次返回，不拼接旧输出；其他仍有效的 `clarifications` 保留。若完整有效需求与最近一次成功解析的 `demand` 相同且结果有效，不增加无意义的重解析。询价机构的放宽仍保留未改写原文，累计放宽写入 `clarifications` 与本轮顶层参数，不套用手动拓展全文替换规则。
 
 1. 用户当前完整有效需求；
 2. 本次 `data.outputs`；
@@ -78,17 +81,19 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 机构回收后达人不足时仍交付当前真实结果并说明缺口，不自动发起新一轮询价。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`。
 
+询价评分表应保存为 `manual_source`；当前需求模式已确认为询价机构时，即使误存为 `manual_score_batch`，也交付本次成功保存的真实评分表，不再汇总、重存或重评。误调汇总返回 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE` 时，不弹重试窗口，只引用当前需求已有的成功保存结果；没有可信文件时如实停止，不宣称交付。`CONTEXT_UNAVAILABLE` 仅表示可信上下文缺失，不能据此推断为询价机构或已完成；停止且不重试汇总、不重新建需或重评。
+
 ## 手动拓展分支
 
 `validate_requirement` 成功后先调用 `select_inquiry_form_fields`；生成字段选择 URL 后原样展示并结束本轮，禁止用“若系统强制会提示”等试错理由提前调用后续工具。用户为该 `requirement_id` 提交字段页并明确回复“好了”后，按 [manual_source_creators](references/tools/manual_source_creators.md) 只传同一 `requirement_id` 提交后端任务，不传 `demand` 或 `num`。需求文本由 Provider 从后台读取；完整有效需求和已确认澄清仍须先解析、复核并通过 `validate_requirement` 保存。
 
-若提交响应同步直接返回 links CSV，则立即保存并归一化 links CSV（见下文），再进入原生达人补全；若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID、`batch_id` 和用户需求人数三倍的 `num`（正整数，即每批取 links URL 的数量）第 1 次查询。Hook 会通过 `MANUAL_SOURCE_TARGET_NUM` 提示当前 requirement 落库的 `quantityTotal × 3`（需求 30 人则取 90）；当前环境 live schema required `num` 时直接把该值并入状态查询，不得再次乘三。缺少需求记录时沿用上一轮已发送的 `num`。最终交付目标仍为用户需求人数。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 requirement ID、batch ID 和当前环境 live schema 对应的目标数量参数开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
+若提交响应同步直接返回 links CSV，则立即保存并归一化 links CSV（见下文），再进入原生达人补全；若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID、`batch_id` 和按目标人数梯度计算的 `num`（正整数，即每批取 links URL 的数量）第 1 次查询。Hook 会通过 `MANUAL_SOURCE_TARGET_NUM` 提示当前 requirement 的梯度取数数量（10 人→30、20 人→50、50 人→100，需求 30 人则取 60）；当前环境 live schema required `num` 时直接把该值并入状态查询，不得再次乘倍数。缺少需求记录时沿用上一轮已发送的 `num`。最终交付目标仍为用户需求人数。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 requirement ID、batch ID 和当前环境 live schema 对应的目标数量参数开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
 
-拿到 links CSV 后，先调用 `ypscan_save_artifact` 保存为 `manual_creator_links`（原始 Provider 下载物，可能只有 url 列；内部产物，不主动向用户展示）；再用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 读取该文件并归一化为受控三列 links CSV（`source_record_id,creator_id,url`：只有 url 列时按平台主页规则推导 creator_id；短链或无法推导时立即失败并停止，不进入原生补全）。归一化成功后调用 `ypscan_summarize_manual_scores({requirement_id})`，从当前真实候选中按原顺序去重、最多使用 `quantityTotal × 3` 人，再按返回的 `next_author_ids` 调用当前平台原生达人补全工具，每批最多 20 人。候选少于三倍时按实际候选处理，不伪造或保证搜够三倍。小红书使用 `get_xhs_author_business_card` 且固定 `page_count=1`，抖音使用 `get_douyin_author_business_card`；两者均由宿主 YP Action 提供、不在 ypscan 白名单内，宿主未开放时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；若某批 `csv_file` 缺失则停止后续 file_bridge 和打分，并原样报告失败达人。该批失败达人已登记，后续汇总不会重新排批；用户明确要求重试且成功后，以成功名单取代旧失败记录。
+拿到 links CSV 后，先调用 `ypscan_save_artifact` 保存为 `manual_creator_links`（原始 Provider 下载物，可能只有 url 列；内部产物，不主动向用户展示）；再用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 读取该文件并归一化为受控三列 links CSV（`source_record_id,creator_id,url`：只有 url 列时按平台主页规则推导 creator_id；短链或无法推导时立即失败并停止，不进入原生补全）。归一化成功后调用 `ypscan_summarize_manual_scores({requirement_id})`，从当前真实候选中按原顺序去重、最多使用梯度候选池（10 人→30、20 人→50、50 人→100）的候选，再按返回的 `next_author_ids` 调用当前平台原生达人补全工具；首批不超过 min(20, 需求人数)，之后每批最多 20 人。候选少于梯度上限时按实际候选处理，不伪造或保证搜够。小红书使用 `get_xhs_author_business_card` 且固定 `page_count=1`，抖音使用 `get_douyin_author_business_card`；两者均由宿主 YP Action 提供、不在 ypscan 白名单内，宿主未开放时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；若某批 `csv_file` 缺失则停止后续 file_bridge 和打分，并原样报告失败达人。该批失败达人已登记，后续汇总不会重新排批；用户明确要求重试且成功后，以成功名单取代旧失败记录。
 
 每批补全完成后，按 [file_bridge](references/tools/file_bridge.md) 调用 `file_bridge(flow=manual_source)`，传入完整受控 links CSV 与**仅当前批**补全 CSV；工具内部只输出匹配的达人。禁止累计传入之前已评分的补全 CSV，否则会重复评分。`missing_creator_ids` 包括未开始的后续候选，不等于补全失败名单；失败只认原生工具的 `failed_author_ids`。若 merged CSV 数据行超过 500，工具跳过上传，必须停止后续打分，并如实报告行数（merged CSV 是内部中间产物，不主动向用户展示）。未超限时把返回的服务器侧 `csv_file_path` 传给 `score_manual_source_csv({requirement_id, csv_file_path})`；`csv_file_path` 只接受当前 `file_bridge` 返回值（当前实现为未签名 OSS URL），绝不传本机工作区路径或自行构造的路径。响应返回 `job_id` 时按 [score_manual_source_csv_status](references/tools/score_manual_source_csv_status.md) 每隔 30 秒轮询（单轮最多 10 次），成功后以 `artifact_kind="manual_score_batch"`、`artifact_id=当前 requirement_id` 保存本批 workbook；同步返回 Excel 时同样按单批保存。这是中间结果，保存并展示链接后立即调用 [ypscan_summarize_manual_scores](references/tools/ypscan_summarize_manual_scores.md)，禁止直接当作最终交付。若 OSS 对象虽已上传但匿名公网地址不可读，则 `file_bridge` 会返回 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，不得继续打分，也不主动展示该内部 CSV。
 
-汇总工具精确识别评分表的“推荐结论”：仅“推荐”计数，“不推荐”不计数；未知结论、身份/需求/平台不一致、来源文件变化或相同达人结论冲突时停止，不猜测。`next_action=complete_next_batch` 时只补全返回的下一批；`await_scores` 时只等待当前已提交评分任务，若任务已终态但缺行则报告并停止，禁止自动重评或开始下一批；`deliver` 时展示汇总 Excel 并停止，不再处理剩余候选。汇总沿用 Provider 单表模板，保留工作表名、标题、需求信息、分组表头、列宽、颜色、数字格式、冻结行及全部评分行，更新评分数量，按综合得分排序，不按推荐结论筛掉或截断行；不保证未评分者中没有更优人选。候选耗尽仍不足时先交付真实结果、说明推荐人数和缺口，再按下文复核和建议放宽。没有实际文件时不得宣称交付。
+汇总工具精确识别评分表的“推荐结论”：仅“推荐”计数，“不推荐”不计数；未知结论、身份/需求/平台不一致、来源文件变化或相同达人结论冲突时停止，不猜测。`next_action=complete_next_batch` 时只补全返回的下一批；当前批任一补全成功达人仍缺评分行时，`await_scores` 优先于“推荐已达标”或“候选已耗尽”；此时先向用户展示 `progress.user_visible_message` 阶段性进度并明确标注不代表最终汇总（已保存的单批评分表也不是最终表），只等待当前已提交评分任务（沿用 30 秒轮询、单轮最多 10 次）；任务仍在运行就继续等待，已终态仍缺行则报告 `pending_score_author_ids` 并停止，禁止自动重评或开始下一批；`deliver` 时展示汇总 Excel 并停止，不再处理剩余候选。汇总沿用 Provider 单表模板，保留工作表名、标题、需求信息、分组表头、列宽、颜色、数字格式、冻结行及全部非 0 分评分行，更新评分数量，按综合得分排序，不按推荐结论筛掉或截断行；综合分为 0 的评分行不写入最终汇总表（0 分通常来自评分失败、资料无效或数据不足，也可能是有效评估但内容/类型相关度均为 0 级），但已返回行不按缺行处理、不自动重评，并按 `excluded_zero_score_count` 如实说明；不保证未评分者中没有更优人选。候选耗尽仍不足时先交付真实结果、说明推荐人数和缺口，再按下文复核和建议放宽。没有实际文件时不得宣称交付。
 
 来源登记仅在当前插件生命周期内保留；Gateway 重置后缺少可信上下文时停止，不通过重新建需、重新评分或临时脚本猜测恢复。机构回收仍全部补全后一次上传评分，不使用本节分批早停。
 

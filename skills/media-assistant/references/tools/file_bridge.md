@@ -22,6 +22,8 @@ The tool chooses the first available ID column per file. For Douyin the priority
 
 ## Result
 
+After upload, user-facing progress is “数据已合并上传，正在启动打分。” Do not echo OSS URLs (including abbreviated/truncated URLs), object paths, `csv_file_path`, or subsequent tool arguments in commentary or final replies. Preserve the exact returned URL only in the downstream tool call. Raw tool-result panel visibility is controlled by the host.
+
 `completion_id_columns` reports each completion file's `file_path` and selected `id_column` (trimmed for display). On `YPSCAN_FILE_BRIDGE_EMPTY`, `error.details` retains the merge details, including `data_row_count`, `matched_creator_ids`, `missing_creator_ids`, and `completion_id_columns`. No upload occurs; report the mismatch rather than guessing a BOM issue or retrying unchanged inputs.
 
 The merged CSV is an internal input for scoring or ranking: do not show its table, link or local path proactively. The only exception is the legacy `mcn_complete_only` flow, whose local merged CSV is that flow's sole output; there, show `delivery.local_file_link`.

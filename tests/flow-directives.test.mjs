@@ -53,6 +53,31 @@ function canonicalValidateParams(businessMode, quantityTotal = 30) {
   };
 }
 
+test("file bridge keeps the scoring URL exact in tool args and separates visible progress", () => {
+  const { hooks } = registeredPlugin();
+  const url = "https://example.invalid/internal.csv";
+  const text = directiveText(
+    hooks.get("tool_result_persist")({
+      toolName: "file_bridge",
+      params: { requirement_id: "req", flow: "manual_source" },
+      message: toolMessage({
+        success: true,
+        data: {
+          file_path: "/tmp/merged.csv",
+          csv_file_path: url,
+          data_row_count: 1,
+        },
+      }),
+    }),
+  );
+  assert.deepEqual(namedArgsFromDirective(text, "SCORE_MANUAL_SOURCE_CSV_ARGS"), {
+    requirement_id: "req",
+    csv_file_path: url,
+  });
+  assert.match(text, /面向用户只说“数据已合并上传，正在启动打分。”/u);
+  assert.match(text, /含省略或截断形式/u);
+});
+
 test("completed empty manual search reviews requirements instead of offering a blind retry", () => {
   const { hooks } = registeredPlugin();
   const payload = {
@@ -380,6 +405,55 @@ test("parse success pins the rawMessagesJson key contract for validate_requireme
   assert.match(directive, /key 写错会被本地预检当成缺失原文阻断/u);
 });
 
+test("parse success rebuilds a changed manual-source demand after first clarification", () => {
+  const { hooks } = registeredPlugin();
+  const directive = directiveText(
+    hooks.get("tool_result_persist")({
+      toolName: "ypscan_parse_requirement",
+      params: { business_mode: "手动拓展" },
+      message: toolMessage({ success: true, data: { outputs: { dybrandName: ["测试品牌"] } } }),
+    }),
+  );
+
+  assert.match(directive, /首次澄清改变当前平台的有效需求/u);
+  assert.match(directive, /无冲突的完整需求全文/u);
+  assert.match(directive, /重新调用 ypscan_parse_requirement/u);
+  assert.match(directive, /demand 与 rawMessagesJson\.original 使用同一份全文/u);
+  assert.match(directive, /parse_outputs 全量替换/u);
+  assert.match(directive, /完整有效需求与最近一次成功解析的 demand 相同.*不得重复解析/u);
+  assert.match(directive, /询价机构放宽仍保留未改写原文/u);
+});
+
+test("parse success reuses the recorded manual mode when persist omits call arguments", () => {
+  const { hooks } = registeredPlugin();
+  const before = hooks.get("before_tool_call");
+  const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "manual-reparse-scope" };
+  assert.equal(
+    before(
+      {
+        toolName: "mcp__ypscan__validate_requirement",
+        params: canonicalValidateParams("手动拓展"),
+      },
+      context,
+    ).block,
+    undefined,
+  );
+
+  const directive = directiveText(
+    persist(
+      {
+        toolName: "ypscan_parse_requirement",
+        message: toolMessage({ success: true, data: { outputs: { dybrandName: ["测试品牌"] } } }),
+      },
+      context,
+    ),
+  );
+
+  assert.match(directive, /首次澄清改变当前平台的有效需求/u);
+  assert.match(directive, /重新调用 ypscan_parse_requirement/u);
+});
+
 test("parse success requires deadline clock review even when persist omits call arguments", () => {
   const { hooks } = registeredPlugin();
   const original = toolMessage({
@@ -545,7 +619,7 @@ test("quantityTotal stays per requirement and never feeds a later requirement", 
     namedArgsFromDirective(manualSource(reqA, 7), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: reqA, batch_id: 7 },
   );
-  assert.match(manualSource(reqA, 7), /MANUAL_SOURCE_TARGET_NUM=90/u);
+  assert.match(manualSource(reqA, 7), /MANUAL_SOURCE_TARGET_NUM=60/u);
   assert.deepEqual(
     namedArgsFromDirective(manualSource(reqB, 8), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: reqB, batch_id: 8 },
@@ -699,6 +773,33 @@ test("native completion directives require the platform login check first", () =
   assert.match(summaryText, /NATIVE_COMPLETION_TOOL=get_xhs_author_business_card/u);
 });
 
+test("deliver directive reports zero-score rows excluded from the summary", () => {
+  const { hooks } = registeredPlugin();
+  const text = directiveText(
+    hooks.get("tool_result_persist")({
+      toolName: "ypscan_summarize_manual_scores",
+      message: toolMessage({
+        success: true,
+        data: {
+          next_action: "deliver",
+          scored_count: 5,
+          excluded_zero_score_count: 2,
+          recommended_count: 3,
+          target_count: 10,
+          unprocessed_count: 0,
+          completion_failed_count: 0,
+          shortfall: 7,
+          stop_reason: "candidates_exhausted",
+        },
+      }),
+    }),
+  );
+
+  assert.match(text, /excluded_zero_score_count/u);
+  assert.match(text, /综合分为 0 的评分行未写入汇总表/u);
+  assert.match(text, /不写成未评分、补全失败或达人被筛掉/u);
+});
+
 test("YP Action completion CSV provenance remains isolated between sessions", () => {
   const { hooks, transientState } = registeredPlugin();
   const persist = hooks.get("tool_result_persist");
@@ -815,7 +916,7 @@ test("host call IDs restore quantity, score and ingest params without persist pa
   });
   assert.match(
     call("manual_source_creators", "manual", { requirement_id: "req-A" }, { batch_id: 9 }),
-    /MANUAL_SOURCE_TARGET_NUM=126/u,
+    /MANUAL_SOURCE_TARGET_NUM=84/u,
   );
   call("score_manual_source_csv", "score", { requirement_id: "req-A" }, { job_id: "score-job" });
   assert.equal(
@@ -1050,7 +1151,7 @@ test("manual source startup only requests requirement_id and delegates demand to
   );
 });
 
-test("status polling without requirement history preserves the already tripled num", () => {
+test("status polling without requirement history preserves the already computed num", () => {
   const { hooks } = registeredPlugin();
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const result = hooks.get("tool_result_persist")({

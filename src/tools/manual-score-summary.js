@@ -8,6 +8,7 @@ import { parseCsv } from "./merge-creator-csv.js";
 import { localFileMarkdownLink, publishWithoutOverwrite } from "./save-artifact.js";
 import { hostToolResult } from "./tool-result.js";
 import { nonemptyString } from "../util/value.js";
+import { manualSourcePoolSize } from "../contract/registry.js";
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const BATCH_SIZE = 20;
@@ -221,6 +222,12 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
     const requirementId = params?.requirement_id;
     const target = sourceContext?.quantityTotal;
     const platform = sourceContext?.platform;
+    if (sourceContext?.business_mode === "询价机构") {
+      fail(
+        "MODE_NOT_APPLICABLE",
+        "评分汇总仅用于手动拓展，不适用于询价机构；本次未读取或修改评分表",
+      );
+    }
     if (
       !nonemptyString(requirementId) ||
       !workspaceDir ||
@@ -240,7 +247,10 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
     );
     if (links.headers.join(",") !== "source_record_id,creator_id,url" || links.rows.length > 10000)
       fail("LINKS_INVALID", "需要已归一化的三列 links CSV，且不超过 10000 行");
-    const candidateIds = [...new Set(links.rows.map((row) => row[1].trim()))].slice(0, target * 3);
+    const candidateIds = [...new Set(links.rows.map((row) => row[1].trim()))].slice(
+      0,
+      manualSourcePoolSize(target),
+    );
     if (!candidateIds.length || candidateIds.some((id) => !id))
       fail("LINKS_INVALID", "候选达人身份为空");
     const candidateSet = new Set(candidateIds);
@@ -260,8 +270,7 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
       ];
       for (const [values, targetSet] of groups) {
         for (const id of values) {
-          if (!candidateSet.has(id))
-            fail("SOURCE_MISMATCH", "补全结果包含本轮三倍候选池以外的达人");
+          if (!candidateSet.has(id)) fail("SOURCE_MISMATCH", "补全结果包含本轮候选池以外的达人");
           targetSet.add(id);
         }
       }
@@ -300,11 +309,18 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
     }
     const rows = candidateIds.flatMap((id) => (scoredById.has(id) ? [scoredById.get(id)] : []));
     rows.sort((a, b) => b.score - a.score);
-    const recommendedCount = rows.filter((row) => row.recommended).length;
+    // 综合分为 0 的评分行不写入最终汇总表（用户要求）。0 分通常来自评分失败、资料无效或数据不足，
+    // 也可能是有效评估但内容/类型相关度均为 0 级；该行已返回，不按缺行处理，也不自动重评。
+    const deliverableRows = rows.filter((row) => row.score !== 0);
+    const excludedZeroScoreCount = rows.length - deliverableRows.length;
+    const recommendedCount = deliverableRows.filter((row) => row.recommended).length;
     const remaining = candidateIds.filter((id) => !successful.has(id) && !failed.has(id));
     const pendingScores = candidateIds.filter((id) => successful.has(id) && !scoredById.has(id));
     const reached = recommendedCount >= target;
     const exhausted = remaining.length === 0 && pendingScores.length === 0;
+    // 首批只排 min(20, N)，目标小于 20 时不多补全用不上的达人；之后每批仍最多 20。
+    const firstBatch = successful.size === 0 && failed.size === 0;
+    const batchLimit = firstBatch ? Math.min(BATCH_SIZE, target) : BATCH_SIZE;
     const data = {
       requirement_id: requirementId,
       platform,
@@ -312,33 +328,48 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
       candidate_count: candidateIds.length,
       recommended_count: recommendedCount,
       scored_count: rows.length,
+      excluded_zero_score_count: excludedZeroScoreCount,
       completion_failed_count: failed.size,
       failed_author_ids: [...failed],
       unprocessed_count: remaining.length,
       pending_score_author_ids: pendingScores,
       shortfall: Math.max(0, target - recommendedCount),
       target_reached: reached,
-      next_action:
-        reached || exhausted
+      next_action: pendingScores.length
+        ? "await_scores"
+        : reached || exhausted
           ? "deliver"
-          : pendingScores.length
-            ? "await_scores"
-            : "complete_next_batch",
-      next_author_ids: reached || pendingScores.length ? [] : remaining.slice(0, BATCH_SIZE),
-      stop_reason: reached ? "target_reached" : exhausted ? "candidates_exhausted" : null,
+          : "complete_next_batch",
+      next_author_ids: reached || pendingScores.length ? [] : remaining.slice(0, batchLimit),
+      stop_reason: pendingScores.length
+        ? null
+        : reached
+          ? "target_reached"
+          : exhausted
+            ? "candidates_exhausted"
+            : null,
+      ...(pendingScores.length
+        ? {
+            progress: {
+              display_required: true,
+              is_final: false,
+              user_visible_message: `当前已评分 ${rows.length} 人，推荐 ${recommendedCount} 人；${excludedZeroScoreCount ? `其中 ${excludedZeroScoreCount} 人综合分为 0，不写入汇总表；` : ""}还有 ${pendingScores.length} 人评分缺失。以下仅为阶段性结果，不代表最终汇总。`,
+            },
+          }
+        : {}),
       links_csv_path: sourceContext.links_file.file_path,
     };
-    if (data.next_action !== "deliver" || !rows.length) {
+    if (data.next_action !== "deliver" || !deliverableRows.length) {
       return hostToolResult({ success: true, data }, { details: data });
     }
-    const saved = await saveSummaryWorkbook(workspaceDir, requirementId, template, rows);
+    const saved = await saveSummaryWorkbook(workspaceDir, requirementId, template, deliverableRows);
     const details = { ...data, ...saved };
     const delivery = {
       local_path: saved.file_path,
       local_file_link: localFileMarkdownLink(saved.file_path),
       display_required: true,
       display_before_next_action: true,
-      user_visible_message: `已评分 ${rows.length} 位，推荐 ${recommendedCount} 位，目标 ${target} 位。`,
+      user_visible_message: `已评分 ${rows.length} 位，推荐 ${recommendedCount} 位，目标 ${target} 位。${excludedZeroScoreCount ? `其中 ${excludedZeroScoreCount} 位综合分为 0，未写入汇总表。` : ""}`,
     };
     return hostToolResult({ success: true, data: details, delivery }, { details });
   } catch (error) {

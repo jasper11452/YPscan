@@ -132,13 +132,13 @@ async function setup(t, mode = "手动拓展") {
   return { ids, normalized, score, local, hooks, remote, context, workspaceDir };
 }
 
-test("registered tools: initial batch, first 20 sufficient, save then summarize and stop", async (t) => {
+test("registered tools: initial batch respects the target, first batch sufficient, save then summarize and stop", async (t) => {
   const f = await setup(t);
   assert.match(f.normalized.directive, /SUMMARIZE_MANUAL_SCORES_ARGS=/u);
   const first = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
-  assert.deepEqual(first.payload.data.next_author_ids, f.ids.slice(0, 20));
+  assert.deepEqual(first.payload.data.next_author_ids, f.ids.slice(0, 10));
   assert.doesNotMatch(first.directive, /auth_prepare/u);
-  const batch = await f.score(f.ids.slice(0, 20), 10);
+  const batch = await f.score(f.ids.slice(0, 10), 10);
   assert.match(batch.completionDirective, /只合并上传当前批/u);
   assert.match(batch.completionDirective, /补全 CSV 是内部中间产物，不主动向用户展示表格或链接/u);
   const bridgeArgs = JSON.parse(
@@ -163,11 +163,11 @@ test("registered tools: initial batch, first 20 sufficient, save then summarize 
 
 test("registered tools: 6 plus 4 recommendations advance exactly once and deliver 30 scored", async (t) => {
   const f = await setup(t);
-  await f.score(f.ids.slice(0, 20), 6);
+  await f.score(f.ids.slice(0, 10), 6);
   const next = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.equal(next.payload.success, true);
-  assert.deepEqual(next.payload.data.next_author_ids, f.ids.slice(20));
-  await f.score(f.ids.slice(20), 4);
+  assert.deepEqual(next.payload.data.next_author_ids, f.ids.slice(10));
+  await f.score(f.ids.slice(10), 4);
   const last = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.equal(last.payload.data.scored_count, 30);
   assert.equal(last.payload.data.recommended_count, 10);
@@ -188,14 +188,60 @@ test("inquiry uses all completion batches and final artifact, never manual early
   assert.equal(summary.payload.success, false);
 });
 
+test("inquiry mis-saved as a manual batch delivers the saved file without scheduling summary", async (t) => {
+  const f = await setup(t, "询价机构");
+  const batch = await f.score(f.ids.slice(0, 5), 3);
+  const saved = await f.local("ypscan_save_artifact", {
+    ...batch.args,
+    artifact_kind: "manual_score_batch",
+  });
+  assert.equal(saved.payload.success, true);
+  assert.equal(saved.payload.data.file_path, batch.savedScore.payload.data.file_path);
+  assert.match(saved.directive, /最终交付物/u);
+  assert.ok(saved.directive.includes(saved.payload.delivery.local_file_link));
+  assert.doesNotMatch(saved.directive, /SUMMARIZE_MANUAL_SCORES_ARGS|ASK_USER_QUESTION_ARGS/u);
+});
+
+test("inquiry summary misuse is distinct from missing context and never requests retry", async (t) => {
+  const f = await setup(t, "询价机构");
+  const result = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(result.payload.error.code, "YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE");
+  assert.equal(result.payload.error.retriable, false);
+  assert.equal(result.payload.delivery, undefined);
+  assert.match(result.directive, /当前需求已成功保存/u);
+  assert.match(result.directive, /没有可信保存结果/u);
+  assert.doesNotMatch(result.directive, /ASK_USER_QUESTION_ARGS|SUMMARIZE_MANUAL_SCORES_ARGS/u);
+  await f.hooks.get("gateway_stop")();
+  const missing = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(missing.payload.error.code, "YPSCAN_MANUAL_SCORE_CONTEXT_UNAVAILABLE");
+  assert.match(missing.directive, /停止/u);
+  assert.doesNotMatch(missing.directive, /最终交付|ASK_USER_QUESTION_ARGS/u);
+});
+
+test("manual sourcing compatibility Excel still delivers without batch summary", async (t) => {
+  const f = await setup(t);
+  const batch = await f.score(f.ids.slice(0, 5), 3);
+  const saved = await f.local("ypscan_save_artifact", {
+    ...batch.args,
+    artifact_kind: "manual_source",
+  });
+  assert.equal(saved.payload.success, true);
+  assert.match(saved.directive, /最终交付物/u);
+  assert.doesNotMatch(saved.directive, /SUMMARIZE_MANUAL_SCORES_ARGS/u);
+});
+
 test("registered tools: an all-failed batch is registered and a successful retry supersedes it", async (t) => {
   const f = await setup(t);
   const { ids, local, remote, workspaceDir } = f;
-  remote("get_douyin_author_business_card", {}, {
-    csv_file: null,
-    successful_author_ids: [],
-    failed_author_ids: ids.slice(0, 20),
-  });
+  remote(
+    "get_douyin_author_business_card",
+    {},
+    {
+      csv_file: null,
+      successful_author_ids: [],
+      failed_author_ids: ids.slice(0, 20),
+    },
+  );
   const next = await local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.equal(next.payload.success, true, JSON.stringify(next.payload));
   assert.equal(next.payload.data.completion_failed_count, 20);
@@ -204,14 +250,22 @@ test("registered tools: an all-failed batch is registered and a successful retry
   // 用户明确要求后重试同一批成功：失败记录被成功取代，不产生成功/失败名单冲突。
   const retryPath = join(workspaceDir, "completion-retry.csv");
   await writeFile(retryPath, "creator_id\n" + ids.slice(0, 20).join("\n"));
-  remote("get_douyin_author_business_card", {}, {
-    csv_file: retryPath,
-    successful_author_ids: ids.slice(0, 20),
-    failed_author_ids: [],
-  });
+  remote(
+    "get_douyin_author_business_card",
+    {},
+    {
+      csv_file: retryPath,
+      successful_author_ids: ids.slice(0, 20),
+      failed_author_ids: [],
+    },
+  );
   const after = await local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.equal(after.payload.success, true, JSON.stringify(after.payload));
   assert.equal(after.payload.data.completion_failed_count, 0);
   assert.equal(after.payload.data.next_action, "await_scores");
   assert.deepEqual(after.payload.data.pending_score_author_ids, ids.slice(0, 20));
+  assert.match(after.directive, /progress\.user_visible_message/u);
+  assert.match(after.directive, /不代表最终汇总/u);
+  assert.match(after.directive, /MANUAL_SCORE_PENDING_AUTHOR_IDS=\[/u);
+  assert.match(after.directive, /任务已终态仍缺行/u);
 });

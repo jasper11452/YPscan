@@ -12,7 +12,7 @@
 | `gateway_start`       | index.js                 | 重置瞬态状态                                          |
 | `gateway_stop`        | index.js                 | 重置瞬态状态                                          |
 
-每轮提示插件相对模块解析得到的 `media-assistant/SKILL.md` 实际绝对路径，要求首次相关操作前完整读取（已读不重复），兼容宿主技能目录漏列的情况；这不等于验证宿主已经读取。解析成功提示区分解析器缺失与用户缺失，明确原文数值复用和首次完整澄清。启动指令要求已明确修改直接执行，并使用业务进度文案。
+每轮提示插件相对模块解析得到的 `media-assistant/SKILL.md` 实际绝对路径，要求首次相关操作前完整读取（已读不重复），兼容宿主技能目录漏列的情况；这不等于验证宿主已经读取。解析成功提示区分解析器缺失与用户缺失，明确原文数值复用和首次完整澄清。手动拓展首次澄清改变有效需求时，动态指令要求合成无冲突全文、以同一全文重解析并替换 `parse_outputs`；输入未变化且结果有效时不重复解析，询价放宽仍保留原文。启动指令要求已明确修改直接执行，并使用业务进度文案。
 
 ## 2. 瞬态状态（不持久化）
 
@@ -51,7 +51,7 @@
 - 续办规则：`rank_mcns` 列表后“暂不询价”等未回答状态可在同会话恢复原询价分支，不重新解析/落库/搜索/排名。
 - 弹窗规范：每行最多 20 个 Unicode 字符，只在整行将超过 20 字符时断行（先填满接近 20），禁止逐分句拆行；发送确认弹窗固定一题两选项 `确认发送`/`返回修改`，正文保留企微消息原有行结构、只对超 20 字符单行断行。
 - 数值格式锁：`validate_requirement` 数值字段全部用无空格 `"[min,max]"`（`min < max`），返点 `"[min,1]"`。
-- 原生补全工具调用：每批按 20 人调用当前平台补全工具（小红书 `get_xhs_author_business_card` 固定 `page_count=1`，抖音 `get_douyin_author_business_card`）；登录窗口与 Cookie 由宿主工具内部处理，Hook 不注入登录准备指令。
+- 原生补全工具调用：按 `next_author_ids` 调用当前平台补全工具，首批不超过 min(20, 需求人数)，之后每批最多 20 人（小红书 `get_xhs_author_business_card` 固定 `page_count=1`，抖音 `get_douyin_author_business_card`）；登录窗口与 Cookie 由宿主工具内部处理，Hook 不注入登录准备指令。
 - 澄清规则：Dify 已给的唯一数值直接采用不再问；八个可选 Label 有则原样保留、无则省略；`contentTag` 必须来自解析结果，缺失时重新解析。
 
 细节以 `skills/media-assistant/SKILL.md` 为权威；Hook 指令是其运行时投影。
@@ -85,7 +85,7 @@
 | `ingest_mcn_submissions`                                           | `GET_INGEST_JOB_ARGS`；缺 `job_id` 给恢复弹窗                                                                                                                                                                                                                                                                 | pause                                                                                                                           |
 | `get_ingest_job`                                                   | Excel-only 终态 → `SAVE_ARTIFACT_ARGS(mcn_creator_preview)`（requirement_id 优先取调用参数，缺失时按 job_id 反查 ingest 记录）；`partially_succeeded` 额外给 `INGEST_PARTIAL_SUMMARY`；终态成功但缺 requirement_id 时 pause 而非继续轮询；未到终态继续轮询（上限 10 次）                                      | `failed`/`cancelled`/`canceled`/`error` 终态 pause，不再轮询                                                                    |
 | `manual_source_creators`                                           | 分三态：links CSV→`SAVE_ARTIFACT_ARGS(manual_creator_links)`；Excel→`SAVE_ARTIFACT_ARGS(manual_source)` 降级交付+放宽策略（完整放宽规则只在结果时刻注入，启动块只保留精简短fall规则）；batch_id→`MANUAL_SOURCE_CREATORS_STATUS_ARGS`（只带 `requirement_id`+`batch_id`；目标数量按 live schema 决定是否并入） | 缺字段配置→字段选择；其余 pause                                                                                                 |
-| `manual_source_creators_status`                                    | 同三态（Excel 交付同样附完整放宽规则）；`BATCH_NOT_READY` 或 live 中间态（success + completed=false）继续 30s 轮询（上限 10 次；续接优先沿用上一轮实际使用的 `num` 作为 `MANUAL_SOURCE_TARGET_NUM`，缺失时回落到落库 `quantityTotal`；只有当前环境 live schema required `num` 时才并入远端调用）                                                         | pause                                                                                                                           |
+| `manual_source_creators_status`                                    | 同三态（Excel 交付同样附完整放宽规则）；`BATCH_NOT_READY` 或 live 中间态（success + completed=false）继续 30s 轮询（上限 10 次；续接优先用落库 `quantityTotal` 按梯度计算 `MANUAL_SOURCE_TARGET_NUM`，缺少需求记录时沿用上一轮实际使用的 `num`；只有当前环境 live schema required `num` 时才并入远端调用）                                                         | pause                                                                                                                           |
 | `get_xhs_author_business_card` / `get_douyin_author_business_card` | 手动拓展附仅当前批 `FILE_BRIDGE_ARGS`；机构回收注入 `COMPLETION_CSV_FILE`、成功/失败 ID 与 `FILE_BRIDGE_FLOW=manual_source`，提示全部补全后合并上传打分                                                                                                                                                                     | pause                                                                                                                           |
 | `score_manual_source_csv`                                          | `job_id` → `SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS`（30s 轮询）；全失败不生成空 Excel                                                                                                                                                                                                                            | 缺字段配置→同 requirement 字段选择，保留到本轮可信 `csv_file_path` 时附精确 `SCORE_MANUAL_SOURCE_CSV_ARGS` 重提参数；其余 pause |
 | `score_manual_source_csv_status`                                   | 终态 → `SAVE_ARTIFACT_ARGS`（手动拓展为 manual_score_batch，机构回收为 manual_source）（requirement_id 优先取调用参数，缺失时按 job_id 反查打分记录）；终态成功但缺 requirement_id 时 pause 而非继续轮询；未完成继续 30s 轮询（上限 10 次）                                                                                                               | 缺字段配置→同 requirement 字段选择（按 job 记录回填 `csv_file_path` 并附精确重提参数）；其他失败终态 pause                      |
@@ -101,12 +101,16 @@
 
 失败且无专门处理时：`ypscan_parse_requirement`、`validate_requirement`、`search_creators`、`rank_mcns` 给 `flowPauseDirective`（`YPSCAN_FLOW_DIRECTIVE=<阶段> 已暂停（code）` + `ASK_USER_QUESTION_ARGS` 重试/结束），其余工具返回 null（不追加）。
 
+评分分支误用恢复：`manual_score_batch` 保存成功且当前记录模式为询价机构时，复用 `manual_source` 最终交付指令与本次真实本地链接，不再引导汇总、重存或重评；手动拓展单批汇总与旧版 `manual_source` Excel 交付不变。汇总的 MODE_NOT_APPLICABLE 仅引导交付当前需求已有的成功保存结果，无可信结果时停止；CONTEXT_UNAVAILABLE 只停止，不推断模式或完成状态。两者均不附重试弹窗，不重建需求或重评。
+
 ## 6. Gateway 生命周期
+
+`file_bridge` 上传后的评分指令区分用户文案与内部参数：正文只提示“数据已合并上传，正在启动打分。”，不复述 OSS 完整/截断地址、对象路径或工具参数；`SCORE_MANUAL_SOURCE_CSV_ARGS.csv_file_path` 仍原样用于评分。机构精排兼容分支同样禁止复述地址。
 
 `gateway_start`、`gateway_stop` 仅调用 `hookRuntime.resetTransientState()`，无其他副作用；不向宿主输出、不影响工具注册。
 
 ## 手动拓展分批投影
 
-`manualScoreSourcesByRequirement` 在 validate 成功后记录需求模式，保存归一化 links 时登记路径+哈希，原生补全的可信调用坐标关联成功/失败 ID（csv_file=null 的全失败批次同样登记失败名单），单批评分保存时登记路径+哈希。相同路径不同来源记录标记冲突；同一达人重试成功后以成功记录取代旧失败。不持久化任务进度，每次汇总从源记录重新计算。Gateway 生命周期清空这些记录，缺失时汇总停止。
+`manualScoreSourcesByRequirement` 在 validate 成功后记录需求模式，保存归一化 links 时登记路径+哈希，原生补全的可信调用坐标关联成功/失败 ID（csv_file=null 的全失败批次同样登记失败名单），单批评分保存时登记路径+哈希。相同路径不同来源记录标记冲突；同一达人重试成功后以成功记录取代旧失败。不持久化任务进度，每次汇总从源记录重新计算；当前批缺评分行优先返回 `await_scores`，不被推荐达标或候选耗尽覆盖。Gateway 生命周期清空这些记录，缺失时汇总停止。
 
-手动拓展 links 归一化及 manual_score_batch 保存后注入 `SUMMARIZE_MANUAL_SCORES_ARGS`。汇总工具返回下一批时注入 `NEXT_AUTHOR_IDS` 与对应原生工具名；await_scores 只等待当前任务，终态缺行停止；deliver 明确禁止再补全/评分，只有推荐缺口大于0才建议复核和放宽。机构回收继续全量补全、一次评分、manual_source 最终交付。before_tool_call 仍只阻断 validate 预检，不新增早停门禁；这些测试证明指令生成，模型遵守与桌面验收另行验证。
+手动拓展 links 归一化及 manual_score_batch 保存后注入 `SUMMARIZE_MANUAL_SCORES_ARGS`。汇总工具返回下一批时注入 `NEXT_AUTHOR_IDS` 与对应原生工具名；await_scores 先要求展示阶段性 `progress.user_visible_message`（不代表最终汇总），只等待当前任务，任务仍在跑时沿用 30s×10 上限，终态缺行则报告 `pending_score_author_ids` 并停止；deliver 携带 `excluded_zero_score_count` 并要求按 0 分行未写入汇总表如实说明（不写成未评分、补全失败或达人被筛掉），明确禁止再补全/评分，只有推荐缺口大于0才建议复核和放宽。机构回收继续全量补全、一次评分、manual_source 最终交付。before_tool_call 仍只阻断 validate 预检，不新增早停门禁；这些测试证明指令生成，模型遵守与桌面验收另行验证。

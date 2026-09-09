@@ -644,10 +644,10 @@ test("manual source status args prefill num from the validated requirement quant
     requirement_id: "req-num",
     batch_id: 7,
   });
-  assert.match(sourceText, /MANUAL_SOURCE_TARGET_NUM=90/u);
+  assert.match(sourceText, /MANUAL_SOURCE_TARGET_NUM=60/u);
   assert.match(sourceText, /num 只在当前环境 live schema required 时才传/u);
 
-  // 轮询续接：有需求记录时以 quantityTotal 的三倍纠正旧 num，不能把旧 num 再乘三。
+  // 轮询续接：有需求记录时以 quantityTotal 的梯度取数纠正旧 num，不能把旧 num 再乘倍数。
   const continued = persist(
     {
       toolName: "ypmcn__manual_source_creators_status",
@@ -663,9 +663,9 @@ test("manual source status args prefill num from the validated requirement quant
     namedArgsFromDirective(directiveText(continued), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: "req-num", batch_id: 7 },
   );
-  assert.match(directiveText(continued), /MANUAL_SOURCE_TARGET_NUM=90/u);
+  assert.match(directiveText(continued), /MANUAL_SOURCE_TARGET_NUM=60/u);
 
-  // 未带 num 时仍取落库 quantityTotal 的三倍。
+  // 未带 num 时仍取落库 quantityTotal 的梯度取数。
   const resumed = persist(
     {
       toolName: "ypmcn__manual_source_creators_status",
@@ -681,7 +681,7 @@ test("manual source status args prefill num from the validated requirement quant
     namedArgsFromDirective(directiveText(resumed), "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: "req-num", batch_id: 7 },
   );
-  assert.match(directiveText(resumed), /MANUAL_SOURCE_TARGET_NUM=90/u);
+  assert.match(directiveText(resumed), /MANUAL_SOURCE_TARGET_NUM=60/u);
 });
 
 test("manual source status live intermediate state keeps polling without a pause popup", () => {
@@ -725,7 +725,7 @@ test("manual source status live intermediate state keeps polling without a pause
     namedArgsFromDirective(text, "MANUAL_SOURCE_CREATORS_STATUS_ARGS"),
     { requirement_id: "req-live", batch_id: 9 },
   );
-  assert.match(text, /MANUAL_SOURCE_TARGET_NUM=90/u);
+  assert.match(text, /MANUAL_SOURCE_TARGET_NUM=60/u);
 });
 
 test("native completion requires manual source context and preserves inquiry bridge flow", () => {
@@ -1282,7 +1282,7 @@ test("file_bridge returns score args for manual_source and compatibility rank ar
     }),
   });
   const text = directiveText(result);
-  assert.match(text, /已合并并完成 OSS 上传/u);
+  assert.match(text, /数据已合并上传/u);
   assert.match(text, /live rank_creators schema 已明确支持 csv_file_path/u);
   assert.doesNotMatch(text, /MERGED_CSV_LOCAL_LINK=|原样展示/u);
   assert.match(

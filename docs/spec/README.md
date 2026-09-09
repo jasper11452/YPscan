@@ -2,7 +2,7 @@
 
 > 本目录是 ypscan（悦普识星）的项目 Spec：描述系统当前形态、边界、契约与关键设计取舍。与代码同仓库、同提交维护，是评审与变更的参照，不是运行时指令或用户文档。
 >
-> 撰写基准：`feat/rank_creators` 分支工作区代码（2026-09-08），即 5 个本地工具 + 5 个 Hook 的 CSV 中心链路形态。此后代码变更应同步更新对应章节（见「维护约定」）。
+> 撰写基准：`feat/rank_creators` 分支工作区（HEAD `45c31bc`，v1.0.18；另含未提交的 P1a 本地修复、综合分 0 行排除与梯度候选池变更），即 5 个本地工具 + 5 个 Hook 的 CSV 中心链路形态。此后代码变更应同步更新对应章节（见「维护约定」）。
 
 ## 一句话结论
 
@@ -34,7 +34,7 @@ ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远�
 直接让 Agent 自由编排上述工具不稳定，历史问题集中在：
 
 1. **链路不固定**：跳步、重复调用、把中间产物当最终交付、跨功能复用 requirement。
-2. **参数契约不表达**：Provider 的 `validate_requirement` schema 未写清类型与格式（历史审计见 `docs/provider/get-workflow-state-refactor.md`），Agent 容易用错误类型来回试。
+2. **参数契约不表达**：Provider 的 `validate_requirement` schema 未写清类型与格式（历史审计结论），Agent 容易用错误类型来回试。
 3. **证据缺失**：品牌、数量、截止时间、粉丝、返点、报价等业务值缺乏「来自用户原文或弹窗」的硬门禁，容易编造或默认补值；当前代码已补充“明确 `品牌：...` 标注”的本地品牌兜底，同时继续拒绝 `暂无品牌` / `无品牌` 等占位值。
 4. **交付物不受控**：下载 URL 任意、覆盖已有文件、只给裸路径不给可点击链接。
 5. **老链路残留**：`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export` 等旧正式链路工具与新 CSV 链路并存，Agent 误用。
@@ -117,7 +117,6 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 | 契约三处手工对齐                                   | 工具卡（`skills/media-assistant/references/tools/`）、Hook 指令、Provider MCP schema 靠人工保持一致，历史上反复出漂移 bug         | 维护者 + Provider；长期看 schema 校验/对齐自动化           |
 | 瞬态状态生命周期                                   | `businessModeByScope` 等映射在 gateway 启停时清空；宿主若在长会话中不重启，映射随会话持续存在                                     | 宿主行为确认                                               |
 | 外部依赖可用性                                     | Dify 60s 超时、Provider 请求 330s 超时；两者不可用时链路暂停（`flowPauseDirective` 给重试/结束选项）                              | Provider/Dify 运维                                         |
-| 本 Spec 基于未提交工作区                           | 当前分支存在未提交变更，Spec 以工作区代码为准；提交后需复核                                                                       | 维护者                                                     |
 
 ## 8. 维护约定
 

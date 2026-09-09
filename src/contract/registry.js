@@ -10,6 +10,20 @@ const MAX_FOLLOWER_COUNT = 999_999_999;
 
 export const UNRESTRICTED_FOLLOWERCOUNT_RANGE = `[0,${MAX_FOLLOWER_COUNT}]`;
 
+/**
+ * 手动拓展候选池上限：按目标人数分档，目标越小倍数越高（补偿冷启动损耗），
+ * 目标越大倍数越低（绝对冗余已足够）。锚点：10→30、20→50、50→100。
+ * @param {number} target 交付目标人数（正整数）
+ * @returns {number} 候选池上限（正整数）
+ */
+export function manualSourcePoolSize(target) {
+  const n = Math.max(1, Math.ceil(target));
+  if (n <= 10) return n * 3;
+  if (n <= 20) return n * 2 + 10;
+  // 21~30 用 n+30 兜底，避免 21 人的池子比 20 人还小（2×21=42 < 50）。
+  return Math.max(n * 2, n + 30);
+}
+
 export const BUSINESS_MODE_VALUES = Object.freeze(["询价机构", "手动拓展"]);
 export const PROVIDER_MANUAL_BUSINESS_MODE = "直接手扒";
 const PROVIDER_BUSINESS_MODE_VALUES = Object.freeze([

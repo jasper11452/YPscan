@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   invalidPlatformArrayFields,
   isFutureSubmissionDeadline,
+  manualSourcePoolSize,
   missingRequiredValidateParams,
   normalizeToolCallParams,
   VALIDATE_REQUIREMENT_RANGE_PARAMS,
@@ -1916,5 +1917,20 @@ test("current-platform metric fragments and neutral compatibility shapes remain 
       const normalized = normalizeToolCallParams("validate_requirement", params);
       assert.equal(normalized[field], "[35000,60000]");
     }
+  }
+});
+
+test("manual source candidate pool scales down by target tier", () => {
+  assert.equal(manualSourcePoolSize(1), 3);
+  assert.equal(manualSourcePoolSize(10), 30);
+  assert.equal(manualSourcePoolSize(20), 50);
+  assert.equal(manualSourcePoolSize(50), 100);
+
+  let previous = 0;
+  for (let target = 1; target <= 500; target += 1) {
+    const pool = manualSourcePoolSize(target);
+    assert.ok(pool > target, `pool must exceed target ${target}`);
+    assert.ok(pool >= previous, `pool must not shrink at target ${target}`);
+    previous = pool;
   }
 });

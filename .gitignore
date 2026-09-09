@@ -5,6 +5,9 @@ node_modules/
 # 打包时注入的 OSS 凭据（scripts/prepare-oss-bundle.mjs 生成，只随 npm pack 进入安装包，不进 git）
 src/tools/file-bridge-oss-defaults.json
 
+# Dify 工作流导出（YAML 内嵌模型 API Key，仅本地核对用，勿提交）
+dify工作流/
+
 # Build artifacts
 *.tgz
 

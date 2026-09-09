@@ -54,9 +54,7 @@ function localDelivery(filePath, message, { display = false } = {}) {
     local_file_link: localFileLink,
     display_required: display,
     display_before_next_action: display,
-    user_visible_message: display
-      ? `${message}\n本地文件：${localFileLink}`
-      : `${message}该 CSV 是内部中间产物，不主动向用户展示。`,
+    user_visible_message: display ? `${message}\n本地文件：${localFileLink}` : message,
   };
 }
 
@@ -71,7 +69,7 @@ function failure(code, message, details = {}, retriable = false, filePath = null
         retriable,
       },
       ...(nonemptyString(filePath)
-        ? { delivery: localDelivery(filePath, "merged CSV 已保存在本地，但后续处理失败。") }
+        ? { delivery: localDelivery(filePath, "数据已合并，但后续处理失败。") }
         : {}),
     },
     { details, isError: true },
@@ -79,9 +77,7 @@ function failure(code, message, details = {}, retriable = false, filePath = null
 }
 
 function success(details) {
-  const message = nonemptyString(details?.csv_file_path)
-    ? "merged CSV 已保存到本地并上传完成。"
-    : "merged CSV 已保存到本地。";
+  const message = nonemptyString(details?.csv_file_path) ? "数据已合并上传。" : "数据已合并。";
   return hostToolResult(
     {
       success: true,

@@ -11,6 +11,7 @@
 | 参数、组件、配置和当前实现         | [Spec 总览](../spec/README.md)，再读对应章节和源代码                              |
 | 用户动作与实际体验验收             | [Review Checklist](../review-checklist.md)                                        |
 | 定位问题、最小修复、消融实验       | [开发与验证](development.md)                                                      |
+| 达人搜索与评分修复、梯度候选池 | [修复方案（P1a 与梯度候选池已实施，后续阶段待验证）](../plans/creator-search-and-scoring-remediation.md) |
 | 一次修改需要同步哪些文件、如何发版 | [同步与发布](sync-and-release.md)                                                 |
 | 历史发布变化                       | [CHANGELOG.md](../../CHANGELOG.md) 与 Git 历史；不能当作当前契约                  |
 

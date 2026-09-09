@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { firstString, isRecord, nonemptyString } from "../util/value.js";
 import {
   BUSINESS_MODE_VALUES,
+  manualSourcePoolSize,
   normalizeBusinessMode,
   normalizeToolCallParams,
   stripHostPrefix,
@@ -33,6 +34,8 @@ const SINGLE_REQUIREMENT_TYPE_RULE =
   "同平台多个达人类型只创建一个 requirement：保留用户给出的总量，合并全部类型标签与条件，不拆分子需求、不重复落库、不重复搜索；本规则覆盖任何旧的平均分配或批量子需求指令。";
 const CLARIFICATION_REUSE_RULE =
   "同一会话内用户已确认的澄清答案（截止时间、粉丝量级、返点、报价等）持续有效：后续轮次和 requirement 重建必须原样带入 rawMessagesJson.clarifications 直接复用，同一字段新答案覆盖旧答案，禁止对同一字段重复询问；用户明确修改该字段且新值唯一时直接采用；只有新值仍有歧义或与新需求冲突时才重新澄清。等价时间表述（今晚8点前/今晚20:00/当天20:00:00）视为同一值，归一后不再重复确认。";
+const MANUAL_EFFECTIVE_DEMAND_REPARSE_RULE =
+  "手动拓展首次澄清改变当前平台的有效需求时，先把原始需求与全部最新有效答案合成为无冲突的完整需求全文，再用该全文重新调用 ypscan_parse_requirement；本次调用的 demand 与 rawMessagesJson.original 使用同一份全文，rawMessagesJson.parse_outputs 全量替换为本次结果，不拼接旧输出，并保留其他仍有效的 clarifications。若完整有效需求与最近一次成功解析的 demand 相同且解析结果有效，不得重复解析。询价机构放宽仍保留未改写原文，按 Skill 将累计放宽写入 clarifications 与本轮顶层参数，不套用手动拓展全文替换规则。";
 const PARSED_METRIC_REUSE_RULE =
   "解析 Workflow 已给出的唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值，必须直接采用，禁止再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。粉丝技术上限溢出由本地截断到 999999999，不弹窗。用户未明确粉丝数或解析为“不限”时默认落库全量区间 [0,999999999]，不省略、不弹窗；历史坏值 [1,999999999] 归一为 [0,999999999]。解析器缺失或 null 不等于用户未提供；先核对当前原文与有效澄清，只有仍缺少必要值、多候选或存在冲突时才调用 AskUserQuestion。";
 const REBATE_MINIMUM_QUESTION_RULE =
@@ -63,10 +66,10 @@ const SEARCH_PARAMETER_REVIEW_RULE =
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
 const MANUAL_SOURCE_STATUS_NUM_RULE =
-  "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传：取用户需求人数 quantityTotal 的 3 倍（正整数），例如需求 30 人则 num=90。Hook 的 MANUAL_SOURCE_TARGET_NUM 已是三倍取数数量，直接使用，不得再次乘三；最终交付目标和不足判断仍使用用户需求人数。schema 不接受 num 时不得附带，避免无效重试。";
+  "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传：按目标人数梯度取数（10 人→30、20 人→50、50 人→100，正整数）。Hook 的 MANUAL_SOURCE_TARGET_NUM 已是该梯度取数数量，直接使用，不得再次乘倍数；最终交付目标和不足判断仍使用用户需求人数。schema 不接受 num 时不得附带，避免无效重试。";
 const SCORE_MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 score_manual_source_csv，也不得猜测或更换 job_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
-const MANUAL_SOURCE_SHORTFALL_RULE = `本条数量策略仅用于旧链路直接返回的 manual_source Excel；分批评分必须通过 ypscan_summarize_manual_scores 统计推荐人数并决定下一步，不用处理成功数判断足量。只在当前 Provider 响应明确给出可信实际数量时与用户需求人数 quantityTotal 比较（三倍取数 num 不是交付目标），不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确要求放宽后优先调整同主题关键词、减少非核心人设限定；调整后仍不足再按 Skill 提示其他条件并等待该项确认，随后重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。`;
+const MANUAL_SOURCE_SHORTFALL_RULE = `本条数量策略仅用于旧链路直接返回的 manual_source Excel；分批评分必须通过 ypscan_summarize_manual_scores 统计推荐人数并决定下一步，不用处理成功数判断足量。只在当前 Provider 响应明确给出可信实际数量时与用户需求人数 quantityTotal 比较（梯度取数 num 不是交付目标），不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确要求放宽后优先调整同主题关键词、减少非核心人设限定；调整后仍不足再按 Skill 提示其他条件并等待该项确认，随后重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、字段配置、batch 或 Excel。`;
 const CREATOR_CSV_LIMIT = 500;
 const MANUAL_SOURCE_FLOW = "manual_source";
 const MCN_COMPLETE_ONLY_FLOW = "mcn_complete_only";
@@ -311,9 +314,9 @@ function parseOutputsFromMessage(message) {
   return null;
 }
 
-function requirementParseSuccessDirective(message, params = {}) {
+function requirementParseSuccessDirective(message, params = {}, recordedMode = null) {
   const { resolved, missing } = classifyDifyOutputs(parseOutputsFromMessage(message));
-  const mode = businessModeFromParams(params);
+  const mode = businessModeFromParams(params) ?? recordedMode;
   return [
     "YPSCAN_FLOW_DIRECTIVE=data.outputs 仅包含当前 Provider 契约消费的 Workflow 字段；先复核，不得直接调用 Browser。",
     "YPSCAN_NEXT_ACTION=REVIEW_REQUIREMENT",
@@ -330,6 +333,7 @@ function requirementParseSuccessDirective(message, params = {}) {
     "YPSCAN_POLICY=按 media-assistant Skill 的“解析后、落库前必须复核”执行。",
     "复核 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3，小红书不使用 L3。缺失或有歧义按 Skill 一次性询问；contentTag 必须来自解析结果，contentTag 缺失时重新解析。",
     "首次澄清前一次检查缺项和过期日期。截止时间由 Agent 对照当前完整有效需求和最新澄清复核；两者均无截止证据须询问，禁止用旧 requirement、默认值或推测。只有日期没有具体时刻必须澄清；不得默认 18:00、23:59:59 或其他时刻，不得宣称“无需补充澄清”。已有明确小时和分钟且未来时，秒省略时可补 00，不重复询问。两位年按20xx。只解析仍须指出缺失时刻，不得创建需求。",
+    ...(mode === BUSINESS_MODE_MANUAL ? [MANUAL_EFFECTIVE_DEMAND_REPARSE_RULE] : []),
     "确需澄清才问“最低返点要求是多少”；选项只给单个最低返点百分比，禁止给返点区间、上限或“不限”类选项。",
     RAW_MESSAGES_JSON_KEY_CONTRACT,
   ].join("\n");
@@ -652,8 +656,9 @@ function manualSourceCreatorsDirective(
   const batchId = manualSourceBatchId(result);
   if (batchId == null || !requirementId) return flowPauseDirective("手动拓展", message);
   const statusArgs = { requirement_id: requirementId, batch_id: batchId };
+  const quantityTotal = quantityTotalLookup(requirementId);
   const targetNumLine = manualSourceTargetNumLine(
-    positiveInteger(quantityTotalLookup(requirementId) * 3),
+    quantityTotal == null ? null : manualSourcePoolSize(quantityTotal),
   );
   return [
     `YPSCAN_FLOW_DIRECTIVE=manual_source_creators 已提交后台任务（仅返回 batch_id）。先告知用户“后台手动拓展耗时较长，您可以先不用管，我会继续轮询。”，再按当前环境 live schema 使用 MANUAL_SOURCE_CREATORS_STATUS_ARGS 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
@@ -722,9 +727,10 @@ function manualSourceCreatorsStatusDirective(
   ) {
     if (batchId == null || !requirementId) return flowPauseDirective("手动拓展结果查询", message);
     const statusArgs = { requirement_id: requirementId, batch_id: batchId };
-    // 从需求人数计算三倍；缺少需求记录时沿用已发送的取数数量，不能重复乘三。
+    // 从需求人数按梯度计算取数数量；缺少需求记录时沿用已发送的取数数量，不能重复计算。
+    const quantityTotal = quantityTotalLookup(requirementId);
     const targetNumLine = manualSourceTargetNumLine(
-      positiveInteger(quantityTotalLookup(requirementId) * 3) ?? positiveInteger(params?.num),
+      quantityTotal == null ? positiveInteger(params?.num) : manualSourcePoolSize(quantityTotal),
     );
     return [
       `YPSCAN_FLOW_DIRECTIVE=manual_source_creators_status 仍在处理中（BATCH_NOT_READY/status 0）。由当前对话累计查询次数；未到第 10 次时等待 30 秒后继续使用同一 ID 轮询；${MANUAL_SOURCE_STATUS_NUM_RULE}。${MANUAL_SOURCE_POLL_RULE}。`,
@@ -898,7 +904,7 @@ function fileBridgeDirective(message, params = {}) {
   if (!csvFilePath) return flowPauseDirective("file_bridge 缺少 csv_file_path", message);
   if (flow === MANUAL_SOURCE_FLOW) {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=file_bridge 已合并并完成 OSS 上传。立即调用 score_manual_source_csv；merged CSV 是内部中间产物，不主动向用户展示。成功后按其指令保存评分 Excel，手动拓展的单批表仍须汇总决定下一步。",
+      "YPSCAN_FLOW_DIRECTIVE=数据已合并上传。面向用户只说“数据已合并上传，正在启动打分。”，不要复述 csv_file_path、OSS 地址（含省略或截断形式）、对象路径或下方工具参数。SCORE_MANUAL_SOURCE_CSV_ARGS 仅供内部调用，原样传给 score_manual_source_csv；merged CSV 是内部中间产物，不主动向用户展示。成功后按其指令保存评分 Excel，手动拓展的单批表仍须汇总决定下一步。",
       `SCORE_MANUAL_SOURCE_CSV_ARGS=${JSON.stringify({
         requirement_id: requirementId,
         csv_file_path: csvFilePath,
@@ -906,7 +912,7 @@ function fileBridgeDirective(message, params = {}) {
     ].join("\n");
   }
   return [
-    "YPSCAN_FLOW_DIRECTIVE=file_bridge 已合并并完成 OSS 上传。merged CSV 是内部中间产物，不主动向用户展示；该结果只用于当前环境 live rank_creators schema 已明确支持 csv_file_path 的机构精排兼容分支；当前测试 Provider 仍默认保留 rank_creators(requirement_id,inquiry_ids) 旧链路（inquiry_ids 来自本轮 sync）。",
+    "YPSCAN_FLOW_DIRECTIVE=数据已合并上传。面向用户不要复述 csv_file_path、OSS 地址（含省略或截断形式）、对象路径或下方工具参数。merged CSV 是内部中间产物，不主动向用户展示；该结果只用于当前环境 live rank_creators schema 已明确支持 csv_file_path 的机构精排兼容分支；当前测试 Provider 仍默认保留 rank_creators(requirement_id,inquiry_ids) 旧链路（inquiry_ids 来自本轮 sync）。",
     `RANK_CREATORS_ARGS=${JSON.stringify({
       requirement_id: requirementId,
       csv_file_path: csvFilePath,
@@ -1254,20 +1260,20 @@ function artifactSaveDirective(
           ]),
     ].join("\n");
   }
-  if (artifactKind === "manual_score_batch") {
+  if (artifactKind === "manual_score_batch" && recordedMode !== BUSINESS_MODE_INQUIRY) {
     return [
       "YPSCAN_FLOW_DIRECTIVE=当前批评分表已保存，仅为中间结果。展示本地链接并立即调用 ypscan_summarize_manual_scores 累计推荐人数；不把本批评分成功数当推荐人数，不直接结束或放宽。",
       `SCORE_BATCH_LOCAL_LINK=${localFileLink}`,
       `SUMMARIZE_MANUAL_SCORES_ARGS=${JSON.stringify({ requirement_id: params.artifact_id })}`,
     ].join("\n");
   }
-  if (artifactKind === "manual_source") {
+  if (artifactKind === "manual_source" || artifactKind === "manual_score_batch") {
     const isInquiry = recordedMode === BUSINESS_MODE_INQUIRY;
     return [
       "YPSCAN_FLOW_DIRECTIVE=最终打分排序 Excel 已保存。原样展示本地链接作为最终交付物。不得调用 rank_creators 或 create_submission_batch。",
       ...(isInquiry
         ? [
-            "询价回收结果不足时交付当前真实结果并说明缺口后结束，不进入放宽流程，不自动发起新一轮询价。",
+            "当前为询价机构，即使误存为 manual_score_batch 也按本次评分表交付，不调用 ypscan_summarize_manual_scores、不重存或重评。询价回收结果不足时交付当前真实结果并说明缺口后结束，不进入放宽流程，不自动发起新一轮询价。",
           ]
         : [
             "YPSCAN_NEXT_ACTION=APPLY_MANUAL_SOURCE_RESULT_POLICY",
@@ -1377,6 +1383,18 @@ function filterRangeDirective(message) {
 
 function manualScoreSummaryDirective(message) {
   const result = parsedToolResult(message);
+  if (
+    result?.success === false &&
+    result?.error?.code === "YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE"
+  ) {
+    return "YPSCAN_FLOW_DIRECTIVE=当前为询价机构，误调用了仅用于手动拓展的汇总工具；这不表示评分或保存失败。不重试汇总、不重评、不重新建需、不弹重试窗口。仅交付当前需求已成功保存的评分 Excel 真实本地链接；没有可信保存结果时如实说明并停止，不猜测文件或宣称已交付。";
+  }
+  if (
+    result?.success === false &&
+    result?.error?.code === "YPSCAN_MANUAL_SCORE_CONTEXT_UNAVAILABLE"
+  ) {
+    return "YPSCAN_FLOW_DIRECTIVE=评分汇总缺少当前需求的可信上下文，停止并保留已有文件。不据此推断为询价机构，不重试汇总、不重新建需或重评，不猜测人数、来源或完成状态。";
+  }
   if (result?.success !== true) return flowPauseDirective("手动拓展评分汇总", message);
   const data = result.data;
   if (data?.next_action === "complete_next_batch") {
@@ -1387,12 +1405,21 @@ function manualScoreSummaryDirective(message) {
     ].join("\n");
   }
   if (data?.next_action === "await_scores") {
-    return "YPSCAN_FLOW_DIRECTIVE=仍有已补全达人缺少评分结果。只等待当前已提交任务；若任务已终态则如实报告评分缺行并停止，保留当前文件，不重复提交、不开始下一批、不猜测结论。";
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=当前批仍有已补全达人缺评分行，不得当作最终交付。先向用户展示 progress.user_visible_message（明确标注仅为阶段性结果，不代表最终汇总；已保存的单批评分表也不是最终表）。",
+      `MANUAL_SCORE_PENDING_AUTHOR_IDS=${JSON.stringify(data.pending_score_author_ids ?? [])}`,
+      "评分任务仍在运行：只等待当前已提交任务（沿用 30 秒轮询、单轮最多 10 次），不开始下一批。任务已终态仍缺行：原样报告上述缺失达人并停止，不重复提交、不自动重评、不猜测结论。",
+    ].join("\n");
   }
   if (data?.next_action === "deliver") {
     return [
       "YPSCAN_FLOW_DIRECTIVE=手动拓展分批评分结束。展示最终汇总 delivery.local_file_link（若有），说明真实已评分、推荐、目标、失败和未处理人数。没有文件不得声称已交付；禁止继续补全或评分剩余候选。",
-      `MANUAL_SCORE_COUNTS=${JSON.stringify({ scored_count: data.scored_count, recommended_count: data.recommended_count, target_count: data.target_count, unprocessed_count: data.unprocessed_count, completion_failed_count: data.completion_failed_count, shortfall: data.shortfall, stop_reason: data.stop_reason })}`,
+      `MANUAL_SCORE_COUNTS=${JSON.stringify({ scored_count: data.scored_count, excluded_zero_score_count: data.excluded_zero_score_count, recommended_count: data.recommended_count, target_count: data.target_count, unprocessed_count: data.unprocessed_count, completion_failed_count: data.completion_failed_count, shortfall: data.shortfall, stop_reason: data.stop_reason })}`,
+      ...(data.excluded_zero_score_count
+        ? [
+            "综合分为 0 的评分行未写入汇总表，按 excluded_zero_score_count 如实说明；不写成未评分、补全失败或达人被筛掉。",
+          ]
+        : []),
       ...(data.shortfall > 0
         ? [
             "先交付真实汇总结果并说明推荐人数缺口，再按 Skill 优先建议替换关键词、减少人设限定；该阶段用户已明确要求放宽时直接执行，否则等待确认。调整后仍不足再提示其他条件并等待该项确认。",
@@ -1503,7 +1530,7 @@ function flowDirective(
     return null;
   }
   if (/(?:^|__)ypscan_parse_requirement$/iu.test(normalizedName)) {
-    return requirementParseSuccessDirective(message, params);
+    return requirementParseSuccessDirective(message, params, recordedMode);
   }
   if (bare === "validate_requirement") {
     const requirementId = firstString(result?.data?.requirement_id, result?.data?.id);
@@ -1655,7 +1682,7 @@ export function registerFlowDirectiveHooks(api) {
           "机构回填预览链路先保存预览表，再让用户选择是否补全；选“补全并打分排序”时继续 ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全（20/批）→ file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。回收不足时不自动放宽，交付真实结果。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。字段映射固定：排名=rank_no（缺省按响应顺序）、机构=agency_name、覆盖达人=candidate_count、返点=rebate_rate、综合分=rank_score。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
-          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 只传 requirement_id，需求由 Provider 从后台读取；manual_source_creators_status 按当前环境 live schema 传入三倍取数 num。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再用 ypscan_save_creator_links 归一化为受控三列 links CSV，然后调用 ypscan_summarize_manual_scores 取得最多20人的当前批名单；仅按该名单调用当前平台对应的 YP Action 原生达人补全工具。每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 file_bridge 和打分。每批补全后仅以当前批 CSV 调用 file_bridge（flow=manual_source）并评分；每份评分表保存为 manual_score_batch 后再汇总，推荐人数达标立即交付汇总 Excel，否则继续下一批直到三倍候选耗尽；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成后保存为 manual_score_batch 再汇总；score 仍同步返回 Excel 时也按单批保存并汇总。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。结果不足且用户确认放宽后重建搜索时，只传 requirement_id，由 Provider 从后台读取已保存的完整有效需求，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导。",
+          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 只传 requirement_id，需求由 Provider 从后台读取；manual_source_creators_status 按当前环境 live schema 传入梯度取数 num（10 人→30、20 人→50、50 人→100）。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再用 ypscan_save_creator_links 归一化为受控三列 links CSV，然后调用 ypscan_summarize_manual_scores 取得最多20人的当前批名单；仅按该名单调用当前平台对应的 YP Action 原生达人补全工具。每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 file_bridge 和打分。每批补全后仅以当前批 CSV 调用 file_bridge（flow=manual_source）并评分；每份评分表保存为 manual_score_batch 后再汇总，推荐人数达标立即交付汇总 Excel，否则继续下一批直到梯度候选池耗尽；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成后保存为 manual_score_batch 再汇总；score 仍同步返回 Excel 时也按单批保存并汇总。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。结果不足且用户确认放宽后重建搜索时，只传 requirement_id，由 Provider 从后台读取已保存的完整有效需求，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导。",
           "原生达人补全工具由宿主 YP Action 提供、不在 ypscan 白名单内：小红书 get_xhs_author_business_card 且固定 page_count=1，抖音 get_douyin_author_business_card。宿主未开放对应工具时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。",
           MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ARGUMENT_RULE,
@@ -1672,6 +1699,7 @@ export function registerFlowDirectiveHooks(api) {
           PARSED_METRIC_REUSE_RULE,
           SINGLE_REQUIREMENT_TYPE_RULE,
           CLARIFICATION_REUSE_RULE,
+          MANUAL_EFFECTIVE_DEMAND_REPARSE_RULE,
         );
       }
       return { prependContext: lines.join("\n") };
@@ -1879,7 +1907,7 @@ export function registerFlowDirectiveHooks(api) {
               source_conflict: false,
             });
           }
-          // 持久化 validate 调用参数里的目标交付数量，作为 manual_source_creators_status 三倍取数数量的确定性来源。
+          // 持久化 validate 调用参数里的目标交付数量，作为 manual_source_creators_status 梯度取数数量的确定性来源。
           const quantityTotal = positiveInteger(params?.quantityTotal);
           if (quantityTotal != null)
             quantityTotalByRequirement.set(String(requirementId), quantityTotal);

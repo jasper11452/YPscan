@@ -185,7 +185,7 @@ export default {
       (context) => ({
         name: "ypscan_summarize_manual_scores",
         description:
-          "仅手动拓展：读取当前需求已登记的候选与各批评分 Excel，精确累计去重后的推荐人数；返回下一批最多20人的 next_author_ids，达标或候选耗尽时生成最终汇总 Excel。不得用模型估算推荐人数。",
+          "仅手动拓展：读取当前需求已登记的候选与各批评分 Excel，精确累计去重后的推荐人数；返回下一批 next_author_ids（首批不超过 min(20, 目标人数)，之后每批最多 20 人），达标或候选耗尽时生成最终汇总 Excel。综合分为 0 的评分行不写入最终汇总表；当前批缺评分行时返回 await_scores 和阶段性 progress，不提前交付。不得用模型估算推荐人数。",
         parameters: {
           type: "object",
           additionalProperties: false,

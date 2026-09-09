@@ -170,15 +170,21 @@ async function fixture(t, { quantityTotal = 10, count = 30, platform = "douyin" 
   return { workspaceDir, ids, sourceContext, batch, summarize };
 }
 
-test("initial summary schedules only the first 20 of the three-times candidate pool", async (t) => {
-  const f = await fixture(t, { count: 40 });
-  const result = await f.summarize();
-  assert.equal(result.success, true);
-  assert.equal(result.data.candidate_count, 30);
-  assert.equal(result.data.target_count, 10);
-  assert.deepEqual(result.data.next_author_ids, f.ids.slice(0, 20));
-  assert.equal(result.data.next_action, "complete_next_batch");
-  assert.equal(result.delivery, undefined);
+test("initial summary schedules min(20, target) candidates from the gradient pool", async (t) => {
+  const small = await fixture(t, { count: 40 });
+  const first = await small.summarize();
+  assert.equal(first.success, true);
+  assert.equal(first.data.candidate_count, 30);
+  assert.equal(first.data.target_count, 10);
+  assert.deepEqual(first.data.next_author_ids, small.ids.slice(0, 10));
+  assert.equal(first.data.next_action, "complete_next_batch");
+  assert.equal(first.data.progress, undefined);
+  assert.equal(first.delivery, undefined);
+
+  const large = await fixture(t, { count: 200, quantityTotal: 30 });
+  const capped = await large.summarize();
+  assert.equal(capped.data.candidate_count, 60);
+  assert.deepEqual(capped.data.next_author_ids, large.ids.slice(0, 20));
 });
 
 for (const platform of ["douyin", "xiaohongshu"]) {
@@ -245,6 +251,62 @@ test("zero recommendations still preserve all scored rows without counting proce
   assert.equal(sheets[0].data.length, 4);
 });
 
+test("zero-score rows stay out of the final workbook but not out of the returned batch", async (t) => {
+  const f = await fixture(t, { count: 2, quantityTotal: 2 });
+  const source = f.batch(f.ids, 1, {
+    rows: [
+      ["douyin", f.ids[0], "90", "推荐", "依据"],
+      ["douyin", f.ids[1], "0", "不推荐", "本次未完成有效评估"],
+    ],
+  });
+  await decorateWorkbook(source, (sheet) => {
+    sheet.sheetData[0].row[0].c.push(
+      { $: { r: "C1", t: "inlineStr" }, is: [{ t: ["评分数量"] }] },
+      { $: { r: "D1", t: "inlineStr" }, is: [{ t: ["2"] }] },
+    );
+  });
+  const result = await f.summarize();
+  assert.equal(result.success, true);
+  assert.equal(result.data.scored_count, 2);
+  assert.equal(result.data.excluded_zero_score_count, 1);
+  assert.equal(result.data.recommended_count, 1);
+  assert.equal(result.data.pending_score_author_ids.length, 0);
+  assert.equal(result.data.next_action, "deliver");
+  const sheets = await readXlsxFile(result.data.file_path);
+  assert.equal(sheets[0].data.length, 3);
+  assert.equal(sheets[0].data[0][3], "1");
+  assert.equal(sheets[0].data[2][1], f.ids[0]);
+  assert.match(result.delivery.user_visible_message, /其中 1 位综合分为 0，未写入汇总表/u);
+});
+
+test("an all-zero batch never counts a recommendation or writes a workbook", async (t) => {
+  const f = await fixture(t, { count: 2, quantityTotal: 2 });
+  f.batch(f.ids, 0, {
+    rows: [
+      ["douyin", f.ids[0], "0", "推荐", "异常输入"],
+      ["douyin", f.ids[1], "0", "不推荐", "本次未完成有效评估"],
+    ],
+  });
+  const result = await f.summarize();
+  assert.equal(result.success, true);
+  assert.equal(result.data.scored_count, 2);
+  assert.equal(result.data.excluded_zero_score_count, 2);
+  assert.equal(result.data.recommended_count, 0);
+  assert.equal(result.data.next_action, "deliver");
+  assert.equal(result.delivery, undefined);
+  assert.equal(result.data.file_path, undefined);
+});
+
+test("progress reports zero-score rows excluded from the pending batch", async (t) => {
+  const f = await fixture(t, { count: 2, quantityTotal: 2 });
+  f.batch(f.ids, 0, { rows: [["douyin", f.ids[0], "0", "不推荐", "本次未完成有效评估"]] });
+  const result = await f.summarize();
+  assert.equal(result.data.next_action, "await_scores");
+  assert.equal(result.data.excluded_zero_score_count, 1);
+  assert.match(result.data.progress.user_visible_message, /其中 1 人综合分为 0，不写入汇总表/u);
+  assert.match(result.data.progress.user_visible_message, /还有 1 人评分缺失/u);
+});
+
 test("completion failures are not rescheduled or counted as unstarted authors", async (t) => {
   const f = await fixture(t);
   f.batch(f.ids.slice(0, 18), 6, { failed: f.ids.slice(18, 20) });
@@ -261,6 +323,30 @@ test("completed but not yet scored creators prevent another completion batch", a
   assert.equal(result.data.next_action, "await_scores");
   assert.deepEqual(result.data.pending_score_author_ids, f.ids.slice(0, 20));
   assert.deepEqual(result.data.next_author_ids, []);
+});
+
+test("a reached target still waits for every successful creator in the current batch", async (t) => {
+  const f = await fixture(t);
+  const selected = f.ids.slice(0, 20);
+  const rows = selected
+    .slice(0, 19)
+    .map((id, index) => ["douyin", id, "80", index < 10 ? "推荐" : "不推荐", "依据"]);
+  f.batch(selected, 10, { rows });
+  const result = await f.summarize();
+  assert.equal(result.success, true);
+  assert.equal(result.data.recommended_count, 10);
+  assert.equal(result.data.target_reached, true);
+  assert.equal(result.data.next_action, "await_scores");
+  assert.deepEqual(result.data.pending_score_author_ids, [selected[19]]);
+  assert.deepEqual(result.data.next_author_ids, []);
+  assert.equal(result.data.stop_reason, null);
+  assert.equal(result.delivery, undefined);
+  assert.equal(result.data.progress.display_required, true);
+  assert.equal(result.data.progress.is_final, false);
+  assert.match(
+    result.data.progress.user_visible_message,
+    /当前已评分 19 人，推荐 10 人；还有 1 人评分缺失。以下仅为阶段性结果，不代表最终汇总。/u,
+  );
 });
 
 test("duplicate score rows and repeated files do not satisfy a 10-person target with 9 people", async (t) => {
@@ -321,7 +407,7 @@ test("modified normalized links, missing context and institutional requests fail
   await writeFile(f.sourceContext.links_file.file_path, "changed");
   assert.equal((await f.summarize()).error.code, "YPSCAN_MANUAL_SCORE_SOURCE_CHANGED");
   f.sourceContext.business_mode = "询价机构";
-  assert.equal((await f.summarize()).error.code, "YPSCAN_MANUAL_SCORE_CONTEXT_UNAVAILABLE");
+  assert.equal((await f.summarize()).error.code, "YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE");
   const missing = payload(
     await summarizeManualScores({ requirement_id: "req" }, { workspaceDir: f.workspaceDir }),
   );

@@ -501,6 +501,7 @@ test("fileBridge uploads the merged CSV and returns an unsigned public URL", asy
   assert.equal(parsed.data.data_row_count, 2);
   assert.match(parsed.delivery.local_file_link, /manual-source-douyin-req-upload-success-/u);
   assert.equal(parsed.delivery.display_required, false);
+  assert.equal(parsed.delivery.user_visible_message, "数据已合并上传。");
   assert.doesNotMatch(parsed.delivery.user_visible_message, /file:\/\//u);
   assert.equal(captured.key, `action/manual_source/req-upload-success/${sha256}.csv`);
   assert.equal(String(captured.body), csvText);

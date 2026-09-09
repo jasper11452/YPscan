@@ -16,7 +16,7 @@
 
 | 字段            | 类型   | 必填 | 约束                                                                                                                                           |
 | --------------- | ------ | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `demand`        | string | 是   | `minLength: 1`；当前单个平台完整最新需求原文；首次解析及用户修改业务条件后必传；手动拓展确认放宽后传应用全部累计放宽的完整需求全文，与 rawMessagesJson.original 一致；其余重传只合并原始表述与人工改口，禁止回填历史解析输出或未确认放宽值 |
+| `demand`        | string | 是   | `minLength: 1`；当前单个平台完整最新需求原文；首次解析及用户修改业务条件后必传；手动拓展首次澄清改变有效需求或确认放宽后，传应用全部当前有效答案的无冲突完整需求全文，与 rawMessagesJson.original 一致；全文和最近成功解析输入相同且结果有效时不重调；其余重传只合并原始表述与人工改口，禁止回填历史解析输出或未确认放宽值 |
 | `business_mode` | string | 是   | enum：`询价机构` / `手动拓展`；来自用户明确表达，未明确或语义冲突时经模式选择确定                                                              |
 
 ### 实现事实
@@ -120,6 +120,7 @@
 
 - `data` 始终包含：`requirement_id`、`platform`、`flow`、`file_name`、`file_path`、`data_row_count`、`matched_creator_ids`、`missing_creator_ids`、`completion_csv_paths`、`completion_id_columns`、`links_csv_path`、`sha256`。`completion_id_columns` 按输入文件顺序记录 `{file_path, id_column}`，列名仅为展示去除首尾空白/BOM。
 - 上传成功时额外包含 `csv_file_path`、`object_key`；超过 500 行时额外包含 `upload_skipped`、`upload_limit`。
+- 非交付进度消息仅描述数据合并/上传状态，不包含地址或内部展示指令；上传成功为“数据已合并上传。”。`data.csv_file_path` 保留原始地址供打分工具使用，原始工具面板由宿主控制。
 - `delivery` 始终包含本地 `local_file_path` 与 `local_file_link`；`manual_source`/`mcn_rank` 与失败结果 `display_required=false`，merged CSV 是内部中间产物、不主动向用户展示；仅遗留 `mcn_complete_only` 分支（本地 merged CSV 即该分支唯一产物）`display_required=true`。
 
 ### 错误码
@@ -163,13 +164,15 @@
 
 ## 5. ypscan_summarize_manual_scores
 
-实现 `src/tools/manual-score-summary.js`，入口只接受 `{requirement_id}`，来源由 Hook 与本地保存工具登记，不接受模型传入文件路径或推荐人数。模式必须为手动拓展；N 使用 validate 成功调用的 quantityTotal。候选按归一化 links 顺序去重，最多 3N，下一批最多20人。评分表必须含唯一“需求ID”元数据与“平台”、当前平台 ID（星图ID/蒲公英ID）、“综合得分”、“推荐结论”列；只接受精确“推荐”/“不推荐”。跨表按达人 ID 去重，相同达人不同结果报错，不挑高分覆盖。
+实现 `src/tools/manual-score-summary.js`，入口只接受 `{requirement_id}`，来源由 Hook 与本地保存工具登记，不接受模型传入文件路径或推荐人数。模式必须为手动拓展；N 使用 validate 成功调用的 quantityTotal。候选按归一化 links 顺序去重，最多按梯度候选池（10 人→30、20 人→50、50 人→100）；首批按 min(20,N) 排批，之后每批最多 20 人。评分表必须含唯一“需求ID”元数据与“平台”、当前平台 ID（星图ID/蒲公英ID）、“综合得分”、“推荐结论”列；只接受精确“推荐”/“不推荐”。跨表按达人 ID 去重，相同达人不同结果报错，不挑高分覆盖。
 
-返回 `next_action`（complete_next_batch / await_scores / deliver）、`next_author_ids`、`recommended_count`、`scored_count`、`target_count`、`candidate_count`、`completion_failed_count`、`failed_author_ids`、`pending_score_author_ids`、`unprocessed_count`、`shortfall`、`target_reached`、`stop_reason`（target_reached / candidates_exhausted / null）。成功汇总终态且有评分行时沿用 Provider 单表模板，保留工作表名、标题、需求信息、分组表头、列宽、颜色、数字格式、冻结行及全部评分行，更新评分数量，按综合得分排序，不过滤不推荐者或截断前N人，并返回受控本地链接；文件内容哈希命名、重复幂等、不覆盖异内容。所有单批原表保留；通过 xml2js 解析工作表 XML、移动原始行和单元格坐标，保留原单元格类型与样式引用，ID 不经过浮点转换、文本不转为公式。各批样式或共享字符串不一致、表头位置不同、数据区合并、公式或关联对象无法安全移动时返回 TEMPLATE 错误并停止，不输出损坏表。
+返回 `next_action`（complete_next_batch / await_scores / deliver）、`next_author_ids`、`recommended_count`、`scored_count`、`excluded_zero_score_count`、`target_count`、`candidate_count`、`completion_failed_count`、`failed_author_ids`、`pending_score_author_ids`、`unprocessed_count`、`shortfall`、`target_reached`、`stop_reason`（target_reached / candidates_exhausted / null）；`await_scores` 时额外返回 `progress`（`display_required=true`、`is_final=false`、`user_visible_message` 明确标注阶段性结果不代表最终汇总）。只要当前批任一补全成功达人缺评分行，`next_action=await_scores` 且 `stop_reason=null`，优先于 target_reached/candidates_exhausted；不生成交付文件或下一批。成功汇总终态时沿用 Provider 单表模板，保留工作表名、标题、需求信息、分组表头、列宽、颜色、数字格式、冻结行及全部非 0 分评分行，更新评分数量（按写入最终表的行数），按综合得分排序，不按推荐结论筛掉或截断前N人，并返回受控本地链接；综合分为 0 的评分行不写入最终表（0 分通常来自评分失败、资料无效或数据不足，也可能是有效评估但内容/类型相关度均为 0 级），不计数推荐、不算缺行，按 `excluded_zero_score_count` 说明；全部评分行均为 0 时不生成汇总文件；文件内容哈希命名、重复幂等、不覆盖异内容。所有单批原表保留；通过 xml2js 解析工作表 XML、移动原始行和单元格坐标，保留原单元格类型与样式引用，ID 不经过浮点转换、文本不转为公式。各批样式或共享字符串不一致、表头位置不同、数据区合并、公式或关联对象无法安全移动时返回 TEMPLATE 错误并停止，不输出损坏表。
 
 文件限制：20 MiB，ZIP 声明解压40 MiB/1000项，最多10000行/200列；只读项目内哈希未变的已登记普通文件。错误前缀 `YPSCAN_MANUAL_SCORE_`，包括 CONTEXT_UNAVAILABLE、SOURCE_NOT_ALLOWED、SOURCE_CHANGED、SOURCE_MISMATCH、HEADERS、UNKNOWN_VERDICT、INVALID_SCORE、CONFLICTING_RESULTS、COMPLETION_INVALID、TEMPLATE、LIMIT、READ_FAILED、SAVE_FAILED 等。缺少上下文（含 Gateway 重置）时停止，不自动重建需求或重评。机构回收拒绝使用此工具。
 
 测试环境 2026-09-08 的一个合成需求、两份不重叠 CSV、每份两人已分别返回独立任务及对应 Excel；四人均为“不推荐”。这证明该次测试的任务独立性和抖音负例表结构，不证明生产行为、跨批评分尺度、正例枚举全覆盖或模型/宿主已验收。当前自动回归用合成表验证两平台计数与 registered tool/Hook 衔接（tests/manual-score-summary.test.mjs、tests/manual-score-flow.test.mjs）。
+
+询价机构已登记模式返回 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE`（success=false、retriable=false），在读取或修改评分文件前返回；缺少可信上下文仍返回 CONTEXT_UNAVAILABLE。两者的 Hook 均不生成重试弹窗：前者仅引导交付当前需求已有的成功保存结果（没有可信文件则停止），后者停止且不得推断为询价机构或已完成。
 
 ## 6. 弹窗载荷（供工具与 Hook 共用）
 
