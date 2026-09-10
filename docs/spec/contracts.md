@@ -13,7 +13,7 @@
 | `MAX_FOLLOWER_COUNT`               | `999_999_999`                                                    | 粉丝技术上限                                                        |
 | `UNRESTRICTED_FOLLOWERCOUNT_RANGE` | `"[0,999999999]"`                                                | 粉丝无要求时的落库值                                                |
 | `TOOL_REGISTRY`                    | 20 个业务工具名                                                  | 含已弃用工具名，供 `normalizeToolCallParams` 判定业务工具；不代表白名单 |
-| `LOCAL_TOOL_NAMES`                 | 7 个插件本地工具名                                                 | 与业务工具一起参与 `stripHostPrefix` 的宿主工具名匹配 |
+| `LOCAL_TOOL_NAMES`                 | 7 个插件本地工具名                                                 | 仅供 `resolveFlowToolName` 路由本地工具，不进入业务参数归一化 |
 
 ## 2. Provider MCP 白名单（manifest `toolFilter.include`）
 
@@ -93,7 +93,9 @@
 
 ## 6. 宿主工具名匹配
 
-`stripHostPrefix` 先做全名精确匹配，再按 `前缀__业务名` 后缀匹配；宿主把 MCP 命名空间扁平化为单分隔符时（如 `mcp-04b79900_validate_requirement`），同样按 `mcp-`/`ypscan-`/`ypmcn-` 命名空间加业务或本地工具名后缀识别；不匹配返回 null（Hook 不处理）。前缀形态受限，不把任意前缀当业务工具。这使 Provider 工具与本地工具在不同宿主命名空间下都能被 Hook 识别。
+`stripHostPrefix` 恢复只识别 `TOOL_REGISTRY` 中的业务工具：裸名精确匹配、受限的 `前缀__业务名` 匹配，并额外兼容扁平 MCP 名称（如 `mcp-04b79900_validate_requirement`）。不匹配返回 null，本地工具参数不进入 Provider 归一化。
+
+Hook 使用 `resolveFlowToolName`：业务工具沿用上述识别；本地工具保留原来的裸名 / 最后一个 `__` 后段匹配，不额外限制旧命名空间字符；另兼容扁平 MCP 名称。该函数只负责 Hook 路由，不发现、注册或过滤宿主可用工具。Agent 的工具可用性以宿主实际提供的工具列表为准，不能用插件注册表或 Provider 白名单替代。
 
 宿主 YP Action 的原生达人补全（`get_xhs_author_business_card`/`get_douyin_author_business_card`）同样按上述两种形态匹配。插件不注册也不校验其 schema，不干预登录窗口、Cookie 或内部回调地址。
 
@@ -104,7 +106,7 @@
 - `sync_mcn_inquiry_status`：`{requirement_id, project_id, supplierIds}` → `data.inquiries[].inquiry_id`（`created`/`reused`）；返回的 `inquiry_ids` 直接用于 ingest。
 - `create_with_distributions`：required = [`requirement_id`, `description`, `wechat_notification_message`]；`supplierIds`/`supplier_name` 可选，业务规则不变（两侧恒传数组、空侧 `[]`、至少一侧非空）。
 - `manual_source_creators` 固定只传 `{requirement_id}`，不传 `demand` 或 `num`，需求由 Provider 从后台读取。测试环境 live schema 已确认启动工具只有 `requirement_id`，状态查询为 `manual_source_creators_status({requirement_id, batch_id, num})`。Hook 通过 `MANUAL_SOURCE_TARGET_NUM` 提示状态查询所需的梯度取数数量（示例：5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，非穷举，表外人数同样按同一梯度计算），不能重复乘倍数，交付目标仍为用户需求人数；只有当前环境 live schema required `num` 时才并入远端调用。字段配置缺失时 Provider 应在启动调用返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` / `REQUIREMENT_COLUMNS_UNAVAILABLE` 并停止，而不是延迟到打分终态；当前插件对启动和打分两处错误均生成同 requirement 字段选择恢复指令，不缓存或重建 columns，只保留本轮可信 `csv_file_path` 用于恢复时精确重提打分。
-- `get_inquiry_form_fields_status`：`{requirement_id}` → `{status}`。2026-09-10 对 app MCP 代理实测（服务端 1.9.4）的取值：`unavailable`（该需求当前没有已提交的字段配置）、`submitted`（该需求已有字段配置，含继承复制）、`invalid`（ID 无效/为空）。响应不回显 `requirement_id`，无时间戳或页面实例标识，pending payload 字节恒定。**语义是按需求判定的存量状态，不是“刚打开的字段页是否提交”**：需求已有配置时，重新打开字段页后仍会立即返回 `submitted`。因此插件只在首次选择（无 `force_reselect`、无 `source_requirement_id`）且即时预检为 `unavailable` 时轮询；预检即 `submitted` 或重选/继承场景不轮询，仍等待用户回复“好了”。轮询上限 12 次（含预检共 13 次查询）：同一工具同一参数连续 16 次相同结果会触发宿主全局无进展断路器。
+- `get_inquiry_form_fields_status`：`{requirement_id}` → `{status}`。2026-09-10 对 app MCP 代理实测（服务端 1.9.4）的取值：`unavailable`（该需求当前没有已提交的字段配置）、`submitted`（该需求已有字段配置，含继承复制）、`invalid`（ID 无效/为空）。响应不回显 `requirement_id`，无时间戳或页面实例标识，pending payload 字节恒定。**语义是按需求判定的存量状态，不是“刚打开的字段页是否提交”**：需求已有配置时，重新打开字段页后仍会立即返回 `submitted`。因此插件只在首次选择（无 `force_reselect`、无 `source_requirement_id`）且即时预检为 `unavailable` 时轮询；预检即 `submitted` 或重选/继承场景不轮询，仍等待用户回复“好了”。轮询上限 8 次（含预检共 9 次查询）：同一工具同一参数连续 16 次相同结果会触发宿主全局无进展断路器，无法确认预检结果时按预检即 `submitted` 处理（等待“好了”）。
 - `score_manual_source_csv`：`{requirement_id, csv_file_path}` → 返回 `job_id`；`score_manual_source_csv_status({job_id})` 轮询至终态 → final workbook URL。`csv_file_path` 只接受当前 `file_bridge` 返回值（当前实现为未签名 OSS URL），绝不传本机工作区路径或自行构造的 URL。若打分阶段返回缺字段配置错误，字段提交后只用同一 requirement 与该可信 `csv_file_path` 重提打分，不重跑搜索、补全或 `file_bridge`，且处理行数不等于最终成功。
 - 回收链：`sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})` → 返回 `data.inquiries[].inquiry_id` → `ingest_mcn_submissions({inquiry_ids})` → `get_ingest_job` 轮询至 `succeeded`/`partially_succeeded`；终态只回一份预览 Excel（`excel_file_url` + `excel_columns`），无 links CSV，之后 ypscan_save_creator_links 读取预览并派生 links CSV → 原生补全 → `file_bridge(manual_source)` → 打分。
 

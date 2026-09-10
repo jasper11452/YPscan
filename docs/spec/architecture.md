@@ -117,4 +117,4 @@ OpenClaw 宿主
 
 ## 7. 可观测性
 
-插件不包含独立日志、指标或告警设施；工具结果经 `hostToolResult` 序列化为 JSON 文本交回宿主，可观测性依赖宿主与 Provider 侧日志。异步任务（`manual_source_creators_status`、`get_ingest_job`、`score_manual_source_csv_status`）与字段状态轮询（`get_inquiry_form_fields_status`，上限 12 次以避开宿主全局无进展断路器）的上限由指令约束，插件不自行记账。
+插件不包含独立日志、指标或告警设施；工具结果经 `hostToolResult` 序列化为 JSON 文本交回宿主，可观测性依赖宿主与 Provider 侧日志。异步任务（`manual_source_creators_status`、`get_ingest_job`、`score_manual_source_csv_status`）与字段状态轮询（`get_inquiry_form_fields_status`，每 30 秒一次、上限 8 次，含预检共 9 次查询，避开宿主全局无进展断路器）的上限由指令约束，插件不自行记账。

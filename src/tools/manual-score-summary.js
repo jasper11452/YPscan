@@ -1,11 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, open, readFile, realpath, unlink } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { unzipSync, zipSync, strFromU8, strToU8 } from "fflate";
 import readXlsxFile from "read-excel-file/node";
 import { Builder, parseStringPromise } from "xml2js";
 import { parseCsv } from "./merge-creator-csv.js";
-import { localFileMarkdownLink, publishWithoutOverwrite } from "./save-artifact.js";
+import {
+  localFileMarkdownLink,
+  publishReadableArtifact,
+  readableArtifactFileName,
+} from "./save-artifact.js";
 import { hostToolResult } from "./tool-result.js";
 import { nonemptyString } from "../util/value.js";
 import { manualSourcePoolSize } from "../contract/registry.js";
@@ -177,6 +182,43 @@ export async function readManualScoreWorkbook(source, { workspaceDir, requiremen
   return { headers, rows, template };
 }
 
+// Provider 单行批次会省略隔行底色等末尾样式。只合并共有编号定义完全一致的表，
+// 保留原始引用；编号冲突、其他样式元数据变化仍拒绝，不猜测或重建格式。
+async function mergeCompatibleStyles(archive, incoming) {
+  const part = "xl/styles.xml";
+  if (text(archive[part]) === text(incoming[part])) return;
+  if (!archive[part] || !incoming[part]) fail("TEMPLATE", "各批评分模板样式部件缺失，不能安全合并");
+  const document = await parseStringPromise(strFromU8(archive[part]));
+  const other = await parseStringPromise(strFromU8(incoming[part]));
+  const base = document.styleSheet;
+  const source = other.styleSheet;
+  if (!base || !source) fail("TEMPLATE", "评分模板样式表无效");
+  for (const [group, item] of [
+    ["numFmts", "numFmt"],
+    ["fonts", "font"],
+    ["fills", "fill"],
+    ["borders", "border"],
+    ["cellStyleXfs", "xf"],
+    ["cellXfs", "xf"],
+  ]) {
+    const left = base[group]?.[0]?.[item];
+    const right = source[group]?.[0]?.[item];
+    if (!Array.isArray(left) || !Array.isArray(right)) continue;
+    const overlap = Math.min(left.length, right.length);
+    if (!isDeepStrictEqual(left.slice(0, overlap), right.slice(0, overlap)))
+      fail("TEMPLATE", "各批评分模板同一样式编号定义冲突，不能安全合并");
+    const merged = left.length >= right.length ? left : right;
+    // 统一长度后再比较整张样式表，确保未忽略其他属性或扩展对象。
+    for (const root of [base, source]) {
+      root[group][0][item] = merged;
+      root[group][0].$ = { ...root[group][0].$, count: String(merged.length) };
+    }
+  }
+  if (!isDeepStrictEqual(base, source))
+    fail("TEMPLATE", "各批评分模板样式元数据不兼容，不能安全合并");
+  archive[part] = strToU8(new Builder({ renderOpts: { pretty: false } }).buildObject(document));
+}
+
 function columnName(index) {
   let name = "";
   for (let value = index + 1; value > 0; value = Math.floor((value - 1) / 26))
@@ -343,7 +385,7 @@ async function addHomepageHyperlinks(archive, sheetPath, document, headerRow, co
   document.worksheet = insertHyperlinks(sheet, hyperlinks);
 }
 
-async function saveSummaryWorkbook(workspaceDir, requirementId, template, rows) {
+async function saveSummaryWorkbook(workspaceDir, projectName, template, rows, now) {
   const { archive, sheetPath, document, headerRow, countCells, homepageColumns, scoreColumn } =
     template;
   const sheet = document.worksheet;
@@ -380,9 +422,10 @@ async function saveSummaryWorkbook(workspaceDir, requirementId, template, rows) 
   // Keep every original template part, including styles, sheet name and print settings.
   const buffer = Buffer.from(zipSync(archive, { mtime: new Date(1980, 0, 1) }));
   const sha256 = hash(buffer);
-  const fileName = `manual-score-summary-${hash(requirementId).slice(0, 16)}-${sha256.slice(0, 16)}.xlsx`;
-  const path = join(await realpath(workspaceDir), fileName);
-  const tempPath = join(await realpath(workspaceDir), `.manual-score-${randomUUID()}.tmp`);
+  // 与单批评分表同一命名规则：项目名 + 表名 + 本地时间戳。
+  const fileName = readableArtifactFileName("手动拓展汇总表", projectName, now());
+  const workspacePath = await realpath(workspaceDir);
+  const tempPath = join(workspacePath, `.manual-score-${randomUUID()}.tmp`);
   const handle = await open(tempPath, "wx", 0o600);
   try {
     try {
@@ -391,9 +434,14 @@ async function saveSummaryWorkbook(workspaceDir, requirementId, template, rows) 
     } finally {
       await handle.close();
     }
-    const published = await publishWithoutOverwrite(tempPath, path, sha256);
+    const published = await publishReadableArtifact(tempPath, workspacePath, fileName, sha256);
     if (!published.ok) fail("SAVE_FAILED", "汇总文件已改变或无法安全保存，不覆盖已有文件");
-    return { file_path: path, file_name: fileName, sha256, idempotent: published.idempotent };
+    return {
+      file_path: published.filePath,
+      file_name: published.fileName,
+      sha256,
+      idempotent: published.idempotent,
+    };
   } finally {
     await unlink(tempPath).catch(() => {});
   }
@@ -429,13 +477,17 @@ async function verifiedBatchDeliveries(sourceContext, workspaceDir, requirementI
  * @param {{requirement_id: string}} params
  * @param {{workspaceDir?: string, sourceContext?: {
  *   business_mode: string, platform: string, quantityTotal: number,
+ *   project_name?: string | null,
  *   source_conflict?: boolean,
  *   links_file: {file_path: string, sha256: string},
  *   completion_results: {file_path: (string|null), platform: string, successful_author_ids: string[], failed_author_ids: string[]}[],
  *   score_files: {file_path: string, sha256: string}[],
- * }}} options
+ * }, now?: () => Date}} options
  */
-export async function summarizeManualScores(params, { workspaceDir, sourceContext } = {}) {
+export async function summarizeManualScores(
+  params,
+  { workspaceDir, sourceContext, now = () => new Date() } = {},
+) {
   try {
     const requirementId = params?.requirement_id;
     const target = sourceContext?.quantityTotal;
@@ -508,10 +560,12 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
       if (headers && JSON.stringify(headers) !== JSON.stringify(parsed.headers))
         fail("HEADERS", "各批评分表列配置不一致，停止汇总，不猜测或丢弃字段");
       if (template) {
-        for (const part of ["xl/styles.xml", "xl/sharedStrings.xml"]) {
-          if (text(template.archive[part]) !== text(parsed.template.archive[part]))
-            fail("TEMPLATE", "各批评分模板样式或共享字符串不一致，不能直接合并");
-        }
+        if (
+          text(template.archive["xl/sharedStrings.xml"]) !==
+          text(parsed.template.archive["xl/sharedStrings.xml"])
+        )
+          fail("TEMPLATE", "各批评分模板共享字符串不一致，不能直接合并");
+        await mergeCompatibleStyles(template.archive, parsed.template.archive);
         if (template.headerRow !== parsed.template.headerRow)
           fail("TEMPLATE", "各批评分表头位置不一致");
       } else template = parsed.template;
@@ -610,7 +664,13 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
     if (data.next_action !== "deliver" || !deliverableRows.length) {
       return hostToolResult({ success: true, data }, { details: data });
     }
-    const saved = await saveSummaryWorkbook(workspaceDir, requirementId, template, deliverableRows);
+    const saved = await saveSummaryWorkbook(
+      workspaceDir,
+      sourceContext?.project_name,
+      template,
+      deliverableRows,
+      now,
+    );
     const details = { ...data, ...saved };
     const delivery = {
       local_path: saved.file_path,

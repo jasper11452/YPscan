@@ -2271,9 +2271,11 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /用户修改需求后的重建规则.*media-assistant Skill/u);
   assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
+  assert.match(first.prependContext, /可用工具以当前宿主提供的工具列表为准/u);
+  assert.match(first.prependContext, /插件业务注册表和 Provider 白名单不是宿主全部工具目录/u);
   assert.match(first.prependContext, /前缀（含 test）只是命名空间/u);
-  assert.match(first.prependContext, /mcp-04b79900_validate_requirement 即 validate_requirement/u);
-  assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
+  assert.match(first.prependContext, /额外兼容 mcp-<server>_<工具名>，按所需工具的完整名称后缀匹配/u);
+  assert.match(first.prependContext, /多个同名匹配才用 AskUserQuestion/u);
   assert.match(first.prependContext, /明确无条件回复“可以发\/发吧\/按这个发\/就这样发送”/u);
   assert.match(first.prependContext, /发送前必须用警示弹窗确认/u);
   assert.match(first.prependContext, /恰好两个选项/u);

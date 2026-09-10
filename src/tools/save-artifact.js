@@ -101,6 +101,52 @@ function safeArtifactNameFromPath(value, extension) {
   return nonemptyString(name) && name.toLowerCase().endsWith(extension) ? name : null;
 }
 
+// Provider 的评分导出文件名是需求/内容哈希串（如 manual_source_score_<hash>_<hash>.xlsx），
+// 用户无法分辨是哪张表；这两类评分表统一改用本地可读名。汇总表使用同一命名规则。
+/** @type {Readonly<Record<string, string>>} */
+const READABLE_ARTIFACT_LABELS = {
+  manual_source: "达人评分排序表",
+  manual_score_batch: "手动拓展评分表",
+};
+const PROJECT_NAME_MAX_LENGTH = 20;
+
+/**
+ * 项目名是调用方生成的自由文本，只用于本地文件名：清洗非法字符、折叠空白、按长度截断，失败返回 null。
+ * @param {unknown} value
+ */
+export function safeNameSegment(value) {
+  if (typeof value !== "string") return null;
+  const cleaned = value
+    .replace(/[\\/:*?"<>|\p{Cc}]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!cleaned) return null;
+  const characters = [...cleaned];
+  return characters.length > PROJECT_NAME_MAX_LENGTH
+    ? characters.slice(0, PROJECT_NAME_MAX_LENGTH).join("")
+    : cleaned;
+}
+
+/** 本地时间戳 `YYYYMMDD-HHmmss`。 */
+function localTimeStamp(now) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return (
+    `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+    `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  );
+}
+
+/**
+ * 本地可读文件名：`<项目名>-<标签>-<YYYYMMDD-HHmmss>.xlsx`，没有项目名时省略第一段。
+ * @param {string} label
+ * @param {unknown} projectName
+ * @param {Date} [now]
+ */
+export function readableArtifactFileName(label, projectName, now = new Date()) {
+  const project = safeNameSegment(projectName);
+  return `${project ? `${project}-` : ""}${label}-${localTimeStamp(now)}.xlsx`;
+}
+
 function artifactFileNameFromDownloadUrl(fileUrl, artifactKind, extension) {
   const parsedUrl = new URL(fileUrl);
   const filePath = parsedUrl.searchParams.get("file_path");
@@ -303,6 +349,29 @@ export async function publishWithoutOverwrite(tempPath, targetPath, sha256) {
 }
 
 /**
+ * 发布可读名交付文件：同一时间戳下出现不同内容时在文件名末尾补内容哈希再发布一次，
+ * 始终不覆盖已有文件；同内容重复发布幂等复用。
+ * @param {string} tempPath
+ * @param {string} workspacePath
+ * @param {string} fileName
+ * @param {string} sha256
+ */
+export async function publishReadableArtifact(tempPath, workspacePath, fileName, sha256) {
+  const targetPath = join(workspacePath, fileName);
+  const attempt = await publishWithoutOverwrite(tempPath, targetPath, sha256);
+  if (attempt.ok || attempt.code !== "YPSCAN_ARTIFACT_SAVE_CONFLICT") {
+    return { ...attempt, fileName, filePath: targetPath };
+  }
+  const fallbackName = fileName.replace(/\.xlsx$/u, `-${sha256.slice(0, 8)}.xlsx`);
+  const fallbackPath = join(workspacePath, fallbackName);
+  return {
+    ...(await publishWithoutOverwrite(tempPath, fallbackPath, sha256)),
+    fileName: fallbackName,
+    filePath: fallbackPath,
+  };
+}
+
+/**
  * @param {any} params
  * @param {{
  *   workspaceDir?: string,
@@ -310,6 +379,8 @@ export async function publishWithoutOverwrite(tempPath, targetPath, sha256) {
  *   retryDelaysMs?: readonly number[],
  *   sleepImpl?: (delayMs: number) => Promise<any>,
  *   testAdapterBaseUrl?: string | null,
+ *   projectName?: string | null,
+ *   now?: () => Date,
  * }} [options]
  */
 export async function saveArtifact(
@@ -320,6 +391,8 @@ export async function saveArtifact(
     retryDelaysMs = ARTIFACT_RETRY_DELAYS_MS,
     sleepImpl = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
     testAdapterBaseUrl = null,
+    projectName = null,
+    now = () => new Date(),
   } = {},
 ) {
   const artifactKind = params?.artifact_kind;
@@ -339,7 +412,7 @@ export async function saveArtifact(
     );
   }
   const format = extension === ".xlsx" ? "Excel" : "CSV";
-  let fileName = artifactFileNameFromDownloadUrl(fileUrl, artifactKind, extension);
+  const readableLabel = READABLE_ARTIFACT_LABELS[artifactKind];
   if (!nonemptyString(workspaceDir) || !isAbsolute(workspaceDir)) {
     return failure("YPSCAN_WORKSPACE_UNAVAILABLE", "宿主未提供可信的当前项目目录");
   }
@@ -357,8 +430,7 @@ export async function saveArtifact(
     return failure("YPSCAN_WORKSPACE_UNAVAILABLE", "当前项目目录不可用");
   }
 
-  let targetPath = join(workspacePath, fileName);
-  const tempPath = join(workspacePath, `.${fileName}.ypscan-${randomUUID()}.tmp`);
+  const tempPath = join(workspacePath, `.ypscan-${randomUUID()}.tmp`);
   let tempCreated = false;
   try {
     const downloaded = await downloadArtifactBuffer(
@@ -396,6 +468,12 @@ export async function saveArtifact(
       return failure("YPSCAN_ARTIFACT_INVALID_CONTENT", `${format} 下载内容为空`);
     }
     const sha256 = createHash("sha256").update(buffer).digest("hex");
+    const readableName = readableLabel
+      ? readableArtifactFileName(readableLabel, projectName, now())
+      : null;
+    const fileName =
+      readableName ?? artifactFileNameFromDownloadUrl(fileUrl, artifactKind, extension);
+    const targetPath = join(workspacePath, fileName);
     const tempHandle = await open(tempPath, "wx", 0o600);
     tempCreated = true;
     try {
@@ -404,18 +482,13 @@ export async function saveArtifact(
     } finally {
       await tempHandle.close();
     }
-    let published = await publishWithoutOverwrite(tempPath, targetPath, sha256);
-    if (
-      !published.ok &&
-      published.code === "YPSCAN_ARTIFACT_SAVE_CONFLICT" &&
-      (artifactKind === "manual_source" || artifactKind === "manual_score_batch")
-    ) {
-      // Separate scoring exports may reuse a basename; preserve both without overwriting.
-      const requirementHash = createHash("sha256").update(artifactId).digest("hex").slice(0, 16);
-      fileName = `${artifactKind}-${requirementHash}-${sha256}.xlsx`;
-      targetPath = join(workspacePath, fileName);
-      published = await publishWithoutOverwrite(tempPath, targetPath, sha256);
-    }
+    const published = readableName
+      ? await publishReadableArtifact(tempPath, workspacePath, fileName, sha256)
+      : {
+          ...(await publishWithoutOverwrite(tempPath, targetPath, sha256)),
+          fileName,
+          filePath: targetPath,
+        };
     if (!published.ok) {
       return failure(
         published.code,
@@ -427,8 +500,8 @@ export async function saveArtifact(
     const details = {
       artifact_kind: artifactKind,
       artifact_id: artifactId,
-      file_name: fileName,
-      file_path: targetPath,
+      file_name: published.fileName,
+      file_path: published.filePath,
       byte_count: buffer.length,
       sha256,
       idempotent: published.idempotent,

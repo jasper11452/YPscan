@@ -106,7 +106,7 @@ test("successful saves expose a clickable local file link with an encoded target
   t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
 
   const result = JSON.parse(
-    (await saveFixture(workspaceDir, "manual_source", "达人 排名 1.xlsx")).content[0].text,
+    (await saveFixture(workspaceDir, "ranked_submission", "达人 排名 1.xlsx")).content[0].text,
   );
 
   assert.equal(result.success, true);
@@ -264,5 +264,5 @@ test("manual score batches are internal artifacts without a user-visible link", 
   assert.equal(saved.delivery.display_before_next_action, false);
   assert.match(saved.delivery.user_visible_message, /不向用户展示文件路径、链接或表格/u);
   assert.doesNotMatch(saved.delivery.user_visible_message, /file:\/\/|本地文件：/u);
-  assert.match(saved.delivery.local_file_link, /batch-score\.xlsx/u);
+  assert.match(saved.delivery.local_file_link, /手动拓展评分表-\d{8}-\d{6}(-[a-f0-9]{8})?\.xlsx/u);
 });

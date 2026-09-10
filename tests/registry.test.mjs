@@ -8,6 +8,7 @@ import {
   missingRequiredValidateParams,
   normalizeToolCallParams,
   stripHostPrefix,
+  resolveFlowToolName,
   VALIDATE_REQUIREMENT_RANGE_PARAMS,
   validateRequirementPreflight,
 } from "../src/contract/registry.js";
@@ -1969,7 +1970,7 @@ test("host tool names resolve across namespaces and flattened MCP prefixes", () 
     ["ypscan_summarize_manual_scores", "ypscan_summarize_manual_scores"],
     ["mcp-04b79900_ypscan_summarize_manual_scores", "ypscan_summarize_manual_scores"],
   ])
-    assert.equal(stripHostPrefix(name), expected, name);
+    assert.equal(resolveFlowToolName(name), expected, name);
   for (const name of ["exec", "mcp-04b79900_exec", "foo_validate_requirement", "read", ""])
     assert.equal(stripHostPrefix(name), null, name);
 });
@@ -1981,4 +1982,19 @@ test("flattened host names normalize business tool params but leave local tools 
   assert.equal(normalized.quantityTotal, "30");
   const local = { requirement_id: "req", platform: "小红书", csv_file_path: "x" };
   assert.equal(normalizeToolCallParams("mcp-04b79900_ypscan_save_creator_links", local), local);
+});
+
+test("business registry does not become the host tool catalog", () => {
+  for (const name of [
+    "ypscan_save_artifact",
+    "test__ypscan_save_artifact",
+    "mcp-04b79900_ypscan_save_artifact",
+  ]) {
+    assert.equal(stripHostPrefix(name), null, name);
+    assert.equal(resolveFlowToolName(name), "ypscan_save_artifact", name);
+    const params = { platform: "小红书" };
+    assert.equal(normalizeToolCallParams(name, params), params);
+  }
+  assert.equal(resolveFlowToolName("host.v1__ypscan_save_artifact"), "ypscan_save_artifact");
+  assert.equal(stripHostPrefix("host.v1__validate_requirement"), null);
 });

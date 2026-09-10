@@ -89,10 +89,6 @@ const LOCAL_TOOL_NAMES = Object.freeze([
   "ypscan_set_filter_range",
 ]);
 
-const HOST_TOOL_NAMES = Object.freeze([...BUSINESS_TOOL_NAMES, ...LOCAL_TOOL_NAMES]);
-const HOST_TOOL_REGISTRY = Object.freeze(
-  Object.fromEntries(HOST_TOOL_NAMES.map((name) => [name, true])),
-);
 // 双下划线命名空间（`<前缀>__业务名`），以及宿主把 MCP 命名空间扁平化为单分隔符的形态
 // （pi 适配器：`mcp-04b79900_validate_requirement`）。前缀形态受限，不把任意前缀当业务工具。
 const HOST_NAMESPACE = /^[a-z0-9_-]+(?:__[a-z0-9_-]+)*$/u;
@@ -652,9 +648,22 @@ function matchesHostNamespace(toolName, bare, separator, namespace) {
 export function stripHostPrefix(toolName) {
   if (typeof toolName !== "string") return null;
   const normalized = toolName.trim().toLowerCase();
-  if (Object.hasOwn(HOST_TOOL_REGISTRY, normalized)) return normalized;
-  for (const bare of HOST_TOOL_NAMES) {
+  if (Object.hasOwn(TOOL_REGISTRY, normalized)) return normalized;
+  for (const bare of BUSINESS_TOOL_NAMES) {
     if (matchesHostNamespace(normalized, bare, "__", HOST_NAMESPACE)) return bare;
+    if (matchesHostNamespace(normalized, bare, "_", FLAT_HOST_NAMESPACE)) return bare;
+  }
+  return null;
+}
+
+// Hook 的本地工具路由保留原来的裸名 / 最后一个 __ 后段匹配，
+// 扁平 MCP 名称仅作为兼容；此列表不代表宿主可用工具目录。
+export function resolveFlowToolName(toolName) {
+  const businessName = stripHostPrefix(toolName);
+  if (businessName || typeof toolName !== "string") return businessName;
+  const normalized = toolName.trim().toLowerCase();
+  for (const bare of LOCAL_TOOL_NAMES) {
+    if (normalized === bare || normalized.endsWith(`__${bare}`)) return bare;
     if (matchesHostNamespace(normalized, bare, "_", FLAT_HOST_NAMESPACE)) return bare;
   }
   return null;
@@ -1526,8 +1535,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
 export function normalizeToolCallParams(toolName, params, { now = new Date() } = {}) {
   if (!params || typeof params !== "object" || Array.isArray(params)) return params;
   const bare = stripHostPrefix(typeof toolName === "string" ? toolName.toLowerCase() : toolName);
-  // 本地工具原本不进入 Provider 参数归一化；保持该边界，只归一化业务工具。
-  if (!bare || !Object.hasOwn(TOOL_REGISTRY, bare)) return params;
+  if (!bare) return params;
 
   let normalized =
     bare === "validate_requirement"

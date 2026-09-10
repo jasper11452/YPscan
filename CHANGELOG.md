@@ -1,5 +1,17 @@
 # 更新日志
 
+## 1.0.24 — 2026-09-10
+
+- 交付文件名可读化：Provider 的评分导出名（`manual_source_score_<hash>_<hash>.xlsx`）用户无法分辨，`manual_source` / `manual_score_batch` 两类评分表与手动拓展汇总表统一改为本地可读名 `<项目名>-<达人评分排序表|手动拓展评分表|手动拓展汇总表>-<本地 YYYYMMDD-HHmmss>.xlsx`。项目名取 Agent 在 `validate_requirement` 时自行总结的 `projectName`（经 Hook 随来源记录持久化，清洗非法字符、折叠空白、最长 20 字），缺失时省略首段。同一秒内重复保存同内容幂等复用；恰好同一秒内出现同名异内容（含本地已修改的文件）时在末尾补内容 SHA-256 前 8 位另存，保留两份且不覆盖，符号链接仍拒绝。相比原先“同内容永远复用同一文件”，跨秒重复保存会多出一个带新时间戳的文件。工具卡、Spec（tools/hooks）、README、验收清单与回归测试同步；真实宿主交付文件名未验收。
+
+- 字段状态轮询收紧为每 30 秒一次、累计最多 8 次：宿主会对同一工具同一参数连续 16 次相同结果触发全局无进展断路器，原“10 秒×5 加 30 秒×7、共 12 次”接近该阈值；现改为预检后每次间隔 30 秒、用一次 sleep 等待而非脚本循环调用，含预检共 9 次查询。同时补上“无法确认预检是否曾返回 `unavailable` 时，按预检即 `submitted` 处理（等待用户回复“好了”）”，避免把存量 `submitted` 误判成本轮提交完成。Hook 指令、SKILL、字段工具卡、Spec（contracts/hooks/flows/architecture）、AGENTS/README、验收清单与回归测试同步。
+
+- 宿主工具名匹配拆分业务与本地工具：`stripHostPrefix` 恢复只识别业务工具（裸名、受限的 `<前缀>__<工具名>`，并兼容扁平 MCP 形态 `mcp-<server>_<工具名>`，如 `mcp-04b79900_validate_requirement`），不再把本地工具名当宿主工具全名；Hook 路由改用 `resolveFlowToolName`，本地工具保留裸名 / 最后一个 `__` 后段匹配并兼容扁平名称。修复宿主扁平化工具名时 Hook 全部静默跳过、最终报 `YPSCAN_MANUAL_SCORE_CONTEXT_UNAVAILABLE` 的问题，同时让本地工具参数不再进入 Provider 参数归一化。SKILL、启动指令、Spec（contracts/hooks/tools）、AGENTS/README、验收清单与回归测试同步；真实 pi 内核宿主未复测。
+
+- 分批评分模板样式兼容：单行批次会省略隔行底色等末尾样式定义，汇总时只合并共有编号定义与其他样式元数据完全一致的样式表，补齐末尾定义并保留原编号引用；两种批次顺序都可汇总，单批原表不变。同编号定义冲突、其他样式元数据不兼容、共享字符串不一致仍按 `YPSCAN_MANUAL_SCORE_TEMPLATE` 停止并保留可信分批交付。SKILL、Spec（tools）、验收清单与隔离回归同步。
+
+- 以上改动已过 lint/typecheck/test（626 项）/smoke（tools=5, hooks=5）；真实宿主的交付文件名、轮询时长回退、双批样式合并与扁平工具名交互均未在桌面验收，不以单元回归代替。
+
 ## 1.0.23 — 2026-09-10
 
 - 字段页提交自动续接：Provider 新增并已进入插件白名单的 `get_inquiry_form_fields_status({requirement_id})` 用于自动确认用户是否已提交字段页，解决“填完后必须手动回复好了”的体验断点。实测（2026-09-10，app MCP 代理 + 服务端 1.9.4）取值仅 `unavailable`（该需求当前无已提交配置）/`submitted`（已有配置，含继承复制）/`invalid`，响应不回显 `requirement_id`、无时间戳与页面实例标识，pending 响应字节恒定。因此状态是需求级存量状态，不能区分“本次打开的页面刚提交”与“此前已有配置”：仅在首次选择且即时预检为 `unavailable` 时轮询（预检 `unavailable` 后 10 秒×5 加 30 秒×7，累计最多 12 次，`submitted` 后立即续接原分支；预检即 `submitted`、`invalid`、未知状态、调用失败或到上限时停止轮询并保留“好了”兼容路径；`force_reselect=true` 与继承场景禁止轮询（会在用户提交前就返回 `submitted`）。上限 12 次是硬约束：宿主对同一工具同一参数连续 16 次相同结果触发全局无进展断路器。Hook、SKILL、字段工具卡（新增 `get_inquiry_form_fields_status.md`）、Spec（contracts/hooks/flows/config/README/architecture）、AGENTS/README、验收清单与回归测试同步；lint/typecheck/test（612 项，其中新增 6 项）通过。真实 App 宿主端到端与超时回退未验收；Provider 若补页面实例 token 或每次变化的状态字段，可评估放宽到 30 轮。

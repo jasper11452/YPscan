@@ -1,6 +1,6 @@
 {
   "name": "ypscan",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "description": "悦普识星客户端集成层：业务模式前置，支持机构询价与后台手动拓展双分支。",
   "type": "module",
   "private": true,

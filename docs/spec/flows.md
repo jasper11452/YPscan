@@ -59,7 +59,7 @@ validate_requirement → select_inquiry_form_fields（configured/copied 直接�
 
 关键约束：
 
-- 新 requirement 必须重新调用 `select_inquiry_form_fields`；同一会话已提交字段通过 source_requirement_id 继承，用户要求重选才传 force_reselect=true；configured/copied 时直接继续。`selection_required`/`opened` 只表示字段页已生成、等待提交，不等于 configured/copied；首次选择的字段页 URL 输出后用 `get_inquiry_form_fields_status({requirement_id})` 自动确认：先即时预检，`unavailable` 才按 10s（前 5 次）/30s、累计最多 12 次轮询，`submitted` 后调用 `manual_source_creators`；预检即 `submitted`（该需求此前已有配置）、`invalid`、未知状态、调用失败或到上限时停止轮询并等待用户回复“好了”。`force_reselect` 与继承场景禁止轮询（状态会在用户提交前就返回 `submitted`）。任何情况下都不得试调后端探测是否会强制报错。
+- 新 requirement 必须重新调用 `select_inquiry_form_fields`；同一会话已提交字段通过 source_requirement_id 继承，用户要求重选才传 force_reselect=true；configured/copied 时直接继续。`selection_required`/`opened` 只表示字段页已生成、等待提交，不等于 configured/copied；首次选择的字段页 URL 输出后用 `get_inquiry_form_fields_status({requirement_id})` 自动确认：先即时预检，`unavailable` 才每 30 秒轮询、累计最多 8 次，`submitted` 后调用 `manual_source_creators`；预检即 `submitted`（该需求此前已有配置）、`invalid`、未知状态、调用失败或到上限时停止轮询并等待用户回复“好了”；无法确认预检结果时同样按预检即 `submitted` 处理。`force_reselect` 与继承场景禁止轮询（状态会在用户提交前就返回 `submitted`）。任何情况下都不得试调后端探测是否会强制报错。
 - `manual_source_creators` 固定只传 `{requirement_id}`，不传 `demand` 或 `num`，需求由 Provider 从后台读取；完整有效需求、澄清及已确认放宽须先通过 `validate_requirement` 保存。状态查询按当前 live schema 传入 `num`。
 - 异步轮询：提交返回 batch_id 后等 30 秒再第 1 次查询状态工具；当前环境 schema required `num` 时，按目标人数梯度取数（示例：5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，非穷举，表外人数同样按同一梯度计算）作为取数数量，通过 `MANUAL_SOURCE_TARGET_NUM` 提示并在远端调用时附带，提示值已是梯度值，不得重复乘倍数；缺少需求记录时沿用上次查询 num。最终交付目标与不足判断仍使用用户需求人数。之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
 - 状态响应成功且 `completed=true、selected_count=0`（success_count 缺失或为0），无文件时进入零结果复核；不再轮询、不盲目重试、不生成空文件或宣称已交付。参数一致才按下文优先调整关键词和人设；仍不足再提示其他条件并等待该项确认。

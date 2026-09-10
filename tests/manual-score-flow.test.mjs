@@ -144,10 +144,18 @@ test("flattened MCP tool names still register sources and deliver the manual sum
   assert.deepEqual(first.payload.data.next_author_ids, f.ids.slice(0, 10));
   const batch = await f.score(f.ids.slice(0, 10), 10);
   assert.match(batch.completionDirective, /只合并上传当前批/u);
+  assert.match(
+    batch.savedScore.payload.data.file_name,
+    /^测试项目-手动拓展评分表-\d{8}-\d{6}(-[a-f0-9]{8})?\.xlsx$/u,
+  );
   const last = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.equal(last.payload.success, true, JSON.stringify(last.payload));
   assert.equal(last.payload.data.recommended_count, 10);
   assert.equal(last.payload.data.next_action, "deliver");
+  assert.match(
+    last.payload.data.file_name,
+    /^测试项目-手动拓展汇总表-\d{8}-\d{6}(-[a-f0-9]{8})?\.xlsx$/u,
+  );
   assert.match(last.directive, /展示最终汇总/u);
 });
 
@@ -209,6 +217,7 @@ test("restart restores registered sources and later batches append to the same r
   assert.equal(persisted.requirements.req.completion_results.length, 1);
   assert.equal(persisted.requirements.req.score_files.length, 1);
   assert.equal(persisted.requirements.req.quantity_total, 10);
+  assert.equal(persisted.requirements.req.project_name, "测试项目");
   await f.hooks.get("gateway_stop")();
   const next = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
   assert.equal(next.payload.success, true, JSON.stringify(next.payload));
@@ -219,6 +228,10 @@ test("restart restores registered sources and later batches append to the same r
   assert.equal(last.payload.data.scored_count, 30);
   assert.equal(last.payload.data.recommended_count, 10);
   assert.equal(last.payload.data.next_action, "deliver");
+  assert.match(
+    last.payload.data.file_name,
+    /^测试项目-手动拓展汇总表-\d{8}-\d{6}(-[a-f0-9]{8})?\.xlsx$/u,
+  );
 });
 
 test("summary failure still offers hash-verified batch workbooks with an unfinished label", async (t) => {
@@ -263,7 +276,12 @@ test("inquiry mis-saved as a manual batch delivers the saved file without schedu
     artifact_kind: "manual_score_batch",
   });
   assert.equal(saved.payload.success, true);
-  assert.equal(saved.payload.data.file_path, batch.savedScore.payload.data.file_path);
+  assert.match(
+    saved.payload.data.file_name,
+    /^测试项目-手动拓展评分表-\d{8}-\d{6}(-[a-f0-9]{8})?\.xlsx$/u,
+  );
+  assert.notEqual(saved.payload.data.file_path, batch.savedScore.payload.data.file_path);
+  assert.equal(saved.payload.data.sha256, batch.savedScore.payload.data.sha256);
   assert.match(saved.directive, /最终交付物/u);
   assert.ok(saved.directive.includes(saved.payload.delivery.local_file_link));
   assert.match(

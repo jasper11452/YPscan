@@ -164,6 +164,78 @@ test("only valid HTTP homepage cells become hyperlinks", async (t) => {
   assert.deepEqual(sheet.data[3].slice(4), ["javascript:alert(1)", otherUrl]);
 });
 
+for (const extendedFirst of [false, true]) {
+  test(`batch style suffixes merge without changing references (extended first: ${extendedFirst})`, async (t) => {
+    const f = await fixture(t, { count: 2, quantityTotal: 2 });
+    const originals = [];
+    for (const [index, id] of f.ids.entries()) {
+      const extended = (index === 0) === extendedFirst;
+      const source = f.batch([id], 1, {
+        rows: [["douyin", id, { number: String(80 + index) }, "推荐", "literal"]],
+      });
+      await decorateWorkbook(source, (sheet, archive) => {
+        archive["xl/styles.xml"] = strToU8(
+          `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/></font></fonts><fills count="${extended ? 3 : 2}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${extended ? '<fill><patternFill patternType="solid"><fgColor rgb="00F4F8F5"/></patternFill></fill>' : ""}</fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="${extended ? 2 : 1}"><xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0"/>${extended ? '<xf numFmtId="2" fontId="0" fillId="2" borderId="0" xfId="0"/>' : ""}</cellXfs></styleSheet>`,
+        );
+        sheet.sheetData[0].row[2].$.s = extended ? "1" : "0";
+        sheet.sheetData[0].row[2].c[2].$.s = extended ? "1" : "0";
+      });
+      originals.push({ source, bytes: await readFile(source.file_path) });
+    }
+    const result = await f.summarize();
+    assert.equal(result.success, true, JSON.stringify(result.error));
+    const archive = unzipSync(await readFile(result.data.file_path));
+    const { styleSheet } = await parseStringPromise(strFromU8(archive["xl/styles.xml"]));
+    assert.equal(styleSheet.fills[0].$.count, "3");
+    assert.equal(styleSheet.cellXfs[0].$.count, "2");
+    assert.equal(styleSheet.cellXfs[0].xf[1].$.fillId, "2");
+    assert.equal(styleSheet.cellXfs[0].xf[1].$.numFmtId, "2");
+    const { worksheet } = await parseStringPromise(strFromU8(archive["xl/worksheets/sheet1.xml"]));
+    const styles = worksheet.sheetData[0].row.slice(2).map((row) => row.c[2].$.s);
+    assert.deepEqual(styles, extendedFirst ? ["0", "1"] : ["1", "0"]);
+    assert.deepEqual(
+      worksheet.sheetData[0].row.slice(2).map((row) => row.$.s),
+      styles,
+    );
+    const [sheet] = await readXlsxFile(result.data.file_path);
+    assert.deepEqual(
+      sheet.data.slice(2).map((row) => row[1]),
+      [...f.ids].reverse(),
+    );
+    assert.deepEqual(
+      sheet.data.slice(2).map((row) => row[2]),
+      [81, 80],
+    );
+    for (const { source, bytes } of originals)
+      assert.deepEqual(await readFile(source.file_path), bytes);
+    assert.equal((await f.summarize()).data.file_path, result.data.file_path);
+  });
+}
+
+for (const conflict of ["fill", "number_format", "theme", "shared_strings"]) {
+  test(`conflicting ${conflict} definitions still stop safely`, async (t) => {
+    const f = await fixture(t, { count: 2 });
+    for (const [index, id] of f.ids.entries()) {
+      const source = f.batch([id], 1);
+      await decorateWorkbook(source, (_sheet, archive) => {
+        const changed = index === 1;
+        archive["xl/styles.xml"] = strToU8(
+          `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fills count="1"><fill><patternFill patternType="solid"><fgColor rgb="${changed && conflict === "fill" ? "FF0000FF" : "FFFF0000"}"/></patternFill></fill></fills><cellXfs count="1"><xf fillId="0" numFmtId="${changed && conflict === "number_format" ? "10" : "2"}"/></cellXfs>${changed && conflict === "theme" ? '<colors><indexedColors><rgbColor rgb="FFFF0000"/></indexedColors></colors>' : ""}</styleSheet>`,
+        );
+        if (conflict === "shared_strings")
+          archive["xl/sharedStrings.xml"] = strToU8(
+            `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>${index}</t></si></sst>`,
+          );
+      });
+    }
+    const result = await f.summarize();
+    assert.equal(result.success, false);
+    assert.equal(result.error.code, "YPSCAN_MANUAL_SCORE_TEMPLATE");
+    assert.equal(result.delivery, undefined);
+    assert.equal(result.data.partial_delivery.batch_files.length, 2);
+  });
+}
+
 for (const variant of ["formula", "merged_data", "different_styles"]) {
   test(`unsafe template ${variant} stops without delivering a corrupted workbook`, async (t) => {
     const f = await fixture(t, { count: 2 });
@@ -294,7 +366,16 @@ test("xiaohongshu 综合得分 uses the price/reach proxy and imputes missing co
 const payload = (result) => JSON.parse(result.content[0].text);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 
-async function fixture(t, { quantityTotal = 10, count = 30, platform = "douyin" } = {}) {
+async function fixture(
+  t,
+  {
+    quantityTotal = 10,
+    count = 30,
+    platform = "douyin",
+    projectName = null,
+    now = () => new Date("2026-09-10T15:30:45"),
+  } = {},
+) {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-score-summary-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   const ids = Array.from({ length: count }, (_, index) => `creator-${index + 1}`);
@@ -308,6 +389,7 @@ async function fixture(t, { quantityTotal = 10, count = 30, platform = "douyin" 
     business_mode: "手动拓展",
     platform,
     quantityTotal,
+    ...(projectName ? { project_name: projectName } : {}),
     links_file: { file_path: linksPath, sha256: hash(csv) },
     completion_results: [],
     score_files: [],
@@ -352,7 +434,9 @@ async function fixture(t, { quantityTotal = 10, count = 30, platform = "douyin" 
     return workbook;
   }
   const summarize = () =>
-    summarizeManualScores({ requirement_id: "req" }, { workspaceDir, sourceContext }).then(payload);
+    summarizeManualScores({ requirement_id: "req" }, { workspaceDir, sourceContext, now }).then(
+      payload,
+    );
   return { workspaceDir, ids, sourceContext, batch, summarize };
 }
 
@@ -396,6 +480,22 @@ for (const platform of ["douyin", "xiaohongshu"]) {
     assert.deepEqual(sheets[0].data, original[0].data);
   });
 }
+
+test("final summary is named after the requirement project name or the local timestamp", async (t) => {
+  for (const platform of ["douyin", "xiaohongshu"]) {
+    const named = await fixture(t, { count: 20, projectName: "天猫9月男装衬衫", platform });
+    named.batch(named.ids, 1);
+    const withName = await named.summarize();
+    assert.equal(withName.success, true, JSON.stringify(withName.error));
+    assert.equal(withName.data.file_name, "天猫9月男装衬衫-手动拓展汇总表-20260910-153045.xlsx");
+
+    const fallback = await fixture(t, { count: 20, platform });
+    fallback.batch(fallback.ids, 1);
+    const unnamed = await fallback.summarize();
+    assert.equal(unnamed.success, true, JSON.stringify(unnamed.error));
+    assert.equal(unnamed.data.file_name, "手动拓展汇总表-20260910-153045.xlsx");
+  }
+});
 
 test("6 recommendations then 4 produce one deduplicated final workbook", async (t) => {
   const f = await fixture(t);

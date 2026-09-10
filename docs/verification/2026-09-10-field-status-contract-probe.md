@@ -38,11 +38,11 @@
 
 - 只在**首次选择**（无 `force_reselect`、无 `source_requirement_id`）且即时预检为 `unavailable` 时轮询；预检即 `submitted`、`invalid`、未知状态、调用失败或到上限时停止并保留“好了”兼容路径。
 - `force_reselect` 与继承场景禁止轮询。
-- 轮询上限 12 次（含预检共 13 次查询）：宿主 App 配置为 `tools.loopDetection.enabled=true`、`globalCircuitBreakerThreshold=16`，对同一工具、同一参数、连续 16 次完全相同结果阻断后续调用（`cfmind/dist/tool-loop-detection-*.js` 的 `getNoProgressStreak` + `runBeforeToolCallHook`；本地 `exec sleep` 不触发是因为其结果 details 每次都变）。只靠文本不同的间隔时间无法规避，因此上限压到 16 以下。
+- 轮询上限 8 次（含预检共 9 次查询；初版曾定为 12 次，复核后按下方熔断阈值收紧为 8 次）：宿主 App 配置为 `tools.loopDetection.enabled=true`、`globalCircuitBreakerThreshold=16`，对同一工具、同一参数、连续 16 次完全相同结果阻断后续调用（`cfmind/dist/tool-loop-detection-*.js` 的 `getNoProgressStreak` + `runBeforeToolCallHook`；本地 `exec sleep` 不触发是因为其结果 details 每次都变）。只靠文本不同的间隔时间无法规避，因此上限压到 16 以下。
 - Provider 若在状态响应里加入页面实例标识（selection token）或每次变化的字段，可重新评估放宽到 30 轮并覆盖重选场景。
 
 ## 未验证
 
 - 真实 App 会话里模型是否严格按新指令预检、轮询、续接（需安装插件并重启宿主）。
-- 超时 12 次后的用户可见文案与“好了”回退路径。
+- 超时 8 次后的用户可见文案与“好了”回退路径。
 - Provider 生产环境（`mcp.eshypdata.com`）状态取值与测试环境是否一致；本地代理指向测试环境，生产未探测。

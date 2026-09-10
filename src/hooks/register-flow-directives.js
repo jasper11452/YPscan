@@ -7,7 +7,7 @@ import {
   manualSourcePoolSize,
   normalizeBusinessMode,
   normalizeToolCallParams,
-  stripHostPrefix,
+  resolveFlowToolName,
   VALIDATE_REQUIREMENT_RANGE_PARAMS,
   validateRequirementPreflight,
 } from "../contract/registry.js";
@@ -20,7 +20,7 @@ import {
   mcnCreatorCompletionQuestionPayload,
   mcnRankingRecipientQuestionPayload,
 } from "../tools/popup-questions.js";
-import { localFileMarkdownLink } from "../tools/save-artifact.js";
+import { localFileMarkdownLink, safeNameSegment } from "../tools/save-artifact.js";
 import { normalizeLocalFilePath } from "../tools/file-bridge.js";
 
 const BUSINESS_SKILL_PATH = fileURLToPath(
@@ -63,7 +63,7 @@ const FIELD_PAGE_WAIT_RULE =
 // 字段状态工具按需求判定（unavailable / submitted / invalid），没有页面实例标识：
 // 预检返回 submitted 时无法区分“本轮页面刚提交”与“需求此前已有配置”，只能按等待处理。
 const FIELD_STATUS_POLL_RULE =
-  "字段选择 URL 输出后先做一次即时预检：用同一 requirement_id 调用 get_inquiry_form_fields_status。返回 unavailable 才开始轮询（前 5 次间隔 10 秒，之后 30 秒，累计最多 12 次）；预检返回 submitted 只说明该需求此前已有字段配置、不能证明本轮已提交，立即停止并等待用户回复“好了”；invalid、未知状态或调用失败同样停止并等待“好了”。轮询期间 submitted 视为本轮提交完成并按原分支恢复；12 次仍为 unavailable 时停止并如实告知，等用户提交后回复“好了”。轮询期间不得调用任何下游工具，不得重开字段页、改写 URL、替用户选字段或更换 requirement_id。当前环境没有 get_inquiry_form_fields_status 时改回等待“好了”。";
+  "URL 输出后先做一次即时预检：用同一 requirement_id 调用 get_inquiry_form_fields_status。返回 unavailable 才开始轮询（每 30 秒查一次，累计最多 8 次；用一次 sleep 等待，禁止脚本循环调用该工具）；预检返回 submitted 只说明该需求此前已有字段配置、不能证明本轮已提交；invalid、未知状态或调用失败同样如此：立即停止并等待用户回复“好了”。轮询期间 submitted 视为本轮提交完成并按原分支恢复（仅限预检曾返回 unavailable；无法确认时按预检即 submitted 处理）；8 次仍为 unavailable 时停止并如实告知、等待“好了”。轮询期间不得调用任何下游工具，不得重开字段页、改写 URL、替用户选字段或更换 requirement_id。当前环境没有该工具时改回等待“好了”。";
 const FIELD_STATUS_NO_POLL_RULE =
   "本次字段页可能对应已有配置（force_reselect 或继承场景）：禁止调用 get_inquiry_form_fields_status 轮询，该状态按需求判定、会在用户提交前就返回 submitted，导致按旧配置提前继续。";
 const FIELD_SELECTION_COLUMNS_RULE =
@@ -477,7 +477,7 @@ function fieldStatusDirective(message, params = {}) {
   const requirementId = firstString(params?.requirement_id);
   if (status === "submitted") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 返回 submitted。若这是字段页 URL 输出后的首次预检，只说明该需求此前已有字段配置，不代表本轮页面已提交：不得恢复下游，停止轮询并等待用户回复“好了”。只有预检曾返回 unavailable、之后轮询才返回 submitted 时，才视为本轮字段页提交完成，按原分支恢复。",
+      "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 返回 submitted。若这是字段页 URL 输出后的首次预检，只说明该需求此前已有字段配置，不代表本轮页面已提交：不得恢复下游，停止轮询并等待用户回复“好了”。只有预检曾返回 unavailable、之后轮询才返回 submitted 时，才视为本轮字段页提交完成，按原分支恢复；无法确认是否见过 unavailable 时，按首次预检处理（等“好了”）。",
       FIELD_SELECTION_COLUMNS_RULE,
       `字段页提交完成时${FIELD_SELECTION_RESUME_RULE}`,
       "不得再次轮询该 requirement。",
@@ -485,7 +485,7 @@ function fieldStatusDirective(message, params = {}) {
   }
   if (status === "unavailable") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 仍为 unavailable：本轮字段页尚未提交。继续用同一 requirement_id 轮询，前 5 次间隔 10 秒、之后 30 秒，累计最多 12 次；到上限仍未 submitted 时停止并如实告知，等用户提交后回复“好了”。",
+      "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 仍为 unavailable：本轮字段页尚未提交。先等待约 30 秒，再用同一 requirement_id 轮询；之后每 30 秒一次，累计最多 8 次；到上限仍未 submitted 时停止并如实告知，等用户提交后回复“好了”。",
       ...(requirementId
         ? [`GET_INQUIRY_FORM_FIELDS_STATUS_ARGS=${JSON.stringify({ requirement_id: requirementId })}`]
         : []),
@@ -900,6 +900,7 @@ function serializableManualScoreSources(sources, platform, quantityTotal) {
     business_mode: sources.business_mode ?? null,
     platform: platform ?? null,
     quantity_total: quantityTotal ?? null,
+    project_name: sources.project_name ?? null,
     source_conflict: sources.source_conflict === true,
     links_file: sources.links_file ?? null,
     completion_results: [...sources.completion_results.values()],
@@ -910,6 +911,7 @@ function serializableManualScoreSources(sources, platform, quantityTotal) {
 function restoredManualScoreSources(record) {
   return {
     business_mode: record.business_mode,
+    project_name: safeNameSegment(record.project_name),
     links_file: isRecord(record.links_file) ? record.links_file : null,
     completion_results: new Map(
       (Array.isArray(record.completion_results) ? record.completion_results : [])
@@ -1582,7 +1584,7 @@ function flowDirective(
   quantityTotalLookup = (_requirementId) => null,
 ) {
   const normalizedName = toolName.toLowerCase();
-  const bare = stripHostPrefix(normalizedName);
+  const bare = resolveFlowToolName(normalizedName);
   const result = parsedToolResult(message);
   const requirementIdFromParams = firstString(
     params?.requirement_id,
@@ -1898,7 +1900,7 @@ export function registerFlowDirectiveHooks(api) {
           "用户已明确的需求或修改直接执行；内部解析、保存和轮询持续推进，不以进度通知索取确认。只在必要输入、业务决策或真实阻塞处停下。面向用户说明正在做什么、是否需要操作和下一步；不主动展示 requirement_id、batch_id、工具名称或落库术语，不把阶段完成说成最终交付。",
           "用户可见的表格只有评分表、汇总表、MCN 排名表和机构回填预览表；links CSV、补全 CSV 和 merged CSV 都是内部中间产物，不主动展示表格、下载链接或本地文件路径，也不作为交付物报告；用户明确索取或要求诊断时除外。",
           SEARCH_PARAMETER_REVIEW_RULE,
-          "工具能力只看宿主完整名称里的实际工具名：`<前缀>__<工具名>` 取最后一个 __ 后段，`mcp-<server>_<工具名>` 按已知业务工具名后缀识别（如 mcp-04b79900_validate_requirement 即 validate_requirement）；前缀（含 test）只是命名空间，不代表测试、旁路或不可用于正式链路。单一匹配时直接调用宿主展示的完整名称；只有多个可用工具映射到同一实际名称时才调用 AskUserQuestion 请用户选择；没有匹配时才报告工具未开放。",
+          "可用工具以当前宿主提供的工具列表为准；插件业务注册表和 Provider 白名单不是宿主全部工具目录。沿用裸工具名或完整名称最后一个 __ 后的实际工具名匹配；额外兼容 mcp-<server>_<工具名>，按所需工具的完整名称后缀匹配。前缀（含 test）只是命名空间。单一匹配直接调用宿主展示的完整名称；多个同名匹配才用 AskUserQuestion 请用户选择；无匹配才报告工具未开放。",
           `选择业务模式后，把同一用户侧 business_mode 传给 ypscan_parse_requirement 和 validate_requirement.rawMessagesJson；插件在 Provider 边界把“手动拓展”兼容映射为旧线值，Agent 不得自行改写。business_mode 决定本次新建 requirement 进入的功能。询价链路：解析→复核→validate_requirement→search_creators→rank_mcns→选择机构和字段→发送确认→create_with_distributions→sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV→原生补全（20/批）→file_bridge（flow=manual_source）→score_manual_source_csv→score_status→保存打分排序 Excel。手动拓展：解析→复核→validate_requirement→选择字段→manual_source_creators→manual_source_creators_status→保存并归一化 links CSV→ypscan_summarize_manual_scores 取得当前批→原生补全（最多20人，小红书 get_xhs_author_business_card 且固定 page_count=1；抖音 get_douyin_author_business_card）→file_bridge（仅当前批）→score_manual_source_csv→score_manual_source_csv_status→保存单批表→再次汇总（达标交付，否则下一批）。需求 ID 优先 data.requirement_id，缺失时兼容 data.id，绝不使用 data.demand_id。发送前必须用警示弹窗确认：AskUserQuestion 一次只问一个问题、恰好两个选项“确认发送/返回修改”、不设 multiSelect；最终机构名单与完整企微消息写入问题正文，不得把机构或消息列为选项；正文保留企微消息原有行结构，只在单行将超过 20 字符时断行，禁止把短分句、字段或项目名拆成多行。用户选择“确认发送”或明确无条件回复“可以发/发吧/按这个发/就这样发送”可发送一次；否定、修改或条件表达不算确认。create_with_distributions 的 description 与 wechat_notification_message 内容一致。supplierIds 和 supplier_name 始终为数组。用户明确提供或提名机构名时，先只在本轮同一 requirement ID、同一平台的 rank_mcns.data.mcns 中做唯一精确匹配；命中非空 supplier_id 放 supplierIds，未命中或无 ID 的原名放 supplier_name，不模糊匹配或跨轮复用。`,
           REQUIREMENT_CREATION_RULE,
           FIELD_SELECTION_REUSE_RULE,
@@ -1937,7 +1939,7 @@ export function registerFlowDirectiveHooks(api) {
     (event, context) => {
       const toolName = firstString(event?.toolName, event?.name) ?? "";
       const bare =
-        stripHostPrefix(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1);
+        resolveFlowToolName(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1);
       const params = paramsFromEvent(event);
       const key = callKey(event, context);
       const scope = scopeKey(event, context);
@@ -1952,6 +1954,7 @@ export function registerFlowDirectiveHooks(api) {
           "artifact_kind",
           "platform",
           "quantityTotal",
+          "projectName",
           "inquiry_ids",
           "job_id",
           "flow",
@@ -2040,14 +2043,14 @@ export function registerFlowDirectiveHooks(api) {
       if (key) pendingCalls.delete(key);
       const matched =
         pending?.bare ===
-        (stripHostPrefix(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1))
+        (resolveFlowToolName(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1))
           ? pending
           : null;
       const params = { ...(matched?.params ?? paramsFromEvent(event)) };
       const recordedMode = matched?.mode ?? businessModeByScope.get(scopeKey(event, context));
       const recordedPlatform = platformByScope.get(scopeKey(event, context));
       const bare =
-        stripHostPrefix(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1);
+        resolveFlowToolName(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1);
       const result = parsedToolResult(event?.message);
       const isNativeCompletion =
         bare === "get_xhs_author_business_card" || bare === "get_douyin_author_business_card";
@@ -2125,9 +2128,15 @@ export function registerFlowDirectiveHooks(api) {
         );
         if (requirementId) {
           if (platform) platformByRequirement.set(String(requirementId), platform);
-          if (recordedMode && !manualScoreSourcesByRequirement.has(String(requirementId))) {
+          // 项目名由 Agent 在 validate 时自行总结；记入需求来源记录，仅用于本地交付文件名。
+          const projectName = safeNameSegment(params?.projectName);
+          const sources = manualScoreSourcesByRequirement.get(String(requirementId));
+          if (sources) {
+            if (projectName) sources.project_name = projectName;
+          } else if (recordedMode) {
             manualScoreSourcesByRequirement.set(String(requirementId), {
               business_mode: recordedMode,
+              project_name: projectName,
               links_file: null,
               completion_results: new Map(),
               score_files: new Map(),
@@ -2293,6 +2302,10 @@ export function registerFlowDirectiveHooks(api) {
       manualScoreSourcesByRequirement.clear();
       manualScoreSourcesStoreByRequirement.clear();
       hydratedManualScoreStores.clear();
+    },
+    projectNameFor(requirementId, workspaceDir) {
+      if (nonemptyString(requirementId)) hydrateManualScoreSources(workspaceDir);
+      return manualScoreSourcesByRequirement.get(String(requirementId))?.project_name ?? null;
     },
     manualScoreContextFor(requirementId, workspaceDir) {
       if (nonemptyString(requirementId)) hydrateManualScoreSources(workspaceDir);

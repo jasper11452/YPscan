@@ -72,6 +72,7 @@ export default {
               workspaceDir: context?.workspaceDir,
               fetchImpl,
               testAdapterBaseUrl,
+              projectName: hookRuntime.projectNameFor(params.artifact_id, context?.workspaceDir),
             });
             hookRuntime.recordSavedCsvArtifact(
               params.artifact_kind,

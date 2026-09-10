@@ -723,6 +723,7 @@ test("a persisted source record restores the requirement context and links allow
             business_mode: "手动拓展",
             platform: "douyin",
             quantity_total: 30,
+            project_name: "测试项目",
             source_conflict: false,
             links_file: { file_path: linksFile, sha256: "a".repeat(64) },
             completion_results: [],
@@ -737,6 +738,9 @@ test("a persisted source record restores the requirement context and links allow
     assert.deepEqual(transientState.linksCsvPathsFor("req"), [linksFile]);
     assert.equal(transientState.manualScoreContextFor("req", workspaceDir)?.platform, "douyin");
     assert.equal(transientState.manualScoreContextFor("req", workspaceDir)?.quantityTotal, 30);
+    assert.equal(transientState.manualScoreContextFor("req", workspaceDir)?.project_name, "测试项目");
+    assert.equal(transientState.projectNameFor("req", workspaceDir), "测试项目");
+    assert.equal(transientState.projectNameFor("req-unknown", workspaceDir), null);
   } finally {
     rmSync(workspaceDir, { recursive: true, force: true });
   }
@@ -1348,7 +1352,9 @@ test("provider opened status starts the field-status poll loop", () => {
   assert.match(text, /FIELD_SELECTION_URL=https:\/\/example.invalid\/fields/u);
   assert.match(text, /get_inquiry_form_fields_status/u);
   assert.match(text, /即时预检/u);
-  assert.match(text, /累计最多 12 次/u);
+  assert.match(text, /每 30 秒查一次/u);
+  assert.match(text, /累计最多 8 次/u);
+  assert.match(text, /sleep/u);
   assert.match(text, /预检返回 submitted/u);
   assert.match(text, /不得调用任何下游工具/u);
   assert.doesNotMatch(text, /本轮必须结束并等待|ASK_USER_QUESTION_ARGS=/u);
@@ -1401,8 +1407,9 @@ test("field status unavailable keeps polling with the exact requirement id", () 
     }),
   );
   assert.match(text, /尚未提交/u);
-  assert.match(text, /前 5 次间隔 10 秒、之后 30 秒/u);
-  assert.match(text, /累计最多 12 次/u);
+  assert.match(text, /先等待约 30 秒/u);
+  assert.match(text, /每 30 秒一次/u);
+  assert.match(text, /累计最多 8 次/u);
   assert.deepEqual(namedArgsFromDirective(text, "GET_INQUIRY_FORM_FIELDS_STATUS_ARGS"), {
     requirement_id: "req-new",
   });
@@ -1421,6 +1428,7 @@ test("field status submitted resumes the original branch only after a failed pre
   assert.match(text, /首次预检/u);
   assert.match(text, /不代表本轮页面已提交/u);
   assert.match(text, /只有预检曾返回 unavailable/u);
+  assert.match(text, /无法确认是否见过 unavailable 时，按首次预检处理/u);
   assert.match(text, /按原分支恢复/u);
   assert.match(text, /发送前警示弹窗确认/u);
   assert.match(text, /不得再次轮询该 requirement/u);
@@ -1507,3 +1515,18 @@ test("startup explains source evidence, schema compatibility and explicit resele
   assert.match(text, /用户明确要求重新勾选才传 force_reselect=true/u);
   assert.match(text, /不支持时说明接口未支持并暂停/u);
 });
+
+for (const toolName of [
+  "host.v1__ypscan_save_creator_links",
+  "mcp-04b79900_ypscan_save_creator_links",
+]) {
+  test(`local tool discovery preserves legacy and flat names: ${toolName}`, () => {
+    const { hooks } = registeredPlugin();
+    const result = hooks.get("tool_result_persist")({
+      toolName,
+      message: toolMessage({ success: false, message: "fixture failure" }),
+    });
+    assert.match(directiveText(result), /YPSCAN_FLOW_DIRECTIVE=/u);
+    assert.match(directiveText(result), /受控 links CSV 生成 已暂停/u);
+  });
+}
