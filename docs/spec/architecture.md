@@ -64,7 +64,7 @@ OpenClaw 宿主
 
 ```
 业务模式确定 → ypscan_parse_requirement → 复核 → validate_requirement（预检+归一化）
-→ select_inquiry_form_fields（首次字段页用 get_inquiry_form_fields_status 自动确认提交，超时/重选等“好了”）→ manual_source_creators(requirement_id)
+→ select_inquiry_form_fields（首次字段页用 get_inquiry_form_fields_status 自动确认提交，超时/重选等用户确认已提交）→ manual_source_creators(requirement_id)
 → 同步返回 links CSV：保存 manual_creator_links → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全(最多20人)
   → file_bridge(manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 30s×10 轮询
   → 保存 manual_score_batch → ypscan_summarize_manual_scores（达标交付汇总表，否则下一批）

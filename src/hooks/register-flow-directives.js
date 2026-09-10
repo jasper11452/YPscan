@@ -57,13 +57,13 @@ const REQUIREMENT_CREATION_RULE =
 const FIELD_SELECTION_REUSE_RULE =
   "字段继承：同一会话新 requirement（含放宽、纠错和跨功能）调用 select_inquiry_form_fields 时，以 SELECT_INQUIRY_FORM_FIELDS_ARGS 为基础，追加 source_requirement_id，来源只取本会话最近一次用户已提交或 Provider 已返回 configured/copied 的真实 requirement；无来源时首次选字段。用户明确要求重新勾选才传 force_reselect=true 并省略来源。来源 ID 不得猜测或跨会话取用，不读取、缓存或传递 columns。继承和重选分别要求 live schema 支持对应新参数；不支持时说明接口未支持并暂停，不盲传、不退回重复勾选。继承失败、平台不兼容或 status=error 时暂停，不自动重选。";
 const FIELD_SELECTION_GATE_RULE =
-  "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields。success=true 且 status=configured/copied、requirement_id 与当前调用一致时直接按原分支继续，不等待“好了”；返回 selection_required、opened 或旧版有效 URL 时按该结果的字段状态轮询规则等待提交（见下方字段页指令），提交确认后才继续，禁止在同一轮试调 manual_source_creators、搜索或打分。";
+  "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields。success=true 且 status=configured/copied、requirement_id 与当前调用一致时直接按原分支继续，不等待用户确认；返回 selection_required、opened 或旧版有效 URL 时按该结果的字段状态轮询规则等待提交（见下方字段页指令），提交确认后才继续，禁止在同一轮试调 manual_source_creators、搜索或打分。";
 const FIELD_PAGE_WAIT_RULE =
-  "字段选择 URL 输出后本轮必须结束并等待用户提交并回复“好了”，不得试调下游工具。";
+  "字段选择 URL 输出后本轮必须结束，不要求用户回复固定口令（需要用户回应时只说提交完成后告诉我），也不得试调下游工具，等用户确认已提交后再继续。";
 // 字段状态工具按需求判定（unavailable / submitted / invalid），没有页面实例标识：
 // 预检返回 submitted 时无法区分“本轮页面刚提交”与“需求此前已有配置”，只能按等待处理。
 const FIELD_STATUS_POLL_RULE =
-  "URL 输出后先做一次即时预检：用同一 requirement_id 调用 get_inquiry_form_fields_status。返回 unavailable 才开始轮询（每 30 秒查一次，累计最多 8 次；用一次 sleep 等待，禁止脚本循环调用该工具）；预检返回 submitted 只说明该需求此前已有字段配置、不能证明本轮已提交；invalid、未知状态或调用失败同样如此：立即停止并等待用户回复“好了”。轮询期间 submitted 视为本轮提交完成并按原分支恢复（仅限预检曾返回 unavailable；无法确认时按预检即 submitted 处理）；8 次仍为 unavailable 时停止并如实告知、等待“好了”。轮询期间不得调用任何下游工具，不得重开字段页、改写 URL、替用户选字段或更换 requirement_id。当前环境没有该工具时改回等待“好了”。";
+  "URL 输出后先做一次即时预检：用同一 requirement_id 调用 get_inquiry_form_fields_status。返回 unavailable 才开始轮询（每 30 秒查一次，累计最多 8 次；用一次 sleep 等待，禁止脚本循环调用该工具）；预检返回 submitted 只说明该需求此前已有字段配置、不能证明本轮已提交；invalid、未知状态或调用失败同样如此：立即停止并等待用户确认已提交（不要求固定口令）。轮询期间 submitted 视为本轮提交完成并按原分支恢复（仅限预检曾返回 unavailable；无法确认时按预检即 submitted 处理）；8 次仍为 unavailable 时停止并如实告知，等用户确认已提交后按原分支恢复。轮询期间不得调用任何下游工具，不得重开字段页、改写 URL、替用户选字段或更换 requirement_id。当前环境没有该工具时改回等待用户确认已提交。";
 const FIELD_STATUS_NO_POLL_RULE =
   "本次字段页可能对应已有配置（force_reselect 或继承场景）：禁止调用 get_inquiry_form_fields_status 轮询，该状态按需求判定、会在用户提交前就返回 submitted，导致按旧配置提前继续。";
 const FIELD_SELECTION_COLUMNS_RULE =
@@ -433,7 +433,7 @@ function fieldSelectionDirective(message, params = {}) {
       return "YPSCAN_FLOW_DIRECTIVE=字段配置结果缺少成功证据、requirement_id 与当前调用不一致或强制重选未返回字段页。暂停，不把历史配置当作当前需求已配置，不继续下游。";
     }
     return [
-      "YPSCAN_FLOW_DIRECTIVE=当前 requirement 字段已配置（existing 或 inherited；Provider 返回 copied 同样按已配置处理）。不展示字段页、不等待用户回复“好了”，直接按原分支恢复：手动拓展只用当前 requirement_id 调 manual_source_creators；询价仍先确认收件机构并执行发送前警示弹窗确认；若由打分缺列错误触发，只用此前 SCORE_MANUAL_SOURCE_CSV_ARGS 或同一 requirement 与本轮 file_bridge 原始可信 csv_file_path 重提一次打分，不重搜、不补全、不重跑 file_bridge。缺少可信路径时暂停。不得读取、缓存或传递 columns。",
+      "YPSCAN_FLOW_DIRECTIVE=当前 requirement 字段已配置（existing 或 inherited；Provider 返回 copied 同样按已配置处理）。不展示字段页、不等待用户确认，直接按原分支恢复：手动拓展只用当前 requirement_id 调 manual_source_creators；询价仍先确认收件机构并执行发送前警示弹窗确认；若由打分缺列错误触发，只用此前 SCORE_MANUAL_SOURCE_CSV_ARGS 或同一 requirement 与本轮 file_bridge 原始可信 csv_file_path 重提一次打分，不重搜、不补全、不重跑 file_bridge。缺少可信路径时暂停。不得读取、缓存或传递 columns。",
       `FIELD_CONFIGURATION_REQUIREMENT_ID=${requirementId}`,
     ].join("\n");
   }
@@ -457,7 +457,7 @@ function fieldSelectionDirective(message, params = {}) {
   const linkReady = result?.success === true || (result?.success === false && autoOpenFailed);
   if (!linkReady || !url) return flowPauseDirective("字段选择", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL，并按 Provider 提示说明是否已自动打开；插件没有可验证的宿主外链打开能力，不得改写、包装、用 Browser 替代打开或替用户选择字段。",
+    "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL，并按 Provider 提示说明是否已自动打开；插件没有可验证的宿主外链打开能力，不得改写、包装、用 Browser 替代打开或替用户选择字段；不要求用户回复固定口令，需要用户回应时只说提交完成后告诉我。",
     `FIELD_SELECTION_URL=${url}`,
     ...(params?.force_reselect === true
       ? [
@@ -467,7 +467,7 @@ function fieldSelectionDirective(message, params = {}) {
         ]
       : [FIELD_STATUS_POLL_RULE]),
     FIELD_SELECTION_COLUMNS_RULE,
-    `收到“好了”后${FIELD_SELECTION_RESUME_RULE}`,
+    `用户确认已提交后${FIELD_SELECTION_RESUME_RULE}`,
   ].join("\n");
 }
 
@@ -477,7 +477,7 @@ function fieldStatusDirective(message, params = {}) {
   const requirementId = firstString(params?.requirement_id);
   if (status === "submitted") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 返回 submitted。若这是字段页 URL 输出后的首次预检，只说明该需求此前已有字段配置，不代表本轮页面已提交：不得恢复下游，停止轮询并等待用户回复“好了”。只有预检曾返回 unavailable、之后轮询才返回 submitted 时，才视为本轮字段页提交完成，按原分支恢复；无法确认是否见过 unavailable 时，按首次预检处理（等“好了”）。",
+      "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 返回 submitted。若这是字段页 URL 输出后的首次预检，只说明该需求此前已有字段配置，不代表本轮页面已提交：不得恢复下游，停止轮询并等待用户确认已提交。只有预检曾返回 unavailable、之后轮询才返回 submitted 时，才视为本轮字段页提交完成，按原分支恢复；无法确认是否见过 unavailable 时，按首次预检处理（等用户确认已提交）。",
       FIELD_SELECTION_COLUMNS_RULE,
       `字段页提交完成时${FIELD_SELECTION_RESUME_RULE}`,
       "不得再次轮询该 requirement。",
@@ -485,14 +485,14 @@ function fieldStatusDirective(message, params = {}) {
   }
   if (status === "unavailable") {
     return [
-      "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 仍为 unavailable：本轮字段页尚未提交。先等待约 30 秒，再用同一 requirement_id 轮询；之后每 30 秒一次，累计最多 8 次；到上限仍未 submitted 时停止并如实告知，等用户提交后回复“好了”。",
+      "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 仍为 unavailable：本轮字段页尚未提交。先等待约 30 秒，再用同一 requirement_id 轮询；之后每 30 秒一次，累计最多 8 次；到上限仍未 submitted 时停止并如实告知，等用户确认已提交后继续。",
       ...(requirementId
         ? [`GET_INQUIRY_FORM_FIELDS_STATUS_ARGS=${JSON.stringify({ requirement_id: requirementId })}`]
         : []),
       "轮询期间不得调用 manual_source_creators、search_creators、rank_mcns、create_with_distributions、score_manual_source_csv 或 file_bridge，不得重开字段页、改写 URL 或更换 requirement_id。",
     ].join("\n");
   }
-  return "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 未返回可识别的终态。停止自动轮询，如实说明尚未确认提交并等待用户提交后回复“好了”；不得按已提交继续、不得重开字段页或更换 requirement_id。";
+  return "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 未返回可识别的终态。停止自动轮询，如实说明尚未确认提交并等待用户确认已提交；不得按已提交继续、不得重开字段页或更换 requirement_id。";
 }
 
 function providerArtifactUrl(result, nestedFields, rootFields = nestedFields) {
@@ -1075,11 +1075,11 @@ function scoreColumnsRecoveryDirective(
   if (csvFilePath) {
     lines.push(
       `SCORE_MANUAL_SOURCE_CSV_ARGS=${JSON.stringify({ requirement_id: requirementId, csv_file_path: csvFilePath })}`,
-      "字段工具返回 configured/copied 后立即恢复；只有返回 URL 时才原样展示字段选择 URL并按字段状态轮询规则等待提交（轮询场景不额外等待“好了”）；恢复后只用上方 SCORE_MANUAL_SOURCE_CSV_ARGS 原样重提一次 score_manual_source_csv，不得重搜、重做原生补全、重跑 file_bridge 或改写该 csv_file_path。",
+      "字段工具返回 configured/copied 后立即恢复；只有返回 URL 时才原样展示字段选择 URL并按字段状态轮询规则等待提交（轮询场景不额外等待用户确认）；恢复后只用上方 SCORE_MANUAL_SOURCE_CSV_ARGS 原样重提一次 score_manual_source_csv，不得重搜、重做原生补全、重跑 file_bridge 或改写该 csv_file_path。",
     );
   } else {
     lines.push(
-      "字段工具返回 configured/copied 后立即恢复；只有返回 URL 时才原样展示字段选择 URL并按字段状态轮询规则等待提交（轮询场景不额外等待“好了”）；随后只使用同一 requirement_id 与本轮 file_bridge 返回的原始 csv_file_path 重提一次 score_manual_source_csv。当前对话无法取得该可信 csv_file_path 时如实说明并停止，禁止自行构造 URL 或重跑前序链路。",
+      "字段工具返回 configured/copied 后立即恢复；只有返回 URL 时才原样展示字段选择 URL并按字段状态轮询规则等待提交（轮询场景不额外等待用户确认）；随后只使用同一 requirement_id 与本轮 file_bridge 返回的原始 csv_file_path 重提一次 score_manual_source_csv。当前对话无法取得该可信 csv_file_path 时如实说明并停止，禁止自行构造 URL 或重跑前序链路。",
     );
   }
   return lines.join("\n");

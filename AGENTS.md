@@ -96,4 +96,4 @@
 6. 涉及业务链路：逐条核对 `docs/review-checklist.md` 中与本次改动相关的条目，并说明结论。
 7. 所有修改：按 Wiki 同步矩阵复核相关资料和最终 diff；报告更新项、不适用项及原因、未验收范围。
 
-字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured/copied 后直接继续；首次选择产生字段页 URL 时用 get_inquiry_form_fields_status 自动确认（预检 unavailable 后每 30 秒轮询、最多 8 次，submitted 续接；预检即 submitted、invalid、未知、失败、到上限或无法确认预检结果时等“好了”），重选/继承场景不轮询；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。
+字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured/copied 后直接继续；首次选择产生字段页 URL 时用 get_inquiry_form_fields_status 自动确认（预检 unavailable 后每 30 秒轮询、最多 8 次，submitted 续接；预检即 submitted、invalid、未知、失败、到上限或无法确认预检结果时等用户确认已提交），重选/继承场景不轮询；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。

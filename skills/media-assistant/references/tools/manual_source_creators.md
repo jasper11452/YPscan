@@ -1,6 +1,6 @@
 # manual_source_creators
 
-手动拓展的默认入口。每次开始手动拓展都先解析、复核并创建独立的新 requirement，再使用该 requirement 调用 `select_inquiry_form_fields`；即使从同一会话已完成或明确停止的询价功能切换而来、且业务条件未变，也不得复用询价 requirement。字段选择 URL 输出后按 [get_inquiry_form_fields_status](get_inquiry_form_fields_status.md) 自动确认提交（超时、重选或环境不支持该工具时等待用户明确回复“好了”），字段已 configured/copied 或确认提交后才使用当前真实 `requirement_id` 提交任务，由 Provider 后台全自动完成手动拓展；用户关于其他 requirement 的“不再选字段”要求不是当前提交证据，不得试调本工具探测 Provider 是否会强制报错。
+手动拓展的默认入口。每次开始手动拓展都先解析、复核并创建独立的新 requirement，再使用该 requirement 调用 `select_inquiry_form_fields`；即使从同一会话已完成或明确停止的询价功能切换而来、且业务条件未变，也不得复用询价 requirement。字段选择 URL 输出后按 [get_inquiry_form_fields_status](get_inquiry_form_fields_status.md) 自动确认提交（超时、重选或环境不支持该工具时等待用户确认已提交），字段已 configured/copied 或确认提交后才使用当前真实 `requirement_id` 提交任务，由 Provider 后台全自动完成手动拓展；用户关于其他 requirement 的“不再选字段”要求不是当前提交证据，不得试调本工具探测 Provider 是否会强制报错。
 
 ## Remote arguments
 
@@ -14,7 +14,7 @@
 
 固定调用 `manual_source_creators({requirement_id})`；不添加需求原文或其他参数，不通过增删 `demand` 重试。
 
-若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` 或 `REQUIREMENT_COLUMNS_UNAVAILABLE`，不得原参数重试；使用同一 requirement 按字段继承规则恢复配置；configured/copied 后直接恢复，否则原样展示 URL 并按字段工具卡自动确认提交（超时或环境不支持时等待用户回复“好了”）。Provider 应在启动本工具时做该校验并立即返回，不应把缺列错误延迟到打分终态；这是 Provider 侧 fail-fast 契约要求，插件不为此新增 columns 缓存或本地账本。
+若 Provider 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` 或 `REQUIREMENT_COLUMNS_UNAVAILABLE`，不得原参数重试；使用同一 requirement 按字段继承规则恢复配置；configured/copied 后直接恢复，否则原样展示 URL 并按字段工具卡自动确认提交（超时或环境不支持时等待用户确认已提交）。Provider 应在启动本工具时做该校验并立即返回，不应把缺列错误延迟到打分终态；这是 Provider 侧 fail-fast 契约要求，插件不为此新增 columns 缓存或本地账本。
 
 “手动拓展”“人工拓展”“直接手扒”“手扒”“手捞筛选”都默认指向本 MCP 工具；除“手动拓展”外的旧说法只作为输入别名，用户侧统一称“手动拓展”。
 

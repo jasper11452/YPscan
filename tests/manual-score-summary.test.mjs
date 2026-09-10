@@ -132,7 +132,7 @@ test("homepage URLs become external hyperlinks after score sorting", async (t) =
   }
 });
 
-test("only valid HTTP homepage cells become hyperlinks", async (t) => {
+test("every valid HTTP(S) URL cell becomes a hyperlink and invalid text stays literal", async (t) => {
   const f = await fixture(t, { count: 2, quantityTotal: 2, platform: "xiaohongshu" });
   const homepage = "https://www.xiaohongshu.com/user/profile/creator-1";
   const otherUrl = "https://example.invalid/not-a-homepage-column";
@@ -153,15 +153,74 @@ test("only valid HTTP homepage cells become hyperlinks", async (t) => {
   );
   assert.deepEqual(
     worksheet.hyperlinks[0].hyperlink.map((link) => link.$.ref),
-    ["E3"],
+    ["E3", "F3", "F4"],
   );
   assert.deepEqual(
     relationships.Relationships.Relationship.map((relationship) => relationship.$.Target),
-    [homepage],
+    [homepage, otherUrl, otherUrl],
   );
   const [sheet] = await readXlsxFile(result.data.file_path);
   assert.deepEqual(sheet.data[2].slice(4), [homepage, otherUrl]);
   assert.deepEqual(sheet.data[3].slice(4), ["javascript:alert(1)", otherUrl]);
+});
+
+test("隔行底色按汇总后的最终行序重算，不跟随原批次行序", async (t) => {
+  const f = await fixture(t, { count: 3, quantityTotal: 3 });
+  const unfilled = ["1", "2", "3", "1", "2"];
+  const filled = ["4", "5", "6", "4", "5"];
+  const styleSheet = (extended) =>
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="1"><font><sz val="11"/></font></fonts>' +
+    `<fills count="${extended ? 3 : 2}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${extended ? '<fill><patternFill patternType="solid"><fgColor rgb="00F4F8F5"/></patternFill></fill>' : ""}</fills>` +
+    '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>' +
+    `<cellXfs count="${extended ? 7 : 4}"><xf/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="10" fontId="0" fillId="0" borderId="0" xfId="0"/>${extended ? '<xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0"/><xf numFmtId="49" fontId="0" fillId="2" borderId="0" xfId="0"/><xf numFmtId="10" fontId="0" fillId="2" borderId="0" xfId="0"/>' : ""}</cellXfs></styleSheet>`;
+  const first = f.batch([f.ids[0]], 1, {
+    rows: [["douyin", f.ids[0], { number: "90" }, "推荐", "依据"]],
+  });
+  await decorateWorkbook(first, (sheet, archive) => {
+    archive["xl/styles.xml"] = strToU8(styleSheet(false));
+    sheet.sheetData[0].row[2].c.forEach((cell, index) => {
+      cell.$.s = unfilled[index];
+    });
+  });
+  const second = f.batch([f.ids[1], f.ids[2]], 2, {
+    rows: [
+      ["douyin", f.ids[1], { number: "80" }, "推荐", "依据"],
+      ["douyin", f.ids[2], { number: "95" }, "推荐", "依据"],
+    ],
+  });
+  await decorateWorkbook(second, (sheet, archive) => {
+    archive["xl/styles.xml"] = strToU8(styleSheet(true));
+    sheet.sheetData[0].row[2].c.forEach((cell, index) => {
+      cell.$.s = unfilled[index];
+    });
+    sheet.sheetData[0].row[3].c.forEach((cell, index) => {
+      cell.$.s = filled[index];
+    });
+  });
+  const before = await Promise.all([first, second].map((source) => readFile(source.file_path)));
+
+  const result = await f.summarize();
+  assert.equal(result.success, true, JSON.stringify(result.error));
+  const archive = unzipSync(await readFile(result.data.file_path));
+  const { styleSheet: merged } = await parseStringPromise(strFromU8(archive["xl/styles.xml"]));
+  assert.equal(merged.cellXfs[0].$.count, "7");
+  const { worksheet } = await parseStringPromise(strFromU8(archive["xl/worksheets/sheet1.xml"]));
+  assert.deepEqual(
+    worksheet.sheetData[0].row.slice(2).map((row) => row.c.map((cell) => cell.$.s)),
+    [unfilled, filled, unfilled],
+  );
+  const [sheet] = await readXlsxFile(result.data.file_path);
+  assert.deepEqual(
+    sheet.data.slice(2).map((row) => [row[1], row[2]]),
+    [
+      [f.ids[2], 95],
+      [f.ids[0], 90],
+      [f.ids[1], 80],
+    ],
+  );
+  for (const [index, source] of [first, second].entries())
+    assert.deepEqual(await readFile(source.file_path), before[index]);
 });
 
 for (const extendedFirst of [false, true]) {

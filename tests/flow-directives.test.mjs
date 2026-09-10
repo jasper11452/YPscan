@@ -1357,6 +1357,8 @@ test("provider opened status starts the field-status poll loop", () => {
   assert.match(text, /sleep/u);
   assert.match(text, /预检返回 submitted/u);
   assert.match(text, /不得调用任何下游工具/u);
+  assert.match(text, /不要求用户回复固定口令/u);
+  assert.doesNotMatch(text, /回复“好了”|等待“好了”/u);
   assert.doesNotMatch(text, /本轮必须结束并等待|ASK_USER_QUESTION_ARGS=/u);
 });
 
@@ -1374,14 +1376,16 @@ test("forced reselection forbids field-status polling", () => {
       }),
     }),
   );
-  assert.match(text, /本轮必须结束并等待/u);
+  assert.match(text, /本轮必须结束/u);
+  assert.match(text, /不要求用户回复固定口令/u);
+  assert.doesNotMatch(text, /回复“好了”/u);
   assert.match(text, /禁止调用 get_inquiry_form_fields_status 轮询/u);
   assert.match(text, /会在用户提交前就返回 submitted/u);
   assert.doesNotMatch(text, /即时预检/u);
 });
 
 for (const status of ["invalid", "pending", "unknown"]) {
-  test(`field status ${status} stops polling and falls back to 好了`, () => {
+  test(`field status ${status} stops polling and falls back to user confirmation`, () => {
     const persist = registeredPlugin().hooks.get("tool_result_persist");
     const text = directiveText(
       persist({
@@ -1391,7 +1395,8 @@ for (const status of ["invalid", "pending", "unknown"]) {
       }),
     );
     assert.match(text, /未返回可识别的终态/u);
-    assert.match(text, /等待用户提交后回复“好了”/u);
+    assert.match(text, /等待用户确认已提交/u);
+    assert.doesNotMatch(text, /回复“好了”|等待“好了”/u);
     assert.match(text, /不得按已提交继续/u);
     assert.doesNotMatch(text, /按原分支恢复/u);
   });
@@ -1477,7 +1482,9 @@ test("explicit reselection opens the page even when a source was supplied", () =
     }),
   );
   assert.match(text, /FIELD_SELECTION_URL=https:\/\/example.invalid\/fields/u);
-  assert.match(text, /本轮必须结束并等待/u);
+  assert.match(text, /本轮必须结束/u);
+  assert.match(text, /不要求用户回复固定口令/u);
+  assert.doesNotMatch(text, /回复“好了”/u);
   assert.match(text, /单独重选只更新字段配置/u);
   assert.match(text, /已完成或明确停止的业务不得重启/u);
   assert.match(text, /只有当前对话明确存在等待字段配置的未完成步骤/u);

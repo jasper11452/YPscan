@@ -2610,7 +2610,8 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /不得使用 demand_id/u);
   assert.match(text, /调用已弃用的 get_selected_inquiry_form_fields/u);
   assert.match(text, /把 columns 放入上下文/u);
-  assert.match(text, /收到“好了”后按原分支恢复/u);
+  assert.match(text, /用户确认已提交后按原分支恢复/u);
+  assert.doesNotMatch(text, /回复“好了”|等待“好了”/u);
   assert.match(text, /按原分支恢复/u);
   assert.match(text, /用户明确选中的当前 MCN/u);
   assert.match(text, /其他原名走 supplier_name/u);

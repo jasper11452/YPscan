@@ -32,7 +32,6 @@ const COST_EFFECTIVENESS_HEADERS = {
     engagement: ["合作_视频&图文_互动中位数", "日常_视频&图文_互动中位数"],
   },
 };
-const HOMEPAGE_HEADERS = new Set(["星图主页", "抖音主页", "小红书主页"]);
 const DOCUMENT_RELATIONSHIP_NAMESPACE =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const PACKAGE_RELATIONSHIP_NAMESPACE =
@@ -149,16 +148,12 @@ export async function readManualScoreWorkbook(source, { workspaceDir, requiremen
       if (text(grid[r][c]).trim() === "评分数量") countCells.push(`${columnName(c + 1)}${r + 1}`);
     }
   }
-  const homepageColumns = headers.flatMap((header, column) =>
-    HOMEPAGE_HEADERS.has(header) ? [column] : [],
-  );
   const template = {
     archive,
     sheetPath,
     document,
     headerRow: index + 1,
     countCells,
-    homepageColumns,
     scoreColumn,
   };
   const rows = [];
@@ -177,7 +172,15 @@ export async function readManualScoreWorkbook(source, { workspaceDir, requiremen
       fail("INVALID_SCORE", "综合得分缺失或不是有效数值");
     const rowXml = xmlRows.get(index + offset + 2);
     if (!rowXml) fail("TEMPLATE", "评分行与原始模板坐标不一致");
-    rows.push({ creator_id: creatorId, recommended: verdict === "推荐", score, cells, rowXml });
+    rows.push({
+      creator_id: creatorId,
+      recommended: verdict === "推荐",
+      score,
+      cells,
+      rowXml,
+      // 模板按数据行序号隔行着色，保留原序号才能按最终行序重算底色。
+      band: offset % 2,
+    });
   }
   return { headers, rows, template };
 }
@@ -309,6 +312,88 @@ function externalHttpUrl(value) {
   }
 }
 
+function cellColumnIndex(ref) {
+  let index = 0;
+  for (const letter of text(ref).replace(/\d+$/u, ""))
+    index = index * 26 + letter.charCodeAt(0) - 64;
+  return index - 1;
+}
+
+/**
+ * 模板按数据行序号隔行着色；各批合并并按综合分重排后行序已变，样式仍跟着原行，
+ * 会出现相邻同色。这里按最终行序把底色切回模板自己的成对样式：只认样式表里
+ * “除 fillId 外完全一致且一对一”的配对，配对冲突、缺失或与观察到的行序不符时
+ * 保留原样式，不猜颜色、不新增样式定义。
+ */
+function bandSides(rows) {
+  const sides = new Map();
+  for (const row of rows) {
+    const record = (style, side) => {
+      if (!style) return;
+      if (!sides.has(style)) sides.set(style, side);
+      else if (sides.get(style) !== side) sides.set(style, null);
+    };
+    for (const cell of row.rowXml.c ?? []) record(text(cell.$?.s), row.band);
+    record(text(row.rowXml.$?.s), row.band);
+  }
+  return sides;
+}
+
+function bandStylePairs(cellXfs, sides) {
+  const signatures = cellXfs.map(({ $, ...children }) => {
+    const { fillId, ...attrs } = $ ?? {};
+    return { attrs, children, fillId };
+  });
+  const candidates = new Map();
+  for (const [style, side] of sides) {
+    const own = signatures[Number(style)];
+    if (side == null || !own) continue;
+    candidates.set(
+      style,
+      signatures.flatMap((other, index) =>
+        String(index) !== style &&
+        text(other.fillId) !== text(own.fillId) &&
+        isDeepStrictEqual(other.attrs, own.attrs) &&
+        isDeepStrictEqual(other.children, own.children)
+          ? [String(index)]
+          : [],
+      ),
+    );
+  }
+  const pairs = new Map();
+  for (const [style, matches] of candidates) {
+    const other = matches.length === 1 ? matches[0] : null;
+    if (
+      !other ||
+      candidates.get(other)?.length !== 1 ||
+      candidates.get(other)[0] !== style ||
+      sides.get(other) !== 1 - sides.get(style)
+    )
+      continue;
+    pairs.set(style, other);
+    pairs.set(other, style);
+  }
+  return pairs;
+}
+
+function bandRowRewrites(rowXml, side, sides, pairs) {
+  const rewrites = [];
+  for (const [index, cell] of (rowXml.c ?? []).entries()) {
+    const before = sides.get(text(cell.$?.s));
+    if (before == null || before === side) continue;
+    const after = pairs.get(text(cell.$?.s));
+    if (!after) return null;
+    rewrites.push({ cell: index, style: after });
+  }
+  const rowStyle = text(rowXml.$?.s);
+  if (sides.get(rowStyle) != null && sides.get(rowStyle) !== side) {
+    const after = pairs.get(rowStyle);
+    if (!after) return null;
+    rewrites.push({ row: true, style: after });
+  }
+  return rewrites;
+}
+
 function worksheetRelationshipsPath(sheetPath) {
   const separator = sheetPath.lastIndexOf("/");
   const directory = sheetPath.slice(0, separator);
@@ -348,11 +433,14 @@ function insertHyperlinks(sheet, hyperlinks) {
   ]);
 }
 
-async function addHomepageHyperlinks(archive, sheetPath, document, headerRow, columns, rows) {
+// 数据区任何单元格只要是合法的 HTTP(S) URL 就写成外部超链接，不按列名白名单限制。
+async function addDataHyperlinks(archive, sheetPath, document, headerRow, rows) {
   const links = rows.flatMap((row, rowIndex) =>
-    columns.flatMap((column) => {
-      const target = externalHttpUrl(row.cells[column]);
-      return target ? [{ ref: `${columnName(column)}${headerRow + rowIndex + 1}`, target }] : [];
+    (row.rowXml.c ?? []).flatMap((cell) => {
+      const target = externalHttpUrl(row.cells[cellColumnIndex(cell.$?.r)]);
+      return target
+        ? [{ ref: `${text(cell.$?.r).replace(/\d+$/u, "")}${headerRow + rowIndex + 1}`, target }]
+        : [];
     }),
   );
   if (!links.length) return;
@@ -386,8 +474,7 @@ async function addHomepageHyperlinks(archive, sheetPath, document, headerRow, co
 }
 
 async function saveSummaryWorkbook(workspaceDir, projectName, template, rows, now) {
-  const { archive, sheetPath, document, headerRow, countCells, homepageColumns, scoreColumn } =
-    template;
+  const { archive, sheetPath, document, headerRow, countCells, scoreColumn } = template;
   const sheet = document.worksheet;
   const prefix = sheet.sheetData[0].row.filter((row) => Number(row.$.r) <= headerRow);
   const body = rows.map((row, index) => {
@@ -398,6 +485,21 @@ async function saveSummaryWorkbook(workspaceDir, projectName, template, rows, no
       setNumericCell(moved, scoreColumn, row.display_score);
     return moved;
   });
+  const sides = bandSides(rows);
+  const styleSheet = archive["xl/styles.xml"]
+    ? (await parseStringPromise(strFromU8(archive["xl/styles.xml"]))).styleSheet
+    : null;
+  const pairs = bandStylePairs(styleSheet?.cellXfs?.[0]?.xf ?? [], sides);
+  const rewrites = body.map((row, index) => bandRowRewrites(row, index % 2, sides, pairs));
+  // 配对不齐时整份保持原样，不留下半染的表格。
+  if (rewrites.every((rowRewrites) => rowRewrites)) {
+    for (const [index, rowRewrites] of rewrites.entries()) {
+      for (const rewrite of rowRewrites) {
+        if (rewrite.row) body[index].$.s = rewrite.style;
+        else body[index].c[rewrite.cell].$.s = rewrite.style;
+      }
+    }
+  }
   for (const row of prefix) {
     for (const cell of row.c ?? []) {
       if (!countCells.includes(cell.$.r)) continue;
@@ -415,7 +517,7 @@ async function saveSummaryWorkbook(workspaceDir, projectName, template, rows, no
     if (sheet[key]?.[0]?.$.ref)
       sheet[key][0].$.ref = sheet[key][0].$.ref.replace(/\d+$/u, String(headerRow + rows.length));
   }
-  await addHomepageHyperlinks(archive, sheetPath, document, headerRow, homepageColumns, rows);
+  await addDataHyperlinks(archive, sheetPath, document, headerRow, rows);
   archive[sheetPath] = strToU8(
     new Builder({ renderOpts: { pretty: false } }).buildObject(document),
   );
