@@ -684,6 +684,41 @@ test("manual source status args prefill num from the validated requirement quant
   assert.match(directiveText(resumed), /MANUAL_SOURCE_TARGET_NUM=60/u);
 });
 
+test("manual source status prefill keeps the computed num for an out-of-table target", () => {
+  const hooks = registeredHooks();
+  const before = hooks.get("before_tool_call");
+  const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "manual-num-out-of-table" };
+  const validateParams = completeValidateParams();
+  validateParams.quantityTotal = 5;
+  const rawMessagesJson = JSON.parse(validateParams.rawMessagesJson);
+  rawMessagesJson.original = rawMessagesJson.original.replace("30位", "5位");
+  validateParams.rawMessagesJson = JSON.stringify(rawMessagesJson);
+  before({ toolName: "ypmcn__validate_requirement", params: validateParams }, context);
+  persist(
+    {
+      toolName: "ypmcn__validate_requirement",
+      params: validateParams,
+      message: toolMessage({ success: true, data: { requirement_id: "req-num-5" } }),
+    },
+    context,
+  );
+  const sourced = persist(
+    {
+      toolName: "ypmcn__manual_source_creators",
+      params: { requirement_id: "req-num-5" },
+      message: toolMessage({ success: true, requirement_id: "req-num-5", batch_id: 3 }),
+    },
+    context,
+  );
+  const sourceText = directiveText(sourced);
+  assert.match(sourceText, /MANUAL_SOURCE_TARGET_NUM=15(?!\d)/u);
+  assert.doesNotMatch(sourceText, /MANUAL_SOURCE_TARGET_NUM=30(?!\d)/u);
+  // 5 人不在旧示例表内：指令必须给出 5→15，并说明示例不是档位表。
+  assert.match(sourceText, /5 人→15/u);
+  assert.match(sourceText, /不是档位/u);
+});
+
 test("manual source status live intermediate state keeps polling without a pause popup", () => {
   const hooks = registeredHooks();
   const before = hooks.get("before_tool_call");
@@ -1247,6 +1282,68 @@ test("manual scoring status terminal recovers requirement id from the score job"
     file_url: "https://files.eshypdata.com/exports/manual-recovered.xlsx",
   });
   assert.doesNotMatch(text, /SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS=/u);
+});
+
+test("scoring HTTP 403 never becomes a saved or counted result", () => {
+  const hooks = registeredHooks();
+  const persist = hooks.get("tool_result_persist");
+  const context = { sessionKey: "score-http-403" };
+
+  const submitFailure = directiveText(
+    persist(
+      {
+        toolName: "ypmcn__score_manual_source_csv",
+        params: { requirement_id: "req-score-403", csv_file_path: "/provider/merged.csv" },
+        message: toolMessage({
+          success: false,
+          error: { code: "HTTP_403", status: 403, message: "forbidden" },
+        }),
+      },
+      context,
+    ),
+  );
+  assert.match(submitFailure, /已暂停/u);
+  assert.match(submitFailure, /ASK_USER_QUESTION_ARGS=/u);
+  assert.doesNotMatch(
+    submitFailure,
+    /SAVE_ARTIFACT_ARGS=|SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS=|SCORE_MANUAL_SOURCE_CSV_ARGS=/u,
+  );
+
+  hooks.get("before_tool_call")(
+    {
+      toolName: "ypmcn__score_manual_source_csv",
+      toolCallId: "score-403-submit",
+      params: { requirement_id: "req-score-403", csv_file_path: "/provider/merged.csv" },
+    },
+    context,
+  );
+  persist(
+    {
+      toolName: "ypmcn__score_manual_source_csv",
+      toolCallId: "score-403-submit",
+      message: toolMessage({ success: true, data: { job_id: "job-score-403" } }),
+    },
+    context,
+  );
+  const statusFailure = directiveText(
+    persist(
+      {
+        toolName: "ypmcn__score_manual_source_csv_status",
+        params: { job_id: "job-score-403" },
+        message: toolMessage({
+          success: false,
+          error: { code: "HTTP_403", status: 403, message: "forbidden" },
+        }),
+      },
+      context,
+    ),
+  );
+  assert.match(statusFailure, /已暂停/u);
+  assert.match(statusFailure, /ASK_USER_QUESTION_ARGS=/u);
+  assert.doesNotMatch(
+    statusFailure,
+    /SAVE_ARTIFACT_ARGS=|SCORE_MANUAL_SOURCE_CSV_STATUS_ARGS=|继续使用同一 job_id 轮询/u,
+  );
 });
 
 test("manual scoring status terminal without any requirement id pauses instead of polling", () => {

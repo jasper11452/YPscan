@@ -85,6 +85,85 @@ test("merged workbook preserves template parts, numeric types, row styles and li
   assert.equal(output.data[3][4], '$1 r="99"');
 });
 
+test("homepage URLs become external hyperlinks after score sorting", async (t) => {
+  const f = await fixture(t, { count: 2, quantityTotal: 2 });
+  const headers = ["平台", "星图ID", "昵称", "综合得分", "推荐结论", "星图主页", "抖音主页"];
+  const firstLinks = [
+    "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/creator-1",
+    "https://www.douyin.com/user/creator-1",
+  ];
+  const secondLinks = [
+    "https://www.xingtu.cn/ad/creator/author-homepage/douyin-video/creator-2",
+    "https://www.douyin.com/user/creator-2",
+  ];
+  f.batch([f.ids[0]], 1, {
+    headers,
+    rows: [["douyin", f.ids[0], "低分达人", "80", "推荐", ...firstLinks]],
+  });
+  f.batch([f.ids[1]], 1, {
+    headers,
+    rows: [["douyin", f.ids[1], "高分达人", "95", "推荐", ...secondLinks]],
+  });
+
+  const result = await f.summarize();
+  assert.equal(result.success, true, JSON.stringify(result.error));
+  const archive = unzipSync(await readFile(result.data.file_path));
+  const { worksheet } = await parseStringPromise(strFromU8(archive["xl/worksheets/sheet1.xml"]));
+  const relationships = await parseStringPromise(
+    strFromU8(archive["xl/worksheets/_rels/sheet1.xml.rels"]),
+  );
+  const targetsById = new Map(
+    relationships.Relationships.Relationship.map((relationship) => [
+      relationship.$.Id,
+      relationship.$,
+    ]),
+  );
+  const linksByCell = new Map(
+    worksheet.hyperlinks[0].hyperlink.map((link) => [link.$.ref, targetsById.get(link.$["r:id"])]),
+  );
+  assert.deepEqual([...linksByCell.keys()], ["F3", "G3", "F4", "G4"]);
+  assert.deepEqual(
+    ["F3", "G3", "F4", "G4"].map((ref) => linksByCell.get(ref).Target),
+    [...secondLinks, ...firstLinks],
+  );
+  for (const relationship of linksByCell.values()) {
+    assert.equal(relationship.Type.endsWith("/hyperlink"), true);
+    assert.equal(relationship.TargetMode, "External");
+  }
+});
+
+test("only valid HTTP homepage cells become hyperlinks", async (t) => {
+  const f = await fixture(t, { count: 2, quantityTotal: 2, platform: "xiaohongshu" });
+  const homepage = "https://www.xiaohongshu.com/user/profile/creator-1";
+  const otherUrl = "https://example.invalid/not-a-homepage-column";
+  f.batch(f.ids, 2, {
+    headers: ["平台", "蒲公英ID", "综合得分", "推荐结论", "小红书主页", "资料链接"],
+    rows: [
+      ["xiaohongshu", f.ids[0], "90", "推荐", homepage, otherUrl],
+      ["xiaohongshu", f.ids[1], "80", "推荐", "javascript:alert(1)", otherUrl],
+    ],
+  });
+
+  const result = await f.summarize();
+  assert.equal(result.success, true, JSON.stringify(result.error));
+  const archive = unzipSync(await readFile(result.data.file_path));
+  const { worksheet } = await parseStringPromise(strFromU8(archive["xl/worksheets/sheet1.xml"]));
+  const relationships = await parseStringPromise(
+    strFromU8(archive["xl/worksheets/_rels/sheet1.xml.rels"]),
+  );
+  assert.deepEqual(
+    worksheet.hyperlinks[0].hyperlink.map((link) => link.$.ref),
+    ["E3"],
+  );
+  assert.deepEqual(
+    relationships.Relationships.Relationship.map((relationship) => relationship.$.Target),
+    [homepage],
+  );
+  const [sheet] = await readXlsxFile(result.data.file_path);
+  assert.deepEqual(sheet.data[2].slice(4), [homepage, otherUrl]);
+  assert.deepEqual(sheet.data[3].slice(4), ["javascript:alert(1)", otherUrl]);
+});
+
 for (const variant of ["formula", "merged_data", "different_styles"]) {
   test(`unsafe template ${variant} stops without delivering a corrupted workbook`, async (t) => {
     const f = await fixture(t, { count: 2 });
@@ -104,6 +183,113 @@ for (const variant of ["formula", "merged_data", "different_styles"]) {
     assert.equal(result.delivery, undefined);
   });
 }
+
+test("douyin 综合得分 blends relevance with batch cost-effectiveness and resorts", async (t) => {
+  const f = await fixture(t, { count: 3, quantityTotal: 3 });
+  f.batch([...f.ids], 3, {
+    headers: [
+      "平台",
+      "星图ID",
+      "综合得分",
+      "推荐结论",
+      "推荐理由",
+      "植入视频-预期CPM",
+      "植入视频-预期CPE",
+    ],
+    rows: [
+      ["douyin", f.ids[0], { number: "90" }, "推荐", "a", { number: "100" }, { number: "5" }],
+      ["douyin", f.ids[1], { number: "80" }, "推荐", "b", { number: "20" }, { number: "1" }],
+      ["douyin", f.ids[2], { number: "95" }, "推荐", "c", { number: "500" }, { number: "50" }],
+    ],
+  });
+  const result = await f.summarize();
+  assert.equal(result.success, true, JSON.stringify(result.error));
+  assert.equal(result.data.cost_effectiveness_pending_count, 0);
+  const [sheet] = await readXlsxFile(result.data.file_path, { parseNumber: (value) => value });
+  const body = sheet.data.slice(2);
+  assert.deepEqual(
+    body.map((row) => row[1]),
+    [f.ids[1], f.ids[0], f.ids[2]],
+  );
+  assert.deepEqual(
+    body.map((row) => row[2]),
+    ["86", "78", "66.5"],
+  );
+  assert.deepEqual(
+    body.map((row) => row[3]),
+    ["推荐", "推荐", "推荐"],
+  );
+});
+
+test("xiaohongshu 综合得分 uses the price/reach proxy and imputes missing cost data", async (t) => {
+  const f = await fixture(t, { count: 4, quantityTotal: 4, platform: "xiaohongshu" });
+  f.batch([...f.ids], 4, {
+    headers: [
+      "平台",
+      "蒲公英ID",
+      "综合得分",
+      "推荐结论",
+      "推荐理由",
+      "视频笔记一口价",
+      "合作_视频&图文_阅读中位数",
+      "日常_视频&图文_阅读中位数",
+      "合作_视频&图文_互动中位数",
+      "日常_视频&图文_互动中位数",
+    ],
+    rows: [
+      [
+        "小红书",
+        f.ids[0],
+        { number: "90" },
+        "推荐",
+        "a",
+        { number: "1000" },
+        { number: "10000" },
+        { number: "5000" },
+        { number: "100" },
+        { number: "50" },
+      ],
+      [
+        "小红书",
+        f.ids[1],
+        { number: "80" },
+        "推荐",
+        "b",
+        { number: "2000" },
+        { number: "0" },
+        { number: "20000" },
+        { number: "0" },
+        { number: "200" },
+      ],
+      [
+        "小红书",
+        f.ids[2],
+        { number: "95" },
+        "推荐",
+        "c",
+        { number: "3000" },
+        { number: "10000" },
+        { number: "1000" },
+        { number: "50" },
+        { number: "25" },
+      ],
+      ["小红书", f.ids[3], { number: "70" }, "推荐", "d", "", "", "", "", ""],
+    ],
+  });
+  const result = await f.summarize();
+  assert.equal(result.success, true, JSON.stringify(result.error));
+  assert.equal(result.data.cost_effectiveness_pending_count, 1);
+  const [sheet] = await readXlsxFile(result.data.file_path, { parseNumber: (value) => value });
+  const body = sheet.data.slice(2);
+  assert.deepEqual(
+    body.map((row) => row[1]),
+    [f.ids[0], f.ids[1], f.ids[3], f.ids[2]],
+  );
+  assert.deepEqual(
+    body.map((row) => row[2]),
+    ["93", "86", "79", "66.5"],
+  );
+});
 
 const payload = (result) => JSON.parse(result.content[0].text);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -226,6 +412,46 @@ test("6 recommendations then 4 produce one deduplicated final workbook", async (
   const repeated = await f.summarize();
   assert.equal(repeated.success, true);
   assert.equal(repeated.data.file_path, last.data.file_path);
+  assert.equal(repeated.data.idempotent, true);
+});
+
+test("N=20 processes two batches, deduplicates repeated scores, then stops with 10 unprocessed", async (t) => {
+  const f = await fixture(t, { count: 50, quantityTotal: 20 });
+  const initial = await f.summarize();
+  assert.deepEqual(initial.data.next_author_ids, f.ids.slice(0, 20));
+
+  f.batch(f.ids.slice(0, 20), 10);
+  const afterFirstBatch = await f.summarize();
+  assert.equal(afterFirstBatch.data.recommended_count, 10);
+  assert.deepEqual(afterFirstBatch.data.next_author_ids, f.ids.slice(20, 40));
+
+  const secondRows = f.ids
+    .slice(20, 40)
+    .map((id, index) => [
+      "douyin",
+      id,
+      String(100 - index),
+      index < 10 ? "推荐" : "不推荐",
+      "测试依据",
+    ]);
+  secondRows.push(["douyin", f.ids[0], "100", "推荐", "测试依据"]);
+  f.batch(f.ids.slice(20, 40), 10, { rows: secondRows });
+
+  const result = await f.summarize();
+  assert.equal(result.success, true, JSON.stringify(result.error));
+  assert.equal(result.data.recommended_count, 20);
+  assert.equal(result.data.scored_count, 40);
+  assert.equal(result.data.unprocessed_count, 10);
+  assert.equal(result.data.next_action, "deliver");
+  assert.equal(result.data.stop_reason, "target_reached");
+  assert.deepEqual(result.data.next_author_ids, []);
+  const [sheet] = await readXlsxFile(result.data.file_path);
+  assert.equal(sheet.data.slice(2).length, 40);
+  assert.equal(new Set(sheet.data.slice(2).map((row) => row[1])).size, 40);
+
+  const repeated = await f.summarize();
+  assert.equal(repeated.success, true);
+  assert.equal(repeated.data.file_path, result.data.file_path);
   assert.equal(repeated.data.idempotent, true);
 });
 

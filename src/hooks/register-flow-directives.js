@@ -55,7 +55,7 @@ const REQUIREMENT_CREATION_RULE =
 const FIELD_SELECTION_REUSE_RULE =
   "字段继承：同一会话新 requirement（含放宽、纠错和跨功能）调用 select_inquiry_form_fields 时，以 SELECT_INQUIRY_FORM_FIELDS_ARGS 为基础，追加 source_requirement_id，来源只取本会话最近一次用户已提交或 Provider 已返回 configured 的真实 requirement；无来源时首次选字段。用户明确要求重新勾选才传 force_reselect=true 并省略来源。来源 ID 不得猜测或跨会话取用，不读取、缓存或传递 columns。继承和重选分别要求 live schema 支持对应新参数；不支持时说明接口未支持并暂停，不盲传、不退回重复勾选。继承失败、平台不兼容或 status=error 时暂停，不自动重选。";
 const FIELD_SELECTION_GATE_RULE =
-  "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields。success=true 且 status=configured、requirement_id 与当前调用一致时直接按原分支继续，不等待“好了”；返回 selection_required 或旧版有效 URL 时，字段选择 URL 输出后本轮必须结束并等待，用户提交并回复“好了”后才继续，禁止在同一轮试调 manual_source_creators、搜索或打分。";
+  "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields。success=true 且 status=configured、requirement_id 与当前调用一致时直接按原分支继续，不等待“好了”；返回 selection_required、opened 或旧版有效 URL 时，字段选择 URL 输出后本轮必须结束并等待，用户提交并回复“好了”后才继续，禁止在同一轮试调 manual_source_creators、搜索或打分。";
 const RELAXATION_REVIEW_COMPACT_RULE =
   "先复核各轮需求、解析、validate 和实际搜索参数；跨 requirement 的 keyword 差异仅是线索。优先替换同主题关键词、减少非核心人设限定；其他搜索条件保持原值，不扩大数值区间。用户明确要求放宽即执行；未授权时提出具体方案并等待确认。调整后仍不足且复核正确，再按 Skill 顺序提示其他可放宽条件；等待用户明确确认该项后才重跑，不自动改动。手动拓展放宽后整体替换 rawMessagesJson.original 为累计放宽后的完整需求，同文重新解析，parse_outputs 全量更新；询价机构放宽仍保留未改写原文；放宽同步 clarifications 和 validate 参数；已确认放宽值必须通过 validate_requirement 保存，由 Provider 从后台读取，搜索返回后核对实际参数与放宽值一致。";
 // 只在结果时刻注入（manual_source Excel 交付处）；启动块只保留精简的 SHORTFALL 规则。
@@ -68,7 +68,7 @@ const SEARCH_PARAMETER_REVIEW_RULE =
 const MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 manual_source_creators，也不得猜测或更换 requirement_id 或 batch_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
 const MANUAL_SOURCE_STATUS_NUM_RULE =
-  "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传：按目标人数梯度取数（10 人→30、20 人→50、50 人→100，正整数）。Hook 的 MANUAL_SOURCE_TARGET_NUM 已是该梯度取数数量，直接使用，不得再次乘倍数；最终交付目标和不足判断仍使用用户需求人数。schema 不接受 num 时不得附带，避免无效重试。";
+  "manual_source_creators_status 的 num 只在当前环境 live schema required 时才传，且取 Hook 给出的 MANUAL_SOURCE_TARGET_NUM 原值：按目标人数梯度取数（如 5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，正整数）。括号内只是示例，不是档位表也不是穷举，表外人数同样由 Hook 按同一梯度算好并写入 MANUAL_SOURCE_TARGET_NUM，直接使用该值，不得再次乘倍数；最终交付目标和不足判断仍使用用户需求人数。schema 不接受 num 时不得附带，避免无效重试。";
 const SCORE_MANUAL_SOURCE_POLL_RULE =
   "这是异步轮询，不调用 AskUserQuestion、不重新提交 score_manual_source_csv，也不得猜测或更换 job_id。任务提交成功后等待 30 秒再进行第 1 次查询，之后每隔 30 秒查询一次，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不得自动查询第 11 次";
 const MANUAL_SOURCE_SHORTFALL_RULE = `本条数量策略仅用于旧链路直接返回的 manual_source Excel；分批评分必须通过 ypscan_summarize_manual_scores 统计推荐人数并决定下一步，不用处理成功数判断足量。只在当前 Provider 响应明确给出可信实际数量时与用户需求人数 quantityTotal 比较（梯度取数 num 不是交付目标），不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确要求放宽后优先调整同主题关键词、减少非核心人设限定；调整后仍不足再按 Skill 提示其他条件并等待该项确认，随后重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、batch 或 Excel。`;
@@ -418,14 +418,15 @@ function fieldSelectionDirective(message, params = {}) {
       `FIELD_CONFIGURATION_REQUIREMENT_ID=${requirementId}`,
     ].join("\n");
   }
-  if (status && status !== "selection_required") {
+  const fieldPageStatus = status === "selection_required" || status === "opened";
+  if (status && !fieldPageStatus) {
     return flowPauseDirective("字段选择返回未知状态", message);
   }
   if (params?.source_requirement_id && params?.force_reselect !== true) {
     return "YPSCAN_FLOW_DIRECTIVE=字段继承未返回 configured，不能确认复制成功。说明接口结果并暂停，不展示字段页、不自动重新勾选、不继续下游。";
   }
   if (
-    (status === "selection_required" && !requirementId) ||
+    (fieldPageStatus && !requirementId) ||
     (requirementId && requirementId !== params?.requirement_id)
   ) {
     return "YPSCAN_FLOW_DIRECTIVE=字段页缺少目标需求 ID 或与当前调用不一致。暂停，不展示字段页、不继续下游。";
@@ -1728,7 +1729,7 @@ export function registerFlowDirectiveHooks(api) {
           "机构回填预览链路先保存预览表，再让用户选择是否补全；选“补全并打分排序”时继续 ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生补全（20/批）→ file_bridge（flow=manual_source）→ score_manual_source_csv → score_status → 保存打分排序 Excel。回收不足时不自动放宽，交付真实结果。",
           "仅询价机构分支调用 search_creators；成功后忽略 creators_export_path 等表格链接，直接用同一 requirement ID 调用 rank_mcns。rank_mcns 成功后先输出完整五列表格，再保存 MCN 排名表；保存成功后展示本地链接并调用收件机构选择弹窗，不得再次询问业务模式。",
           "MCN 用户可见输出格式锁：rank_mcns 成功后不得根据响应 schema、原始字段、旧模板或上一轮结果自行设计表格。只能输出五列 Markdown 表格：排名、机构、覆盖达人、返点、综合分；列名、顺序和数量不得改动。字段映射固定：排名=rank_no（缺省按响应顺序）、机构=agency_name、覆盖达人=candidate_count、返点=rebate_rate、综合分=rank_score。特别禁止 Supplier ID/supplier_id、候选达人、供给占比、手动拓展补量、推荐理由及其他 rank_mcns 字段或汇总。",
-          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 只传 requirement_id，需求由 Provider 从后台读取；manual_source_creators_status 按当前环境 live schema 传入梯度取数 num（10 人→30、20 人→50、50 人→100）。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再用 ypscan_save_creator_links 归一化为受控三列 links CSV，然后调用 ypscan_summarize_manual_scores 取得最多20人的当前批名单；仅按该名单调用当前平台对应的 YP Action 原生达人补全工具。每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 file_bridge 和打分。每批补全后仅以当前批 CSV 调用 file_bridge（flow=manual_source）并评分；每份评分表保存为 manual_score_batch 后再汇总，推荐人数达标立即交付汇总 Excel，否则继续下一批直到梯度候选池耗尽；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成后保存为 manual_score_batch 再汇总；score 仍同步返回 Excel 时也按单批保存并汇总。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。结果不足且用户确认放宽后重建搜索时，只传 requirement_id，由 Provider 从后台读取已保存的完整有效需求，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导。",
+          "手动拓展分支先选择字段，再调用 manual_source_creators；该工具由后台 API 完成搜索和落库。manual_source_creators 只传 requirement_id，需求由 Provider 从后台读取；manual_source_creators_status 按当前环境 live schema 传入梯度取数 num（如 5 人→15、10 人→30、30 人→60，非穷举，实际值取 Hook 的 MANUAL_SOURCE_TARGET_NUM）。返回 batch_id 后先等待 30 秒，再按同一 requirement_id / batch_id 轮询，累计最多 10 次。新链路下成功结果的主产物是 creator_links_csv_url：先保存 manual_creator_links CSV，再用 ypscan_save_creator_links 归一化为受控三列 links CSV，然后调用 ypscan_summarize_manual_scores 取得最多20人的当前批名单；仅按该名单调用当前平台对应的 YP Action 原生达人补全工具。每批只认 csv_file、successful_author_ids、failed_author_ids，部分成功保留同一个 CSV，不自动重试整批；全部失败时 csv_file=null，停止 file_bridge 和打分。每批补全后仅以当前批 CSV 调用 file_bridge（flow=manual_source）并评分；每份评分表保存为 manual_score_batch 后再汇总，推荐人数达标立即交付汇总 Excel，否则继续下一批直到梯度候选池耗尽；score 返回 job_id 时用 score_manual_source_csv_status 每 30 秒查询一次、累计最多 10 次，完成后保存为 manual_score_batch 再汇总；score 仍同步返回 Excel 时也按单批保存并汇总。第 10 次仍未完成时如实报告并停止，不弹窗、不自动查询第 11 次。结果不足且用户确认放宽后重建搜索时，只传 requirement_id，由 Provider 从后台读取已保存的完整有效需求，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导。",
           "原生达人补全工具由宿主 YP Action 提供、不在 ypscan 白名单内：小红书 get_xhs_author_business_card 且固定 page_count=1，抖音 get_douyin_author_business_card。宿主未开放对应工具时如实报告工具未开放并停止补全链路，不得改用 Browser 或其他手扒工具代替。",
           MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ARGUMENT_RULE,

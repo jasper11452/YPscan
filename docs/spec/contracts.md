@@ -83,7 +83,7 @@
   - `quantityTotal`、`submissionDeadlineAt` 必须有与提交值一致的原文/澄清证据。截止时间的等价同日表述归一为同一值：`今晚8点前`/`今晚20:00`/`当天20:00:00` 同指当天 20:00:00；同一会话内已确认的澄清答案在后续轮次与 requirement 重建时原样带入 `clarifications` 直接复用，不重复询问。
   - `rebate`、报价：要么 Dify 给出唯一合法区间且提交值与其等价，要么原文/澄清中有对应证据。
   - `followercount` 无证据门禁：缺失或“不限”由本地边界默认落库全量区间 `[0,999999999]`，`[0,999999999]` 是合法落库值，不弹窗。
-  - `projectStartStart`/`projectStartEnd`（可选）：只能传明确日期，需原文证据，且开始不晚于结束。
+  - `projectStartStart`/`projectStartEnd`（可选）：只能传明确日期，需原文或澄清中带项目/档期语境的证据；无年份中文日期可匹配已解析的同年日期，证据自带年份时必须同年，且开始不晚于结束。
 - 布尔字符串字段（`hasOrganization`、`hasOrder30day`、`hasSocial30day`）必须是 `"true"`/`"false"`。
 - 字符串字段类型校验；`rawMessagesJson` 结构校验。
 - 容器不可读（不是对象，或缺非空 `original`/对象 `parse_outputs`）时，不额外报告依赖容器取证的品牌、数量、返点、报价、截止时间、抖音视频类型和可选项目日期问题，避免把同一结构问题级联成业务值“没有证据”的假错误；其他可独立判断的缺失或格式问题仍照常聚合。
@@ -102,7 +102,7 @@
 - `rank_creators`：已废弃，正式链路不再调用。工具仍暴露于 Provider，live schema 为 `inquiry_ids`（array|null）+ `requirement_id`（string|null），不消费 `csv_file_path`。
 - `sync_mcn_inquiry_status`：`{requirement_id, project_id, supplierIds}` → `data.inquiries[].inquiry_id`（`created`/`reused`）；返回的 `inquiry_ids` 直接用于 ingest。
 - `create_with_distributions`：required = [`requirement_id`, `description`, `wechat_notification_message`]；`supplierIds`/`supplier_name` 可选，业务规则不变（两侧恒传数组、空侧 `[]`、至少一侧非空）。
-- `manual_source_creators` 固定只传 `{requirement_id}`，不传 `demand` 或 `num`，需求由 Provider 从后台读取。测试环境 live schema 已确认启动工具只有 `requirement_id`，状态查询为 `manual_source_creators_status({requirement_id, batch_id, num})`。Hook 通过 `MANUAL_SOURCE_TARGET_NUM` 提示状态查询所需的梯度取数数量（10 人→30、20 人→50、50 人→100），不能重复乘倍数，交付目标仍为用户需求人数；只有当前环境 live schema required `num` 时才并入远端调用。字段配置缺失时 Provider 应在启动调用返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` / `REQUIREMENT_COLUMNS_UNAVAILABLE` 并停止，而不是延迟到打分终态；当前插件对启动和打分两处错误均生成同 requirement 字段选择恢复指令，不缓存或重建 columns，只保留本轮可信 `csv_file_path` 用于恢复时精确重提打分。
+- `manual_source_creators` 固定只传 `{requirement_id}`，不传 `demand` 或 `num`，需求由 Provider 从后台读取。测试环境 live schema 已确认启动工具只有 `requirement_id`，状态查询为 `manual_source_creators_status({requirement_id, batch_id, num})`。Hook 通过 `MANUAL_SOURCE_TARGET_NUM` 提示状态查询所需的梯度取数数量（示例：5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，非穷举，表外人数同样按同一梯度计算），不能重复乘倍数，交付目标仍为用户需求人数；只有当前环境 live schema required `num` 时才并入远端调用。字段配置缺失时 Provider 应在启动调用返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` / `REQUIREMENT_COLUMNS_UNAVAILABLE` 并停止，而不是延迟到打分终态；当前插件对启动和打分两处错误均生成同 requirement 字段选择恢复指令，不缓存或重建 columns，只保留本轮可信 `csv_file_path` 用于恢复时精确重提打分。
 - `score_manual_source_csv`：`{requirement_id, csv_file_path}` → 返回 `job_id`；`score_manual_source_csv_status({job_id})` 轮询至终态 → final workbook URL。`csv_file_path` 只接受当前 `file_bridge` 返回值（当前实现为未签名 OSS URL），绝不传本机工作区路径或自行构造的 URL。若打分阶段返回缺字段配置错误，字段提交后只用同一 requirement 与该可信 `csv_file_path` 重提打分，不重跑搜索、补全或 `file_bridge`，且处理行数不等于最终成功。
 - 回收链：`sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})` → 返回 `data.inquiries[].inquiry_id` → `ingest_mcn_submissions({inquiry_ids})` → `get_ingest_job` 轮询至 `succeeded`/`partially_succeeded`；终态只回一份预览 Excel（`excel_file_url` + `excel_columns`），无 links CSV，之后 ypscan_save_creator_links 读取预览并派生 links CSV → 原生补全 → `file_bridge(manual_source)` → 打分。
 
@@ -115,13 +115,13 @@
 | `validate_requirement` | 校验并创建当前单平台需求记录（会写入）。按当前 customer_demands 列契约直接传顶层参数，不用 payload 包装或旧字段名；platform 只接受 xiaohongshu/douyin，需求完整时 status="ready"。成功后取 data.requirement_id 作为需求 ID（缺失时用 data.id；demand_id 不是需求 ID）。 |
 | `search_creators` | 按当前需求的已保存筛选条件检索候选达人并写入候选池，返回实际生效筛选、排除统计与去重候选数。零匹配也是成功结果；本工具不自动切换功能或放宽条件，成功后继续 rank_mcns。 |
 | `rank_mcns` | 按当前需求对候选达人所属机构排序，返回每家机构的排名、独立覆盖达人、返点、综合分与机构 ID，并提供排名 Excel 下载地址。本工具不选择收件机构，也不发送询价。 |
-| `select_inquiry_form_fields` | 支持 source_requirement_id 继承和 force_reselect 强制重选；configured 表示当前需求配置成功，selection_required 返回 URL 待提交，error 暂停。不返回字段数组。 |
+| `select_inquiry_form_fields` | 期望支持 source_requirement_id 继承和 force_reselect 强制重选；当前 test live schema 尚未提供这两个参数。configured 表示当前需求配置成功，selection_required/opened 返回 URL 待提交，error 暂停。不返回字段数组。 |
 | `create_with_distributions` | 按需求已保存的字段配置创建询价项目并向指定机构分发（含企微发送）。成功只代表分发已创建；是否送达以 Provider 回执为准，不要自动重发。 |
 | `sync_mcn_inquiry_status` | 为已分发项目创建或复用机构询价映射。用户报告机构已回填时先调用本工具，用返回的 inquiry_ids 直接调用 ingest_mcn_submissions；同步成功不代表机构已填表。 |
 | `ingest_mcn_submissions` | 对非空询价启动机构回填采集，返回 job_id。用 sync_mcn_inquiry_status 返回的 inquiry_ids 调用；受理后用 get_ingest_job 轮询到 succeeded 或 partially_succeeded。 |
 | `get_ingest_job` | 查询机构回填采集任务的状态、各询价结果与预览 Excel 下载地址。轮询到 succeeded/partially_succeeded 后保存预览表；partially_succeeded 需如实报告未回填或失败的机构。 |
 | `manual_source_creators` | 按指定需求后台保存的完整有效需求启动手动拓展搜索，只传 requirement_id。同步返回候选 links CSV；异步返回 batch_id，用 manual_source_creators_status 查询。 |
-| `manual_source_creators_status` | 查询手动拓展任务状态并获取候选 links CSV。未完成时用同一 requirement_id、batch_id、num 继续查询，不要重新提交搜索；num 为本批取候选链接数量，由调用方按目标人数梯度计算并传入（当前 10 人→30、20 人→50、50 人→100）。 |
+| `manual_source_creators_status` | 查询手动拓展任务状态并获取候选 links CSV。未完成时用同一 requirement_id、batch_id、num 继续查询，不要重新提交搜索；num 为本批取候选链接数量，由调用方按目标人数梯度计算并传入（示例：5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，非穷举）。 |
 | `score_manual_source_csv` | 为已补全达人详情的 CSV 启动或恢复评分任务，返回 job_id。csv_file_path 传当前 file_bridge 返回的 CSV URL；受理后用 score_manual_source_csv_status 轮询。 |
 | `score_manual_source_csv_status` | 查询评分任务的行处理进度与最终工作簿下载地址。仅终态且返回可下载地址时保存工作簿；行评分成功不等于工作簿可交付。 |
 | `rank_creators` | 遗留机构提交排序工具：当前询价回收流程不使用（回收走预览表、原生补全与 CSV 评分链路）。仅保留兼容，不要按旧链路调用。 |

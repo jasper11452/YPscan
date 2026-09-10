@@ -3,7 +3,15 @@ import globals from "globals";
 
 export default [
   {
-    ignores: ["node_modules/**", ".ua/**", "docs/**", "skills/**", "benchmarks/**", "*.tgz"],
+    ignores: [
+      "node_modules/**",
+      ".ua/**",
+      "docs/**",
+      "skills/**",
+      "benchmarks/**",
+      "*.tgz",
+      ".ypscan-loop/**",
+    ],
   },
   js.configs.recommended,
   {

@@ -1583,6 +1583,22 @@ test("preflight accepts explicit project dates and rejects a reversed range", ()
   );
 });
 
+test("preflight accepts year-less Chinese project dates that match the canonical year", () => {
+  const now = new Date(2026, 7, 24, 10, 0, 0);
+  const params = {
+    ...completeValidateParams(),
+    projectStartStart: "2026-09-10",
+    projectStartEnd: "2026-09-20",
+    rawMessagesJson: {
+      ...completeValidateParams().rawMessagesJson,
+      original:
+        "抖音项目：项目A；品牌：品牌A；定制视频；30位；单价5万元；返点25%以上；粉丝不限；提报截止2026-08-25 12:00:00；档期9月10日-9月20日。",
+    },
+  };
+
+  assert.deepEqual(validateRequirementPreflight(params, { now }), []);
+});
+
 test("preflight does not add a project clock to date-only evidence", () => {
   const now = new Date(2026, 7, 24, 10, 0, 0);
   const params = {
@@ -1922,8 +1938,11 @@ test("current-platform metric fragments and neutral compatibility shapes remain 
 
 test("manual source candidate pool scales down by target tier", () => {
   assert.equal(manualSourcePoolSize(1), 3);
+  assert.equal(manualSourcePoolSize(5), 15);
+  assert.equal(manualSourcePoolSize(6), 18);
   assert.equal(manualSourcePoolSize(10), 30);
   assert.equal(manualSourcePoolSize(20), 50);
+  assert.equal(manualSourcePoolSize(30), 60);
   assert.equal(manualSourcePoolSize(50), 100);
 
   let previous = 0;

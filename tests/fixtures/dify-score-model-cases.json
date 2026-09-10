@@ -1,0 +1,67 @@
+{
+  "purpose": "冻结的草稿模型筛查样例（M3/7.3）。本次仅版本化，未运行；需要草稿模型调用授权后每场景同输入重复 5 次。",
+  "status": "not_run",
+  "runs_per_scenario": 5,
+  "categories": ["net_price", "quoted_price", "double_negation", "missing_evidence"],
+  "scenarios": [
+    {
+      "id": "M1",
+      "category": "net_price",
+      "title": "净价条件只有普通报价（超上限）",
+      "condition": {"id": "H3", "requirement": "返点后到手单价不超过10000元", "scope": "creator_commercial", "price_basis": "rebate_net"},
+      "evidence": {"profile": {"视频报价": "12000"}, "records": [{"id": "R1", "data": {"视频标题": "红烧肉教程", "正文": "步骤"}}]},
+      "program_status": "UNKNOWN",
+      "expected_behavior": "评分与复核都不得把 12000 的原始报价判为净价 FAIL；应保持 UNKNOWN 并可上报 unverified_price_basis。",
+      "forbidden": ["case H3 判 FAIL", "文案写‘价格超过预算’"]
+    },
+    {
+      "id": "M2",
+      "category": "net_price",
+      "title": "净价条件只有普通报价（在上限内）",
+      "condition": {"id": "H3", "requirement": "返点后到手单价不超过10000元", "scope": "creator_commercial", "price_basis": "rebate_net"},
+      "evidence": {"profile": {"视频报价": "8000"}, "records": [{"id": "R1", "data": {"视频标题": "红烧肉教程", "正文": "步骤"}}]},
+      "program_status": "UNKNOWN",
+      "expected_behavior": "不得把 8000 的原始报价判为净价 PASS；应保持 UNKNOWN。",
+      "forbidden": ["case H3 判 PASS", "文案写‘价格符合预算’"]
+    },
+    {
+      "id": "M3",
+      "category": "quoted_price",
+      "title": "普通报价条件仍确定性核验",
+      "condition": {"id": "H2", "requirement": "视频报价最高10000元", "scope": "creator_commercial", "price_basis": "quoted"},
+      "evidence": {"profile": {"视频报价": "12000"}, "records": [{"id": "R1", "data": {"视频标题": "红烧肉教程", "正文": "步骤"}}]},
+      "program_status": "FAIL",
+      "expected_behavior": "quoted 条件下报价 12000 应判 FAIL，program FAIL 必须保留。",
+      "forbidden": ["把程序 FAIL 改写成 PASS 或 UNKNOWN"]
+    },
+    {
+      "id": "M4",
+      "category": "double_negation",
+      "title": "双重否定文案与程序 FAIL 冲突",
+      "condition": {"id": "H1", "requirement": "视频报价不超过100000元", "scope": "creator_commercial", "price_basis": "quoted"},
+      "initial_reason": "报价不是不符合预算",
+      "program_status": "FAIL",
+      "expected_behavior": "正确理解双重否定应给出 PASS verdict，并触发 review_conflict；review_json 必须把同 id PASS/FAIL 冲突标为复核失败。",
+      "forbidden": ["把‘不是不符合预算’判为 UNKNOWN 以掩盖冲突", "复核失败后仍采用复核结论"]
+    },
+    {
+      "id": "M5",
+      "category": "missing_evidence",
+      "title": "缺正文下的正面口播主张不得放行",
+      "condition": {"id": "H4", "requirement": "内容类型为美食教程", "scope": "creator_objective"},
+      "evidence": {"profile": {}, "records": [{"id": "R1", "data": {"视频标题": "红烧肉教程"}}]},
+      "expected_behavior": "没有正文或转写时，‘口播讲解清晰’不得出现在 strengths/weaknesses/reason；缺证据用 evidence_gaps.missing_content 上报。",
+      "forbidden": ["输出‘口播清晰/表达清晰/出镜自然’等正面主张"]
+    },
+    {
+      "id": "M6",
+      "category": "missing_evidence",
+      "title": "缺证与正面断言混合句不得整体放行",
+      "condition": {"id": "H4", "requirement": "内容类型为美食教程", "scope": "creator_objective"},
+      "evidence": {"profile": {}, "records": [{"id": "R1", "data": {"视频标题": "红烧肉教程"}}]},
+      "mixed_sentence": "未提供口播样本，但口播讲解清晰",
+      "expected_behavior": "混合句仍按缺少正文处理：正面断言被删除或改写为受控缺证说明，不得作为正面证据输出。",
+      "forbidden": ["保留‘但口播讲解清晰’作为优点"]
+    }
+  ]
+}

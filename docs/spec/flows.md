@@ -46,7 +46,7 @@ validate_requirement → search_creators → rank_mcns → 输出五列表格
 ## 4. 手动拓展链路
 
 ```text
-validate_requirement → select_inquiry_form_fields（configured 直接继续；URL 等用户提交并回复“好了”）
+validate_requirement → select_inquiry_form_fields（configured 直接继续；selection_required/opened 等字段页提交并回复“好了”）
 → manual_source_creators(requirement_id)
 → 同步 links CSV：ypscan_save_artifact(manual_creator_links) → ypscan_save_creator_links 归一化
   → ypscan_summarize_manual_scores 取得当前批 → 原生补全(最多20人) → file_bridge(manual_source，仅当前批)
@@ -59,9 +59,9 @@ validate_requirement → select_inquiry_form_fields（configured 直接继续；
 
 关键约束：
 
-- 新 requirement 必须重新调用 `select_inquiry_form_fields`；同一会话已提交字段通过 source_requirement_id 继承，用户要求重选才传 force_reselect=true；configured 时直接继续。字段 URL 输出后当前轮次结束，只有用户为该 requirement 提交并明确回复“好了”后才能调用 `manual_source_creators`，不得试调后端探测是否会强制报错。
+- 新 requirement 必须重新调用 `select_inquiry_form_fields`；同一会话已提交字段通过 source_requirement_id 继承，用户要求重选才传 force_reselect=true；configured 时直接继续。`selection_required`/`opened` 只表示字段页已生成、等待提交，不等于 configured；字段 URL 输出后当前轮次结束，只有用户为该 requirement 提交并明确回复“好了”后才能调用 `manual_source_creators`，不得试调后端探测是否会强制报错。
 - `manual_source_creators` 固定只传 `{requirement_id}`，不传 `demand` 或 `num`，需求由 Provider 从后台读取；完整有效需求、澄清及已确认放宽须先通过 `validate_requirement` 保存。状态查询按当前 live schema 传入 `num`。
-- 异步轮询：提交返回 batch_id 后等 30 秒再第 1 次查询状态工具；当前环境 schema required `num` 时，按目标人数梯度取数（10 人→30、20 人→50、50 人→100）作为取数数量，通过 `MANUAL_SOURCE_TARGET_NUM` 提示并在远端调用时附带，提示值已是梯度值，不得重复乘倍数；缺少需求记录时沿用上次查询 num。最终交付目标与不足判断仍使用用户需求人数。之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
+- 异步轮询：提交返回 batch_id 后等 30 秒再第 1 次查询状态工具；当前环境 schema required `num` 时，按目标人数梯度取数（示例：5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，非穷举，表外人数同样按同一梯度计算）作为取数数量，通过 `MANUAL_SOURCE_TARGET_NUM` 提示并在远端调用时附带，提示值已是梯度值，不得重复乘倍数；缺少需求记录时沿用上次查询 num。最终交付目标与不足判断仍使用用户需求人数。之后每 30 秒一次，单轮累计最多 10 次；第 10 次未完成如实报告并停止，不弹窗、不自动查第 11 次、不重复提交或换 ID。
 - 状态响应成功且 `completed=true、selected_count=0`（success_count 缺失或为0），无文件时进入零结果复核；不再轮询、不盲目重试、不生成空文件或宣称已交付。参数一致才按下文优先调整关键词和人设；仍不足再提示其他条件并等待该项确认。
 - 打分阶段：`score_manual_source_csv({requirement_id, csv_file_path})` 返回 job_id 后，按 30s×10 轮询 `score_manual_source_csv_status({job_id})`，终态后保存 manual_score_batch；该单批表是内部中间产物，不展示表格、路径或链接，再调用本地汇总工具决定下一步。打分提交或状态结果若返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` / `REQUIREMENT_COLUMNS_UNAVAILABLE`（含明确缺少 selected inquiry columns 消息，即使外层包裹通用任务错误也必须识别），停止轮询并为同一 requirement 按字段工具卡恢复配置；configured 或字段页提交并回复“好了”后只用同一 requirement 与本轮 `file_bridge` 原始 `csv_file_path` 重提一次打分——Hook 保留到该可信路径时直接附带精确 `SCORE_MANUAL_SOURCE_CSV_ARGS`，按原样重提，不重搜、不重补全、不重跑 `file_bridge`，也不把 `success_count` 当最终成功。
 - links CSV 到达后：先 `ypscan_save_artifact(artifact_kind="manual_creator_links", file_url=<当前 Provider URL>)`（内部产物，不主动向用户展示）；再用 `ypscan_save_creator_links({requirement_id, platform, links_csv_path})` 归一化为受控三列 links CSV（缺 `creator_id` 时按平台主页规则从 url 推导，短链或无法推导、ID 与主页不匹配时整份失败停止，不进入补全）；登录窗口与 Cookie 由宿主补全工具内部处理；宿主未开放对应补全工具时如实报告并停止补全链路。原生补全每批只信任 `csv_file`、`successful_author_ids`、`failed_author_ids`；部分成功保留成功 CSV，不自动重试整批；某批 `csv_file` 缺失则停止 file_bridge/打分并报告失败达人，该批失败名单已登记，汇总不再重排；用户明确要求重试且成功后以成功记录继续。

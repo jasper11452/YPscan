@@ -176,6 +176,27 @@ test("parse review distinguishes missing parser output from missing user informa
   assert.match(text, /一次.*过期/u);
 });
 
+for (const [code, message] of [
+  ["DIFY_TIMEOUT", "需求解析请求超时"],
+  ["DIFY_HTTP_ERROR", "需求解析返回 HTTP 403"],
+]) {
+  test(`${code} pauses before validate instead of treating parse as usable`, () => {
+    const { hooks } = registeredPlugin();
+    const text = directiveText(
+      hooks.get("tool_result_persist")({
+        toolName: "ypscan_parse_requirement",
+        message: toolMessage({ success: false, error: { code, message } }),
+      }),
+    );
+    assert.match(text, /已暂停/u);
+    assert.match(text, /ASK_USER_QUESTION_ARGS=/u);
+    assert.doesNotMatch(
+      text,
+      /SELECT_INQUIRY_FORM_FIELDS_ARGS=|SEARCH_CREATORS_ARGS=|SAVE_ARTIFACT_ARGS=/u,
+    );
+  });
+}
+
 test("flow hooks register the validate_requirement preflight gate", () => {
   const { hooks } = registeredPlugin();
   assert.deepEqual([...hooks.keys()].sort(), [
@@ -526,6 +547,7 @@ test("validate_requirement success reuses the business mode recorded by the pref
   assert.match(manual, /字段选择 URL 输出后本轮必须结束并等待/u);
   assert.match(manual, /追加 source_requirement_id/u);
   assert.match(manual, /status=configured.*直接按原分支继续/u);
+  assert.match(manual, /selection_required、opened 或旧版有效 URL/u);
   assert.doesNotMatch(manual, /SEARCH_CREATORS_ARGS=/u);
 
   assert.equal(
@@ -626,6 +648,55 @@ test("quantityTotal stays per requirement and never feeds a later requirement", 
     { requirement_id: reqB, batch_id: 8 },
   );
   assert.match(manualSource(reqB, 8), /MANUAL_SOURCE_TARGET_NUM=30/u);
+});
+
+test("manual source num directive keeps the computed target for out-of-table quantities", () => {
+  const { hooks } = registeredPlugin();
+  const before = hooks.get("before_tool_call");
+  const persist = hooks.get("tool_result_persist");
+  const validateEvent = { toolName: "mcp__ypscan__validate_requirement" };
+
+  for (const [quantityTotal, expectedNum] of [
+    [5, 15],
+    [6, 18],
+    [30, 60],
+  ]) {
+    const requirementId = `${quantityTotal}`.padStart(32, "0");
+    const context = { sessionKey: `num-exact-${quantityTotal}` };
+    assert.equal(
+      before(
+        { ...validateEvent, params: canonicalValidateParams("手动拓展", quantityTotal) },
+        context,
+      ).block,
+      undefined,
+    );
+    persist(
+      {
+        ...validateEvent,
+        params: { quantityTotal },
+        message: toolMessage({ success: true, data: { requirement_id: requirementId } }),
+      },
+      context,
+    );
+    const text = directiveText(
+      persist(
+        {
+          toolName: "manual_source_creators",
+          message: toolMessage({
+            success: true,
+            requirement_id: requirementId,
+            data: { batch_id: 1 },
+          }),
+        },
+        context,
+      ),
+    );
+    assert.match(text, new RegExp(`MANUAL_SOURCE_TARGET_NUM=${expectedNum}(?!\\d)`, "u"));
+    // 示例不是档位表也不是穷举：表外人数同样由 Hook 算好并写进 MANUAL_SOURCE_TARGET_NUM。
+    assert.match(text, /5 人→15/u);
+    assert.match(text, /30 人→60/u);
+    assert.match(text, /不是档位/u);
+  }
 });
 
 test("derived creator links CSV records are scoped per requirement", () => {
@@ -1187,6 +1258,25 @@ for (const configurationSource of ["existing", "inherited"]) {
   });
 }
 
+test("provider opened status is a valid field-selection wait state", () => {
+  const persist = registeredPlugin().hooks.get("tool_result_persist");
+  const text = directiveText(
+    persist({
+      toolName: "mcp__ypscan__select_inquiry_form_fields",
+      params: { requirement_id: "req-new" },
+      message: toolMessage({
+        success: true,
+        status: "opened",
+        requirement_id: "req-new",
+        url: "https://example.invalid/fields",
+      }),
+    }),
+  );
+  assert.match(text, /FIELD_SELECTION_URL=https:\/\/example.invalid\/fields/u);
+  assert.match(text, /本轮必须结束并等待/u);
+  assert.doesNotMatch(text, /未知状态|ASK_USER_QUESTION_ARGS=/u);
+});
+
 for (const payload of [
   { success: true, status: "configured", requirement_id: "wrong" },
   { success: false, status: "configured", requirement_id: "req-new" },
@@ -1233,6 +1323,8 @@ test("explicit reselection opens the page even when a source was supplied", () =
 for (const payload of [
   { success: true, status: "selection_required", requirement_id: "wrong" },
   { success: true, status: "selection_required" },
+  { success: true, status: "opened", requirement_id: "wrong" },
+  { success: true, status: "opened" },
   { success: true, requirement_id: "wrong" },
   { success: true, data: { status: "selection_required", requirement_id: "wrong" } },
 ]) {

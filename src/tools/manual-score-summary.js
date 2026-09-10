@@ -12,8 +12,27 @@ import { manualSourcePoolSize } from "../contract/registry.js";
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const BATCH_SIZE = 20;
+const RELEVANCE_WEIGHT = 0.7;
+const COST_EFFECTIVENESS_WEIGHT = 0.3;
+const CPM_WEIGHT = 0.6;
+const CPE_WEIGHT = 0.4;
 const PLATFORM_HEADERS = { douyin: "星图ID", xiaohongshu: "蒲公英ID" };
 const PLATFORM_LABELS = { douyin: "抖音", xiaohongshu: "小红书" };
+// 性价比只用同批已有商业数据做相对比较，不引入新的 Provider 字段或绝对基准。
+const COST_EFFECTIVENESS_HEADERS = {
+  douyin: { cpm: ["植入视频-预期CPM"], cpe: ["植入视频-预期CPE"] },
+  xiaohongshu: {
+    price: ["视频笔记一口价", "视频笔记报价", "视频报价"],
+    reach: ["合作_视频&图文_阅读中位数", "日常_视频&图文_阅读中位数"],
+    engagement: ["合作_视频&图文_互动中位数", "日常_视频&图文_互动中位数"],
+  },
+};
+const HOMEPAGE_HEADERS = new Set(["星图主页", "抖音主页", "小红书主页"]);
+const DOCUMENT_RELATIONSHIP_NAMESPACE =
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const PACKAGE_RELATIONSHIP_NAMESPACE =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+const HYPERLINK_RELATIONSHIP_TYPE = `${DOCUMENT_RELATIONSHIP_NAMESPACE}/hyperlink`;
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const text = (value) => (value == null ? "" : String(value));
 
@@ -125,7 +144,18 @@ export async function readManualScoreWorkbook(source, { workspaceDir, requiremen
       if (text(grid[r][c]).trim() === "评分数量") countCells.push(`${columnName(c + 1)}${r + 1}`);
     }
   }
-  const template = { archive, sheetPath, document, headerRow: index + 1, countCells };
+  const homepageColumns = headers.flatMap((header, column) =>
+    HOMEPAGE_HEADERS.has(header) ? [column] : [],
+  );
+  const template = {
+    archive,
+    sheetPath,
+    document,
+    headerRow: index + 1,
+    countCells,
+    homepageColumns,
+    scoreColumn,
+  };
   const rows = [];
   for (const [offset, row] of grid.slice(index + 1).entries()) {
     const cells = Array.from({ length: headers.length }, (_, col) => text(row[col]));
@@ -154,14 +184,176 @@ function columnName(index) {
   return name;
 }
 
+function setNumericCell(rowXml, columnIndex, value) {
+  if (columnIndex < 0) return;
+  const ref = columnName(columnIndex);
+  const cell = (rowXml.c ?? []).find((item) => text(item.$?.r).replace(/\d+$/u, "") === ref);
+  if (!cell) return;
+  cell.$.t = "n";
+  delete cell.is;
+  cell.v = [String(value)];
+}
+
+function positiveNumber(value) {
+  const parsed = Number(text(value).trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function columnIndexes(headers, names) {
+  return names.flatMap((name) => (headers.indexOf(name) === -1 ? [] : [headers.indexOf(name)]));
+}
+
+function firstPositive(cells, indexes) {
+  for (const index of indexes) {
+    const value = positiveNumber(cells[index]);
+    if (value != null) return value;
+  }
+  return null;
+}
+
+function percentileScores(values) {
+  const distinct = [...new Set(values.filter((value) => value != null))].sort((a, b) => a - b);
+  if (distinct.length < 2) return values.map(() => null);
+  return values.map((value) =>
+    value == null
+      ? null
+      : (100 * (distinct.length - 1 - distinct.indexOf(value))) / (distinct.length - 1),
+  );
+}
+
+/** 同批同平台相对性价比：成本越低分越高；数据缺失返回 null，由调用方按同批中位数代入。 */
+function costEffectivenessScores(headers, rows, platform) {
+  const config = COST_EFFECTIVENESS_HEADERS[platform];
+  if (!config || !rows.length) return new Map();
+  const indexes = Object.fromEntries(
+    Object.entries(config).map(([key, names]) => [key, columnIndexes(headers, names)]),
+  );
+  const cpm = rows.map((row) => {
+    if (platform === "douyin") return firstPositive(row.cells, indexes.cpm);
+    const price = firstPositive(row.cells, indexes.price);
+    const reach = firstPositive(row.cells, indexes.reach);
+    return price != null && reach != null ? (price * 1000) / reach : null;
+  });
+  const cpe = rows.map((row) => {
+    if (platform === "douyin") return firstPositive(row.cells, indexes.cpe);
+    const price = firstPositive(row.cells, indexes.price);
+    const engagement = firstPositive(row.cells, indexes.engagement);
+    return price != null && engagement != null ? price / engagement : null;
+  });
+  const cpmScores = percentileScores(cpm);
+  const cpeScores = percentileScores(cpe);
+  return new Map(
+    rows.map((row, index) => {
+      const cpmScore = cpmScores[index];
+      const cpeScore = cpeScores[index];
+      const score =
+        cpmScore == null
+          ? cpeScore
+          : cpeScore == null
+            ? cpmScore
+            : CPM_WEIGHT * cpmScore + CPE_WEIGHT * cpeScore;
+      return [row.creator_id, score];
+    }),
+  );
+}
+
+function externalHttpUrl(value) {
+  const target = text(value).trim();
+  try {
+    const url = new URL(target);
+    return ["http:", "https:"].includes(url.protocol) ? target : null;
+  } catch {
+    return null;
+  }
+}
+
+function worksheetRelationshipsPath(sheetPath) {
+  const separator = sheetPath.lastIndexOf("/");
+  const directory = sheetPath.slice(0, separator);
+  const fileName = sheetPath.slice(separator + 1);
+  return `${directory}/_rels/${fileName}.rels`;
+}
+
+function insertHyperlinks(sheet, hyperlinks) {
+  const followingElements = new Set([
+    "printOptions",
+    "pageMargins",
+    "pageSetup",
+    "headerFooter",
+    "rowBreaks",
+    "colBreaks",
+    "customProperties",
+    "cellWatches",
+    "ignoredErrors",
+    "smartTags",
+    "drawing",
+    "legacyDrawing",
+    "legacyDrawingHF",
+    "picture",
+    "oleObjects",
+    "controls",
+    "webPublishItems",
+    "tableParts",
+    "extLst",
+  ]);
+  const entries = Object.entries(sheet);
+  const nextIndex = entries.findIndex(([key]) => followingElements.has(key));
+  const insertionIndex = nextIndex === -1 ? entries.length : nextIndex;
+  return Object.fromEntries([
+    ...entries.slice(0, insertionIndex),
+    ["hyperlinks", [{ hyperlink: hyperlinks }]],
+    ...entries.slice(insertionIndex),
+  ]);
+}
+
+async function addHomepageHyperlinks(archive, sheetPath, document, headerRow, columns, rows) {
+  const links = rows.flatMap((row, rowIndex) =>
+    columns.flatMap((column) => {
+      const target = externalHttpUrl(row.cells[column]);
+      return target ? [{ ref: `${columnName(column)}${headerRow + rowIndex + 1}`, target }] : [];
+    }),
+  );
+  if (!links.length) return;
+
+  const relationshipPath = worksheetRelationshipsPath(sheetPath);
+  const relationships = archive[relationshipPath]
+    ? await parseStringPromise(strFromU8(archive[relationshipPath]))
+    : { Relationships: { $: { xmlns: PACKAGE_RELATIONSHIP_NAMESPACE }, Relationship: [] } };
+  const root = relationships.Relationships;
+  root.$ ??= { xmlns: PACKAGE_RELATIONSHIP_NAMESPACE };
+  const records = (root.Relationship ??= []);
+  const usedIds = new Set(records.map((record) => record.$?.Id).filter(nonemptyString));
+  let sequence = 1;
+  const hyperlinks = links.map(({ ref, target }) => {
+    while (usedIds.has(`rId${sequence}`)) sequence += 1;
+    const id = `rId${sequence}`;
+    usedIds.add(id);
+    sequence += 1;
+    records.push({
+      $: { Id: id, Type: HYPERLINK_RELATIONSHIP_TYPE, Target: target, TargetMode: "External" },
+    });
+    return { $: { ref, "r:id": id } };
+  });
+  archive[relationshipPath] = strToU8(
+    new Builder({ renderOpts: { pretty: false } }).buildObject(relationships),
+  );
+  const sheet = document.worksheet;
+  sheet.$ ??= {};
+  sheet.$["xmlns:r"] = DOCUMENT_RELATIONSHIP_NAMESPACE;
+  document.worksheet = insertHyperlinks(sheet, hyperlinks);
+}
+
 async function saveSummaryWorkbook(workspaceDir, requirementId, template, rows) {
-  const { archive, sheetPath, document, headerRow, countCells } = template;
+  const { archive, sheetPath, document, headerRow, countCells, homepageColumns, scoreColumn } =
+    template;
   const sheet = document.worksheet;
   const prefix = sheet.sheetData[0].row.filter((row) => Number(row.$.r) <= headerRow);
   const body = rows.map((row, index) => {
     const moved = structuredClone(row.rowXml);
     moved.$.r = String(headerRow + index + 1);
     for (const cell of moved.c ?? []) cell.$.r = cell.$.r.replace(/\d+$/u, moved.$.r);
+    if (row.display_score != null && row.display_score !== row.score)
+      setNumericCell(moved, scoreColumn, row.display_score);
     return moved;
   });
   for (const row of prefix) {
@@ -181,6 +373,7 @@ async function saveSummaryWorkbook(workspaceDir, requirementId, template, rows) 
     if (sheet[key]?.[0]?.$.ref)
       sheet[key][0].$.ref = sheet[key][0].$.ref.replace(/\d+$/u, String(headerRow + rows.length));
   }
+  await addHomepageHyperlinks(archive, sheetPath, document, headerRow, homepageColumns, rows);
   archive[sheetPath] = strToU8(
     new Builder({ renderOpts: { pretty: false } }).buildObject(document),
   );
@@ -308,7 +501,36 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
       }
     }
     const rows = candidateIds.flatMap((id) => (scoredById.has(id) ? [scoredById.get(id)] : []));
-    rows.sort((a, b) => b.score - a.score);
+    // 综合分 = 0.7×相关度 + 0.3×性价比；性价比在同批同平台内按成本百分位归一化。
+    // 性价比数据不足的行按同批中位数代入，不当作免费或 0 分；整批都没有数据时保留原相关度分。
+    const scoredRows = rows.filter((row) => row.score !== 0);
+    const costEffectiveness = costEffectivenessScores(headers, scoredRows, platform);
+    const validCostEffectiveness = [...costEffectiveness.values()].filter((value) => value != null);
+    let medianCostEffectiveness = null;
+    if (validCostEffectiveness.length) {
+      const sorted = [...validCostEffectiveness].sort((a, b) => a - b);
+      medianCostEffectiveness =
+        sorted.length % 2 === 1
+          ? sorted[(sorted.length - 1) / 2]
+          : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+    }
+    let pendingCostEffectiveness = 0;
+    for (const row of rows) {
+      if (row.score === 0 || !validCostEffectiveness.length) {
+        row.display_score = row.score;
+        continue;
+      }
+      const cost = costEffectiveness.get(row.creator_id);
+      if (cost == null) pendingCostEffectiveness += 1;
+      const used = cost == null ? medianCostEffectiveness : cost;
+      row.display_score =
+        Math.round((RELEVANCE_WEIGHT * row.score + COST_EFFECTIVENESS_WEIGHT * used) * 10) / 10;
+    }
+    rows.sort(
+      (a, b) =>
+        b.display_score - a.display_score ||
+        (costEffectiveness.get(b.creator_id) ?? -1) - (costEffectiveness.get(a.creator_id) ?? -1),
+    );
     // 综合分为 0 的评分行不写入最终汇总表（用户要求）。0 分通常来自评分失败、资料无效或数据不足，
     // 也可能是有效评估但内容/类型相关度均为 0 级；该行已返回，不按缺行处理，也不自动重评。
     const deliverableRows = rows.filter((row) => row.score !== 0);
@@ -329,6 +551,7 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
       recommended_count: recommendedCount,
       scored_count: rows.length,
       excluded_zero_score_count: excludedZeroScoreCount,
+      cost_effectiveness_pending_count: pendingCostEffectiveness,
       completion_failed_count: failed.size,
       failed_author_ids: [...failed],
       unprocessed_count: remaining.length,
@@ -369,7 +592,7 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
       local_file_link: localFileMarkdownLink(saved.file_path),
       display_required: true,
       display_before_next_action: true,
-      user_visible_message: `已评分 ${rows.length} 位，推荐 ${recommendedCount} 位，目标 ${target} 位。${excludedZeroScoreCount ? `其中 ${excludedZeroScoreCount} 位综合分为 0，未写入汇总表。` : ""}`,
+      user_visible_message: `已评分 ${rows.length} 位，推荐 ${recommendedCount} 位，目标 ${target} 位。${excludedZeroScoreCount ? `其中 ${excludedZeroScoreCount} 位综合分为 0，未写入汇总表。` : ""}${pendingCostEffectiveness ? `另有 ${pendingCostEffectiveness} 位性价比数据不足，按同批中位数计入排序。` : ""}`,
     };
     return hostToolResult({ success: true, data: details, delivery }, { details });
   } catch (error) {

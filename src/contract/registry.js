@@ -1035,9 +1035,28 @@ function hasProjectDateEvidence(evidence, value) {
       ];
   const context =
     "(?:项目(?:开始|结束)(?:时间)?|档期|投放(?:时间|周期)?|执行(?:时间|周期|开始|结束)?|发布(?:时间)?|上线(?:时间)?|projectStartStart|projectStartEnd)";
-  return datePatterns.some((datePattern) =>
-    new RegExp(`${context}[^。；;\\n]{0,80}${datePattern}`, "iu").test(evidence),
-  );
+  if (
+    datePatterns.some((datePattern) =>
+      new RegExp(`${context}[^。；;\\n]{0,80}${datePattern}`, "iu").test(evidence),
+    )
+  ) {
+    return true;
+  }
+  if (hasTime) return false;
+
+  const contextPattern = new RegExp(context, "iu");
+  for (const dateMatch of evidence.matchAll(
+    /(?<!\d)(?:(\d{2,4})年)?(\d{1,2})月(\d{1,2})日/gu,
+  )) {
+    if (Number(dateMatch[2]) !== month || Number(dateMatch[3]) !== day) continue;
+    const index = dateMatch.index ?? 0;
+    if (!contextPattern.test(evidence.slice(Math.max(0, index - 80), index))) continue;
+    const evidenceYear = dateMatch[1]
+      ? Number(dateMatch[1].length === 2 ? `20${dateMatch[1]}` : dateMatch[1])
+      : null;
+    if (evidenceYear === null || evidenceYear === year) return true;
+  }
+  return false;
 }
 
 function supportedDouyinVideoTypeTiers(evidence) {

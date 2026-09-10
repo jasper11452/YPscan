@@ -1,0 +1,297 @@
+{
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "province": {
+        "items": {
+          "type": "string",
+          "enum": [
+            "北京市",
+            "天津市",
+            "上海市",
+            "重庆市",
+            "河北省",
+            "山西省",
+            "辽宁省",
+            "吉林省",
+            "黑龙江省",
+            "江苏省",
+            "浙江省",
+            "安徽省",
+            "福建省",
+            "江西省",
+            "山东省",
+            "河南省",
+            "湖北省",
+            "湖南省",
+            "广东省",
+            "海南省",
+            "四川省",
+            "贵州省",
+            "云南省",
+            "陕西省",
+            "甘肃省",
+            "青海省",
+            "台湾省",
+            "内蒙古自治区",
+            "广西壮族自治区",
+            "西藏自治区",
+            "宁夏回族自治区",
+            "新疆维吾尔自治区",
+            "香港特别行政区",
+            "澳门特别行政区"
+          ]
+        },
+        "type": "array",
+        "uniqueItems": true
+      },
+      "first_industry_id": {
+        "enum": [
+          "出行旅游",
+          "社交通讯",
+          "商务服务",
+          "房地产",
+          "交通工具",
+          "社会公共",
+          "实体书籍",
+          "机械设备",
+          "招商加盟",
+          "购物",
+          "医药健康",
+          "医疗机构",
+          "生活服务",
+          "休闲娱乐",
+          "丽人",
+          "教育培训",
+          "互联网电商服务",
+          "农资园艺",
+          "文化用品",
+          "运动户外"
+        ],
+        "type": "string"
+      },
+      "tag": {
+        "items": {
+          "type": "string",
+          "enum": [
+            "美妆",
+            "时尚",
+            "萌宠",
+            "测评",
+            "游戏",
+            "二次元",
+            "旅行",
+            "汽车",
+            "生活",
+            "音乐",
+            "舞蹈",
+            "美食",
+            "母婴亲子",
+            "运动健身",
+            "科技数码",
+            "教育培训",
+            "颜值达人",
+            "生活家居",
+            "才艺技能",
+            "影视娱乐",
+            "艺术文化",
+            "财经投资",
+            "三农",
+            "剧情搞笑",
+            "情感",
+            "园艺",
+            "房产",
+            "随拍",
+            "媒体号"
+          ]
+        },
+        "type": "array",
+        "uniqueItems": true,
+        "maxItems": 1
+      },
+      "tag_level_two": {
+        "items": {
+          "type": "string",
+          "enum": [
+            "美妆教程",
+            "妆容展示",
+            "护肤保养",
+            "美妆测评种草",
+            "穿搭",
+            "街拍",
+            "造型",
+            "时尚媒体",
+            "日常宠物",
+            "特别宠物",
+            "宠物周边",
+            "美妆测评",
+            "3C数码测评",
+            "汽车测评",
+            "美食产品测评",
+            "母婴产品测评",
+            "综合测评",
+            "酒店测评",
+            "游戏剧情",
+            "游戏解说",
+            "游戏资讯",
+            "游戏其他",
+            "游戏录屏",
+            "游戏集锦",
+            "二次元真人",
+            "动画漫画",
+            "配音声优",
+            "宅物手办",
+            "旅行记录",
+            "旅行攻略",
+            "旅行推荐",
+            "户外生活",
+            "汽车知识",
+            "汽车周边",
+            "生活记录",
+            "生活小窍门",
+            "好物推荐",
+            "健康养生",
+            "婚恋",
+            "歌曲演唱",
+            "乐器演奏",
+            "音乐教学",
+            "音乐其他",
+            "音乐剪辑",
+            "美食教程",
+            "乡村野食",
+            "美食其他",
+            "酒类",
+            "育儿科普",
+            "萌娃日常",
+            "亲子互动",
+            "测评种草",
+            "健身",
+            "极限运动",
+            "体育资讯",
+            "冰雪",
+            "垂钓",
+            "格斗",
+            "球类项目",
+            "综合体育",
+            "3C数码",
+            "家居电器",
+            "科技",
+            "考学培训",
+            "语言教学",
+            "个人管理",
+            "职业教育",
+            "美女",
+            "帅哥",
+            "硬装",
+            "软装",
+            "生活技巧",
+            "家居氛围",
+            "创意才能",
+            "手工",
+            "摄影",
+            "绘画",
+            "其他才艺",
+            "影视解说",
+            "影视混剪",
+            "明星资讯",
+            "综艺解说",
+            "综艺混剪",
+            "传统文化",
+            "人文科普",
+            "自然科学",
+            "传统金融",
+            "互联网金融",
+            "财经知识",
+            "剧情",
+            "搞笑",
+            "其他房产",
+            "房产知识",
+            "房产及投资",
+            "楼盘评测",
+            "楼市资讯",
+            "租房"
+          ]
+        },
+        "type": "array",
+        "uniqueItems": true,
+        "maxItems": 5
+      },
+      "link_link_cnt_by_industry__ge": {
+        "type": "string"
+      },
+      "link_link_cnt_by_industry__le": {
+        "type": "string"
+      },
+      "follower__ge": {
+        "type": "string"
+      },
+      "follower__le": {
+        "type": "string"
+      },
+      "price_by_video_type": {
+        "enum": ["植入视频", "定制视频"],
+        "type": "string"
+      },
+      "price_by_video_type__ge": {
+        "type": "string"
+      },
+      "price_by_video_type__le": {
+        "type": "string"
+      },
+      "sn_prospective_20_60_cpm__ge": {
+        "type": "string"
+      },
+      "sn_prospective_20_60_cpm__le": {
+        "type": "string"
+      },
+      "sn_prospective_20_60_cpe__ge": {
+        "type": "string"
+      },
+      "sn_prospective_20_60_cpe__le": {
+        "type": "string"
+      },
+      "sn_interact_rate_within_30d__ge": {
+        "type": "string"
+      },
+      "sn_interact_rate_within_30d__le": {
+        "type": "string"
+      },
+      "sn_play_over_rate_within_30d__ge": {
+        "type": "string"
+      },
+      "sn_play_over_rate_within_30d__le": {
+        "type": "string"
+      },
+      "link_crowd_profile": {
+        "items": {
+          "type": "string",
+          "enum": [
+            "Z世代",
+            "小镇青年",
+            "新锐白领",
+            "精致妈妈",
+            "都市蓝领",
+            "小镇中老年",
+            "资深中产",
+            "都市银发"
+          ]
+        },
+        "type": "array",
+        "uniqueItems": true
+      },
+      "watcher_gender_female_rate_v2__ge": {
+        "type": "string"
+      },
+      "author_id": {
+        "type": "string"
+      },
+      "search_by": {
+        "enum": ["内容找人"],
+        "type": "string"
+      }
+    },
+    "required": ["province", "tag", "tag_level_two", "link_crowd_profile", "search_by"]
+  },
+  "code": "from decimal import Decimal, InvalidOperation\n\nFIELDS = {'province': {'items': {'type': 'string', 'enum': ['北京市', '天津市', '上海市', '重庆市', '河北省', '山西省', '辽宁省', '吉林省', '黑龙江省', '江苏省', '浙江省', '安徽省', '福建省', '江西省', '山东省', '河南省', '湖北省', '湖南省', '广东省', '海南省', '四川省', '贵州省', '云南省', '陕西省', '甘肃省', '青海省', '台湾省', '内蒙古自治区', '广西壮族自治区', '西藏自治区', '宁夏回族自治区', '新疆维吾尔自治区', '香港特别行政区', '澳门特别行政区']}, 'type': 'array', 'uniqueItems': True}, 'first_industry_id': {'enum': ['出行旅游', '社交通讯', '商务服务', '房地产', '交通工具', '社会公共', '实体书籍', '机械设备', '招商加盟', '购物', '医药健康', '医疗机构', '生活服务', '休闲娱乐', '丽人', '教育培训', '互联网电商服务', '农资园艺', '文化用品', '运动户外'], 'type': 'string'}, 'tag': {'items': {'type': 'string', 'enum': ['美妆', '时尚', '萌宠', '测评', '游戏', '二次元', '旅行', '汽车', '生活', '音乐', '舞蹈', '美食', '母婴亲子', '运动健身', '科技数码', '教育培训', '颜值达人', '生活家居', '才艺技能', '影视娱乐', '艺术文化', '财经投资', '三农', '剧情搞笑', '情感', '园艺', '房产', '随拍', '媒体号']}, 'type': 'array', 'uniqueItems': True, 'maxItems': 1}, 'tag_level_two': {'items': {'type': 'string', 'enum': ['美妆教程', '妆容展示', '护肤保养', '美妆测评种草', '穿搭', '街拍', '造型', '时尚媒体', '日常宠物', '特别宠物', '宠物周边', '美妆测评', '3C数码测评', '汽车测评', '美食产品测评', '母婴产品测评', '综合测评', '酒店测评', '游戏剧情', '游戏解说', '游戏资讯', '游戏其他', '游戏录屏', '游戏集锦', '二次元真人', '动画漫画', '配音声优', '宅物手办', '旅行记录', '旅行攻略', '旅行推荐', '户外生活', '汽车知识', '汽车周边', '生活记录', '生活小窍门', '好物推荐', '健康养生', '婚恋', '歌曲演唱', '乐器演奏', '音乐教学', '音乐其他', '音乐剪辑', '美食教程', '乡村野食', '美食其他', '酒类', '育儿科普', '萌娃日常', '亲子互动', '测评种草', '健身', '极限运动', '体育资讯', '冰雪', '垂钓', '格斗', '球类项目', '综合体育', '3C数码', '家居电器', '科技', '考学培训', '语言教学', '个人管理', '职业教育', '美女', '帅哥', '硬装', '软装', '生活技巧', '家居氛围', '创意才能', '手工', '摄影', '绘画', '其他才艺', '影视解说', '影视混剪', '明星资讯', '综艺解说', '综艺混剪', '传统文化', '人文科普', '自然科学', '传统金融', '互联网金融', '财经知识', '剧情', '搞笑', '其他房产', '房产知识', '房产及投资', '楼盘评测', '楼市资讯', '租房']}, 'type': 'array', 'uniqueItems': True, 'maxItems': 5}, 'link_link_cnt_by_industry__ge': {'type': 'string'}, 'link_link_cnt_by_industry__le': {'type': 'string'}, 'follower__ge': {'type': 'string'}, 'follower__le': {'type': 'string'}, 'price_by_video_type': {'enum': ['植入视频', '定制视频'], 'type': 'string'}, 'price_by_video_type__ge': {'type': 'string'}, 'price_by_video_type__le': {'type': 'string'}, 'sn_prospective_20_60_cpm__ge': {'type': 'string'}, 'sn_prospective_20_60_cpm__le': {'type': 'string'}, 'sn_prospective_20_60_cpe__ge': {'type': 'string'}, 'sn_prospective_20_60_cpe__le': {'type': 'string'}, 'sn_interact_rate_within_30d__ge': {'type': 'string'}, 'sn_interact_rate_within_30d__le': {'type': 'string'}, 'sn_play_over_rate_within_30d__ge': {'type': 'string'}, 'sn_play_over_rate_within_30d__le': {'type': 'string'}, 'link_crowd_profile': {'items': {'type': 'string', 'enum': ['Z世代', '小镇青年', '新锐白领', '精致妈妈', '都市蓝领', '小镇中老年', '资深中产', '都市银发']}, 'type': 'array', 'uniqueItems': True}, 'watcher_gender_female_rate_v2__ge': {'type': 'string'}, 'author_id': {'type': 'string'}, 'search_by': {'enum': ['内容找人'], 'type': 'string'}}\n\ndef number(value):\n    if not isinstance(value, (str, int, float)) or isinstance(value, bool):\n        return None\n    try:\n        n = Decimal(str(value).strip())\n    except InvalidOperation:\n        return None\n    return n if n.is_finite() and n >= 0 else None\n\ndef render(n):\n    return format(n, 'f').rstrip('0').rstrip('.') if '.' in format(n, 'f') else format(n, 'f')\n\ndef main(payload: dict):\n    payload = payload if isinstance(payload, dict) else {}\n    result = {}\n    for field, spec in FIELDS.items():\n        value = payload.get(field)\n        if spec['type'] == 'array':\n            values = value if isinstance(value, list) else []\n            allowed = spec['items']['enum']\n            result[field] = list(dict.fromkeys(v for v in values if isinstance(v, str) and v in allowed))[:spec.get('maxItems', len(allowed))]\n        elif field.endswith(('__ge', '__le')):\n            n = number(value)\n            if n is not None and ('rate' in field) and n > 1:\n                n = None\n            result[field] = render(n) if n is not None else None\n        else:\n            value = value.strip() if isinstance(value, str) else None\n            if not value or value.lower() in ('null', 'none') or ('enum' in spec and value not in spec['enum']):\n                value = None\n            result[field] = value\n    # Reject inverted raw ranges before price widening could hide them.\n    for lower in FIELDS:\n        if not lower.endswith('__ge'):\n            continue\n        upper = lower[:-4] + '__le'\n        if upper in result and result[lower] is not None and result[upper] is not None:\n            if Decimal(result[lower]) > Decimal(result[upper]):\n                raise ValueError('倒置区间: ' + lower + ' / ' + upper)\n    if result['follower__ge'] is None and result['follower__le'] is None:\n        result['follower__ge'], result['follower__le'] = '0', '999999999'\n    result['search_by'] = '内容找人'\n    for field, factor in [('price_by_video_type__ge', '0.5'), ('price_by_video_type__le', '1.2')]:\n        if result[field] is not None:\n            result[field] = render(Decimal(result[field]) * Decimal(factor))\n    return result\n"
+}
