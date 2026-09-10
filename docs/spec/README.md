@@ -2,7 +2,7 @@
 
 > 本目录是 ypscan（悦普识星）的项目 Spec：描述系统当前形态、边界、契约与关键设计取舍。与代码同仓库、同提交维护，是评审与变更的参照，不是运行时指令或用户文档。
 >
-> 撰写基准：`feat/rank_creators` 分支工作区（v1.0.19），即 5 个本地工具 + 5 个 Hook 的 CSV 中心链路形态。此后代码变更应同步更新对应章节（见「维护约定」）。
+> 撰写基准：`feat/rank_creators` 分支工作区（v1.0.21，另含未提交的评分来源持久化改动），即 5 个本地工具 + 5 个 Hook 的 CSV 中心链路形态。此后代码变更应同步更新对应章节（见「维护约定」）。
 
 ## 一句话结论
 
@@ -115,7 +115,7 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 | 询价回收 links CSV 需本地派生      | Provider 只回预览 Excel，无 links CSV；`ypscan_save_creator_links` 从已保存预览的结构化达人标识受控派生并登记为合法来源 | 插件内部闭环；`file_bridge` 上传门禁已放行该来源             |
 | OSS 对象需匿名可读                                 | OSS 上传成功后，若 Bucket 或账号策略阻断未签名访问，下游会拿不到 `csv_file_path`                                                  | `file_bridge` 先做匿名 `HEAD/GET` 校验；失败即停止下游调用 |
 | 契约三处手工对齐                                   | 工具卡（`skills/media-assistant/references/tools/`）、Hook 指令、Provider MCP schema 靠人工保持一致，历史上反复出漂移 bug         | 维护者 + Provider；长期看 schema 校验/对齐自动化           |
-| 瞬态状态生命周期                                   | `businessModeByScope` 等映射在 gateway 启停时清空；宿主若在长会话中不重启，映射随会话持续存在                                     | 宿主行为确认                                               |
+| 瞬态状态生命周期                                   | `businessModeByScope` 等映射在 gateway 启停时清空；手动评分来源已按项目持久化并按需恢复                                               | 宿主行为确认                                               |
 | 外部依赖可用性                                     | Dify 60s 超时、Provider 请求 330s 超时；两者不可用时链路暂停（`flowPauseDirective` 给重试/结束选项）                              | Provider/Dify 运维                                         |
 
 ## 8. 维护约定

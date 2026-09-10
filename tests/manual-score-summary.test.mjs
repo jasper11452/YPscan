@@ -622,10 +622,42 @@ test("modified or symlinked source workbooks are not accepted", async (t) => {
   const f = await fixture(t, { count: 2 });
   const file = f.batch(f.ids, 1);
   await writeFile(file.file_path, "modified");
-  assert.equal((await f.summarize()).error.code, "YPSCAN_MANUAL_SCORE_SOURCE_CHANGED");
+  const changed = await f.summarize();
+  assert.equal(changed.error.code, "YPSCAN_MANUAL_SCORE_SOURCE_CHANGED");
+  // 哈希校验不过的批次不得作为“本批评分结果”交付。
+  assert.equal(changed.data, undefined);
   await rm(file.file_path);
   await symlink(f.sourceContext.links_file.file_path, file.file_path);
   assert.equal((await f.summarize()).error.code, "YPSCAN_MANUAL_SCORE_SOURCE_NOT_ALLOWED");
+});
+
+test("failed summary offers only hash-verified workbooks that belong to the current requirement", async (t) => {
+  const f = await fixture(t, { quantityTotal: 2 });
+  const kept = f.batch([f.ids[0]], 1);
+  const foreign = f.batch([f.ids[1]], 1, { requirementId: "other" });
+  // 补全名单出现候选池以外的达人使汇总失败；两批评分表本身均可解析。
+  f.sourceContext.completion_results.push({
+    file_path: join(f.workspaceDir, "bogus.csv"),
+    platform: "douyin",
+    successful_author_ids: ["creator-outside-pool"],
+    failed_author_ids: [],
+  });
+  const result = await f.summarize();
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "YPSCAN_MANUAL_SCORE_SOURCE_MISMATCH");
+  assert.deepEqual(
+    result.data.partial_delivery.batch_files.map((file) => file.local_path),
+    [kept.file_path],
+  );
+  assert.equal(
+    result.data.partial_delivery.user_visible_message,
+    "以下为本批评分结果，汇总未完成。",
+  );
+  assert.ok(result.data.partial_delivery.batch_files[0].local_file_link.includes(kept.file_path));
+  assert.equal(
+    result.data.partial_delivery.batch_files.some((file) => file.local_path === foreign.file_path),
+    false,
+  );
 });
 
 test("modified normalized links, missing context and institutional requests fail closed", async (t) => {

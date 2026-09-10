@@ -101,19 +101,19 @@
 
 失败且无专门处理时：`ypscan_parse_requirement`、`validate_requirement`、`search_creators`、`rank_mcns` 给 `flowPauseDirective`（`YPSCAN_FLOW_DIRECTIVE=<阶段> 已暂停（code）` + `ASK_USER_QUESTION_ARGS` 重试/结束），其余工具返回 null（不追加）。
 
-评分分支误用恢复：`manual_score_batch` 保存成功且当前记录模式为询价机构时，复用 `manual_source` 最终交付指令与本次真实本地链接，不再引导汇总、重存或重评；手动拓展单批保存只注入汇总参数，不展示表格、路径或链接，旧版 `manual_source` Excel 交付不变。保存的 `manual_score_batch` 所属 requirement 缺少模式记录时，不借用会话级模式；停止并保留文件，不展示最终交付、不汇总、不重存或重评，也不附重试弹窗。汇总的 MODE_NOT_APPLICABLE 仅引导交付当前需求已有的成功保存结果，无可信结果时停止；CONTEXT_UNAVAILABLE 只停止，不推断模式或完成状态。两者均不附重试弹窗，不重建需求或重评。
+评分分支误用恢复：`manual_score_batch` 保存成功且当前记录模式为询价机构时，复用 `manual_source` 最终交付指令与本次真实本地链接，不再引导汇总、重存或重评；手动拓展单批保存只注入汇总参数，不展示表格、路径或链接，旧版 `manual_source` Excel 交付不变。保存的 `manual_score_batch` 所属 requirement 缺少模式记录时，不借用会话级模式；停止并保留文件，不展示最终交付、不汇总、不重存或重评，也不附重试弹窗。汇总的 MODE_NOT_APPLICABLE 仅引导交付当前需求已有的成功保存结果，无可信结果时停止；CONTEXT_UNAVAILABLE 只停止，不推断模式或完成状态。汇总因其他错误失败、但持久记录中仍有路径、SHA-256、需求 ID 与平台均校验通过的评分表时，结果附 `data.partial_delivery.batch_files`，Hook 注入 `MANUAL_SCORE_BATCH_LINKS` 并要求标注“本批评分结果，汇总未完成”，不重搜、不重补全、不重打分；校验不过的批次不展示。均不附重试弹窗，不重建需求或重评。
 
 ## 6. Gateway 生命周期
 
 `file_bridge` 上传后的评分指令区分用户文案与内部参数：正文只提示“数据已合并上传，正在启动打分。”，不复述 OSS 完整/截断地址、对象路径或工具参数；`SCORE_MANUAL_SOURCE_CSV_ARGS.csv_file_path` 仍原样用于评分。机构精排兼容分支同样禁止复述地址。
 
-`gateway_start`、`gateway_stop` 仅调用 `hookRuntime.resetTransientState()`，无其他副作用；不向宿主输出、不影响工具注册。
+`gateway_start`、`gateway_stop` 仅调用 `hookRuntime.resetTransientState()`，无其他副作用；不向宿主输出、不影响工具注册。手动拓展来源记录已按项目持久化，清空内存后由下一次 hook 事件或汇总调用按需读回，不依赖进程生命周期。
 
 ## 手动拓展分批投影
 
 字段页结果 `selection_required` 或 `opened` 必须有与调用参数一致的 requirement_id；`opened` 表示字段页已生成、等待提交，不等于 configured；旧版无 status/ID 链接兼容，有 ID 不一致则暂停且不输出 FIELD_SELECTION_URL。force_reselect 的 URL 指令限定提交后只更新配置，仅恢复对话明确的等待字段配置的未完成步骤，不重启已完成或停止的业务。恢复限制由指令表达，不新增宿主任务状态或门禁。
 
-`manualScoreSourcesByRequirement` 在 validate 成功后记录需求模式，保存归一化 links 时登记路径+哈希，原生补全的可信调用坐标关联成功/失败 ID（csv_file=null 的全失败批次同样登记失败名单），单批评分保存时登记路径+哈希。相同路径不同来源记录标记冲突；同一达人重试成功后以成功记录取代旧失败。不持久化任务进度，每次汇总从源记录重新计算；当前批缺评分行优先返回 `await_scores`，不被推荐达标或候选耗尽覆盖。Gateway 生命周期清空这些记录，缺失时汇总停止。
+`manualScoreSourcesByRequirement` 在 validate 成功后记录需求模式，保存归一化 links 时登记路径+哈希，原生补全的可信调用坐标关联成功/失败 ID（csv_file=null 的全失败批次同样登记失败名单），单批评分保存时登记路径+哈希。相同路径不同来源记录标记冲突；同一达人重试成功后以成功记录取代旧失败。不持久化任务进度，每次汇总从源记录重新计算；当前批缺评分行优先返回 `await_scores`，不被推荐达标或候选耗尽覆盖。来源记录按项目写入 `<workspaceDir>/.ypscan/manual-score-sources.json`（模式、平台、目标人数、links 路径+哈希、补全名单、评分表路径+哈希、冲突标记），内存优先、不覆盖本进程已更新的记录；Gateway 重置后在下一次 hook 事件或汇总时按需读回，并同步恢复 links 上传白名单，保证重启后仍能用同一 requirement 继续分批或重新汇总。恢复后统一重新读本地文件并校验 SHA-256，不重搜、不重补全、不重打分；持久记录缺失或校验失败时汇总停止。
 
 手动拓展 links 归一化及 manual_score_batch 保存后注入 `SUMMARIZE_MANUAL_SCORES_ARGS`；manual_score_batch 是内部中间表，不展示表格、路径或链接。汇总工具返回下一批时注入 `NEXT_AUTHOR_IDS` 与对应原生工具名；await_scores 先要求展示阶段性 `progress.user_visible_message`（不代表最终汇总），只等待当前任务，任务仍在跑时沿用 30s×10 上限，终态缺行则报告 `pending_score_author_ids` 并停止；deliver 携带 `excluded_zero_score_count` 并要求按 0 分行未写入汇总表如实说明（不写成未评分、补全失败或达人被筛掉），明确禁止再补全/评分，只有推荐缺口大于0才建议复核和放宽。机构回收继续全量补全、一次评分、manual_source 最终交付。before_tool_call 仍只阻断 validate 预检，不新增早停门禁；这些测试证明指令生成，模型遵守与桌面验收另行验证。
 

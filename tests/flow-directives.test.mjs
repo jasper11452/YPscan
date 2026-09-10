@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -706,6 +706,40 @@ test("derived creator links CSV records are scoped per requirement", () => {
   assert.deepEqual(transientState.linksCsvPathsFor("req-a"), ["/tmp/links-a.csv"]);
   assert.deepEqual(transientState.linksCsvPathsFor("req-b"), ["/tmp/links-b.csv"]);
   assert.deepEqual(transientState.linksCsvPathsFor("req-other"), []);
+});
+
+test("a persisted source record restores the requirement context and links allowlist", () => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-source-store-"));
+  try {
+    const storeDir = join(workspaceDir, ".ypscan");
+    const linksFile = join(workspaceDir, "links.csv");
+    mkdirSync(storeDir, { recursive: true });
+    writeFileSync(
+      join(storeDir, "manual-score-sources.json"),
+      JSON.stringify({
+        version: 1,
+        requirements: {
+          req: {
+            business_mode: "手动拓展",
+            platform: "douyin",
+            quantity_total: 30,
+            source_conflict: false,
+            links_file: { file_path: linksFile, sha256: "a".repeat(64) },
+            completion_results: [],
+            score_files: [],
+          },
+        },
+      }),
+    );
+    const { transientState } = registeredPlugin();
+    assert.deepEqual(transientState.linksCsvPathsFor("req"), []);
+    transientState.manualScoreContextFor("req", workspaceDir);
+    assert.deepEqual(transientState.linksCsvPathsFor("req"), [linksFile]);
+    assert.equal(transientState.manualScoreContextFor("req", workspaceDir)?.platform, "douyin");
+    assert.equal(transientState.manualScoreContextFor("req", workspaceDir)?.quantityTotal, 30);
+  } finally {
+    rmSync(workspaceDir, { recursive: true, force: true });
+  }
 });
 
 test("reset only re-enables the per-gateway startup instruction", () => {

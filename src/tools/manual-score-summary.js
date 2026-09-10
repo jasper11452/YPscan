@@ -400,6 +400,31 @@ async function saveSummaryWorkbook(workspaceDir, requirementId, template, rows) 
 }
 
 /**
+ * 汇总失败时仍可交付当前需求已登记、路径与 SHA-256 未变且表格自身属于当前需求的评分表；
+ * 校验不过的批次不展示，避免把已修改、越界或属于其他需求的表当成果。
+ */
+async function verifiedBatchDeliveries(sourceContext, workspaceDir, requirementId) {
+  const batchFiles = [];
+  for (const source of sourceContext?.score_files ?? []) {
+    try {
+      await readManualScoreWorkbook(source, {
+        workspaceDir,
+        requirement_id: requirementId,
+        platform: sourceContext?.platform,
+      });
+    } catch {
+      continue;
+    }
+    batchFiles.push({
+      local_path: source.file_path,
+      local_file_link: localFileMarkdownLink(source.file_path),
+      sha256: source.sha256,
+    });
+  }
+  return batchFiles;
+}
+
+/**
  * Recompute progress from observed source records; no task ledger or remote calls.
  * @param {{requirement_id: string}} params
  * @param {{workspaceDir?: string, sourceContext?: {
@@ -596,18 +621,35 @@ export async function summarizeManualScores(params, { workspaceDir, sourceContex
     };
     return hostToolResult({ success: true, data: details, delivery }, { details });
   } catch (error) {
+    const code = error?.code?.startsWith("YPSCAN_MANUAL_SCORE_")
+      ? error.code
+      : "YPSCAN_MANUAL_SCORE_READ_FAILED";
+    const batchFiles =
+      code === "YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE"
+        ? []
+        : await verifiedBatchDeliveries(sourceContext, workspaceDir, params?.requirement_id);
     return hostToolResult(
       {
         success: false,
         error: {
-          code: error?.code?.startsWith("YPSCAN_MANUAL_SCORE_")
-            ? error.code
-            : "YPSCAN_MANUAL_SCORE_READ_FAILED",
+          code,
           message: error?.code?.startsWith("YPSCAN_MANUAL_SCORE_")
             ? error.message
             : "评分汇总无法安全读取或保存；保留已有文件并停止，不猜测推荐人数",
           retriable: false,
         },
+        ...(batchFiles.length
+          ? {
+              data: {
+                partial_delivery: {
+                  display_required: true,
+                  display_before_next_action: true,
+                  user_visible_message: "以下为本批评分结果，汇总未完成。",
+                  batch_files: batchFiles,
+                },
+              },
+            }
+          : {}),
       },
       { isError: true },
     );

@@ -15,7 +15,7 @@
 | 双平台手动拓展发布与实测（各5人） | [2026-09-10 手动拓展验收](../verification/2026-09-10-manual-search-score-e2e.md) |
 | 候选池上限、`num` 实发值、评分口径与运行态加载路径（只读复核） | [2026-09-10 候选池上限与评分口径复核](../verification/2026-09-10-manual-source-pool-and-score-audit.md) |
 | 定位问题、最小修复、消融实验       | [开发与验证](development.md)                                                      |
-| 达人搜索与评分修复、梯度候选池 | [修复方案（P1a 与梯度候选池已实施，后续阶段待验证）](../plans/creator-search-and-scoring-remediation.md) |
+| 达人搜索与评分修复、梯度候选池 | [修复方案（P1a 与梯度候选池已实施；P1b Provider 闭环、多轮召回仍待实施，双平台实测见验证记录）](../plans/creator-search-and-scoring-remediation.md) |
 | Dify 手扒/评分节点级缺陷与结构化判据 | [节点级修复方案](../plans/dify-search-and-scoring-remediation.md)、[本地 P0/P1 候选实施记录](../verification/2026-09-10-score-node-remediation-local.md) |
 | 一次修改需要同步哪些文件、如何发版 | [同步与发布](sync-and-release.md)                                                 |
 | 历史发布变化                       | [CHANGELOG.md](../../CHANGELOG.md) 与 Git 历史；不能当作当前契约                  |

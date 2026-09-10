@@ -166,7 +166,7 @@
 
 ## 本地手动拓展分批契约
 
-本地汇总新增 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE`，区分已登记询价模式与 CONTEXT_UNAVAILABLE；两者均为不可重试错误。恢复行为见 [hooks.md](./hooks.md)，Provider schema 与工具入参不变。
+本地汇总新增 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE`，区分已登记询价模式与 CONTEXT_UNAVAILABLE；两者均为不可重试错误。来源登记按项目持久化，恢复与部分交付行为见 [hooks.md](./hooks.md)；错误结果可额外携带 `data.partial_delivery.batch_files`（已核验的当前需求评分表）。Provider schema 与工具入参不变。
 
 新增 `ypscan_summarize_manual_scores({requirement_id})` 与 `manual_score_batch` Excel kind；工具入参由 index.js 声明，manifest 同步列入 contracts.tools。registry.js 的 Provider 参数归一化保持不变，Provider 评分工具仍使用原始两个参数，状态工具仍仅 job_id。手动拓展每批评分完成后保存为 manual_score_batch，再由本地汇总精确累计推荐数；机构回收仍使用 manual_source。详细返回、停止条件及已验证契约范围见 [tools.md](./tools.md) 的评分汇总章节。
 

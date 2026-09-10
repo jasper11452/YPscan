@@ -170,11 +170,11 @@
 
 最终汇总将“星图主页”“抖音主页”“小红书主页”列中的合法 HTTP(S) URL 文本写为 OOXML 外部超链接，关系目标对应排序后的达人行；显示文本、单元格样式和单批原表保持不变。其他列或无效 URL 不转换，不检查远端网页可访问性。已有超链接或其他不支持的关联对象模板仍返回 TEMPLATE，不扩展其合并能力。
 
-文件限制：20 MiB，ZIP 声明解压40 MiB/1000项，最多10000行/200列；只读项目内哈希未变的已登记普通文件。错误前缀 `YPSCAN_MANUAL_SCORE_`，包括 CONTEXT_UNAVAILABLE、SOURCE_NOT_ALLOWED、SOURCE_CHANGED、SOURCE_MISMATCH、HEADERS、UNKNOWN_VERDICT、INVALID_SCORE、CONFLICTING_RESULTS、COMPLETION_INVALID、TEMPLATE、LIMIT、READ_FAILED、SAVE_FAILED 等。缺少上下文（含 Gateway 重置）时停止，不自动重建需求或重评。机构回收拒绝使用此工具。
+文件限制：20 MiB，ZIP 声明解压40 MiB/1000项，最多10000行/200列；只读项目内哈希未变的已登记普通文件。错误前缀 `YPSCAN_MANUAL_SCORE_`，包括 CONTEXT_UNAVAILABLE、SOURCE_NOT_ALLOWED、SOURCE_CHANGED、SOURCE_MISMATCH、HEADERS、UNKNOWN_VERDICT、INVALID_SCORE、CONFLICTING_RESULTS、COMPLETION_INVALID、TEMPLATE、LIMIT、READ_FAILED、SAVE_FAILED 等。来源登记按项目持久化，缺少上下文只表示持久记录中无可信来源（含 Gateway 重置后文件已不存在或损坏）；此时停止，不自动重建需求或重评。汇总因其他错误失败时，仍会逐个复核已登记评分表（路径、SHA-256、需求 ID、平台一致），通过者随错误结果返回 `data.partial_delivery.batch_files`，供 Hook 提示标注“本批评分结果，汇总未完成”后交付；校验不过的批次不返回。机构回收拒绝使用此工具。
 
 测试环境 2026-09-08 的一个合成需求、两份不重叠 CSV、每份两人已分别返回独立任务及对应 Excel；四人均为“不推荐”。这证明该次测试的任务独立性和抖音负例表结构，不证明生产行为、跨批评分尺度、正例枚举全覆盖或模型/宿主已验收。当前自动回归用合成表验证两平台计数与 registered tool/Hook 衔接（tests/manual-score-summary.test.mjs、tests/manual-score-flow.test.mjs）。
 
-询价机构已登记模式返回 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE`（success=false、retriable=false），在读取或修改评分文件前返回；缺少可信上下文仍返回 CONTEXT_UNAVAILABLE。两者的 Hook 均不生成重试弹窗：前者仅引导交付当前需求已有的成功保存结果（没有可信文件则停止），后者停止且不得推断为询价机构或已完成。保存 `manual_score_batch` 时，Hook 只采用该 artifact_id 对应的已登记模式；该 requirement 缺少模式记录时停止并保留文件，不借用会话级模式，也不展示最终交付、汇总、重存或重评。
+询价机构已登记模式返回 `YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE`（success=false、retriable=false），在读取或修改评分文件前返回；持久记录中缺少可信上下文且无已核验本批表时仍返回 CONTEXT_UNAVAILABLE。两者的 Hook 均不生成重试弹窗：前者仅引导交付当前需求已有的成功保存结果（没有可信文件则停止），后者停止且不得推断为询价机构或已完成。其他错误附已核验 `partial_delivery` 时，Hook 注入 `MANUAL_SCORE_BATCH_LINKS` 并要求标注“本批评分结果，汇总未完成”，不重搜、不重补全、不重打分。保存 `manual_score_batch` 时，Hook 只采用该 artifact_id 对应的已登记模式；该 requirement 缺少模式记录时停止并保留文件，不借用会话级模式，也不展示最终交付、汇总、重存或重评。
 
 ## 6. 弹窗载荷（供工具与 Hook 共用）
 

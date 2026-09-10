@@ -195,7 +195,10 @@ export default {
         async execute(_id, params) {
           return summarizeManualScores(params, {
             workspaceDir: context?.workspaceDir,
-            sourceContext: hookRuntime.manualScoreContextFor(params.requirement_id),
+            sourceContext: hookRuntime.manualScoreContextFor(
+              params.requirement_id,
+              context?.workspaceDir,
+            ),
           });
         },
       }),

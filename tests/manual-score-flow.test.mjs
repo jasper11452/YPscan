@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -174,8 +174,55 @@ test("registered tools: 6 plus 4 recommendations advance exactly once and delive
   assert.equal(last.payload.data.recommended_count, 10);
   assert.equal(last.payload.data.next_action, "deliver");
   await f.hooks.get("gateway_stop")();
-  const reset = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
-  assert.equal(reset.payload.success, false);
+  const restored = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(restored.payload.success, true, JSON.stringify(restored.payload));
+  assert.equal(restored.payload.data.scored_count, 30);
+  assert.equal(restored.payload.data.recommended_count, 10);
+  assert.equal(restored.payload.data.next_action, "deliver");
+  assert.match(restored.directive, /展示最终汇总/u);
+});
+
+test("restart restores registered sources and later batches append to the same requirement", async (t) => {
+  const f = await setup(t);
+  await f.score(f.ids.slice(0, 10), 1);
+  const store = join(f.workspaceDir, ".ypscan", "manual-score-sources.json");
+  const persisted = JSON.parse(await readFile(store, "utf8"));
+  assert.equal(persisted.requirements.req.completion_results.length, 1);
+  assert.equal(persisted.requirements.req.score_files.length, 1);
+  assert.equal(persisted.requirements.req.quantity_total, 10);
+  await f.hooks.get("gateway_stop")();
+  const next = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(next.payload.success, true, JSON.stringify(next.payload));
+  assert.deepEqual(next.payload.data.next_author_ids, f.ids.slice(10));
+  await f.score(f.ids.slice(10), 9);
+  const last = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(last.payload.success, true, JSON.stringify(last.payload));
+  assert.equal(last.payload.data.scored_count, 30);
+  assert.equal(last.payload.data.recommended_count, 10);
+  assert.equal(last.payload.data.next_action, "deliver");
+});
+
+test("summary failure still offers hash-verified batch workbooks with an unfinished label", async (t) => {
+  const f = await setup(t);
+  const batch = await f.score(f.ids.slice(0, 10), 3);
+  f.remote(
+    "get_douyin_author_business_card",
+    {},
+    {
+      csv_file: join(f.workspaceDir, "foreign-completion.csv"),
+      successful_author_ids: ["creator-outside-pool"],
+      failed_author_ids: [],
+    },
+  );
+  const result = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(result.payload.success, false);
+  assert.equal(result.payload.error.code, "YPSCAN_MANUAL_SCORE_SOURCE_MISMATCH");
+  const files = result.payload.data.partial_delivery.batch_files;
+  assert.equal(files.length, 1);
+  assert.equal(files[0].local_path, batch.savedScore.payload.data.file_path);
+  assert.match(result.directive, /本批评分结果，汇总未完成/u);
+  assert.match(result.directive, /不重新搜索、不重新补全、不重新打分/u);
+  assert.ok(result.directive.includes(files[0].local_file_link));
 });
 
 test("inquiry uses all completion batches and final artifact, never manual early stop", async (t) => {
@@ -231,10 +278,16 @@ test("inquiry summary misuse is distinct from missing context and never requests
   assert.match(result.directive, /没有可信保存结果/u);
   assert.doesNotMatch(result.directive, /ASK_USER_QUESTION_ARGS|SUMMARIZE_MANUAL_SCORES_ARGS/u);
   await f.hooks.get("gateway_stop")();
-  const missing = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
-  assert.equal(missing.payload.error.code, "YPSCAN_MANUAL_SCORE_CONTEXT_UNAVAILABLE");
-  assert.match(missing.directive, /停止/u);
-  assert.doesNotMatch(missing.directive, /最终交付|ASK_USER_QUESTION_ARGS/u);
+  const restored = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(restored.payload.error.code, "YPSCAN_MANUAL_SCORE_MODE_NOT_APPLICABLE");
+  assert.match(restored.directive, /当前需求已成功保存/u);
+  assert.doesNotMatch(restored.directive, /ASK_USER_QUESTION_ARGS|SUMMARIZE_MANUAL_SCORES_ARGS/u);
+  const unknown = await f.local("ypscan_summarize_manual_scores", {
+    requirement_id: "req-never-registered",
+  });
+  assert.equal(unknown.payload.error.code, "YPSCAN_MANUAL_SCORE_CONTEXT_UNAVAILABLE");
+  assert.match(unknown.directive, /停止/u);
+  assert.doesNotMatch(unknown.directive, /最终交付|ASK_USER_QUESTION_ARGS/u);
 });
 
 test("manual sourcing compatibility Excel still delivers without batch summary", async (t) => {

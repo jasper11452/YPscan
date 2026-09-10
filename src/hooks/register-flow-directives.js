@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { firstString, isRecord, nonemptyString } from "../util/value.js";
 import {
@@ -74,6 +76,9 @@ const SCORE_MANUAL_SOURCE_POLL_RULE =
 const MANUAL_SOURCE_SHORTFALL_RULE = `本条数量策略仅用于旧链路直接返回的 manual_source Excel；分批评分必须通过 ypscan_summarize_manual_scores 统计推荐人数并决定下一步，不用处理成功数判断足量。只在当前 Provider 响应明确给出可信实际数量时与用户需求人数 quantityTotal 比较（梯度取数 num 不是交付目标），不得猜测数量，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 Excel / xlsx 来补链路。数量未知时交付当前 Excel 并结束；达到目标数量时结束；实际数量为 0 或少于目标数量时，先交付当前 Excel 并说明实际数量、目标数量和缺口，再向用户建议可按 media-assistant Skill 的“结果不足：先复核，再放宽”顺序放宽的项，由用户决定是否放宽；不自动放宽、不自动重跑、不自动创建新 requirement。用户明确要求放宽后优先调整同主题关键词、减少非核心人设限定；调整后仍不足再按 Skill 提示其他条件并等待该项确认，随后重新解析、复核并创建独立的新 requirement，不得复用或合并不同轮次 requirement、batch 或 Excel。`;
 const CREATOR_CSV_LIMIT = 500;
 const MANUAL_SOURCE_FLOW = "manual_source";
+// 可信来源登记按项目持久化：Gateway 重启后按需恢复，恢复后仍逐文件重校验 SHA-256。
+const MANUAL_SCORE_SOURCES_FILE = "manual-score-sources.json";
+const MANUAL_SCORE_SOURCES_VERSION = 1;
 const MCN_COMPLETE_ONLY_FLOW = "mcn_complete_only";
 const MCN_RANK_FLOW = "mcn_rank";
 
@@ -842,6 +847,47 @@ function completionCsvFilePath(result) {
   );
 }
 
+// 原地图键：有 csv_file 用路径，全失败批次用失败名单。
+function completionResultKey(record) {
+  return (
+    record?.file_path ??
+    `no-csv:${JSON.stringify((record?.failed_author_ids ?? []).map((value) => String(value)))}`
+  );
+}
+
+function serializableManualScoreSources(sources, platform, quantityTotal) {
+  return {
+    business_mode: sources.business_mode ?? null,
+    platform: platform ?? null,
+    quantity_total: quantityTotal ?? null,
+    source_conflict: sources.source_conflict === true,
+    links_file: sources.links_file ?? null,
+    completion_results: [...sources.completion_results.values()],
+    score_files: [...sources.score_files.values()],
+  };
+}
+
+function restoredManualScoreSources(record) {
+  return {
+    business_mode: record.business_mode,
+    links_file: isRecord(record.links_file) ? record.links_file : null,
+    completion_results: new Map(
+      (Array.isArray(record.completion_results) ? record.completion_results : [])
+        .filter((entry) => isRecord(entry))
+        .map((entry) => [completionResultKey(entry), entry]),
+    ),
+    score_files: new Map(
+      (Array.isArray(record.score_files) ? record.score_files : [])
+        .filter(
+          (entry) =>
+            isRecord(entry) && nonemptyString(entry.file_path) && nonemptyString(entry.sha256),
+        )
+        .map((entry) => [entry.file_path, entry]),
+    ),
+    source_conflict: record.source_conflict === true,
+  };
+}
+
 function completionAuthorIds(result, field) {
   return Array.isArray(result?.[field])
     ? result[field]
@@ -1434,11 +1480,21 @@ function manualScoreSummaryDirective(message) {
   ) {
     return "YPSCAN_FLOW_DIRECTIVE=当前为询价机构，误调用了仅用于手动拓展的汇总工具；这不表示评分或保存失败。不重试汇总、不重评、不重新建需、不弹重试窗口。仅交付当前需求已成功保存的评分 Excel 真实本地链接；没有可信保存结果时如实说明并停止，不猜测文件或宣称已交付。";
   }
+  const batchFiles = Array.isArray(result?.data?.partial_delivery?.batch_files)
+    ? result.data.partial_delivery.batch_files
+    : [];
+  if (result?.success === false && batchFiles.length > 0) {
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=评分汇总未完成，但当前需求已有按持久来源记录校验通过的评分表。先如实说明汇总未完成和具体原因，再展示下列本地链接，并明确标注“本批评分结果，汇总未完成”，不得当作最终汇总。",
+      `MANUAL_SCORE_BATCH_LINKS=${JSON.stringify(batchFiles.map((file) => file?.local_file_link))}`,
+      "不重新搜索、不重新补全、不重新打分，不新建 requirement；校验失败被排除的批次不猜测、不补文件，不要求用户整轮重做。",
+    ].join("\n");
+  }
   if (
     result?.success === false &&
     result?.error?.code === "YPSCAN_MANUAL_SCORE_CONTEXT_UNAVAILABLE"
   ) {
-    return "YPSCAN_FLOW_DIRECTIVE=评分汇总缺少当前需求的可信上下文，停止并保留已有文件。不据此推断为询价机构，不重试汇总、不重新建需或重评，不猜测人数、来源或完成状态。";
+    return "YPSCAN_FLOW_DIRECTIVE=持久来源记录中缺少当前需求的可信上下文，且没有可交付的已核验评分表。停止并保留已有文件，不据此推断为询价机构，不重试汇总、不重新建需或重评，不猜测人数、来源或完成状态。";
   }
   if (result?.success !== true) return flowPauseDirective("手动拓展评分汇总", message);
   const data = result.data;
@@ -1701,6 +1757,86 @@ export function registerFlowDirectiveHooks(api) {
   const completionCsvPathsByRequirement = new Map();
   // Source records only; progress is recomputed by the local summarizer.
   const manualScoreSourcesByRequirement = new Map();
+  // requirement → 持久化文件路径；hydrated 集合避免同一项目重复读盘。
+  const manualScoreSourcesStoreByRequirement = new Map();
+  const hydratedManualScoreStores = new Set();
+
+  function manualScoreStorePath(workspaceDir) {
+    return nonemptyString(workspaceDir) && isAbsolute(workspaceDir)
+      ? join(workspaceDir, ".ypscan", MANUAL_SCORE_SOURCES_FILE)
+      : null;
+  }
+
+  // 首次需要时按项目读回持久记录；已存在的内存记录优先，不覆盖本进程的新结果。
+  function hydrateManualScoreSources(workspaceDir) {
+    const storePath = manualScoreStorePath(workspaceDir);
+    if (!storePath || hydratedManualScoreStores.has(storePath)) return;
+    hydratedManualScoreStores.add(storePath);
+    let payload;
+    try {
+      payload = JSON.parse(readFileSync(storePath, "utf8"));
+    } catch {
+      return;
+    }
+    if (!isRecord(payload) || payload.version !== MANUAL_SCORE_SOURCES_VERSION) return;
+    const records = isRecord(payload.requirements) ? payload.requirements : {};
+    for (const [requirementId, record] of Object.entries(records)) {
+      if (!isRecord(record) || manualScoreSourcesByRequirement.has(requirementId)) continue;
+      const sources = restoredManualScoreSources(record);
+      manualScoreSourcesByRequirement.set(requirementId, sources);
+      manualScoreSourcesStoreByRequirement.set(requirementId, storePath);
+      const platform = canonicalPlatformName(record.platform);
+      if (platform && !platformByRequirement.has(requirementId))
+        platformByRequirement.set(requirementId, platform);
+      const quantityTotal = positiveInteger(record.quantity_total);
+      if (quantityTotal != null && !quantityTotalByRequirement.has(requirementId))
+        quantityTotalByRequirement.set(requirementId, quantityTotal);
+      // 恢复 links CSV 上传白名单，使重启后仍能仅凭持久来源继续当前需求。
+      if (nonemptyString(sources.links_file?.file_path)) {
+        const paths = linksCsvPathsByRequirement.get(requirementId) ?? new Set();
+        paths.add(sources.links_file.file_path);
+        linksCsvPathsByRequirement.set(requirementId, paths);
+      }
+    }
+  }
+
+  function persistManualScoreSources(workspaceDir) {
+    const storePath = manualScoreStorePath(workspaceDir);
+    if (!storePath) return;
+    const requirements = {};
+    for (const [requirementId, sources] of manualScoreSourcesByRequirement) {
+      if (manualScoreSourcesStoreByRequirement.get(requirementId) !== storePath) continue;
+      requirements[requirementId] = serializableManualScoreSources(
+        sources,
+        platformByRequirement.get(requirementId),
+        quantityTotalByRequirement.get(requirementId),
+      );
+    }
+    const tempPath = `${storePath}.${String(process.pid)}.tmp`;
+    try {
+      mkdirSync(dirname(storePath), { recursive: true });
+      writeFileSync(
+        tempPath,
+        JSON.stringify({ version: MANUAL_SCORE_SOURCES_VERSION, requirements }, null, 2),
+        { mode: 0o600 },
+      );
+      renameSync(tempPath, storePath);
+    } catch {
+      try {
+        unlinkSync(tempPath);
+      } catch {
+        // 临时文件清理失败不影响本次工具结果。
+      }
+    }
+  }
+
+  function recordManualScoreSourceChange(requirementId, workspaceDir) {
+    const storePath = manualScoreStorePath(workspaceDir);
+    if (!storePath) return;
+    if (!manualScoreSourcesStoreByRequirement.has(requirementId))
+      manualScoreSourcesStoreByRequirement.set(requirementId, storePath);
+    persistManualScoreSources(workspaceDir);
+  }
 
   api.on(
     "before_prompt_build",
@@ -1855,6 +1991,7 @@ export function registerFlowDirectiveHooks(api) {
   api.on(
     "tool_result_persist",
     (event, context) => {
+      hydrateManualScoreSources(context?.workspaceDir);
       const toolName = firstString(event?.toolName, event?.name) ?? "";
       const key = callKey(event, context);
       const pending = key ? pendingCalls.get(key) : null;
@@ -1926,12 +2063,13 @@ export function registerFlowDirectiveHooks(api) {
                 successful_author_ids: successfulIds,
                 failed_author_ids: failedIds,
               };
-              const recordKey = path ?? `no-csv:${JSON.stringify([...failed])}`;
+              const recordKey = completionResultKey(record);
               const previous = sources.completion_results.get(recordKey);
               if (previous && JSON.stringify(previous) !== JSON.stringify(record))
                 sources.source_conflict = true;
               sources.completion_results.set(recordKey, record);
             }
+            recordManualScoreSourceChange(requirementId, context?.workspaceDir);
           }
         }
       }
@@ -1958,6 +2096,8 @@ export function registerFlowDirectiveHooks(api) {
           const quantityTotal = positiveInteger(params?.quantityTotal);
           if (quantityTotal != null)
             quantityTotalByRequirement.set(String(requirementId), quantityTotal);
+          if (manualScoreSourcesByRequirement.has(String(requirementId)))
+            recordManualScoreSourceChange(String(requirementId), context?.workspaceDir);
         }
       } else if (result?.success === true) {
         const requirementId = firstString(params?.requirement_id, params?.id, params?.artifact_id);
@@ -2109,8 +2249,11 @@ export function registerFlowDirectiveHooks(api) {
       previewFilesByRequirement.clear();
       completionCsvPathsByRequirement.clear();
       manualScoreSourcesByRequirement.clear();
+      manualScoreSourcesStoreByRequirement.clear();
+      hydratedManualScoreStores.clear();
     },
-    manualScoreContextFor(requirementId) {
+    manualScoreContextFor(requirementId, workspaceDir) {
+      if (nonemptyString(requirementId)) hydrateManualScoreSources(workspaceDir);
       const sources = manualScoreSourcesByRequirement.get(requirementId);
       if (!sources) return undefined;
       return {
@@ -2130,6 +2273,7 @@ export function registerFlowDirectiveHooks(api) {
           const previous = sources.score_files.get(path);
           if (previous && previous.sha256 !== sha256) sources.source_conflict = true;
           sources.score_files.set(path, { file_path: path, sha256 });
+          recordManualScoreSourceChange(String(artifactId), workspaceDir);
         }
         return;
       }
@@ -2174,6 +2318,7 @@ export function registerFlowDirectiveHooks(api) {
         if (sources.links_file && JSON.stringify(sources.links_file) !== JSON.stringify(record))
           sources.source_conflict = true;
         sources.links_file = record;
+        recordManualScoreSourceChange(id, workspaceDir);
       }
     },
     linksCsvPathsFor(requirementId) {
