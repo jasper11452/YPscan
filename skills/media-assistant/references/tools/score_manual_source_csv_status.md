@@ -21,10 +21,10 @@ Poll the scoring job created by `score_manual_source_csv`. Call only after that 
 
 ## Recoverable missing-columns failure
 
-If the terminal result is `REQUIREMENT_COLUMNS_NOT_CONFIGURED`, `REQUIREMENT_COLUMNS_UNAVAILABLE`, or includes the exact message `customer demand has no selected inquiry columns`, stop polling and do not treat `success_count` as a successful workbook. Call `select_inquiry_form_fields` for the same requirement and platform using its inheritance rules. On configured resume immediately; only a field-page URL requires submission and “好了”. Once configured, submit a new scoring job once: if the failure directive carries `SCORE_MANUAL_SOURCE_CSV_ARGS`, reuse that exact JSON payload without altering the path; otherwise use the same requirement ID and the exact trusted `csv_file_path` returned by the current `file_bridge`. Do not repeat search, native completion, or `file_bridge`.
+If the terminal result is `REQUIREMENT_COLUMNS_NOT_CONFIGURED`, `REQUIREMENT_COLUMNS_UNAVAILABLE`, or includes the exact message `customer demand has no selected inquiry columns`, stop polling and do not treat `success_count` as a successful workbook. Call `select_inquiry_form_fields` for the same requirement and platform using its inheritance rules. On a configured/copied result resume immediately; when the field page is an eligible first selection, confirm submission per [get_inquiry_form_fields_status](get_inquiry_form_fields_status.md) (falling back to an explicit “好了” on timeout, reselection or an environment without that tool). Once configured, submit a new scoring job once: if the failure directive carries `SCORE_MANUAL_SOURCE_CSV_ARGS`, reuse that exact JSON payload without altering the path; otherwise use the same requirement ID and the exact trusted `csv_file_path` returned by the current `file_bridge`. Do not repeat search, native completion, or `file_bridge`.
 
 ## Stop conditions
 
 Stop on any other failed envelope, a mismatched job ID, or an outcome-unknown result. Do not resubmit the scoring job automatically.
 
-字段恢复使用 [字段工具规则](select_inquiry_form_fields.md)：可继承时传 source_requirement_id；configured 后直接按原可信参数重提一次，失败时暂停，不自动要求重选。
+字段恢复使用 [字段工具规则](select_inquiry_form_fields.md)：可继承时传 source_requirement_id；configured/copied 后直接按原可信参数重提一次，失败时暂停，不自动要求重选。

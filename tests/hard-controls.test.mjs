@@ -916,9 +916,9 @@ test("default manual sourcing repairs missing field selection before retrying", 
     platform: "douyin",
   });
   assert.match(text, /不得原参数重试/u);
-  assert.match(text, /configured 后直接继续；只有 URL 才展示并等“好了”/u);
+  assert.match(text, /configured\/copied 后直接继续；只有 URL 才展示并按字段状态轮询规则等待提交/u);
   assert.match(text, /追加 source_requirement_id/u);
-  assert.match(text, /字段选择 URL 输出后本轮必须结束并等待/u);
+  assert.match(text, /按字段状态轮询规则等待提交/u);
   assert.doesNotMatch(text, /\bsize\b|creator_count|page_url|original_brief/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });
@@ -1022,7 +1022,7 @@ test("missing scoring columns return to field selection without repeating comple
   });
   assert.match(directFailure, /不得把失败 job 的 success_count 当成最终成功/u);
   assert.match(directFailure, /不得重新搜索、补全或调用 file_bridge/u);
-  assert.match(directFailure, /结束本轮等待用户回复“好了”/u);
+  assert.match(directFailure, /按字段状态轮询规则等待提交/u);
   assert.deepEqual(namedArgsFromDirective(directFailure, "SCORE_MANUAL_SOURCE_CSV_ARGS"), {
     requirement_id: "req-score-columns",
     csv_file_path: "https://bucket.oss-cn-shanghai.aliyuncs.com/current.csv",
@@ -1148,7 +1148,7 @@ test("columns recovery survives param retention and a generic outer job error", 
     requirement_id: "req-lifecycle",
     csv_file_path: csvPath,
   });
-  assert.match(statusFailure, /结束本轮等待用户回复“好了”/u);
+  assert.match(statusFailure, /按字段状态轮询规则等待提交/u);
   assert.doesNotMatch(statusFailure, /继续使用同一 job_id 轮询/u);
 
   const directMasked = directiveText(
@@ -2271,7 +2271,8 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /用户修改需求后的重建规则.*media-assistant Skill/u);
   assert.match(first.prependContext, /绝不使用 data\.demand_id/u);
   assert.match(first.prependContext, /正常成功交付不追加完成弹窗/u);
-  assert.match(first.prependContext, /包括 test 在内的前缀只是命名空间/u);
+  assert.match(first.prependContext, /前缀（含 test）只是命名空间/u);
+  assert.match(first.prependContext, /mcp-04b79900_validate_requirement 即 validate_requirement/u);
   assert.match(first.prependContext, /多个可用工具映射到同一实际名称时才调用 AskUserQuestion/u);
   assert.match(first.prependContext, /明确无条件回复“可以发\/发吧\/按这个发\/就这样发送”/u);
   assert.match(first.prependContext, /发送前必须用警示弹窗确认/u);
@@ -2613,7 +2614,7 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
   assert.match(text, /其他原名走 supplier_name/u);
   assert.match(text, /发送前警示弹窗确认/u);
   assert.match(text, /手动拓展只使用原 requirement_id 和当前环境 live schema 允许的参数/u);
-  assert.ok(text.length < 900, `field-selection directive too long: ${text.length}`);
+  assert.ok(text.length < 1100, `field-selection directive too long: ${text.length}`);
   assert.doesNotMatch(text, /GET_SELECTED_INQUIRY_FORM_FIELDS_ARGS=/u);
   assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
 });

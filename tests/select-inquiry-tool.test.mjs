@@ -11,6 +11,10 @@ test("field selection is exposed directly from the Provider MCP", async () => {
     true,
   );
   assert.equal(
+    manifest.mcpServers.ypscan.toolFilter.include.includes("get_inquiry_form_fields_status"),
+    true,
+  );
+  assert.equal(
     manifest.mcpServers.ypscan.toolFilter.include.includes("get_selected_inquiry_form_fields"),
     false,
   );

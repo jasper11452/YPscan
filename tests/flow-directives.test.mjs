@@ -544,7 +544,7 @@ test("validate_requirement success reuses the business mode recorded by the pref
     platform: "douyin",
     requirement_id: requirementId,
   });
-  assert.match(manual, /字段选择 URL 输出后本轮必须结束并等待/u);
+  assert.match(manual, /字段页 URL 按字段状态轮询规则等待提交/u);
   assert.match(manual, /追加 source_requirement_id/u);
   assert.match(manual, /status=configured.*直接按原分支继续/u);
   assert.match(manual, /selection_required、opened 或旧版有效 URL/u);
@@ -1292,7 +1292,46 @@ for (const configurationSource of ["existing", "inherited"]) {
   });
 }
 
-test("provider opened status is a valid field-selection wait state", () => {
+test("provider copied status resumes inheritance without a selection page", () => {
+  const persist = registeredPlugin().hooks.get("tool_result_persist");
+  const text = directiveText(
+    persist({
+      toolName: "mcp__ypscan__select_inquiry_form_fields",
+      params: { requirement_id: "req-new", source_requirement_id: "req-old" },
+      message: toolMessage({
+        success: true,
+        status: "copied",
+        platform: "xiaohongshu",
+        requirement_id: "req-new",
+        source_requirement_id: "req-old",
+        message: "已复制来源需求的字段配置。",
+      }),
+    }),
+  );
+  assert.match(text, /FIELD_CONFIGURATION_REQUIREMENT_ID=req-new/u);
+  assert.match(text, /直接按原分支恢复/u);
+  assert.doesNotMatch(text, /未知状态|FIELD_SELECTION_URL=|ASK_USER_QUESTION_ARGS=/u);
+});
+
+test("forced reselection never accepts an inherited copied result", () => {
+  const persist = registeredPlugin().hooks.get("tool_result_persist");
+  const text = directiveText(
+    persist({
+      toolName: "mcp__ypscan__select_inquiry_form_fields",
+      params: { requirement_id: "req-new", force_reselect: true },
+      message: toolMessage({
+        success: true,
+        status: "copied",
+        requirement_id: "req-new",
+        source_requirement_id: "req-old",
+      }),
+    }),
+  );
+  assert.match(text, /暂停/u);
+  assert.doesNotMatch(text, /FIELD_CONFIGURATION_REQUIREMENT_ID=|FIELD_SELECTION_URL=/u);
+});
+
+test("provider opened status starts the field-status poll loop", () => {
   const persist = registeredPlugin().hooks.get("tool_result_persist");
   const text = directiveText(
     persist({
@@ -1307,14 +1346,96 @@ test("provider opened status is a valid field-selection wait state", () => {
     }),
   );
   assert.match(text, /FIELD_SELECTION_URL=https:\/\/example.invalid\/fields/u);
+  assert.match(text, /get_inquiry_form_fields_status/u);
+  assert.match(text, /即时预检/u);
+  assert.match(text, /累计最多 12 次/u);
+  assert.match(text, /预检返回 submitted/u);
+  assert.match(text, /不得调用任何下游工具/u);
+  assert.doesNotMatch(text, /本轮必须结束并等待|ASK_USER_QUESTION_ARGS=/u);
+});
+
+test("forced reselection forbids field-status polling", () => {
+  const persist = registeredPlugin().hooks.get("tool_result_persist");
+  const text = directiveText(
+    persist({
+      toolName: "mcp__ypscan__select_inquiry_form_fields",
+      params: { requirement_id: "req-new", force_reselect: true },
+      message: toolMessage({
+        success: true,
+        status: "opened",
+        requirement_id: "req-new",
+        url: "https://example.invalid/fields",
+      }),
+    }),
+  );
   assert.match(text, /本轮必须结束并等待/u);
-  assert.doesNotMatch(text, /未知状态|ASK_USER_QUESTION_ARGS=/u);
+  assert.match(text, /禁止调用 get_inquiry_form_fields_status 轮询/u);
+  assert.match(text, /会在用户提交前就返回 submitted/u);
+  assert.doesNotMatch(text, /即时预检/u);
+});
+
+for (const status of ["invalid", "pending", "unknown"]) {
+  test(`field status ${status} stops polling and falls back to 好了`, () => {
+    const persist = registeredPlugin().hooks.get("tool_result_persist");
+    const text = directiveText(
+      persist({
+        toolName: "mcp__ypscan__get_inquiry_form_fields_status",
+        params: { requirement_id: "req-new" },
+        message: toolMessage({ status }),
+      }),
+    );
+    assert.match(text, /未返回可识别的终态/u);
+    assert.match(text, /等待用户提交后回复“好了”/u);
+    assert.match(text, /不得按已提交继续/u);
+    assert.doesNotMatch(text, /按原分支恢复/u);
+  });
+}
+
+test("field status unavailable keeps polling with the exact requirement id", () => {
+  const persist = registeredPlugin().hooks.get("tool_result_persist");
+  const text = directiveText(
+    persist({
+      toolName: "mcp__ypscan__get_inquiry_form_fields_status",
+      params: { requirement_id: "req-new" },
+      message: toolMessage({ status: "unavailable" }),
+    }),
+  );
+  assert.match(text, /尚未提交/u);
+  assert.match(text, /前 5 次间隔 10 秒、之后 30 秒/u);
+  assert.match(text, /累计最多 12 次/u);
+  assert.deepEqual(namedArgsFromDirective(text, "GET_INQUIRY_FORM_FIELDS_STATUS_ARGS"), {
+    requirement_id: "req-new",
+  });
+  assert.match(text, /不得重开字段页、改写 URL 或更换 requirement_id/u);
+});
+
+test("field status submitted resumes the original branch only after a failed precheck", () => {
+  const persist = registeredPlugin().hooks.get("tool_result_persist");
+  const text = directiveText(
+    persist({
+      toolName: "mcp__ypscan__get_inquiry_form_fields_status",
+      params: { requirement_id: "req-new" },
+      message: toolMessage({ status: "submitted" }),
+    }),
+  );
+  assert.match(text, /首次预检/u);
+  assert.match(text, /不代表本轮页面已提交/u);
+  assert.match(text, /只有预检曾返回 unavailable/u);
+  assert.match(text, /按原分支恢复/u);
+  assert.match(text, /发送前警示弹窗确认/u);
+  assert.match(text, /不得再次轮询该 requirement/u);
+  assert.doesNotMatch(text, /FIELD_SELECTION_URL=|ASK_USER_QUESTION_ARGS=/u);
+  assert.ok(text.length < 900, `field-status directive too long: ${text.length}`);
 });
 
 for (const payload of [
   { success: true, status: "configured", requirement_id: "wrong" },
   { success: false, status: "configured", requirement_id: "req-new" },
   { success: true, status: "configured" },
+  { success: true, status: "copied", requirement_id: "wrong" },
+  { success: false, status: "copied", requirement_id: "req-new" },
+  { success: true, status: "copied" },
+  { success: true, status: "pending", requirement_id: "req-new" },
   { success: false, status: "error", url: "https://example.invalid/fields" },
   { success: true, status: "selection_required", url: "https://example.invalid/fields" },
   { success: true, url: "https://example.invalid/fields" },
@@ -1382,7 +1503,7 @@ test("startup explains source evidence, schema compatibility and explicit resele
     { runId: "field-inheritance" },
   ).prependContext;
   assert.match(text, /追加 source_requirement_id/u);
-  assert.match(text, /本会话最近一次用户已提交或 Provider 已返回 configured/u);
+  assert.match(text, /本会话最近一次用户已提交或 Provider 已返回 configured\/copied/u);
   assert.match(text, /用户明确要求重新勾选才传 force_reselect=true/u);
   assert.match(text, /不支持时说明接口未支持并暂停/u);
 });

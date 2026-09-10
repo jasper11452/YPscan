@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.0.23 — 2026-09-10
+
+- 字段页提交自动续接：Provider 新增并已进入插件白名单的 `get_inquiry_form_fields_status({requirement_id})` 用于自动确认用户是否已提交字段页，解决“填完后必须手动回复好了”的体验断点。实测（2026-09-10，app MCP 代理 + 服务端 1.9.4）取值仅 `unavailable`（该需求当前无已提交配置）/`submitted`（已有配置，含继承复制）/`invalid`，响应不回显 `requirement_id`、无时间戳与页面实例标识，pending 响应字节恒定。因此状态是需求级存量状态，不能区分“本次打开的页面刚提交”与“此前已有配置”：仅在首次选择且即时预检为 `unavailable` 时轮询（预检 `unavailable` 后 10 秒×5 加 30 秒×7，累计最多 12 次，`submitted` 后立即续接原分支；预检即 `submitted`、`invalid`、未知状态、调用失败或到上限时停止轮询并保留“好了”兼容路径；`force_reselect=true` 与继承场景禁止轮询（会在用户提交前就返回 `submitted`）。上限 12 次是硬约束：宿主对同一工具同一参数连续 16 次相同结果触发全局无进展断路器。Hook、SKILL、字段工具卡（新增 `get_inquiry_form_fields_status.md`）、Spec（contracts/hooks/flows/config/README/architecture）、AGENTS/README、验收清单与回归测试同步；lint/typecheck/test（612 项，其中新增 6 项）通过。真实 App 宿主端到端与超时回退未验收；Provider 若补页面实例 token 或每次变化的状态字段，可评估放宽到 30 轮。
+
+- 宿主工具名匹配兼容扁平 MCP 命名空间：`stripHostPrefix` 除全名和 `<前缀>__<工具名>` 外，按 `mcp-<server>_<工具名>`（如 `mcp-04b79900_validate_requirement`）解析业务工具与本地工具；流程指令的本地工具判断改用同一裸名，不再各自正则。修复宿主扁平化工具名时 Hook 全部静默跳过、最终报 `YPSCAN_MANUAL_SCORE_CONTEXT_UNAVAILABLE` 的问题。SKILL、启动指令、Spec（contracts/hooks）、回归测试同步；真实 pi 内核宿主未复测。
+
+- 字段继承适配 Provider 实际返回的状态名：`select_inquiry_form_fields` 继承成功现返回 `status=copied`（旧契约名 `configured`，现网 payload 不含 `configuration_source`），插件按已配置处理，直接恢复原分支，不再落入“字段选择返回未知状态”暂停；`force_reselect` 未返回字段页、需求 ID 不一致、缺少成功证据或 `status=error` 仍暂停。入口仍是同一继承规则，不新增状态、缓存或门禁。Hook 指令、工具卡、Skill、Spec（contracts/hooks/flows）、AGENTS/README、验收清单与回归测试同步；lint/typecheck/test（603 项）覆盖 `copied` 继承成功、强制重选、`copied` 三种无效 payload 与未知状态回退。真实 App 宿主交互与 Provider 后续状态名变更未重新验收。
+
 ## 1.0.22 — 2026-09-10
 
 - 手动拓展来源登记按项目持久化到 `<workspaceDir>/.ypscan/manual-score-sources.json`：需求模式、平台、目标人数、links 路径与哈希、每批原生补全成功/失败名单、各批评分表路径与哈希及冲突标记。Gateway 重置清空内存后，在下一次 Hook 事件或汇总调用时按需读回，并恢复 links 上传白名单，使已评分批次不因重启失效；恢复后仍逐文件重校验 SHA-256，通过才继续汇总或分批，不重搜、不重补全、不重打分。内存记录优先，持久文件写入失败不影响本次工具结果。

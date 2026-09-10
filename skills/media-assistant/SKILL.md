@@ -15,7 +15,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 进入流程与业务模式
 
-只处理媒介助手范围内的达人筛选、询价和提报任务。工具能力只按宿主完整名称中最后一个 `__` 后的实际工具名判断；单一匹配时使用宿主展示的完整名称，多个同名匹配时才询问用户，无匹配时才报告缺失。
+只处理媒介助手范围内的达人筛选、询价和提报任务。工具能力只按宿主完整名称里的实际工具名判断：`<前缀>__<工具名>` 取最后一个 `__` 后段，扁平 MCP 形态 `mcp-<server>_<工具名>` 按已知业务工具名后缀识别；单一匹配时使用宿主展示的完整名称，多个同名匹配时才询问用户，无匹配时才报告缺失。
 
 解析需求前先确定业务模式：
 
@@ -27,9 +27,9 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 询价机构：`ypscan_parse_requirement → 复核 → validate_requirement → search_creators → rank_mcns → MCN 排名表 → 选择收件机构 → 选择字段 → 发送确认 → create_with_distributions → 用户说机构已回填 → sync_mcn_inquiry_status(requirement_id, project_id, supplierIds) → 用其返回的 inquiry_ids 直接 ingest_mcn_submissions → get_ingest_job（到 succeeded/partially_succeeded）→ 保存机构达人预览表 → 询问用户是否补全 → ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生达人补全(20/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存打分排序 Excel`
 
-手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields → manual_source_creators(requirement_id) → 同步 links CSV 直接保存，或 manual_source_creators_status(requirement_id, batch_id, num) 轮询 → 保存并归一化 links CSV → ypscan_summarize_manual_scores 取得当前批 → 原生达人补全(最多20人/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，仅合并上传当前批) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存单批 manual_score_batch → 再汇总（达标交付，否则下一批）`
+手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields（字段页提交用 get_inquiry_form_fields_status 自动确认，超时回退等“好了”） → manual_source_creators(requirement_id) → 同步 links CSV 直接保存，或 manual_source_creators_status(requirement_id, batch_id, num) 轮询 → 保存并归一化 links CSV → ypscan_summarize_manual_scores 取得当前批 → 原生达人补全(最多20人/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，仅合并上传当前批) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存单批 manual_score_batch → 再汇总（达标交付，否则下一批）`
 
-每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement。即使同一会话、同一平台、业务条件未变，或询价完成/停止后改用手动拓展（反之亦然），也必须重新调用 `ypscan_parse_requirement`、按下文复核并调用 `validate_requirement`；不得跨功能复用 requirement，新 requirement 必须重新调用 `select_inquiry_form_fields` 配置字段。两个功能不得并行执行，也不得复用旧机构、达人、batch、CSV 或 Excel。同一会话首次选择字段；后续新 requirement（含放宽、纠错和跨功能）通过 `select_inquiry_form_fields` 传 `source_requirement_id`，来源只取本会话最近一次用户已提交或 Provider 已确认 `configured` 的真实需求，不跨会话、不猜测 ID。用户明确要求重新勾选时才传 `force_reselect=true` 并省略来源。新参数须为当前 live schema 支持，否则说明接口未支持并暂停。`success=true` 且 `status=configured`、返回需求 ID 与当前调用一致时直接继续；只有字段页 URL 才展示并等待提交及“好了”。继承失败或平台不兼容时暂停，不自动重选；不读取、缓存或传递 `columns`。字段选择 URL 输出后本轮必须结束并等待；有字段页时，只有用户为这个 requirement 提交并明确回复“好了”后才恢复原分支，禁止同一轮试调搜索、手动拓展或打分。
+每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement。即使同一会话、同一平台、业务条件未变，或询价完成/停止后改用手动拓展（反之亦然），也必须重新调用 `ypscan_parse_requirement`、按下文复核并调用 `validate_requirement`；不得跨功能复用 requirement，新 requirement 必须重新调用 `select_inquiry_form_fields` 配置字段。两个功能不得并行执行，也不得复用旧机构、达人、batch、CSV 或 Excel。同一会话首次选择字段；后续新 requirement（含放宽、纠错和跨功能）通过 `select_inquiry_form_fields` 传 `source_requirement_id`，来源只取本会话最近一次用户已提交或 Provider 已确认 `configured`/`copied` 的真实需求，不跨会话、不猜测 ID。用户明确要求重新勾选时才传 `force_reselect=true` 并省略来源。新参数须为当前 live schema 支持，否则说明接口未支持并暂停。`success=true` 且 `status=configured`/`copied`、返回需求 ID 与当前调用一致时直接继续；只有字段页 URL 才展示并按 [get_inquiry_form_fields_status](references/tools/get_inquiry_form_fields_status.md) 自动确认提交：URL 输出后先即时预检一次，`unavailable` 才开始轮询（前 5 次间隔 10 秒、之后 30 秒，累计最多 12 次），`submitted` 才恢复原分支；预检就是 `submitted`（说明该需求此前已有配置）、`invalid`、未知状态、调用失败或到达上限时停止轮询并等待用户回复“好了”。`force_reselect=true` 或继承场景禁止轮询，仍等待“好了”。继承失败或平台不兼容时暂停，不自动重选；不读取、缓存或传递 `columns`。轮询或等待期间禁止同一轮试调搜索、手动拓展或打分。
 
 机构列表展示后的“暂不询价”是唯一的续办例外：用户选择“暂不询价”、关闭/取消机构选择弹窗或当轮未回答后，只要仍在同一会话，之后明确要求给该列表中的机构发询价（包括“前 5 家”等可按当前排名唯一确定的表达），且期间未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，就视为恢复当前询价分支，而不是开始新询价。继续使用该列表所属 requirement、平台和 `rank_mcns` 机构映射，不重新解析、落库、搜索或排名；当前 requirement 已提交字段配置时复用，否则再调用 `select_inquiry_form_fields`。“暂不询价”只暂停发送，不算明确停止整个询价功能。任一条件不满足时不得把历史列表当作当前证据，按真正的新功能开始处理。
 
@@ -68,9 +68,9 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 覆盖达人只取当前机构自己的 `candidate_count`，缺失写“未知”。不得展示 supplier ID、候选达人、供给占比、手动拓展补量、推荐理由、汇总字段或历史数据。
 
-排名表保存后展示 `delivery.local_file_link`，再让用户从本轮真实机构中选择收件机构，或明确提供需要发送的自定义机构名称。机构名只在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；弹窗换行只用于展示，匹配前去掉换行还原完整名称；命中非空 `supplier_id` 就放入 `supplierIds`，未匹配或无 ID 的原始名称保留在 `supplier_name` 交给 Provider；不模糊匹配、不跨轮复用。用户当轮暂不询价、关闭/取消弹窗或未回答，之后仍可按上文续办例外从这份当前列表明确选择机构。选中机构后，若同一 requirement 已提交字段配置则直接复用，否则按上述规则调用 `select_inquiry_form_fields` 继承或首次选择字段；configured 时直接进入发送确认，URL 时等待用户提交并回复“好了”。
+排名表保存后展示 `delivery.local_file_link`，再让用户从本轮真实机构中选择收件机构，或明确提供需要发送的自定义机构名称。机构名只在本轮同一 requirement、同一平台的 `rank_mcns.data.mcns` 中唯一精确匹配；弹窗换行只用于展示，匹配前去掉换行还原完整名称；命中非空 `supplier_id` 就放入 `supplierIds`，未匹配或无 ID 的原始名称保留在 `supplier_name` 交给 Provider；不模糊匹配、不跨轮复用。用户当轮暂不询价、关闭/取消弹窗或未回答，之后仍可按上文续办例外从这份当前列表明确选择机构。选中机构后，若同一 requirement 已提交字段配置则直接复用，否则按上述规则调用 `select_inquiry_form_fields` 继承或首次选择字段；configured/copied 时直接进入发送确认，URL 时按字段工具卡自动确认提交（超时、重选或环境不支持该工具时等待“好了”）。
 
-字段已配置或收到字段提交后的“好了”后立即恢复询价分支。发送前必须用警示弹窗确认：一次 `AskUserQuestion` 只含一个问题、恰好两个选项 `确认发送`/`返回修改`、不设 `multiSelect`；最终机构名单和完整企微消息写在问题正文里，不得把机构或消息拆成选项；正文保留企微消息原有的行结构，只在单行将超过 20 个 Unicode 字符时断行，禁止把短分句、字段或项目名拆成多行。用户点击“确认发送”，或明确回复“可以发”“发吧”“按这个发”“就这样发送”等无条件肯定表达时，调用一次 `create_with_distributions`，`description` 与 `wechat_notification_message` 内容一致；否定、要求修改或带条件的表达不算确认。Provider 负责机构匹配、去重和发送幂等，插件不控制在线表格是否预填或 Provider 如何处理机构回填达人。
+字段已配置或确认字段页已提交（自动轮询到 `submitted`，或用户回复“好了”）后立即恢复询价分支。发送前必须用警示弹窗确认：一次 `AskUserQuestion` 只含一个问题、恰好两个选项 `确认发送`/`返回修改`、不设 `multiSelect`；最终机构名单和完整企微消息写在问题正文里，不得把机构或消息拆成选项；正文保留企微消息原有的行结构，只在单行将超过 20 个 Unicode 字符时断行，禁止把短分句、字段或项目名拆成多行。用户点击“确认发送”，或明确回复“可以发”“发吧”“按这个发”“就这样发送”等无条件肯定表达时，调用一次 `create_with_distributions`，`description` 与 `wechat_notification_message` 内容一致；否定、要求修改或带条件的表达不算确认。Provider 负责机构匹配、去重和发送幂等，插件不控制在线表格是否预填或 Provider 如何处理机构回填达人。
 
 用户说机构已回填时，回收第一步固定调用 `sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})`，用其返回的 `inquiry_ids` 直接调用 `ingest_mcn_submissions({inquiry_ids})`，不依赖 `get_workflow_state`。随后轮询 `get_ingest_job` 到 `succeeded` 或 `partially_succeeded`，保存机构达人预览表，再询问用户是否补全。`get_ingest_job` 终态只回一份预览 Excel（`excel_file_url` + `excel_columns`），没有 links CSV。
 
@@ -85,7 +85,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 手动拓展分支
 
-`validate_requirement` 成功后先按上述继承规则调用 `select_inquiry_form_fields`；configured 时直接继续；生成字段选择 URL 后原样展示并结束本轮，禁止用“若系统强制会提示”等试错理由提前调用后续工具。字段已配置或用户为该 `requirement_id` 提交字段页并明确回复“好了”后，按 [manual_source_creators](references/tools/manual_source_creators.md) 只传同一 `requirement_id` 提交后端任务，不传 `demand` 或 `num`。需求文本由 Provider 从后台读取；完整有效需求和已确认澄清仍须先解析、复核并通过 `validate_requirement` 保存。
+`validate_requirement` 成功后先按上述继承规则调用 `select_inquiry_form_fields`；configured/copied 时直接继续；生成字段选择 URL 后原样展示，并按 [get_inquiry_form_fields_status](references/tools/get_inquiry_form_fields_status.md) 自动确认提交（超时或环境不支持时等待“好了”），禁止用“若系统强制会提示”等试错理由提前调用后续工具。字段已配置或确认字段页已提交后，按 [manual_source_creators](references/tools/manual_source_creators.md) 只传同一 `requirement_id` 提交后端任务，不传 `demand` 或 `num`。需求文本由 Provider 从后台读取；完整有效需求和已确认澄清仍须先解析、复核并通过 `validate_requirement` 保存。
 
 若提交响应同步直接返回 links CSV，则立即保存并归一化 links CSV（见下文），再进入原生达人补全；若返回异步抖音 batch，则先提示用户后台处理耗时较长，再等待 30 秒，按 [manual_source_creators_status](references/tools/manual_source_creators_status.md) 使用同一 requirement ID、`batch_id` 和按目标人数梯度计算的 `num`（正整数，即每批取 links URL 的数量）第 1 次查询。Hook 会通过 `MANUAL_SOURCE_TARGET_NUM` 提示当前 requirement 的梯度取数数量（如 5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，仅示例、非穷举，表外人数同样按同一梯度算好）；当前环境 live schema required `num` 时直接把该值并入状态查询，不得再次乘倍数。缺少需求记录时沿用上一轮已发送的 `num`。最终交付目标仍为用户需求人数。结果仍未完成时每隔 30 秒继续查询，单轮累计最多 10 次；第 10 次仍未完成时如实报告并停止，不调用 `AskUserQuestion`，不自动查询第 11 次。用户以后明确要求继续时，保留同一 requirement ID、batch ID 和当前环境 live schema 对应的目标数量参数开始新一轮最多 10 次的查询；不得重复创建任务或猜测、更换 ID。
 
@@ -101,7 +101,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 若旧 Provider 仍同步或异步返回 Excel，则仅作为兼容降级路径：立即保存并交付当前 Excel，不进入 CSV 补全/打分链路。该降级路径不调用 `rank_creators`、`create_submission_batch` 或补充达人信息弹窗。
 
-若 `score_manual_source_csv` 或 `score_manual_source_csv_status` 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`、`REQUIREMENT_COLUMNS_UNAVAILABLE` 或明确消息 `customer demand has no selected inquiry columns`，不得把 `success_count` 当作最终打分成功，也不得重搜、重做原生补全或重跑 `file_bridge`。使用同一 requirement 按上述规则调用 `select_inquiry_form_fields` 恢复配置；configured 后直接恢复，只有 URL 才展示并等待提交及“好了”；恢复时，若缺列指令已附带 `SCORE_MANUAL_SOURCE_CSV_ARGS` 则原样使用该参数重提一次 `score_manual_source_csv`，不得改写路径；否则只用同一 requirement 和本轮 `file_bridge` 返回的原始 `csv_file_path` 重提，当前对话无法取得该可信路径时如实说明并停止，不自行构造 URL。报告时明确区分 Agent 跳步、Provider 失败与用户操作，不把 Agent 可避免的返工描述成纯系统要求。
+若 `score_manual_source_csv` 或 `score_manual_source_csv_status` 返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED`、`REQUIREMENT_COLUMNS_UNAVAILABLE` 或明确消息 `customer demand has no selected inquiry columns`，不得把 `success_count` 当作最终打分成功，也不得重搜、重做原生补全或重跑 `file_bridge`。使用同一 requirement 按上述规则调用 `select_inquiry_form_fields` 恢复配置；configured/copied 后直接恢复，只有 URL 才展示并按字段工具卡自动确认提交（超时、重选或环境不支持时等待“好了”）；恢复时，若缺列指令已附带 `SCORE_MANUAL_SOURCE_CSV_ARGS` 则原样使用该参数重提一次 `score_manual_source_csv`，不得改写路径；否则只用同一 requirement 和本轮 `file_bridge` 返回的原始 `csv_file_path` 重提，当前对话无法取得该可信路径时如实说明并停止，不自行构造 URL。报告时明确区分 Agent 跳步、Provider 失败与用户操作，不把 Agent 可避免的返工描述成纯系统要求。
 
 ## 结果不足：先复核，再放宽
 
@@ -129,7 +129,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 ## 用户修改需求与最终交付
 
-用户只要求重新勾选字段时，按字段工具卡传 `force_reselect=true`；这不代表重跑业务。提交并回复“好了”后只确认配置更新；只有当前对话明确存在等待字段配置的未完成步骤才恢复该步骤。已完成或明确停止的搜索、打分或询价不重启；无法确定待办步骤时不调用下游。字段页响应为 `selection_required` 或 `opened` 时必须返回与当前调用一致的 `requirement_id`，缺失或不一致则暂停且不展示链接；`opened` 只表示字段页已生成、等待提交，不等于 `configured`；旧版无 status/ID 的链接仍兼容，有 ID 时必须匹配。
+用户只要求重新勾选字段时，按字段工具卡传 `force_reselect=true`；这不代表重跑业务。重选页面属于已有配置场景，禁止用 `get_inquiry_form_fields_status` 轮询（会在用户提交前就返回 `submitted`）；提交并回复“好了”后只确认配置更新；只有当前对话明确存在等待字段配置的未完成步骤才恢复该步骤。已完成或明确停止的搜索、打分或询价不重启；无法确定待办步骤时不调用下游。字段页响应为 `selection_required` 或 `opened` 时必须返回与当前调用一致的 `requirement_id`，缺失或不一致则暂停且不展示链接；`opened` 只表示字段页已生成、等待提交，不等于 `configured`/`copied`；旧版无 status/ID 的链接仍兼容，有 ID 时必须匹配。
 
 用户主动修改任何业务条件时，无论是否已生成提报表，都回到用户原始需求，合并用户亲自提出的最新修改，撤销全部自动放宽，重新解析、复核、创建新 requirement，并沿原业务模式重跑。不得复用旧 requirement、机构、询价、达人、batch、CSV 或 Excel；未修改字段的已确认澄清答案（含截止时间）必须一并带入新 requirement 的 `rawMessagesJson.clarifications`，直接复用、不重复询问。
 

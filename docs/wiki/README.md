@@ -14,6 +14,7 @@
 | 2026-09-09/10 搜索与评分链路诊断、Dify 工作流修复与发布 | [只读诊断](../verification/2026-09-09-search-scoring-diagnosis.md)、[解析工作流修复与发布](../verification/2026-09-10-parse-workflow-fix-and-publish.md)、[评分工作流修复与发布](../verification/2026-09-10-score-workflow-fix-and-publish.md) |
 | 双平台手动拓展发布与实测（各5人） | [2026-09-10 手动拓展验收](../verification/2026-09-10-manual-search-score-e2e.md) |
 | 候选池上限、`num` 实发值、评分口径与运行态加载路径（只读复核） | [2026-09-10 候选池上限与评分口径复核](../verification/2026-09-10-manual-source-pool-and-score-audit.md) |
+| 字段页提交自动续接的 Provider 状态语义与轮询上限 | [2026-09-10 字段状态工具契约探测](../verification/2026-09-10-field-status-contract-probe.md) |
 | 定位问题、最小修复、消融实验       | [开发与验证](development.md)                                                      |
 | 达人搜索与评分修复、梯度候选池 | [修复方案（P1a 与梯度候选池已实施；P1b Provider 闭环、多轮召回仍待实施，双平台实测见验证记录）](../plans/creator-search-and-scoring-remediation.md) |
 | Dify 手扒/评分节点级缺陷与结构化判据 | [节点级修复方案](../plans/dify-search-and-scoring-remediation.md)、[本地 P0/P1 候选实施记录](../verification/2026-09-10-score-node-remediation-local.md) |

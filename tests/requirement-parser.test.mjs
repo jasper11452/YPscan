@@ -103,7 +103,7 @@ test("manual sourcing shares the reviewed relaxation policy and recreates requir
   assert.match(skill, /在结果前汇总全部放宽记录/u);
   assert.match(skill, /手动修改需求 \/ 改用询价机构 \/ 结束/u);
   assert.match(skill, /source_requirement_id.*最近一次用户已提交或 Provider 已确认/u);
-  assert.match(skill, /字段选择 URL 输出后本轮必须结束并等待/u);
+  assert.match(skill, /字段页 URL 才展示并按 \[get_inquiry_form_fields_status\].*自动确认提交/u);
   assert.match(skill, /用户明确要求放宽即按此优先范围执行，不重复要求逐项确认/u);
   assert.match(skill, /替换同主题关键词、减少非核心人设限定/u);
   assert.match(skill, /报价、CPM、CPE、粉丝范围、返点及其他条件保持原值/u);

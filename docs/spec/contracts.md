@@ -8,15 +8,16 @@
 | ---------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `BUSINESS_MODE_VALUES`             | `["询价机构", "手动拓展"]`                                       | 用户侧业务模式                                                      |
 | `PROVIDER_MANUAL_BUSINESS_MODE`    | `直接手扒`                                                       | 手动拓展的 Provider 兼容线值，仅出站边界映射，Agent 不得使用或展示  |
-| `HOST_PREFIXES`                    | `mcp__ypscan__`、`ypscan__`、`mcp__ypmcn__`、`ypmcn__`、`test__` | 工具名前缀（命名空间），按最后一个 `__` 后段匹配实际工具名          |
+| `HOST_PREFIXES`                    | `mcp__ypscan__`、`ypscan__`、`mcp__ypmcn__`、`ypmcn__`、`test__` | 工具名前缀（命名空间）示例，按最后一个 `__` 后段匹配实际工具名          |
 | 平台别名                           | `xhs`/`小红书`→`xiaohongshu`；`dy`/`抖音`→`douyin`               | 归一化规则                                                          |
 | `MAX_FOLLOWER_COUNT`               | `999_999_999`                                                    | 粉丝技术上限                                                        |
 | `UNRESTRICTED_FOLLOWERCOUNT_RANGE` | `"[0,999999999]"`                                                | 粉丝无要求时的落库值                                                |
-| `TOOL_REGISTRY`                    | 19 个业务工具名                                                  | 含已弃用工具名，供 `stripHostPrefix` 做宿主工具名匹配；不代表白名单 |
+| `TOOL_REGISTRY`                    | 20 个业务工具名                                                  | 含已弃用工具名，供 `normalizeToolCallParams` 判定业务工具；不代表白名单 |
+| `LOCAL_TOOL_NAMES`                 | 7 个插件本地工具名                                                 | 与业务工具一起参与 `stripHostPrefix` 的宿主工具名匹配 |
 
 ## 2. Provider MCP 白名单（manifest `toolFilter.include`）
 
-`validate_requirement`、`search_creators`、`rank_mcns`、`select_inquiry_form_fields`、`create_with_distributions`、`sync_mcn_inquiry_status`、`ingest_mcn_submissions`、`get_ingest_job`、`manual_source_creators`、`manual_source_creators_status`、`score_manual_source_csv`、`score_manual_source_csv_status`、`rank_creators`（共 13 个）。
+`validate_requirement`、`search_creators`、`rank_mcns`、`select_inquiry_form_fields`、`get_inquiry_form_fields_status`、`create_with_distributions`、`sync_mcn_inquiry_status`、`ingest_mcn_submissions`、`get_ingest_job`、`manual_source_creators`、`manual_source_creators_status`、`score_manual_source_csv`、`score_manual_source_csv_status`、`rank_creators`（共 14 个）。
 
 明确不暴露：`get_workflow_state`、`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export`、`get_selected_inquiry_form_fields`（已弃用）。
 
@@ -92,9 +93,9 @@
 
 ## 6. 宿主工具名匹配
 
-`stripHostPrefix` 先做全名精确匹配，再按 `前缀__业务名` 后缀匹配；不匹配返回 null（Hook 不处理）。这使 Provider 工具与本地工具在不同宿主命名空间下都能被 Hook 识别。
+`stripHostPrefix` 先做全名精确匹配，再按 `前缀__业务名` 后缀匹配；宿主把 MCP 命名空间扁平化为单分隔符时（如 `mcp-04b79900_validate_requirement`），同样按 `mcp-`/`ypscan-`/`ypmcn-` 命名空间加业务或本地工具名后缀识别；不匹配返回 null（Hook 不处理）。前缀形态受限，不把任意前缀当业务工具。这使 Provider 工具与本地工具在不同宿主命名空间下都能被 Hook 识别。
 
-宿主 YP Action 的原生达人补全（`get_xhs_author_business_card`/`get_douyin_author_business_card`）同样按完整名称最后一个 `__` 后匹配。插件不注册也不校验其 schema，不干预登录窗口、Cookie 或内部回调地址。
+宿主 YP Action 的原生达人补全（`get_xhs_author_business_card`/`get_douyin_author_business_card`）同样按上述两种形态匹配。插件不注册也不校验其 schema，不干预登录窗口、Cookie 或内部回调地址。
 
 ## 7. 关键 Provider 工具契约（v1.9.4）
 
@@ -103,6 +104,7 @@
 - `sync_mcn_inquiry_status`：`{requirement_id, project_id, supplierIds}` → `data.inquiries[].inquiry_id`（`created`/`reused`）；返回的 `inquiry_ids` 直接用于 ingest。
 - `create_with_distributions`：required = [`requirement_id`, `description`, `wechat_notification_message`]；`supplierIds`/`supplier_name` 可选，业务规则不变（两侧恒传数组、空侧 `[]`、至少一侧非空）。
 - `manual_source_creators` 固定只传 `{requirement_id}`，不传 `demand` 或 `num`，需求由 Provider 从后台读取。测试环境 live schema 已确认启动工具只有 `requirement_id`，状态查询为 `manual_source_creators_status({requirement_id, batch_id, num})`。Hook 通过 `MANUAL_SOURCE_TARGET_NUM` 提示状态查询所需的梯度取数数量（示例：5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，非穷举，表外人数同样按同一梯度计算），不能重复乘倍数，交付目标仍为用户需求人数；只有当前环境 live schema required `num` 时才并入远端调用。字段配置缺失时 Provider 应在启动调用返回 `REQUIREMENT_COLUMNS_NOT_CONFIGURED` / `REQUIREMENT_COLUMNS_UNAVAILABLE` 并停止，而不是延迟到打分终态；当前插件对启动和打分两处错误均生成同 requirement 字段选择恢复指令，不缓存或重建 columns，只保留本轮可信 `csv_file_path` 用于恢复时精确重提打分。
+- `get_inquiry_form_fields_status`：`{requirement_id}` → `{status}`。2026-09-10 对 app MCP 代理实测（服务端 1.9.4）的取值：`unavailable`（该需求当前没有已提交的字段配置）、`submitted`（该需求已有字段配置，含继承复制）、`invalid`（ID 无效/为空）。响应不回显 `requirement_id`，无时间戳或页面实例标识，pending payload 字节恒定。**语义是按需求判定的存量状态，不是“刚打开的字段页是否提交”**：需求已有配置时，重新打开字段页后仍会立即返回 `submitted`。因此插件只在首次选择（无 `force_reselect`、无 `source_requirement_id`）且即时预检为 `unavailable` 时轮询；预检即 `submitted` 或重选/继承场景不轮询，仍等待用户回复“好了”。轮询上限 12 次（含预检共 13 次查询）：同一工具同一参数连续 16 次相同结果会触发宿主全局无进展断路器。
 - `score_manual_source_csv`：`{requirement_id, csv_file_path}` → 返回 `job_id`；`score_manual_source_csv_status({job_id})` 轮询至终态 → final workbook URL。`csv_file_path` 只接受当前 `file_bridge` 返回值（当前实现为未签名 OSS URL），绝不传本机工作区路径或自行构造的 URL。若打分阶段返回缺字段配置错误，字段提交后只用同一 requirement 与该可信 `csv_file_path` 重提打分，不重跑搜索、补全或 `file_bridge`，且处理行数不等于最终成功。
 - 回收链：`sync_mcn_inquiry_status({requirement_id, project_id, supplierIds})` → 返回 `data.inquiries[].inquiry_id` → `ingest_mcn_submissions({inquiry_ids})` → `get_ingest_job` 轮询至 `succeeded`/`partially_succeeded`；终态只回一份预览 Excel（`excel_file_url` + `excel_columns`），无 links CSV，之后 ypscan_save_creator_links 读取预览并派生 links CSV → 原生补全 → `file_bridge(manual_source)` → 打分。
 
@@ -115,7 +117,8 @@
 | `validate_requirement` | 校验并创建当前单平台需求记录（会写入）。按当前 customer_demands 列契约直接传顶层参数，不用 payload 包装或旧字段名；platform 只接受 xiaohongshu/douyin，需求完整时 status="ready"。成功后取 data.requirement_id 作为需求 ID（缺失时用 data.id；demand_id 不是需求 ID）。 |
 | `search_creators` | 按当前需求的已保存筛选条件检索候选达人并写入候选池，返回实际生效筛选、排除统计与去重候选数。零匹配也是成功结果；本工具不自动切换功能或放宽条件，成功后继续 rank_mcns。 |
 | `rank_mcns` | 按当前需求对候选达人所属机构排序，返回每家机构的排名、独立覆盖达人、返点、综合分与机构 ID，并提供排名 Excel 下载地址。本工具不选择收件机构，也不发送询价。 |
-| `select_inquiry_form_fields` | 期望支持 source_requirement_id 继承和 force_reselect 强制重选；当前 test live schema 尚未提供这两个参数。configured 表示当前需求配置成功，selection_required/opened 返回 URL 待提交，error 暂停。不返回字段数组。 |
+| `select_inquiry_form_fields` | live schema 已提供 source_requirement_id 继承和 force_reselect 强制重选（2026-09-10 对 app MCP 代理实测）。继承成功返回 `configured`（旧契约名）或 `copied`（现网实际状态名，payload 可无 `configuration_source`），两者都表示当前需求配置成功；selection_required/opened 返回 URL 待提交，error 暂停。不返回字段数组。 |
+| `get_inquiry_form_fields_status` | 查询需求字段配置是否已提交，只传 requirement_id。返回 `unavailable`（尚无已提交配置）/`submitted`（已有配置，含继承）/`invalid`。按需求判定、不区分字段页实例；不返回字段数组。首次选择的字段页可用它自动确认提交，重选/继承场景不得轮询。 |
 | `create_with_distributions` | 按需求已保存的字段配置创建询价项目并向指定机构分发（含企微发送）。成功只代表分发已创建；是否送达以 Provider 回执为准，不要自动重发。 |
 | `sync_mcn_inquiry_status` | 为已分发项目创建或复用机构询价映射。用户报告机构已回填时先调用本工具，用返回的 inquiry_ids 直接调用 ingest_mcn_submissions；同步成功不代表机构已填表。 |
 | `ingest_mcn_submissions` | 对非空询价启动机构回填采集，返回 job_id。用 sync_mcn_inquiry_status 返回的 inquiry_ids 调用；受理后用 get_ingest_job 轮询到 succeeded 或 partially_succeeded。 |

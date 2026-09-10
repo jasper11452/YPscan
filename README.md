@@ -49,4 +49,4 @@ Smoke 断言本地工具为 5 个、Hook 为 5 个，并校验 package、manifes
 
 仓库维护者从 [项目开发 Wiki](docs/wiki/README.md) 进入，按 [同步矩阵与发布流程](docs/wiki/sync-and-release.md) 完成相关资料更新和四处版本核对；当前实现见 [Spec](docs/spec/README.md)，体验验收见 [Review Checklist](docs/review-checklist.md)。`docs/` 是仓库工程资料，不在插件发布包内。
 
-字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured 后直接继续；URL 等待提交；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。
+字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured/copied 后直接继续；首次选择产生字段页 URL 时用 get_inquiry_form_fields_status 自动确认提交（预检 unavailable 后最多 12 次轮询，submitted 续接；预检即 submitted、invalid、未知、失败或到上限时等“好了”），重选/继承场景不轮询；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。

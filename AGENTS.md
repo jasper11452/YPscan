@@ -34,7 +34,7 @@
 ## 架构地图（当前形态）
 
 - `index.js` — 入口：注册 5 个本地工具 `ypscan_parse_requirement`、`ypscan_save_artifact`、`ypscan_save_creator_links`、`file_bridge`、`ypscan_summarize_manual_scores`；注册 5 个 Hook：`before_prompt_build`、`before_tool_call`、`tool_result_persist`、`gateway_start`、`gateway_stop`（后两个只重置瞬态状态）。
-- `openclaw.plugin.json` — 清单：Provider MCP 白名单 13 个（含 `manual_source_creators`/`manual_source_creators_status`、`rank_mcns`、`select_inquiry_form_fields`、`score_manual_source_csv`/`score_manual_source_csv_status`、`rank_creators`；不再暴露 `get_workflow_state`）、测试 adapter、`contracts.tools`、`skills`。`configSchema` 包含 `testMode`/`testAdapterBaseUrl` 与 `fileBridgeOss`；后者是 `file_bridge` 的安装级 OSS 上传配置，`testAdapterBaseUrl` 仅 `testMode=true` 时使用且必须是无凭据 loopback origin。
+- `openclaw.plugin.json` — 清单：Provider MCP 白名单 14 个（含 `manual_source_creators`/`manual_source_creators_status`、`rank_mcns`、`select_inquiry_form_fields`/`get_inquiry_form_fields_status`、`score_manual_source_csv`/`score_manual_source_csv_status`、`rank_creators`；不再暴露 `get_workflow_state`）、测试 adapter、`contracts.tools`、`skills`。`configSchema` 包含 `testMode`/`testAdapterBaseUrl` 与 `fileBridgeOss`；后者是 `file_bridge` 的安装级 OSS 上传配置，`testAdapterBaseUrl` 仅 `testMode=true` 时使用且必须是无凭据 loopback origin。
 - `src/tools/` — 本地工具与辅助：
   - `parse-requirement.js` — 直连 Dify 的需求解析代理；`data.outputs` 只返回当前 Provider 契约消费的字段，缺失字段省略；八个 Dify Label 解析契约保持不变，`talentTypeLabel` 不是 Dify 字段。
   - `manual-score-summary.js` — 读取受控评分表，精确累计推荐人数，返回下一批或最终汇总 Excel；仅手动拓展使用。
@@ -96,4 +96,4 @@
 6. 涉及业务链路：逐条核对 `docs/review-checklist.md` 中与本次改动相关的条目，并说明结论。
 7. 所有修改：按 Wiki 同步矩阵复核相关资料和最终 diff；报告更新项、不适用项及原因、未验收范围。
 
-字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured 后直接继续；URL 等待提交；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。
+字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured/copied 后直接继续；首次选择产生字段页 URL 时用 get_inquiry_form_fields_status 自动确认（预检 unavailable 后最多 12 次轮询，submitted 续接；预检即 submitted、invalid、未知、失败或到上限时等“好了”），重选/继承场景不轮询；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。

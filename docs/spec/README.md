@@ -25,7 +25,7 @@ ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远�
 
 ### 当前现状
 
-- Provider MCP 提供达人搜索、机构排名、询价发送、手动拓展、异步入库等后端能力，插件侧只做白名单接入（manifest `toolFilter` 暴露 13 个 Provider 工具）。
+- Provider MCP 提供达人搜索、机构排名、询价发送、手动拓展、异步入库等后端能力，插件侧只做白名单接入（manifest `toolFilter` 暴露 14 个 Provider 工具）。
 - 需求解析由固定 Dify Workflow 完成（`ypscan_parse_requirement` 直连代理，不落本地库）。
 - 交付物（Excel、CSV）由 Provider 返回下载 URL，插件负责受控下载与本地保存。
 

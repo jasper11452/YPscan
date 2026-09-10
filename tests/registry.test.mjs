@@ -7,6 +7,7 @@ import {
   manualSourcePoolSize,
   missingRequiredValidateParams,
   normalizeToolCallParams,
+  stripHostPrefix,
   VALIDATE_REQUIREMENT_RANGE_PARAMS,
   validateRequirementPreflight,
 } from "../src/contract/registry.js";
@@ -1952,4 +1953,32 @@ test("manual source candidate pool scales down by target tier", () => {
     assert.ok(pool >= previous, `pool must not shrink at target ${target}`);
     previous = pool;
   }
+});
+
+test("host tool names resolve across namespaces and flattened MCP prefixes", () => {
+  for (const [name, expected] of [
+    ["validate_requirement", "validate_requirement"],
+    ["test__validate_requirement", "validate_requirement"],
+    ["mcp__ypscan__validate_requirement", "validate_requirement"],
+    ["mcp-04b79900_validate_requirement", "validate_requirement"],
+    ["MCP-04B79900_SCORE_MANUAL_SOURCE_CSV", "score_manual_source_csv"],
+    ["mcp-04b79900_manual_source_creators_status", "manual_source_creators_status"],
+    ["mcp-04b79900_get_inquiry_form_fields_status", "get_inquiry_form_fields_status"],
+    ["test__get_inquiry_form_fields_status", "get_inquiry_form_fields_status"],
+    ["mcp-04b79900_ypscan_save_artifact", "ypscan_save_artifact"],
+    ["ypscan_summarize_manual_scores", "ypscan_summarize_manual_scores"],
+    ["mcp-04b79900_ypscan_summarize_manual_scores", "ypscan_summarize_manual_scores"],
+  ])
+    assert.equal(stripHostPrefix(name), expected, name);
+  for (const name of ["exec", "mcp-04b79900_exec", "foo_validate_requirement", "read", ""])
+    assert.equal(stripHostPrefix(name), null, name);
+});
+
+test("flattened host names normalize business tool params but leave local tools untouched", () => {
+  const params = completeValidateParams();
+  params.quantityTotal = 30;
+  const normalized = normalizeToolCallParams("mcp-04b79900_validate_requirement", params);
+  assert.equal(normalized.quantityTotal, "30");
+  const local = { requirement_id: "req", platform: "小红书", csv_file_path: "x" };
+  assert.equal(normalizeToolCallParams("mcp-04b79900_ypscan_save_creator_links", local), local);
 });

@@ -25,7 +25,7 @@ function canonicalValidateParams(businessMode, quantityTotal = 30) {
   };
 }
 
-async function setup(t, mode = "手动拓展") {
+async function setup(t, mode = "手动拓展", hostToolName = (name) => name) {
   const workspaceDir = await mkdtemp(join(tmpdir(), "ypscan-score-flow-"));
   t.after(() => rm(workspaceDir, { recursive: true, force: true }));
   const context = { workspaceDir, sessionKey: "score-flow" };
@@ -45,9 +45,13 @@ async function setup(t, mode = "手动拓展") {
   let seq = 0;
   function before(name, params) {
     const toolCallId = `call-${++seq}`;
-    const result = hooks.get("before_tool_call")({ toolName: name, params, toolCallId }, context);
+    const hostName = hostToolName(name);
+    const result = hooks.get("before_tool_call")(
+      { toolName: hostName, params, toolCallId },
+      context,
+    );
     assert.notEqual(result?.block, true, result?.blockReason);
-    return { toolName: name, toolCallId, params: result?.params ?? params };
+    return { toolName: hostName, toolCallId, params: result?.params ?? params };
   }
   function persist(event, result) {
     const message = result.content
@@ -131,6 +135,21 @@ async function setup(t, mode = "手动拓展") {
   }
   return { ids, normalized, score, local, hooks, remote, context, workspaceDir };
 }
+
+test("flattened MCP tool names still register sources and deliver the manual summary", async (t) => {
+  const f = await setup(t, "手动拓展", (name) => `mcp-04b79900_${name}`);
+  assert.match(f.normalized.directive, /SUMMARIZE_MANUAL_SCORES_ARGS=/u);
+  const first = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(first.payload.success, true, JSON.stringify(first.payload));
+  assert.deepEqual(first.payload.data.next_author_ids, f.ids.slice(0, 10));
+  const batch = await f.score(f.ids.slice(0, 10), 10);
+  assert.match(batch.completionDirective, /只合并上传当前批/u);
+  const last = await f.local("ypscan_summarize_manual_scores", { requirement_id: "req" });
+  assert.equal(last.payload.success, true, JSON.stringify(last.payload));
+  assert.equal(last.payload.data.recommended_count, 10);
+  assert.equal(last.payload.data.next_action, "deliver");
+  assert.match(last.directive, /展示最终汇总/u);
+});
 
 test("registered tools: initial batch respects the target, first batch sufficient, save then summarize and stop", async (t) => {
   const f = await setup(t);

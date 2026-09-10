@@ -13,7 +13,7 @@ OpenClaw 宿主
        └─ skills/media-assistant（业务行为权威，随包发布）
 
 远端：
-  ├─ Provider MCP  https://mcp.eshypdata.com/mcp（Streamable HTTP，13 个白名单工具）
+  ├─ Provider MCP  https://mcp.eshypdata.com/mcp（Streamable HTTP，14 个白名单工具）
   └─ Dify Workflow  https://dfi.eshypdata.com/v1/workflows/run（需求解析）
 ```
 
@@ -51,7 +51,7 @@ OpenClaw 宿主
 ```
 业务模式确定 → ypscan_parse_requirement → 复核 → validate_requirement（预检+归一化）
 → search_creators → rank_mcns → 五列机构表 + ypscan_save_artifact(mcn_ranking)
-→ 选择收件机构 → select_inquiry_form_fields（已提交则复用）→ 发送确认弹窗
+→ 选择收件机构 → select_inquiry_form_fields（已提交则复用；首次字段页用 get_inquiry_form_fields_status 自动确认提交）→ 发送确认弹窗
 → create_with_distributions → sync_mcn_inquiry_status（返回 inquiry_ids）
 → ingest_mcn_submissions → get_ingest_job（轮询至 succeeded/partially_succeeded）
 → ypscan_save_artifact(mcn_creator_preview) → 询问是否补全
@@ -64,7 +64,7 @@ OpenClaw 宿主
 
 ```
 业务模式确定 → ypscan_parse_requirement → 复核 → validate_requirement（预检+归一化）
-→ select_inquiry_form_fields → manual_source_creators(requirement_id)
+→ select_inquiry_form_fields（首次字段页用 get_inquiry_form_fields_status 自动确认提交，超时/重选等“好了”）→ manual_source_creators(requirement_id)
 → 同步返回 links CSV：保存 manual_creator_links → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全(最多20人)
   → file_bridge(manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 30s×10 轮询
   → 保存 manual_score_batch → ypscan_summarize_manual_scores（达标交付汇总表，否则下一批）
@@ -117,4 +117,4 @@ OpenClaw 宿主
 
 ## 7. 可观测性
 
-插件不包含独立日志、指标或告警设施；工具结果经 `hostToolResult` 序列化为 JSON 文本交回宿主，可观测性依赖宿主与 Provider 侧日志。异步任务（`manual_source_creators_status`、`get_ingest_job`、`score_manual_source_csv_status`）的轮询上限由指令约束，插件不自行记账。
+插件不包含独立日志、指标或告警设施；工具结果经 `hostToolResult` 序列化为 JSON 文本交回宿主，可观测性依赖宿主与 Provider 侧日志。异步任务（`manual_source_creators_status`、`get_ingest_job`、`score_manual_source_csv_status`）与字段状态轮询（`get_inquiry_form_fields_status`，上限 12 次以避开宿主全局无进展断路器）的上限由指令约束，插件不自行记账。

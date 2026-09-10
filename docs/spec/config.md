@@ -24,7 +24,7 @@
 | transport           | `streamable-http`                              |
 | connectionTimeoutMs | `5000`                                         |
 | requestTimeoutMs    | `330000`                                       |
-| toolFilter.include  | 13 个工具（见 [contracts.md](./contracts.md)） |
+| toolFilter.include  | 14 个工具（见 [contracts.md](./contracts.md)） |
 
 ## 3. 运行约束（`package.json`）
 

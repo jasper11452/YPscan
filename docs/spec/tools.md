@@ -180,4 +180,4 @@
 
 `src/tools/popup-questions.js` 构造 `AskUserQuestion` 载荷：`{ questions: [...] }`，1–4 题；每题 `header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符（语义换行优先），选项 2–4 个且标签去重（忽略换行）。固定载荷：业务模式选择、流程重试/结束、入库恢复、Browser 验证、MCN 收件机构选择（单选快捷项 + 宿主自定义输入，内置 `询价全部机构` / `暂不询价`，必要时补少量当前机构快捷项）、回填后续分叉（`补全并打分排序`/`暂不补全`）。
 
-远端字段选择工具的继承/重选入参与结果处理见 [字段工具卡](../../skills/media-assistant/references/tools/select_inquiry_form_fields.md)。本地工具注册不变。
+远端字段选择工具的继承/重选入参与结果处理见 [字段工具卡](../../skills/media-assistant/references/tools/select_inquiry_form_fields.md)，字段页提交状态查询见 [字段状态工具卡](../../skills/media-assistant/references/tools/get_inquiry_form_fields_status.md)。本地工具注册不变。

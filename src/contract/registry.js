@@ -56,6 +56,7 @@ const BUSINESS_TOOL_NAMES = Object.freeze([
   "search_creators",
   "rank_mcns",
   "select_inquiry_form_fields",
+  "get_inquiry_form_fields_status",
   "create_with_distributions",
   "sync_mcn_inquiry_status",
   "ingest_mcn_submissions",
@@ -76,6 +77,26 @@ const BUSINESS_TOOL_NAMES = Object.freeze([
 export const TOOL_REGISTRY = Object.freeze(
   Object.fromEntries(BUSINESS_TOOL_NAMES.map((name) => [name, true])),
 );
+
+// 插件本地工具同样按宿主工具名参与 Hook 路由（解析、保存、归一化、汇总等）。
+const LOCAL_TOOL_NAMES = Object.freeze([
+  "file_bridge",
+  "ypscan_parse_requirement",
+  "ypscan_save_artifact",
+  "ypscan_save_creator_links",
+  "ypscan_summarize_manual_scores",
+  "ypscan_select_cascade",
+  "ypscan_set_filter_range",
+]);
+
+const HOST_TOOL_NAMES = Object.freeze([...BUSINESS_TOOL_NAMES, ...LOCAL_TOOL_NAMES]);
+const HOST_TOOL_REGISTRY = Object.freeze(
+  Object.fromEntries(HOST_TOOL_NAMES.map((name) => [name, true])),
+);
+// 双下划线命名空间（`<前缀>__业务名`），以及宿主把 MCP 命名空间扁平化为单分隔符的形态
+// （pi 适配器：`mcp-04b79900_validate_requirement`）。前缀形态受限，不把任意前缀当业务工具。
+const HOST_NAMESPACE = /^[a-z0-9_-]+(?:__[a-z0-9_-]+)*$/u;
+const FLAT_HOST_NAMESPACE = /^(?:mcp|ypscan|ypmcn)[-_.][a-z0-9]+(?:[-_][a-z0-9]+)*$/u;
 
 export const VALIDATE_REQUIREMENT_PARAMS = Object.freeze([
   "demandId",
@@ -615,15 +636,26 @@ export function normalizeValidateRequirementTagArrays(params) {
   return normalized ?? params;
 }
 
+/**
+ * @param {string} toolName
+ * @param {string} bare
+ * @param {string} separator
+ * @param {RegExp} namespace
+ */
+function matchesHostNamespace(toolName, bare, separator, namespace) {
+  const suffix = `${separator}${bare}`;
+  if (!toolName.endsWith(suffix)) return false;
+  const prefix = toolName.slice(0, -suffix.length);
+  return prefix !== "" && namespace.test(prefix);
+}
+
 export function stripHostPrefix(toolName) {
   if (typeof toolName !== "string") return null;
   const normalized = toolName.trim().toLowerCase();
-  if (Object.hasOwn(TOOL_REGISTRY, normalized)) return normalized;
-  for (const bare of BUSINESS_TOOL_NAMES) {
-    const suffix = `__${bare}`;
-    if (!normalized.endsWith(suffix)) continue;
-    const prefix = normalized.slice(0, -suffix.length);
-    if (/^[a-z0-9_-]+(?:__[a-z0-9_-]+)*$/u.test(prefix)) return bare;
+  if (Object.hasOwn(HOST_TOOL_REGISTRY, normalized)) return normalized;
+  for (const bare of HOST_TOOL_NAMES) {
+    if (matchesHostNamespace(normalized, bare, "__", HOST_NAMESPACE)) return bare;
+    if (matchesHostNamespace(normalized, bare, "_", FLAT_HOST_NAMESPACE)) return bare;
   }
   return null;
 }
@@ -1494,7 +1526,8 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
 export function normalizeToolCallParams(toolName, params, { now = new Date() } = {}) {
   if (!params || typeof params !== "object" || Array.isArray(params)) return params;
   const bare = stripHostPrefix(typeof toolName === "string" ? toolName.toLowerCase() : toolName);
-  if (!bare) return params;
+  // 本地工具原本不进入 Provider 参数归一化；保持该边界，只归一化业务工具。
+  if (!bare || !Object.hasOwn(TOOL_REGISTRY, bare)) return params;
 
   let normalized =
     bare === "validate_requirement"
