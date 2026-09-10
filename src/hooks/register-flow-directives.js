@@ -59,7 +59,7 @@ const FIELD_SELECTION_REUSE_RULE =
 const FIELD_SELECTION_GATE_RULE =
   "手动拓展的新 requirement 在调用 manual_source_creators 前必须先调用 select_inquiry_form_fields。success=true 且 status=configured/copied、requirement_id 与当前调用一致时直接按原分支继续，不等待用户确认；返回 selection_required、opened 或旧版有效 URL 时按该结果的字段状态轮询规则等待提交（见下方字段页指令），提交确认后才继续，禁止在同一轮试调 manual_source_creators、搜索或打分。";
 const FIELD_PAGE_WAIT_RULE =
-  "字段选择 URL 输出后本轮必须结束，不要求用户回复固定口令（需要用户回应时只说提交完成后告诉我），也不得试调下游工具，等用户确认已提交后再继续。";
+  "字段选择 URL 输出后本轮必须结束，不要求用户回复固定口令（需要用户回应时只说提交完成后告诉我），也不得试调下游工具；提交确认后的动作以下方恢复边界为准。";
 // 字段状态工具按需求判定（unavailable / submitted / invalid），没有页面实例标识：
 // 预检返回 submitted 时无法区分“本轮页面刚提交”与“需求此前已有配置”，只能按等待处理。
 const FIELD_STATUS_POLL_RULE =
@@ -467,7 +467,9 @@ function fieldSelectionDirective(message, params = {}) {
         ]
       : [FIELD_STATUS_POLL_RULE]),
     FIELD_SELECTION_COLUMNS_RULE,
-    `用户确认已提交后${FIELD_SELECTION_RESUME_RULE}`,
+    params?.force_reselect === true
+      ? `用户确认已提交后只确认字段配置已更新，不调用任何下游工具；仅当本轮对话明确存在等待字段配置的未完成步骤时才${FIELD_SELECTION_RESUME_RULE}无法确定时到此结束。`
+      : `用户确认已提交后${FIELD_SELECTION_RESUME_RULE}`,
   ].join("\n");
 }
 
@@ -1949,6 +1951,9 @@ export function registerFlowDirectiveHooks(api) {
         const minimal = {};
         for (const field of [
           "requirement_id",
+          // 字段选择的这两个参数决定工具结果指令走重选/继承分支，必须在 pending 记录里保留。
+          "source_requirement_id",
+          "force_reselect",
           "id",
           "artifact_id",
           "artifact_kind",

@@ -30,7 +30,7 @@
 | `completionCsvPathsByRequirement` | requirement_id         | 原生补全 CSV 路径集                | `get_xhs_author_business_card` / `get_douyin_author_business_card` 成功且带 `csv_file` 时                                                            |
 
 - `scopeKey` 取 `sessionKey/sessionId/runId/run_id` 中第一个非空值，缺省 `"global"`。
-- `pendingCalls` 仅使用已安装 YP Action 两个 Hook 均传递的 `sessionKey + toolCallId` 关联（兼容 event/context 字段）；只保留 id、平台、数量、inquiry_ids、job/batch、flow、kind 与模式，不保存完整需求或下载 URL——唯一例外是 `score_manual_source_csv` 调用的可信 `csv_file_path`，缺列恢复需要它精确重提。结果到达立即消费，失败/合成结果也释放，Gateway 重置清空；没有可信调用坐标不借用最近参数或 requirement。
+- `pendingCalls` 仅使用已安装 YP Action 两个 Hook 均传递的 `sessionKey + toolCallId` 关联（兼容 event/context 字段）；只保留 id、平台、数量、inquiry_ids、job/batch、flow、kind、模式与字段选择的重选/继承标记（`force_reselect`、`source_requirement_id`，两者决定字段结果指令走哪个分支），不保存完整需求或下载 URL——唯一例外是 `score_manual_source_csv` 调用的可信 `csv_file_path`，缺列恢复需要它精确重提。结果到达立即消费，失败/合成结果也释放，Gateway 重置清空；没有可信调用坐标不借用最近参数或 requirement。
 - score/ingest 的 job 映射按 scope 隔离，成功 Excel 或失败终态后删除；状态查询发起时将已知 requirement 保存到该调用快照，避免另一在途查询的终态清理使其丢失归属。inquiry_ids 反查也仅限同 scope，多个 requirement 同时匹配时不推测。
 - `get_ingest_job` 返回失败 envelope 时，只有明确的 `JOB_PENDING` 继续轮询；其他错误暂停并保留原始错误，不因恢复出 job_id 而继续轮询。
 - 保存结果回显 `data.artifact_kind/artifact_id`，params 缺失时仍可生成预览补全弹窗。
@@ -112,7 +112,7 @@
 
 ## 手动拓展分批投影
 
-字段页结果 `selection_required` 或 `opened` 必须有与调用参数一致的 requirement_id；`opened` 表示字段页已生成、等待提交，不等于 configured/copied；旧版无 status/ID 链接兼容，有 ID 不一致则暂停且不输出 FIELD_SELECTION_URL。force_reselect 的 URL 指令限定提交后只更新配置，仅恢复对话明确的等待字段配置的未完成步骤，不重启已完成或停止的业务。恢复限制由指令表达，不新增宿主任务状态或门禁。
+字段页结果 `selection_required` 或 `opened` 必须有与调用参数一致的 requirement_id；`opened` 表示字段页已生成、等待提交，不等于 configured/copied；旧版无 status/ID 链接兼容，有 ID 不一致则暂停且不输出 FIELD_SELECTION_URL。force_reselect 的 URL 指令限定提交后只更新配置，仅恢复对话明确的等待字段配置的未完成步骤，不重启已完成或停止的业务；重选分支的恢复语句必须自带该条件，无条件恢复语句只用于首轮字段页轮询路径。恢复限制由指令表达，不新增宿主任务状态或门禁。
 
 `manualScoreSourcesByRequirement` 在 validate 成功后记录需求模式与 Agent 自行总结的 `projectName`（清洗后仅用于本地交付文件名），保存归一化 links 时登记路径+哈希，原生补全的可信调用坐标关联成功/失败 ID（csv_file=null 的全失败批次同样登记失败名单），单批评分保存时登记路径+哈希。相同路径不同来源记录标记冲突；同一达人重试成功后以成功记录取代旧失败。不持久化任务进度，每次汇总从源记录重新计算；当前批缺评分行优先返回 `await_scores`，不被推荐达标或候选耗尽覆盖。来源记录按项目写入 `<workspaceDir>/.ypscan/manual-score-sources.json`（模式、项目名、平台、目标人数、links 路径+哈希、补全名单、评分表路径+哈希、冲突标记），内存优先、不覆盖本进程已更新的记录；Gateway 重置后在下一次 hook 事件或汇总时按需读回，并同步恢复 links 上传白名单，保证重启后仍能用同一 requirement 继续分批或重新汇总。恢复后统一重新读本地文件并校验 SHA-256，不重搜、不重补全、不重打分；持久记录缺失或校验失败时汇总停止。
 

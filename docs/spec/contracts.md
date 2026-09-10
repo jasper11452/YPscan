@@ -175,4 +175,4 @@ Hook 使用 `resolveFlowToolName`：业务工具沿用上述识别；本地工�
 
 新增 `ypscan_summarize_manual_scores({requirement_id})` 与 `manual_score_batch` Excel kind；工具入参由 index.js 声明，manifest 同步列入 contracts.tools。registry.js 的 Provider 参数归一化保持不变，Provider 评分工具仍使用原始两个参数，状态工具仍仅 job_id。手动拓展每批评分完成后保存为 manual_score_batch，再由本地汇总精确累计推荐数；机构回收仍使用 manual_source。详细返回、停止条件及已验证契约范围见 [tools.md](./tools.md) 的评分汇总章节。
 
-字段选择新契约见 [入参与出参](../../skills/media-assistant/references/tools/select_inquiry_form_fields.md)。插件已适配；2026-09-09 测试环境 tools/list 尚无 source_requirement_id/force_reselect，真实继承未验收。
+字段选择新契约见 [入参与出参](../../skills/media-assistant/references/tools/select_inquiry_form_fields.md)。插件已适配；2026-09-10 在真实 App 宿主验证：live schema 已提供 `source_requirement_id` 与 `force_reselect`，继承返回 `copied` 并直接续接，重选返回字段页且不轮询。两个调用参数必须由 Hook 的调用坐标保留（见 [hooks.md](./hooks.md) 的 `pendingCalls`），否则重选/继承分支不会生效。

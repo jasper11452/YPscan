@@ -1358,6 +1358,7 @@ test("provider opened status starts the field-status poll loop", () => {
   assert.match(text, /预检返回 submitted/u);
   assert.match(text, /不得调用任何下游工具/u);
   assert.match(text, /不要求用户回复固定口令/u);
+  assert.match(text, /用户确认已提交后按原分支恢复：/u);
   assert.doesNotMatch(text, /回复“好了”|等待“好了”/u);
   assert.doesNotMatch(text, /本轮必须结束并等待|ASK_USER_QUESTION_ARGS=/u);
 });
@@ -1381,6 +1382,9 @@ test("forced reselection forbids field-status polling", () => {
   assert.doesNotMatch(text, /回复“好了”/u);
   assert.match(text, /禁止调用 get_inquiry_form_fields_status 轮询/u);
   assert.match(text, /会在用户提交前就返回 submitted/u);
+  assert.match(text, /已提交后只确认字段配置已更新/u);
+  assert.match(text, /仅当本轮对话明确存在等待字段配置的未完成步骤时才按原分支恢复：/u);
+  assert.doesNotMatch(text, /已提交后按原分支恢复：/u);
   assert.doesNotMatch(text, /即时预检/u);
 });
 
@@ -1488,6 +1492,56 @@ test("explicit reselection opens the page even when a source was supplied", () =
   assert.match(text, /单独重选只更新字段配置/u);
   assert.match(text, /已完成或明确停止的业务不得重启/u);
   assert.match(text, /只有当前对话明确存在等待字段配置的未完成步骤/u);
+});
+
+test("host call IDs keep field selection flags for reselect and inheritance", () => {
+  const { hooks } = registeredPlugin();
+  const context = { sessionKey: "field-flags" };
+  const call = (toolCallId, params, payload) => {
+    hooks.get("before_tool_call")(
+      { toolName: "mcp__ypscan__select_inquiry_form_fields", toolCallId, params },
+      context,
+    );
+    return directiveText(
+      hooks.get("tool_result_persist")(
+        {
+          toolName: "mcp__ypscan__select_inquiry_form_fields",
+          toolCallId,
+          message: toolMessage(payload),
+        },
+        context,
+      ),
+    );
+  };
+  const reselect = call(
+    "reselect",
+    { requirement_id: "req-new", force_reselect: true },
+    {
+      success: true,
+      status: "opened",
+      requirement_id: "req-new",
+      url: "https://example.invalid/fields",
+    },
+  );
+  assert.match(reselect, /禁止调用 get_inquiry_form_fields_status 轮询/u);
+  assert.match(reselect, /单独重选只更新字段配置/u);
+  assert.match(reselect, /已提交后只确认字段配置已更新/u);
+  assert.match(reselect, /仅当本轮对话明确存在等待字段配置的未完成步骤时才按原分支恢复：/u);
+  assert.doesNotMatch(reselect, /已提交后按原分支恢复：/u);
+  assert.doesNotMatch(reselect, /即时预检/u);
+
+  const inherit = call(
+    "inherit",
+    { requirement_id: "req-new", source_requirement_id: "req-old" },
+    {
+      success: true,
+      status: "opened",
+      requirement_id: "req-new",
+      url: "https://example.invalid/fields",
+    },
+  );
+  assert.match(inherit, /字段继承未返回 configured\/copied/u);
+  assert.doesNotMatch(inherit, /FIELD_SELECTION_URL=/u);
 });
 
 for (const payload of [
