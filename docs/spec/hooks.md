@@ -119,3 +119,5 @@
 手动拓展 links 归一化及 manual_score_batch 保存后注入 `SUMMARIZE_MANUAL_SCORES_ARGS`；manual_score_batch 是内部中间表，不展示表格、路径或链接。汇总工具返回下一批时注入 `NEXT_AUTHOR_IDS` 与对应原生工具名；await_scores 先要求展示阶段性 `progress.user_visible_message`（不代表最终汇总），只等待当前任务，任务仍在跑时沿用 30s×10 上限，终态缺行则报告 `pending_score_author_ids` 并停止；deliver 携带 `excluded_zero_score_count` 并要求按 0 分行未写入汇总表如实说明（不写成未评分、补全失败或达人被筛掉），明确禁止再补全/评分，只有推荐缺口大于0才建议复核和放宽。机构回收继续全量补全、一次评分、manual_source 最终交付。before_tool_call 仍只阻断 validate 预检，不新增早停门禁；这些测试证明指令生成，模型遵守与桌面验收另行验证。
 
 字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured/copied 后直接继续；URL 等待提交；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。
+
+机构局部失败处理：`partially_succeeded` 有本轮预览表时先保存并交付成功结果，失败机构按真实原因单独提示，不等待修正。预览行校验错误仅排除错误行，Hook 按 `preview.problems` 提示机构（有则引用）、行号和原因，正确行继续补全及评分；全部行无效保留原始预览并报告，不生成空表。来源、文件完整性、表头歧义校验仍阻断。代码检查不代表模型或真实宿主验收。

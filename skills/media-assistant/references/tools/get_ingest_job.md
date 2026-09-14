@@ -21,3 +21,5 @@ When the user chooses to complete and score, continue:
 ## partially_succeeded
 
 A `partially_succeeded` job can include pending institutions (`results[]` with `error.code="DISTRIBUTION_NOT_SUBMITTED"`) and real processing failures. Report separately. Without results, per-institution details and causes are unknown; do not infer pending institutions from `failed_count`. Preserve the response summary. Backfilled rows are not a verified unique or qualified creator count. Let the user choose `补全并打分排序` or `暂不补全`; do not treat partial success as complete or automatically rerun inquiries.
+
+When partial success includes the current preview Excel, save and deliver it even if some institutions failed. Report real error messages separately; only describe errors as incorrect filling when the response supports that cause. Do not wait for failed institutions to correct their forms or rerun successful institutions. Valid preview rows can continue to completion and scoring after the existing user choice.

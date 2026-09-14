@@ -92,3 +92,5 @@ validate_requirement → select_inquiry_form_fields（configured/copied 直接�
 - 所有结果只用当前 requirement、当前平台、本轮真实 Provider 证据；不跨需求/平台/账号/历史 run 混用或补齐。
 
 字段配置按字段工具卡执行：同一会话新需求传 source_requirement_id 继承最近已提交/已配置的需求；用户主动重选才传 force_reselect=true。configured/copied 后直接继续；URL 等待提交；继承失败、平台不兼容或 live schema 不支持新参数时暂停。具体字段仅由 Provider 保存和复制。单独重选提交后只更新配置，只有明确等待字段配置的未完成步骤才恢复；不重启已完成或停止的业务。
+
+机构局部失败处理：`partially_succeeded` 有本轮预览表时先保存并交付成功结果，失败机构按真实原因单独提示，不等待修正。预览行校验错误仅排除错误行，Hook 按 `preview.problems` 提示机构（有则引用）、行号和原因，正确行继续补全及评分；全部行无效保留原始预览并报告，不生成空表。来源、文件完整性、表头歧义校验仍阻断。代码检查不代表模型或真实宿主验收。

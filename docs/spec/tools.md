@@ -146,14 +146,14 @@
   - `url` 列必填，`creator_id`/`source_record_id` 列可选；缺少或重复表头报 `YPSCAN_CREATOR_LINKS_INVALID_CSV`。
   - 缺 `creator_id` 时按平台主页规则从 url 推导：小红书支持 `www.xiaohongshu.com`/`xiaohongshu.com` 的 `/user/profile/<id>` 与 `pgy.xiaohongshu.com` 的 `/solar/pre-trade/blogger-detail/<id>`；抖音支持 `www.xingtu.cn` 的 `/ad/creator/author-homepage/douyin-video/<id>`。短链等无法推导、或给定 `creator_id` 与 url 不匹配时，整份失败报 `YPSCAN_CREATOR_LINKS_INVALID_ROWS`。
   - `source_record_id` 缺失时回落为稳定行号（1-based）；`creator_id` 重复保留首条、保持 Provider 原顺序。
-- 预览 xlsx 入口：行为与错误码同历史契约（哈希校验、唯一工作表与表头、主页匹配校验；`source_record_id` 缺失留空）。
+- 预览 xlsx 入口：保留哈希校验、唯一工作表与表头校验；逐行排除 ID/主页缺失、不匹配、不支持格式及控制字符错误，其余行继续生成 links。全部无效仍报 ROWS，原表不改写；`source_record_id` 缺失留空。
 - 校验：`creator_id`/`url` 非空且不含控制字符；去重后无行报 `YPSCAN_CREATOR_LINKS_EMPTY`。
 - 保存后通过 `recordLinksCsv` 登记进 `linksCsvPathsByRequirement`，使 `file_bridge` 上传门禁接受该 CSV 为合法 links 来源。
 
 ### 输出（成功）
 
 - `data`：`file_name`、`file_path`、`row_count`、`sha256`。
-- 预览 xlsx 输入额外返回 `data.preview`：file_path、sha256、sheet、header_row、headers、records（最多前 100 条且累计 cells JSON 不超过 256 KiB，含行号及原始 cells）、total_row_count、records_truncated、duplicate_creator_ids、verification_status=unverified。记录数及去重数不等于合格人数。主页须为对应平台支持的主页格式且路径 ID 与所选 ID 一致，未知格式报错而非猜测。
+- 预览 xlsx 输入额外返回 `data.preview`：file_path、sha256、sheet、header_row、headers、records（最多前 100 条且累计 cells JSON 不超过 256 KiB，含行号及原始 cells）、total_row_count（含排除行）、records_truncated、duplicate_creator_ids（有效行）、excluded_row_count、problems（row、可选 institution 取自“所属机构”、reason）、verification_status=unverified。记录数及去重数不等于合格人数。主页须为对应平台支持的主页格式且路径 ID 与所选 ID 一致，未知格式排除该行并报告，不猜测。
 - `delivery`：`local_path`、`local_file_link`、`display_required=false`、`display_before_next_action=false`、`user_visible_message`；归一化后的 links CSV 是内部中间产物，Agent 不主动向用户展示表格、链接或本地路径，直接继续补全与打分。
 
 ### 错误码

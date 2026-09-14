@@ -138,34 +138,58 @@ export async function readCreatorPreview(params, { workspaceDir, allowedPreviews
     }
     const header = candidates[0];
     const sourceIndex = header.headers.indexOf("source_record_id");
+    const institutionIndex = header.headers.indexOf("所属机构");
     const rows = [];
     const records = [];
     let recordBytes = 0;
     const seen = new Set();
     const duplicates = new Set();
     const problems = [];
+    let totalRowCount = 0;
     for (let index = header.index + 1; index < grid.length; index += 1) {
       const cells = Array.from({ length: grid[header.index].length }, (_, col) =>
         cellText(grid[index][col]),
       );
       if (cells.every((cell) => !cell.trim())) continue;
+      totalRowCount += 1;
+      recordBytes += Buffer.byteLength(JSON.stringify(cells));
+      if (records.length < 100 && recordBytes <= 256 * 1024)
+        records.push({ row: index + 1, cells });
       const creatorId = (cells[header.ids[0]] ?? "").trim();
       const url = (cells[header.urls[0]] ?? "").trim();
-      if (!creatorId || !url) problems.push({ row: index + 1, reason: "平台 ID 或主页为空" });
+      const sourceRecordId = sourceIndex < 0 ? "" : cells[sourceIndex];
+      let reason = null;
+      if (!creatorId || !url) reason = "平台 ID 或主页为空";
       else if (!matchesHomepage(params.platform, creatorId, url))
-        problems.push({ row: index + 1, reason: "平台主页与 ID 不匹配或格式不受支持" });
+        reason = "平台主页与 ID 不匹配或格式不受支持";
+      else if (
+        [creatorId, url, sourceRecordId].some((value) =>
+          [...value].some(
+            (char) => char.codePointAt(0) < 0x20 && !["\t", "\n", "\r"].includes(char),
+          ),
+        )
+      )
+        reason = "包含控制字符";
+      if (reason) {
+        problems.push({
+          row: index + 1,
+          ...(institutionIndex < 0 ? {} : { institution: cells[institutionIndex] }),
+          reason,
+        });
+        continue;
+      }
       if (seen.has(creatorId)) duplicates.add(creatorId);
       seen.add(creatorId);
       rows.push({
         creator_id: creatorId,
         url,
-        source_record_id: sourceIndex < 0 ? "" : cells[sourceIndex],
+        source_record_id: sourceRecordId,
       });
-      recordBytes += Buffer.byteLength(JSON.stringify(cells));
-      if (records.length < 100 && recordBytes <= 256 * 1024)
-        records.push({ row: index + 1, cells });
     }
-    if (problems.length) return failure("ROWS", "预览存在非法行，未生成 links CSV", { problems });
+    if (problems.length && !rows.length)
+      return failure("ROWS", "预览没有可处理的有效行，未生成 links CSV；原始预览表保留", {
+        problems,
+      });
     if (!rows.length) return failure("EMPTY", "预览表没有达人记录");
     return {
       ok: true,
@@ -177,8 +201,10 @@ export async function readCreatorPreview(params, { workspaceDir, allowedPreviews
         header_row: header.index + 1,
         headers: grid[header.index].map(cellText),
         records,
-        total_row_count: rows.length,
-        records_truncated: rows.length > records.length,
+        total_row_count: totalRowCount,
+        records_truncated: totalRowCount > records.length,
+        excluded_row_count: problems.length,
+        problems,
         duplicate_creator_ids: [...duplicates],
         verification_status: "unverified",
       },

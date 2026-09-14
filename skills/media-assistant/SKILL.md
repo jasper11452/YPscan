@@ -77,7 +77,7 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 保存机构达人预览表时，必须使用 `ypscan_save_artifact(artifact_kind="mcn_creator_preview", artifact_id=当前 requirement_id, file_url=本次终态预览 Excel URL)`。本次 ingest 的 `job_id` 仅用于 `get_ingest_job` 查询，绝不得作为 `artifact_id`；保存前核对 `artifact_id` 是当前需求 ID，后续 `ypscan_save_creator_links.requirement_id` 必须与其一致。
 
 - 保存预览表后询问用户是否补全；选“补全并打分排序”时：`ypscan_save_creator_links({requirement_id, preview_file_path, platform})` 直接读取已受控保存的预览 xlsx 并派生 links CSV，返回的原始字段仅供核验，不是合格名单 → 按 20 个一批调用对应平台的原生达人补全工具（小红书 `get_xhs_author_business_card` 且固定 `page_count=1`；抖音 `get_douyin_author_business_card`。两者均由宿主 YP Action 提供、不在 ypscan 白名单内，宿主未开放时如实报告并停止补全，不得改用 Browser 或其他手扒工具）→ 全部批次完成后调用 `file_bridge(flow=manual_source)` 合并并上传 → `score_manual_source_csv` → `score_manual_source_csv_status` 轮询 → 保存打分排序 Excel。
-- `partially_succeeded` 时如实报告哪些机构 pending、哪些已回填，让用户选择“补全并打分排序 / 暂不补全”，不把部分成功当全部完成。
+- `partially_succeeded` 时如实报告哪些机构 pending、哪些已回填，让用户选择“补全并打分排序 / 暂不补全”，不把部分成功当全部完成。处理失败的机构另报真实原因；存在本轮预览表时先保存并交付，不等待失败机构修正。预览派生 links 时逐行排除填写错误，按 `preview.problems` 报告所属机构（有则引用）、原表行号和原因，正确行继续补全、评分；不得因少数机构或行失败阻断其余结果，也不自动重跑成功机构。全部行无效时保留原始预览、报告错误，不生成空评分表。
 
 机构回收后达人不足时仍交付当前真实结果并说明缺口，不自动发起新一轮询价。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`。
 

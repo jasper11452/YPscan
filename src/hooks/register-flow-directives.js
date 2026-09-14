@@ -987,6 +987,12 @@ function creatorLinksSaveDirective(message, params = {}, recordedMode = null) {
   }
   return [
     "YPSCAN_FLOW_DIRECTIVE=受控 links CSV 已生成并登记为当前 requirement 的合法 links 来源（内部产物，不主动向用户展示）。按 20/批把该 CSV 的 author 标识传给当前平台 YP Action 原生达人补全工具，再调用 file_bridge（flow=manual_source）→ score_manual_source_csv。",
+    ...(result?.data?.preview?.excluded_row_count > 0
+      ? [
+          "部分机构回填行填写不正确，已排除错误行；按 preview.problems 提醒用户机构、原表行号及原因（机构名缺失时只报行号，不猜测）。正确行继续补全和生成评分表，不等待错误机构修正，不重跑整批；原始预览表保留。",
+          `PREVIEW_ROW_WARNINGS=${JSON.stringify(result.data.preview.problems)}`,
+        ]
+      : []),
     `CREATOR_LINKS_LOCAL_PATH=${filePath}`,
   ].join("\n");
 }
@@ -1309,13 +1315,18 @@ function ingestPartialSummary(result) {
     if (item?.success === true) succeeded.push(inquiryId);
     else if (item?.error?.code === "DISTRIBUTION_NOT_SUBMITTED") pending.push(inquiryId);
     else if (item?.success === false)
-      failed.push({ inquiry_id: inquiryId, code: item?.error?.code ?? "UNKNOWN" });
+      failed.push({
+        inquiry_id: inquiryId,
+        code: item?.error?.code ?? "UNKNOWN",
+        message: item?.error?.message,
+      });
     else unknown += 1;
   }
   return [
     `INGEST_PARTIAL_SUMMARY=已回填 ${succeeded.length} 家，pending ${pending.length} 家${pending.length > 0 ? `（inquiry_id: ${pending.join(", ")}）` : ""}。`,
     `处理失败 ${failed.length} 家，状态未知 ${unknown} 家；失败明细=${JSON.stringify(failed)}。不能把 pending 当故障，也不能把回填行数当合格人数。`,
     "如实报告哪些机构 pending、哪些已回填；保存预览表后让用户选择「补全并打分排序 / 暂不补全」，不得把 partially_succeeded 当全部完成。",
+    "部分机构失败不阻止保存成功机构的预览表及后续生成评分表；按真实错误说明原因，不等待失败机构修正，不重跑成功机构。只有明确的填写错误才说填写不正确，其他错误原样说明。",
   ].join("\n");
 }
 

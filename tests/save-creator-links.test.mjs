@@ -455,6 +455,53 @@ test("preview reports duplicates and keeps full-length Douyin IDs as text", asyn
   assert.match(readFileSync(result.data.file_path, "utf8"), /7324533389695025215/u);
 });
 
+test("preview isolates invalid institution rows and preserves valid rows", async (t) => {
+  const workspaceDir = workspaceFixture(t);
+  const source = previewFixture(workspaceDir, {
+    rows: [
+      ["蒲公英ID", "小红书主页", "所属机构", "source_record_id"],
+      ["c1", "https://www.xiaohongshu.com/user/profile/c2", "机构甲", "bad"],
+      ["c2", "https://www.xiaohongshu.com/user/profile/c2", "机构乙", "good"],
+      ["", "", "机构丙", "missing"],
+    ],
+  });
+  const original = readFileSync(source.file_path);
+  const result = payload(
+    await saveCreatorLinks(
+      { requirement_id: "req", platform: "xiaohongshu", preview_file_path: source.file_path },
+      { workspaceDir, allowedPreviews: () => [source] },
+    ),
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.data.row_count, 1);
+  assert.equal(result.data.preview.total_row_count, 3);
+  assert.equal(result.data.preview.excluded_row_count, 2);
+  assert.deepEqual(
+    result.data.preview.problems.map(({ row, institution }) => ({ row, institution })),
+    [
+      { row: 2, institution: "机构甲" },
+      { row: 4, institution: "机构丙" },
+    ],
+  );
+  assert.equal(
+    readFileSync(result.data.file_path, "utf8"),
+    "source_record_id,creator_id,url\ngood,c2,https://www.xiaohongshu.com/user/profile/c2",
+  );
+  assert.deepEqual(readFileSync(source.file_path), original);
+  const hooks = new Map();
+  registerFlowDirectiveHooks({ on: (name, handler) => hooks.set(name, handler) });
+  const directed = hooks.get("tool_result_persist")({
+    toolName: "ypscan_save_creator_links",
+    params: { requirement_id: "req", platform: "xiaohongshu", preview_file_path: source.file_path },
+    message: { content: [{ type: "text", text: JSON.stringify(result) }] },
+  });
+  const text = JSON.stringify(directed);
+  assert.match(text, /正确行继续补全和生成评分表/u);
+  assert.match(text, /PREVIEW_ROW_WARNINGS=/u);
+  assert.match(text, /机构甲/u);
+  assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
+});
+
 test("preview rejects mismatched homepage identities and corrupt files", async (t) => {
   const workspaceDir = workspaceFixture(t);
   const source = previewFixture(workspaceDir, {

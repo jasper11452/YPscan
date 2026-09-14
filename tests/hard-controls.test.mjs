@@ -1642,13 +1642,21 @@ test("partial ingest keeps real failures apart from unsubmitted institutions", (
           results: [
             { success: true, inquiry_id: "1" },
             { success: false, inquiry_id: "2", error: { code: "DISTRIBUTION_NOT_SUBMITTED" } },
-            { success: false, inquiry_id: "3", error: { code: "IMPORT_FAILED" } },
+            {
+              success: false,
+              inquiry_id: "3",
+              error: { code: "IMPORT_FAILED", message: "报价填写格式错误" },
+            },
           ],
         },
       }),
     }),
   );
   assert.match(text, /已回填 1 家，pending 1 家/u);
+  assert.match(text, /SAVE_ARTIFACT_ARGS=/u);
+  assert.match(text, /报价填写格式错误/u);
+  assert.match(text, /部分机构失败不阻止/u);
+  assert.doesNotMatch(text, /ASK_USER_QUESTION_ARGS=/u);
   assert.match(text, /处理失败 1 家/u);
   assert.match(text, /IMPORT_FAILED/u);
 });

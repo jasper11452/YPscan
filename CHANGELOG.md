@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.0.26 — 2026-09-14
+
+- 机构回填预览改为行级容错：`read-creator-preview.js` 原先只要有一行非法（ID/主页缺失、平台主页与 ID 不匹配、格式不受支持或含控制字符）就整表报 `YPSCAN_CREATOR_PREVIEW_ROWS`，个别机构回填错误会阻断其余机构的补全与评分。现在逐行排除错误行，正确行继续派生 links CSV；`data.preview.problems` 保留原表行号、所属机构（表内存在“所属机构”列时，缺失只报行号不猜测）与原因，`total_row_count` 改为含排除行并新增 `excluded_row_count`，原始预览表字节不变。全部行无效时仍报 ROWS 且保留原表，不生成空评分表；来源、哈希、唯一工作表、表头歧义校验仍阻断。
+- links 保存成功后 Hook 注入 `PREVIEW_ROW_WARNINGS`，要求按机构、原表行号与原因提示用户，正确行继续补全和评分，不等待错误机构修正、不重跑整批。`partially_succeeded` 的失败明细补上 Provider `error.message`，指令明确“有本轮预览表时先保存交付成功结果、按真实原因单独提示失败机构、不等待修正、不重跑成功机构”；只有真实错误支持时才归因为填写不正确。
+- 同步 SKILL、`ypscan_save_creator_links`／`get_ingest_job` 工具卡、Spec（flows/hooks/tools）、验收清单与工程 Wiki 入口，并新增修复与阻断分级记录 `docs/verification/2026-09-14-institution-partial-failure.md`；manifest 入参、注册数量、README 主流程与 AGENTS 不变量未变，无需改动。
+- 验证：`npm run lint`／`typecheck`／`test`（629 项，新增隔离样本覆盖混合错误行、全部错误、原文件不变与 Hook 继续指令）／`smoke`（tools=5, hooks=5）全部通过。未执行模型行为验收与真实 YP Action 桌面验收；远端 Provider 能否在混合失败机构时返回预览表未验证，测试环境 metadata 审计只核对工具元数据。
+
 ## 1.0.25 — 2026-09-10
 
 - 修复宿主参数保留缺口：`select_inquiry_form_fields` 的 `force_reselect` 与 `source_requirement_id` 此前不在 `before_tool_call` 的 `pendingCalls` 白名单里，而 `tool_result_persist` 优先用这份最小记录当参数，导致两个值恒为缺失、重选与继承分支在真实宿主从不执行。后果是单独重选字段后用户确认提交，模型拿到的是“首次选择”指令（即时预检 + 无条件“用户确认已提交后按原分支恢复”），会重启已完成的手动拓展搜索：实测同一已交付需求在修复前连续两次空跑新批次（候选池已取空、后台返回 0 人）。保留这两个调用参数即修复分支判定，不新增状态、缓存或门禁；`force_reselect` 未返回字段页、继承未返回 `configured`/`copied`、需求 ID 不一致等既有暂停条件不变。
