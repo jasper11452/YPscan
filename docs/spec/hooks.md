@@ -1,5 +1,9 @@
 # Hook 契约
 
+手动拓展解析成功使用三项业务必填与一次可选补充入口指令，替代询价品牌/报价必填提示；启动指令声明该模式例外。共用归一化/预检允许手动拓展省略品牌和报价，但有值仍校验，询价必填不变。不增加补充状态缓存或新 Hook，是否已处理入口由当前会话及业务 Skill 判断；指令测试不等同于模型或真实弹窗验收。
+
+手动拓展解析成功指令及启动规则明确：未提供返点时默认 `[0,1]`，不追问；保留已有有效条件，不改写原文/解析输出或伪造澄清。`before_tool_call` 在共用参数归一化中补值并按契约预检后序列化。询价机构规则不变。
+
 `src/hooks/register-flow-directives.js` 注册 3 个流程 Hook（`HOOK_OPTIONS = { priority: 90, timeoutMs: 5000 }`），`index.js` 注册 2 个 Gateway 生命周期 Hook。Smoke 断言 Hook 集合固定为 5 个：`before_prompt_build`、`before_tool_call`、`tool_result_persist`、`gateway_start`、`gateway_stop`。
 
 ## 1. 注册形态
@@ -69,7 +73,7 @@
 1. 从结果解析 `requirement_id`/`platform`，成功时写入 `platformByRequirement`；当前 requirement 按 scope 隔离，原生补全 success=true 的 `csv_file` 只能登记到可信发起调用快照的 requirement；`sync_mcn_inquiry_status` 成功且返回非空 `inquiry_ids` 时写入 `inquiryIdsByRequirement`；score/ingest 链路成功且带 job_id 时按 job_id 记录 requirement_id 映射（ingest 缺 requirement_id 时按 inquiry_ids 反查）。
 2. 调 `flowDirective(toolName, message, params, ...)` 生成指令，追加到结果消息尾部（`appendDirective`）；`get_ingest_job` / `score_manual_source_csv_status` 调用参数缺 `requirement_id` 时先按 job_id 映射补齐再生成指令。
 3. 保存共用的 `manual_source` 打分 Excel 时，优先按 requirement 登记的业务模式选择收尾策略（无记录才沿用 scope）：询价回收只交付真实结果并说明缺口，不注入手动拓展放宽策略；手动拓展保留放宽建议。来源未确认时提示先确认来源，不直接应用放宽建议。
-4. 需求解析成功后单独注入截止时刻复核规则：当前有效原文与澄清均无截止时间证据时必须询问，不从旧 requirement 或默认值回填；只有日期没有具体时刻时必须澄清，不默认时刻、不宣称无需澄清；已有小时和分钟且可唯一确定未来时间时仅补秒，不重复询问。只解析、不落库的请求仍指出缺失，但不得继续下游。该规则不依赖 persist 事件携带调用参数，也不新增日期解析器或状态。
+4. 需求解析成功后单独注入截止时刻复核规则：询价机构当前有效原文与澄清均无截止时间证据时必须询问，不从旧 requirement 或默认值回填；手动拓展在完全没有截止时间语境时不询问，由插件在建需边界写入当前时间后 30 天的未来绝对值，并在 `description` 标明系统默认、可覆盖。手动拓展若已有日期、模糊、过期或冲突时间仍必须澄清；任何模式只有日期没有具体时刻时都不能默认时刻。已有小时和分钟且可唯一确定未来时间时仅补秒，不重复询问。只解析、不落库的请求仍指出缺失，但不得创建需求或继续下游。该规则不依赖 persist 事件携带调用参数，也不新增日期解析器或状态。
 
 指令覆盖的工具与行为（详见 [flows.md](./flows.md)）：
 

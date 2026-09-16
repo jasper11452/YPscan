@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   invalidPlatformArrayFields,
   isFutureSubmissionDeadline,
+  manualDefaultSubmissionDeadline,
   manualSourcePoolSize,
   missingRequiredValidateParams,
   normalizeToolCallParams,
@@ -37,6 +38,260 @@ function completeValidateParams() {
     kolOfficialPriceL3: "[35000,60000]",
   };
 }
+
+test("manual sourcing defaults only an unstated rebate and preserves inquiry requirements", () => {
+  const now = new Date(2026, 7, 24, 10);
+  for (const mode of ["手动拓展", "直接手扒", "询价机构"]) {
+    for (const rebate of [undefined, null, "", "null"]) {
+      const params = completeValidateParams();
+      params.rebate = rebate;
+      params.rawMessagesJson.business_mode = mode;
+      params.rawMessagesJson.original = params.rawMessagesJson.original.replace(
+        "返点25%以上；",
+        "",
+      );
+      const original = structuredClone(params.rawMessagesJson);
+      const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+      const issues = validateRequirementPreflight(normalized, { now });
+      if (mode === "询价机构") {
+        assert.ok(issues.some((issue) => issue.field === "rebate"));
+      } else {
+        assert.equal(normalized.rebate, "[0,1]");
+        assert.deepEqual(issues, []);
+      }
+      assert.equal(normalized.rawMessagesJson.original, original.original);
+      assert.deepEqual(normalized.rawMessagesJson.parse_outputs, original.parse_outputs);
+      assert.equal(normalized.rawMessagesJson.clarifications, undefined);
+    }
+  }
+});
+
+test("manual sourcing permits absent brand and price while inquiry still requires them", () => {
+  const now = new Date(2026, 7, 24, 10);
+  for (const mode of ["手动拓展", "直接手扒", "询价机构"]) {
+    const params = completeValidateParams();
+    delete params.brandName;
+    delete params.kolOfficialPriceL3;
+    delete params.rebate;
+    params.rawMessagesJson = {
+      business_mode: mode,
+      original: "抖音科技耳机达人30位，提报截止2026-08-25 12:00:00。",
+      parse_outputs: { contentTag: ["科技", "耳机"] },
+    };
+    const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+    const issues = validateRequirementPreflight(normalized, { now });
+    if (mode === "询价机构") {
+      assert.ok(issues.some((issue) => issue.field === "brandName"));
+      assert.ok(issues.some((issue) => issue.field === "kolOfficialPriceL1/L2/L3"));
+    } else {
+      assert.deepEqual(issues, []);
+      assert.equal(Object.hasOwn(normalized, "brandName"), false);
+      assert.equal(Object.hasOwn(normalized, "kolOfficialPriceL3"), false);
+      assert.equal(normalized.rebate, "[0,1]");
+      for (const field of ["platform", "quantityTotal", "contentTag"]) {
+        const incomplete = { ...normalized };
+        delete incomplete[field];
+        assert.ok(validateRequirementPreflight(incomplete, { now }).some((i) => i.field === field));
+      }
+      assert.ok(
+        validateRequirementPreflight({ ...normalized, brandName: "编造品牌" }, { now }).some(
+          (i) => i.field === "brandName",
+        ),
+      );
+      assert.ok(
+        validateRequirementPreflight(
+          { ...normalized, kolOfficialPriceL3: "[100,200]" },
+          { now },
+        ).some((i) => i.field === "douyinVideoType"),
+      );
+    }
+  }
+});
+
+test("manual sourcing defaults an absent deadline to thirty days and records the override marker", () => {
+  const now = new Date(2026, 8, 16, 10, 20, 30, 900);
+  const params = completeValidateParams();
+  params.rawMessagesJson = {
+    original: "抖音科技耳机达人30位。",
+    business_mode: "手动拓展",
+    parse_outputs: { contentTag: ["科技", "耳机"] },
+  };
+  delete params.brandName;
+  delete params.kolOfficialPriceL3;
+  delete params.rebate;
+  delete params.submissionDeadlineAt;
+  delete params.description;
+  const original = structuredClone(params.rawMessagesJson);
+
+  const normalized = normalizeToolCallParams("validate_requirement", params, { now });
+
+  assert.equal(normalized.submissionDeadlineAt, manualDefaultSubmissionDeadline(now));
+  assert.match(normalized.description, /系统默认设置为.*建需后30天，可覆盖/u);
+  assert.equal(normalized.rawMessagesJson.original, original.original);
+  assert.equal(normalized.rawMessagesJson.clarifications, undefined);
+  assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
+
+  for (const deadlineContext of [
+    "截止时间不填",
+    "不用填截止时间",
+    "截止时间不用填写",
+    "产品优惠截至2026年9月30日",
+    "产品优惠截至2026年9月30日，截止时间不用填",
+  ]) {
+    // Both missing parameters and an already generated default must survive normalization.
+    for (const previous of [params, normalized]) {
+      const input = {
+        ...previous,
+        rawMessagesJson: {
+          ...previous.rawMessagesJson,
+          original: `抖音科技耳机达人30位；${deadlineContext}。`,
+        },
+      };
+      const actual = normalizeToolCallParams("validate_requirement", input, { now });
+      assert.equal(actual.submissionDeadlineAt, normalized.submissionDeadlineAt, deadlineContext);
+      assert.equal(actual.description, normalized.description, deadlineContext);
+      assert.equal(actual.rawMessagesJson.original, input.rawMessagesJson.original);
+      assert.deepEqual(validateRequirementPreflight(actual, { now }), [], deadlineContext);
+    }
+  }
+
+  for (const [originalDeadline, clarifiedDeadline, shouldDefault] of [
+    ["截止时间不限", "2026-09-30 18:00:00", false],
+    ["提报截止2026-09-30 18:00:00", "不用填", true],
+  ]) {
+    const input = {
+      ...params,
+      rawMessagesJson: {
+        ...params.rawMessagesJson,
+        original: `抖音科技耳机达人30位；${originalDeadline}。`,
+        clarifications: { submissionDeadlineAt: clarifiedDeadline },
+      },
+    };
+    const actual = normalizeToolCallParams("validate_requirement", input, { now });
+    assert.equal(
+      actual.submissionDeadlineAt,
+      shouldDefault ? normalized.submissionDeadlineAt : undefined,
+    );
+    assert.equal(validateRequirementPreflight(actual, { now }).length === 0, shouldDefault);
+    assert.deepEqual(actual.rawMessagesJson.clarifications, input.rawMessagesJson.clarifications);
+  }
+});
+
+test("manual deadline defaults are idempotent and never replace explicit or invalid values", () => {
+  const now = new Date(2026, 8, 16, 10, 20, 30);
+  const params = completeValidateParams();
+  params.rawMessagesJson = {
+    original: "抖音科技耳机达人30位。",
+    business_mode: "手动拓展",
+    parse_outputs: { contentTag: ["科技", "耳机"] },
+  };
+  delete params.brandName;
+  delete params.kolOfficialPriceL3;
+  delete params.rebate;
+  delete params.submissionDeadlineAt;
+  delete params.description;
+  const first = normalizeToolCallParams("validate_requirement", params, { now });
+  const second = normalizeToolCallParams("validate_requirement", first, { now });
+  assert.deepEqual(second, first);
+
+  const explicit = { ...params, submissionDeadlineAt: "2026-09-30 18:00:00" };
+  explicit.rawMessagesJson = {
+    ...params.rawMessagesJson,
+    original: "抖音科技耳机达人30位；提报截止2026-09-30 18:00:00。",
+  };
+  const explicitNormalized = normalizeToolCallParams("validate_requirement", explicit, { now });
+  assert.equal(explicitNormalized.submissionDeadlineAt, "2026-09-30 18:00:00");
+  assert.equal(Object.hasOwn(explicitNormalized, "description"), false);
+
+  const overridden = {
+    ...first,
+    submissionDeadlineAt: "2026-10-01 18:00:00",
+    rawMessagesJson: {
+      ...first.rawMessagesJson,
+      original: "抖音科技耳机达人30位；提报截止2026-10-01 18:00:00。",
+    },
+  };
+  const overriddenNormalized = normalizeToolCallParams("validate_requirement", overridden, { now });
+  assert.equal(overriddenNormalized.submissionDeadlineAt, "2026-10-01 18:00:00");
+  assert.doesNotMatch(overriddenNormalized.description ?? "", /系统默认设置为/u);
+
+  const invalid = { ...params, submissionDeadlineAt: "2026-09-01 18:00:00" };
+  invalid.rawMessagesJson = {
+    ...params.rawMessagesJson,
+    original: "抖音科技耳机达人30位；提报截止2026-09-01 18:00:00。",
+  };
+  const invalidNormalized = normalizeToolCallParams("validate_requirement", invalid, { now });
+  assert.equal(invalidNormalized.submissionDeadlineAt, "2026-09-01 18:00:00");
+  assert.equal(Object.hasOwn(invalidNormalized, "description"), false);
+  assert.ok(
+    validateRequirementPreflight(invalidNormalized, { now }).some(
+      (issue) => issue.field === "submissionDeadlineAt",
+    ),
+  );
+
+  for (const deadlineMention of [
+    "截止2026年9月30日",
+    "截至2026年9月30日",
+    "产品优惠截至2026年9月30日，提报截止2026年9月20日",
+    "产品优惠截至2026年9月30日但提报截止下周",
+    "产品优惠截至2026年9月30日但截止时间2026年9月20日",
+  ]) {
+    const dateOnly = { ...params };
+    dateOnly.rawMessagesJson = {
+      ...params.rawMessagesJson,
+      original: `抖音科技耳机达人30位；${deadlineMention}。`,
+    };
+    const dateOnlyNormalized = normalizeToolCallParams("validate_requirement", dateOnly, { now });
+    assert.equal(Object.hasOwn(dateOnlyNormalized, "submissionDeadlineAt"), false);
+    assert.ok(
+      validateRequirementPreflight(dateOnlyNormalized, { now }).some(
+        (issue) => issue.field === "submissionDeadlineAt",
+      ),
+    );
+  }
+
+  const inquiry = { ...params };
+  inquiry.rawMessagesJson = {
+    ...params.rawMessagesJson,
+    business_mode: "询价机构",
+    original: "抖音科技耳机达人30位。",
+  };
+  const inquiryNormalized = normalizeToolCallParams("validate_requirement", inquiry, { now });
+  assert.equal(Object.hasOwn(inquiryNormalized, "submissionDeadlineAt"), false);
+  assert.ok(
+    validateRequirementPreflight(inquiryNormalized, { now }).some(
+      (issue) => issue.field === "submissionDeadlineAt",
+    ),
+  );
+});
+
+test("manual rebate default never replaces explicit, parsed or unresolved rebate evidence", () => {
+  const now = new Date(2026, 7, 24, 10);
+  const params = completeValidateParams();
+  params.rawMessagesJson.business_mode = "手动拓展";
+  assert.equal(normalizeToolCallParams("validate_requirement", params).rebate, "[0.25,1]");
+  delete params.rebate;
+  assert.ok(
+    validateRequirementPreflight(normalizeToolCallParams("validate_requirement", params), {
+      now,
+    }).some((issue) => issue.field === "rebate"),
+  );
+  params.rawMessagesJson.original = params.rawMessagesJson.original.replace("返点25%以上；", "");
+  params.rawMessagesJson.parse_outputs.rebate = { rebate: "[0.3,1]" };
+  assert.equal(normalizeToolCallParams("validate_requirement", params).rebate, "[0.3,1]");
+  params.rawMessagesJson.parse_outputs.rebate = ["[0.2,1]", "[0.3,1]"];
+  assert.notEqual(normalizeToolCallParams("validate_requirement", params).rebate, "[0,1]");
+  delete params.rawMessagesJson.parse_outputs.rebate;
+  params.rawMessagesJson.clarifications = { rebate: "至少20%" };
+  assert.notEqual(normalizeToolCallParams("validate_requirement", params).rebate, "[0,1]");
+  delete params.rawMessagesJson.clarifications;
+  params.rebate = "[0.5,1]";
+  assert.ok(
+    validateRequirementPreflight(normalizeToolCallParams("validate_requirement", params), {
+      now,
+    }).some((issue) => issue.field === "rebate"),
+  );
+});
 
 test("Chinese calendar dates with colon clocks normalize without losing deadline evidence", () => {
   const now = new Date(2026, 8, 5, 12);

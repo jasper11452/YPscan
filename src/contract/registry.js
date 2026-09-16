@@ -9,6 +9,7 @@ import { isRecord, nonemptyString } from "../util/value.js";
 const MAX_FOLLOWER_COUNT = 999_999_999;
 
 export const UNRESTRICTED_FOLLOWERCOUNT_RANGE = `[0,${MAX_FOLLOWER_COUNT}]`;
+export const MANUAL_DEFAULT_DEADLINE_DAYS = 30;
 
 /**
  * 手动拓展候选池上限：按目标人数分档，目标越小倍数越高（补偿冷启动损耗），
@@ -546,6 +547,24 @@ function parseLocalDateTime(value) {
 
 const DEADLINE_CLOCK = String.raw`(?:\d{1,2}[:：]\d{2}(?:[:：]\d{2})?|\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分)?(?:\s*\d{1,2}\s*秒)?)`;
 const DEADLINE_DATE = String.raw`(?:(?:\d{4}|\d{2})年\s*\d{1,2}月\s*\d{1,2}日\s*|\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T])`;
+const MANUAL_DEFAULT_DEADLINE_MARKER = "提报截止时间由系统默认设置为";
+const MANUAL_DEFAULT_DEADLINE_DESCRIPTION_PATTERN =
+  /提报截止时间由系统默认设置为 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}（建需后30天，可覆盖）/gu;
+
+function formatLocalDateTime(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+export function manualDefaultSubmissionDeadline(now = new Date()) {
+  const base =
+    now instanceof Date && Number.isFinite(now.getTime()) ? new Date(now.getTime()) : new Date();
+  base.setMilliseconds(0);
+  base.setDate(base.getDate() + MANUAL_DEFAULT_DEADLINE_DAYS);
+  return formatLocalDateTime(base);
+}
 
 function normalizedDateTime(value, { now = new Date() } = {}) {
   if (typeof value !== "string") return value;
@@ -785,6 +804,7 @@ export function invalidPlatformArrayFields(params) {
 export function missingRequiredValidateParams(params) {
   if (!params || typeof params !== "object" || Array.isArray(params)) return [];
   const missing = [...REQUIRED_VALIDATE_PARAMS].filter((name) => {
+    if (name === "brandName" && isManualRequirement(params.rawMessagesJson)) return false;
     const value = params[name];
     return (
       value === undefined || value === null || (typeof value === "string" && value.trim() === "")
@@ -1052,6 +1072,33 @@ function hasSubmissionDeadlineEvidence(evidence, value, now) {
   );
 }
 
+function hasSubmissionDeadlineMention(rawMessages) {
+  const evidence =
+    latestFieldEvidence(rawMessages, [
+      "submissionDeadlineAt",
+      "提报截止",
+      "提报截止时间",
+      "截止时间",
+    ]) ?? rawRequirementEvidence(rawMessages);
+  if (!evidence) return false;
+  const context =
+    "(?:submissionDeadlineAt|deadline(?:\\s+(?:date|time))?|提报截止(?:时间)?|截止(?:时间|日期)?|提交截止(?:时间|日期)?|提报截止|截至(?:时间|日期)?|到期(?:时间|日期)?)";
+  const noValue =
+    "(?:未提供|未填写|未填|没有|无|不限|不填|不设|(?:不用|不需要)(?:填写|填|设置)|待定|未定|待确认|暂无|未知|not\\s+(?:provided|required|set|specified)|none|n/?a|tbd|pending|unknown)";
+  const unspecified = new RegExp(
+    `(?:${context})\\s*[:：]?\\s*${noValue}|${noValue}\\s*${context}`,
+    "giu",
+  );
+  const deadline = new RegExp(context, "iu");
+  return evidence.split(/[。；;，,\n]/u).some((clause) => {
+    // 只移除优惠期限标记，不吞掉同一分句内其他截止要求。
+    if (!/(?:submissionDeadlineAt|deadline|提报|提交|反馈)/iu.test(clause)) {
+      clause = clause.replace(/优惠(?:活动)?(?:的)?\s*(?:截止|截至|到期)/gu, "");
+    }
+    return deadline.test(clause.replace(unspecified, ""));
+  });
+}
+
 function hasProjectDateEvidence(evidence, value) {
   if (typeof value !== "string") return false;
   const match = value.match(LOCAL_DATE_OR_DATETIME);
@@ -1129,6 +1176,43 @@ function usableMetricValue(value) {
     value !== null &&
     value !== undefined &&
     !(typeof value === "string" && (!value.trim() || value.trim().toLowerCase() === "null"))
+  );
+}
+
+function isManualRequirement(rawMessages) {
+  const normalized = normalizedRawMessages(rawMessages);
+  return (
+    isRecord(normalized) &&
+    normalizeBusinessMode(normalized.business_mode) === BUSINESS_MODE_VALUES[1]
+  );
+}
+
+function allowsManualRebateDefault(rawMessages) {
+  return (
+    isManualRequirement(rawMessages) &&
+    !/(?:返点|返佣|佣金|rebate)/iu.test(rawRequirementEvidence(rawMessages)) &&
+    collectParsedMetricValues(rawMessages.parse_outputs, "rebate", null).length === 0
+  );
+}
+
+function manualDefaultDeadlineDescription(deadline) {
+  return `${MANUAL_DEFAULT_DEADLINE_MARKER} ${deadline}（建需后${MANUAL_DEFAULT_DEADLINE_DAYS}天，可覆盖）`;
+}
+
+function withoutManualDefaultDeadlineDescription(description) {
+  return description
+    .replace(MANUAL_DEFAULT_DEADLINE_DESCRIPTION_PATTERN, "")
+    .replace(/^；+|；+$/gu, "")
+    .replace(/；{2,}/gu, "；")
+    .trim();
+}
+
+function isManualDefaultDeadline(payload) {
+  const deadline = payload?.submissionDeadlineAt;
+  return (
+    isManualRequirement(payload?.rawMessagesJson) &&
+    typeof payload?.description === "string" &&
+    payload.description.includes(manualDefaultDeadlineDescription(deadline))
   );
 }
 
@@ -1282,6 +1366,9 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     return [{ field: "arguments", reason: "必须是完整的顶层对象" }];
   }
   const payload = /** @type {Record<string, unknown>} */ (params);
+  const manual = isManualRequirement(payload.rawMessagesJson);
+  const checkBrand = !manual || Object.hasOwn(payload, "brandName");
+  const checkPrice = !manual || PRICE_FIELDS.some((field) => Object.hasOwn(payload, field));
 
   const issues = [];
   const add = (field, reason) => {
@@ -1308,7 +1395,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   if (!["xiaohongshu", "douyin"].includes(String(payload.platform))) {
     add("platform", '只允许字符串 "xiaohongshu" 或 "douyin"');
   }
-  if (typeof payload.brandName !== "string" || !payload.brandName.trim()) {
+  if (checkBrand && (typeof payload.brandName !== "string" || !payload.brandName.trim())) {
     add("brandName", "必须直接使用当前平台 Dify 解析品牌；解析缺失或多候选时必须弹窗确认");
   }
   if (typeof payload.projectName !== "string" || !payload.projectName.trim()) {
@@ -1366,7 +1453,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     }
   }
 
-  if (!PRICE_FIELDS.some((field) => Object.hasOwn(payload, field))) {
+  if (checkPrice && !PRICE_FIELDS.some((field) => Object.hasOwn(payload, field))) {
     add("kolOfficialPriceL1/L2/L3", "至少提供一个与平台内容形式对应的报价区间");
   }
   for (const field of RANGE_PARAMS) {
@@ -1407,7 +1494,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     submittedBrand && !parsedBrand && !clarifiedBrand.present && explicitBrand === submittedBrand,
   );
   const parsedBrandMatches = Boolean(submittedBrand && submittedBrand === parsedBrand);
-  if (!parsedBrandMatches && !clarifiedBrandMatches && !explicitBrandMatches) {
+  if (checkBrand && !parsedBrandMatches && !clarifiedBrandMatches && !explicitBrandMatches) {
     addEvidenceIssue(
       "brandName",
       "必须原样使用当前平台唯一 Dify 解析品牌；仅在解析缺失或多候选时使用最新弹窗答案",
@@ -1427,6 +1514,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
   }
   if (
     !hasUniqueParsedRangeEvidence(rawMessages, "rebate", payload.rebate, payload.platform) &&
+    !(payload.rebate === "[0,1]" && allowsManualRebateDefault(rawMessages)) &&
     !/(?:返点|返佣|佣金|rebate)/iu.test(evidence)
   ) {
     addEvidenceIssue("rebate", "原始需求或弹窗澄清记录中没有返点证据，且 Dify 未给出唯一返点区间");
@@ -1436,7 +1524,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
       Object.hasOwn(payload, field) &&
       hasUniqueParsedRangeEvidence(rawMessages, field, payload[field], payload.platform),
   );
-  if (!hasParsedPrice && !/(?:单价|报价|预算|费用|价格|kolOfficialPrice)/iu.test(evidence)) {
+  if (checkPrice && !hasParsedPrice && !/(?:单价|报价|预算|费用|价格|kolOfficialPrice)/iu.test(evidence)) {
     addEvidenceIssue(
       "kolOfficialPriceL1/L2/L3",
       "原始需求或弹窗澄清记录中没有报价证据，且 Dify 未给出唯一报价区间",
@@ -1449,7 +1537,7 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
       "提报截止时间",
       "截止时间",
     ]) ?? evidence;
-  if (!hasSubmissionDeadlineEvidence(deadlineEvidence, payload.submissionDeadlineAt, now)) {
+  if (!hasSubmissionDeadlineEvidence(deadlineEvidence, payload.submissionDeadlineAt, now) && !isManualDefaultDeadline(payload)) {
     addEvidenceIssue(
       "submissionDeadlineAt",
       "原始需求或弹窗澄清记录中没有与提交值一致的明确截止时间证据",
@@ -1591,6 +1679,10 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
         if (!Object.hasOwn(normalized, field)) set(field, value);
       }
       if (rawMessages && typeof rawMessages === "object" && !Array.isArray(rawMessages)) {
+        if (isManualRequirement(rawMessages) && !usableMetricValue(normalized.brandName)) {
+          if (normalized === params) normalized = { ...params };
+          delete normalized.brandName;
+        }
         const parsedBrand = uniqueParsedBrand(
           rawMessages,
           normalizedPlatformName(normalized.platform),
@@ -1618,6 +1710,40 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
           if (parsed) set(field, parsed);
         }
         normalized = normalizeParsedDouyinMetrics(normalized, rawMessages);
+        if (!usableMetricValue(normalized.rebate) && allowsManualRebateDefault(rawMessages)) {
+          set("rebate", "[0,1]");
+        }
+        if (isManualRequirement(rawMessages) && typeof normalized.description === "string") {
+          const description = normalized.description.trim();
+          const hasDefaultMarker = description.includes(MANUAL_DEFAULT_DEADLINE_MARKER);
+          const keepsCurrentDefault =
+            usableMetricValue(normalized.submissionDeadlineAt) &&
+            description.includes(manualDefaultDeadlineDescription(normalized.submissionDeadlineAt));
+          if (hasDefaultMarker && (!keepsCurrentDefault || hasSubmissionDeadlineMention(rawMessages))) {
+            const cleaned = withoutManualDefaultDeadlineDescription(description);
+            if (cleaned) set("description", cleaned);
+            else {
+              if (normalized === params) normalized = { ...params };
+              delete normalized.description;
+            }
+          }
+        }
+        if (
+          isManualRequirement(rawMessages) &&
+          !usableMetricValue(normalized.submissionDeadlineAt) &&
+          !hasSubmissionDeadlineMention(rawMessages)
+        ) {
+          const deadline = manualDefaultSubmissionDeadline(now);
+          set("submissionDeadlineAt", deadline);
+          if (!Object.hasOwn(normalized, "description") || typeof normalized.description === "string") {
+            const marker = manualDefaultDeadlineDescription(deadline);
+            const description =
+              typeof normalized.description === "string" ? normalized.description.trim() : "";
+            if (!description.includes(marker)) {
+              set("description", description ? `${description}；${marker}` : marker);
+            }
+          }
+        }
       }
     }
     if (

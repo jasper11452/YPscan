@@ -14,7 +14,7 @@
 ## 当前组成
 
 - `index.js`：注册 5 个本地工具与 5 个 Hook；远端 MCP 白名单由 `openclaw.plugin.json` 声明。
-- `src/tools/parse-requirement.js`：调用固定需求解析 Workflow，`data.outputs` 只返回当前 Provider 契约消费的字段；解析标签合法时直接采用，缺失或 `null` 时省略。当前平台唯一且非占位的品牌候选直接采用；数值字段只有仍缺失、模糊或冲突时才询问。
+- `src/tools/parse-requirement.js`：调用固定需求解析 Workflow，`data.outputs` 只返回当前 Provider 契约消费的字段；解析标签合法时直接采用，缺失或 `null` 时省略。手动拓展以平台、达人方向、人数为业务必填，三项齐全后提供一次可选补充入口，缺品牌/报价不追问；返点缺失默认 `[0,1]`，截止时间缺失默认建需后 30 天并在 `description` 标明系统默认、可覆盖，具体兼容规则按业务 Skill 执行。询价机构维持原必填规则，当前平台唯一有效品牌及数值直接采用。
 - `src/tools/save-artifact.js`：单一入口受控保存 Provider 返回的 Excel 或 links CSV；`artifact_kind` 唯一决定格式，共用下载限制、重试、原子发布与幂等逻辑。`manual_source` / `manual_score_batch` 两类评分表在本地改用可读名（`<项目名>-达人评分排序表-<时间戳>.xlsx`、`<项目名>-手动拓展评分表-<时间戳>.xlsx`；项目名取 Agent 在 validate 时总结的 `projectName`，缺失时省略；时间戳为本地 `YYYYMMDD-HHmmss`），恰好同一秒内保存不同内容时在末尾补内容哈希前 8 位另存，不覆盖已有文件；其他 kind 仍沿用 Provider 文件名。推荐计数与早停由本地汇总工具负责。
 - `src/tools/save-creator-links.js`：读取受控 links CSV 或机构预览 Excel，归一化为当前 requirement 的三列 links CSV。
 - `src/tools/merge-creator-csv.js`：`file_bridge` 的内部合并实现，按 links CSV 原顺序合并多批原生达人补全结果；不是公开工具。

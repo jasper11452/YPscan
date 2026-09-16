@@ -176,6 +176,95 @@ test("parse review distinguishes missing parser output from missing user informa
   assert.match(text, /一次.*过期/u);
 });
 
+test("manual sourcing sends the default rebate through the hook without inventing user evidence", () => {
+  const { hooks } = registeredPlugin();
+  for (const mode of ["手动拓展", "询价机构"]) {
+    const params = canonicalValidateParams(mode);
+    delete params.rebate;
+    const raw = JSON.parse(params.rawMessagesJson);
+    raw.original = raw.original.replace("返点25%以上；", "");
+    params.rawMessagesJson = raw;
+    const result = hooks.get("before_tool_call")({ toolName: "validate_requirement", params });
+    if (mode === "询价机构") {
+      assert.equal(result.block, true);
+      assert.match(result.blockReason, /rebate/u);
+    } else {
+      assert.equal(result.block, undefined);
+      assert.equal(result.params.rebate, "[0,1]");
+      assert.equal(JSON.parse(result.params.rawMessagesJson).original, raw.original);
+      assert.equal(JSON.parse(result.params.rawMessagesJson).clarifications, undefined);
+    }
+  }
+  const directive = directiveText(
+    hooks.get("tool_result_persist")({
+      toolName: "ypscan_parse_requirement",
+      params: { business_mode: "手动拓展" },
+      message: toolMessage({ success: true, data: { outputs: { rebate: null } } }),
+    }),
+  );
+  assert.match(directive, /不询问返点.*\[0,1\]/u);
+  assert.doesNotMatch(directive, /确需澄清才问“最低返点要求是多少”/u);
+});
+
+test("manual intake requests three essentials and offers optional conditions once", () => {
+  const { hooks } = registeredPlugin();
+  const directive = directiveText(
+    hooks.get("tool_result_persist")({
+      toolName: "ypscan_parse_requirement",
+      params: { business_mode: "手动拓展" },
+      message: toolMessage({ success: true, data: { outputs: { contentTag: ["科技"] } } }),
+    }),
+  );
+  assert.match(directive, /只把平台、达人方向、目标人数作为业务必填/u);
+  assert.match(directive, /直接开始／补充条件/u);
+  assert.match(directive, /不得重复提示/u);
+  assert.match(directive, /品牌和报价缺失不追问/u);
+  assert.match(directive, /截止时间未提供时由插件默认设置为建需后 30 天/u);
+  assert.doesNotMatch(directive, /至少一个当前平台支持且与内容形式匹配的报价档位/u);
+  const params = canonicalValidateParams("手动拓展");
+  params.brandName = null;
+  delete params.kolOfficialPriceL3;
+  delete params.rebate;
+  params.rawMessagesJson = {
+    original: "抖音科技达人30位，截止2099-08-25 12:00:00。",
+    business_mode: "手动拓展",
+    parse_outputs: { contentTag: ["科技"] },
+  };
+  const result = hooks.get("before_tool_call")({ toolName: "validate_requirement", params });
+  assert.equal(result.block, undefined);
+  assert.equal(Object.hasOwn(result.params, "brandName"), false);
+  assert.equal(Object.hasOwn(result.params, "kolOfficialPriceL3"), false);
+});
+
+test("manual validate call receives a future system deadline when the user did not provide one", () => {
+  const { hooks } = registeredPlugin();
+  const params = canonicalValidateParams("手动拓展");
+  const raw = JSON.parse(params.rawMessagesJson);
+  raw.original = "抖音科技达人30位。";
+  raw.parse_outputs = { contentTag: ["科技"] };
+  params.rawMessagesJson = raw;
+  delete params.brandName;
+  delete params.kolOfficialPriceL3;
+  delete params.rebate;
+  delete params.submissionDeadlineAt;
+  delete params.description;
+
+  for (const original of [
+    "抖音科技达人30位。",
+    "抖音科技达人30位；不用填截止时间。",
+    "抖音科技达人30位；产品优惠截至2026年9月30日。",
+  ]) {
+    const input = { ...params, rawMessagesJson: { ...raw, original } };
+    const result = hooks.get("before_tool_call")({ toolName: "validate_requirement", params: input });
+
+    assert.equal(result.block, undefined, original);
+    assert.match(result.params.description, /系统默认设置为.*建需后30天，可覆盖/u);
+    assert.match(result.params.submissionDeadlineAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u);
+    assert.equal(JSON.parse(result.params.rawMessagesJson).original, original);
+    assert.equal(JSON.parse(result.params.rawMessagesJson).clarifications, undefined);
+  }
+});
+
 for (const [code, message] of [
   ["DIFY_TIMEOUT", "需求解析请求超时"],
   ["DIFY_HTTP_ERROR", "需求解析返回 HTTP 403"],

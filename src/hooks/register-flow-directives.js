@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { firstString, isRecord, nonemptyString } from "../util/value.js";
 import {
   BUSINESS_MODE_VALUES,
+  MANUAL_DEFAULT_DEADLINE_DAYS,
   manualSourcePoolSize,
   normalizeBusinessMode,
   normalizeToolCallParams,
@@ -41,11 +42,16 @@ const MANUAL_EFFECTIVE_DEMAND_REPARSE_RULE =
 const PARSED_METRIC_REUSE_RULE =
   "解析 Workflow 已给出的唯一且合法 followercount、rebate、报价、CPM 或 CPE 属于已解析数值，必须直接采用，禁止再问；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此创建报价区间弹窗。粉丝技术上限溢出由本地截断到 999999999，不弹窗。用户未明确粉丝数或解析为“不限”时默认落库全量区间 [0,999999999]，不省略、不弹窗；历史坏值 [1,999999999] 归一为 [0,999999999]。解析器缺失或 null 不等于用户未提供；先核对当前原文与有效澄清，只有仍缺少必要值、多候选或存在冲突时才调用 AskUserQuestion。";
 const REBATE_MINIMUM_QUESTION_RULE =
-  '需要澄清返点时只问最低返点：AskUserQuestion 的问题写“最低返点要求是多少”，选项只给单个最低返点百分比（如 20%、25%、30%），禁止给返点区间、上限或“不限”类选项；上限固定按 100% 处理，落库仍为 "[min,1]"。';
+  '询价机构需要澄清返点时只问最低返点：AskUserQuestion 的问题写“最低返点要求是多少”，选项只给单个最低返点百分比（如 20%、25%、30%），禁止给返点区间、上限或“不限”类选项；上限固定按 100% 处理，落库仍为 "[min,1]"。手动拓展未提供返点按手动例外处理。';
+const MANUAL_REBATE_DEFAULT_RULE =
+  '手动拓展例外：原文、有效澄清及解析结果均未提供返点时，不询问返点，rebate 默认 "[0,1]"（最低0%，不限制）；不写回 original、demand、parse_outputs 或伪造澄清。已提供的有效返点继续采用，不覆盖明确要求；询价机构仍按原规则澄清。此例外优先于通用必填数值澄清规则。';
+const MANUAL_DEFAULT_DEADLINE_RULE = `手动拓展例外：原文、有效澄清及解析结果均未提供截止时间时，不询问截止时间；在调用 validate_requirement 前用可见正文说明“未提供截止时间，将使用系统默认建需后 ${MANUAL_DEFAULT_DEADLINE_DAYS} 天，之后可补充具体时间覆盖”。插件将 submissionDeadlineAt 默认设置为当前建需时间后 ${MANUAL_DEFAULT_DEADLINE_DAYS} 天的未来绝对时间，并在 description 标明“系统默认、建需后 ${MANUAL_DEFAULT_DEADLINE_DAYS} 天、可覆盖”。这只是 Provider 兼容值，不写回 original、demand、parse_outputs 或伪造澄清；用户补充具体截止时间时优先采用并覆盖默认值。已有截止时间仍按原规则校验；询价机构不适用此例外。`;
+const MANUAL_REQUIREMENT_INPUT_RULE =
+  `手动拓展输入规则优先于通用必填澄清：只把平台、达人方向、目标人数作为业务必填；缺失时一次 AskUserQuestion 问齐。三项齐全后、首次建需前，按 Skill 提供一次“直接开始／补充条件”的可选条件入口，正文列出预算、粉丝范围、合作形式、地域、品牌/产品、CPM/CPE、粉丝画像、参考达人、排除条件和截止时间，未填不限或省略；截止时间未提供时由插件默认设置为建需后 ${MANUAL_DEFAULT_DEADLINE_DAYS} 天，并在 description 标明系统默认、可由具体时间覆盖，不因此追问。已选择直接开始、已完成补充或明确说按当前条件直接开始后不得重复提示，重解析/放宽重建不重问。品牌和报价缺失不追问、不造占位值或最大报价；有值仍按原契约校验，用户已写但含糊的预算/粉丝量级等仍需澄清。没有报价/CPM/CPE 档位条件时，不为抖音植入/定制单独追问。contentTag 由解析产生，缺失先重新解析，不让用户填写系统标签。`;
 const NUMERIC_CLARIFICATION_QUESTION_RULE =
   "数值澄清正文须先解释原需求为何不能确定该值，再提示“请选择或自定义输入”：未提及则明确缺失字段；定性描述无法确定数值范围时必须说明。不得只写“确认报价/报价上限是多少”，不得展示“落库/Provider 参数”等内部术语。每题设置 multiSelect=false，提供恰好 3 个互斥且可直接回答该字段的具体值；禁用“1 个数值+返回修改/取消”的二按钮结构及自建“其他”选项，保留宿主自定义输入。需要澄清时用一次 AskUserQuestion 收集全部待确认字段，禁止逐字段分轮弹窗。";
 const REQUIREMENT_COMPLETENESS_RULE =
-  "进入 validate_requirement 前必须检查 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3 且必须匹配视频类型，小红书不使用 L3。followercount 未明确或“不限”时默认落库全量区间 [0,999999999]，不省略字段、不弹窗；历史坏值 [1,999999999] 归一为 [0,999999999]。这些业务值缺失、无效或需要选择时，必须在调用前一次性通过 AskUserQuestion 收集，禁止默认补值。contentTag 必须是解析结果中的非空数组；缺失或无效时重新解析，禁止向用户询问或自行补值；本规则覆盖任何“contentTag 缺失时直接省略”的旧指令。status=ready、projectName 和 rawMessagesJson（当前原文+parse_outputs）由 Agent 构造。";
+  `进入 validate_requirement 前按业务模式检查完整性：询价机构必须检查 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3 且必须匹配视频类型，小红书不使用 L3，缺失或有歧义一次性 AskUserQuestion 收集，禁止默认补值。手动拓展只把 platform、达人方向对应的 contentTag、quantityTotal 作为用户业务必填；brandName 和报价缺失时省略，submissionDeadlineAt 缺失按手动默认截止规则，rebate 缺失按手动返点规则，followercount 未明确或“不限”仍落库全量区间 [0,999999999]，不省略、不弹窗。所有已提供字段仍按格式、平台和证据校验；contentTag 必须是解析结果中的非空数组，缺失或无效时重新解析，禁止向用户询问或自行补值；本规则覆盖任何“contentTag 缺失时直接省略”的旧指令。status=ready、projectName 和 rawMessagesJson（当前原文+parse_outputs）由 Agent 构造。`;
 const RAW_MESSAGES_JSON_KEY_CONTRACT =
   "rawMessagesJson key 与取值严格按 validate_requirement 工具卡 rawMessagesJson 契约执行，禁止写成 original_demand 或 demand；key 写错会被本地预检当成缺失原文阻断。";
 const INQUIRY_RECIPIENT_RESPONSE_RULE =
@@ -352,10 +358,16 @@ function requirementParseSuccessDirective(message, params = {}, recordedMode = n
       : []),
     "唯一值直接采用；八个可选 Label 有则原样保留、无则省略；禁止整体传解析输出。",
     "YPSCAN_POLICY=按 media-assistant Skill 的“解析后、落库前必须复核”执行。",
-    "复核 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3，小红书不使用 L3。缺失或有歧义按 Skill 一次性询问；contentTag 必须来自解析结果，contentTag 缺失时重新解析。",
-    "首次澄清前一次检查缺项和过期日期。截止时间由 Agent 对照当前完整有效需求和最新澄清复核；两者均无截止证据须询问，禁止用旧 requirement、默认值或推测。只有日期没有具体时刻必须澄清；不得默认 18:00、23:59:59 或其他时刻，不得宣称“无需补充澄清”。已有明确小时和分钟且未来时，秒省略时可补 00，不重复询问。两位年按20xx。只解析仍须指出缺失时刻，不得创建需求。",
+    mode === BUSINESS_MODE_MANUAL
+      ? MANUAL_REQUIREMENT_INPUT_RULE
+      : "复核 brandName、quantityTotal、submissionDeadlineAt、rebate、followercount 和至少一个当前平台支持且与内容形式匹配的报价档位；抖音仅使用 L2/L3，小红书不使用 L3。缺失或有歧义按 Skill 一次性询问；contentTag 必须来自解析结果，contentTag 缺失时重新解析。",
+    mode === BUSINESS_MODE_MANUAL
+      ? MANUAL_DEFAULT_DEADLINE_RULE
+      : "首次澄清前一次检查缺项和过期日期。截止时间由 Agent 对照当前完整有效需求和最新澄清复核；两者均无截止证据须询问，禁止用旧 requirement、默认值或推测。只有日期没有具体时刻必须澄清；不得默认 18:00、23:59:59 或其他时刻，不得宣称“无需补充澄清”。已有明确小时和分钟且未来时，秒省略时可补 00，不重复询问。两位年按20xx。只解析仍须指出缺失时刻，不得创建需求。",
     ...(mode === BUSINESS_MODE_MANUAL ? [MANUAL_EFFECTIVE_DEMAND_REPARSE_RULE] : []),
-    "确需澄清才问“最低返点要求是多少”；选项只给单个最低返点百分比，禁止给返点区间、上限或“不限”类选项。",
+    mode === BUSINESS_MODE_MANUAL
+      ? MANUAL_REBATE_DEFAULT_RULE
+      : "确需澄清才问“最低返点要求是多少”；选项只给单个最低返点百分比，禁止给返点区间、上限或“不限”类选项。",
     RAW_MESSAGES_JSON_KEY_CONTRACT,
   ].join("\n");
 }
@@ -1929,7 +1941,10 @@ export function registerFlowDirectiveHooks(api) {
           "手动拓展最终汇总 Excel 或旧版兼容 Excel 保存成功后原样展示 delivery.local_file_link；手动拓展的 manual_score_batch 单批中间表不展示表格、路径或链接，不再提供浏览器详细拓展分支，也不追加完成弹窗。",
           "需求澄清规则：解析返回的八个可选 Label 数组是纯解析结果，有什么就原样落库什么，保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认、不询问任何标签内容；可选 Label（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。contentTag 必须是本次解析结果中的非空数组；缺失或无效时重新解析，禁止询问用户或自行补值。数值字段先采用 Dify 唯一解析值，再与最新非空 clarification 合并；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。Dify 已给出唯一 followercount、rebate、报价、CPM、CPE 时禁止再问。只有这些必填数值仍缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。当前平台 Dify 品牌候选唯一、合法且非空时必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为 null、未知等占位值时才询问。项目名由 Agent 根据当前需求自行总结生成，不弹窗确认；调用 validate_requirement 前用一句可见正文告知用户取的项目名。禁止编造标签、默认补数值或普通文本追问。解析 Workflow 唯一合法报价、CPM、CPE 候选直接复用，不因原文单值与 Provider 区间格式差异询问；同平台多个达人类型只保留一个 requirement，总量不变并合并条件，不拆分或追问每类人数。正常成功交付不追加完成弹窗。",
           REQUIREMENT_COMPLETENESS_RULE,
+          "询价机构这些业务值缺失、无效或需要选择时，必须在调用前一次性通过 AskUserQuestion 收集；手动拓展只对三项业务必填这样处理。",
           REBATE_MINIMUM_QUESTION_RULE,
+          MANUAL_REBATE_DEFAULT_RULE,
+          MANUAL_REQUIREMENT_INPUT_RULE,
           NUMERIC_CLARIFICATION_QUESTION_RULE,
           INQUIRY_RECIPIENT_RESPONSE_RULE,
           `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"；followercount 未明确或“不限”时默认落库 [0,999999999]。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
