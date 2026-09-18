@@ -186,22 +186,16 @@ const TAG_ARRAY_PARAMS = new Set([
   "industryTagLabel",
 ]);
 
-const STRING_VALIDATE_PARAMS = new Set(
-  VALIDATE_REQUIREMENT_PARAMS.filter(
-    (name) => name !== "rawMessagesJson" && name !== "contentTag" && !TAG_ARRAY_PARAMS.has(name),
-  ),
-);
-
 const STRING_BOOLEAN_PARAMS = new Set(["hasOrganization", "hasOrder30day", "hasSocial30day"]);
 
+/**
+ * Provider 侧按区间校验的数值字段白名单。
+ * 依据：2026-09-18 探测 test Provider `validate_requirement`，非区间值被拒时返回的
+ * `invalid_range_fields` 与本清单一致；不在此清单的数值字段不接受区间字符串。
+ */
 export const VALIDATE_REQUIREMENT_RANGE_PARAMS = Object.freeze([
   "rebate",
   "followercount",
-  "interactionRate",
-  "clickMedium",
-  "viewMedium",
-  "photoView",
-  "videoInteract",
   "photoInteract",
   "userlikecount",
   "likeIncrement",
@@ -210,13 +204,6 @@ export const VALIDATE_REQUIREMENT_RANGE_PARAMS = Object.freeze([
   "avgcomment",
   "avgcollect",
   "avginteract",
-  "femaleRate",
-  "age1Rate",
-  "age2Rate",
-  "age3Rate",
-  "age4Rate",
-  "age5Rate",
-  "age6Rate",
   "cpeL1",
   "cpeL2",
   "cpeL3",
@@ -228,9 +215,32 @@ export const VALIDATE_REQUIREMENT_RANGE_PARAMS = Object.freeze([
   "kolOfficialPriceL3",
 ]);
 
-const RANGE_PARAMS = VALIDATE_REQUIREMENT_RANGE_PARAMS;
+/**
+ * Provider 侧按单值 float 处理的数值字段：不接受区间字符串，只能省略或传单个数值。
+ * `viewMedium` 已由线上 `INVALID_PAYLOAD`（could not convert string to float）证实；
+ * 其余字段依据同一份 `invalid_range_fields` 白名单推断。单值语义（下限/精确值）以
+ * Provider 为准，插件只做格式守卫，不推断、不把区间折算成单值。
+ */
+export const VALIDATE_REQUIREMENT_SCALAR_PARAMS = Object.freeze([
+  "interactionRate",
+  "clickMedium",
+  "viewMedium",
+  "photoView",
+  "videoInteract",
+  "femaleRate",
+  "age1Rate",
+  "age2Rate",
+  "age3Rate",
+  "age4Rate",
+  "age5Rate",
+  "age6Rate",
+]);
 
-const RATE_RANGE_PARAMS = new Set([
+const RANGE_PARAMS = VALIDATE_REQUIREMENT_RANGE_PARAMS;
+const SCALAR_PARAMS = new Set(VALIDATE_REQUIREMENT_SCALAR_PARAMS);
+
+/** 比例类字段（现为单值）：值按 0–1 分数表示。 */
+const RATE_SHARE_PARAMS = new Set([
   "interactionRate",
   "femaleRate",
   "age1Rate",
@@ -248,6 +258,16 @@ const PRICE_RANGE_PARAMS = new Set([
 ]);
 
 const MAXIMUM_METRIC_RANGE_PARAMS = new Set(["cpeL1", "cpeL2", "cpeL3", "cpmL1", "cpmL2", "cpmL3"]);
+
+const STRING_VALIDATE_PARAMS = new Set(
+  VALIDATE_REQUIREMENT_PARAMS.filter(
+    (name) =>
+      name !== "rawMessagesJson" &&
+      name !== "contentTag" &&
+      !TAG_ARRAY_PARAMS.has(name) &&
+      !SCALAR_PARAMS.has(name),
+  ),
+);
 
 const PLATFORM_TAG_FIELDS = Object.freeze({
   xiaohongshu: [
@@ -293,6 +313,7 @@ const PLATFORM_ALIASES = Object.freeze({
 });
 
 const POSITIVE_INTEGER_STRING = /^([1-9]\d*)$/u;
+const NON_NEGATIVE_NUMBER_STRING = /^\d+(?:\.\d+)?$/u;
 const LOCAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const LOCAL_DATE_OR_DATETIME = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/u;
 function normalizedQuantityTotal(value) {
@@ -428,6 +449,25 @@ function normalizedNumericRange(value, { rate = false, price = false, maximum = 
     return JSON.stringify([Math.floor(normalized[0] * 0.7), Math.ceil(normalized[1] * 1.2)]);
   }
   return JSON.stringify(normalized);
+}
+
+/**
+ * Provider 侧为单值 float 的数值字段：只归一化单个非负数值，不做区间展开。
+ * 无法确定成单个非负数值时原样返回，交给预检报明确的格式错误。
+ */
+function normalizedNumericScalar(value, { rate = false } = {}) {
+  let parsed = null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    parsed = value;
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    const percent = trimmed.match(/^(\d+(?:\.\d+)?)%$/u);
+    if (percent) parsed = Number(percent[1]) / 100;
+    else if (/^\d+(?:\.\d+)?$/u.test(trimmed)) parsed = Number(trimmed);
+  }
+  if (parsed === null || !Number.isFinite(parsed) || parsed < 0) return value;
+  if (rate && parsed > 1 && parsed <= 100) parsed /= 100;
+  return String(parsed);
 }
 
 function clampFollowerCountRange(value) {
@@ -1264,7 +1304,7 @@ function canonicalizeMetricRange(field, value) {
   if (field === "rebate") return normalizedRebateRange(value);
   if (field === "followercount") return normalizedFollowerRange(value);
   return normalizedNumericRange(value, {
-    rate: RATE_RANGE_PARAMS.has(field),
+    rate: RATE_SHARE_PARAMS.has(field),
     price: PRICE_RANGE_PARAMS.has(field),
     maximum: MAXIMUM_METRIC_RANGE_PARAMS.has(field),
   });
@@ -1472,8 +1512,19 @@ export function validateRequirementPreflight(params, { now = new Date() } = {}) 
     if (MAXIMUM_METRIC_RANGE_PARAMS.has(field) && range[0] !== 0) {
       add(field, 'CPM/CPE 表示最大可接受值，必须使用 "[0,max]"');
     }
-    if (RATE_RANGE_PARAMS.has(field) && range[1] > 1) {
-      add(field, "比例区间必须位于 0–1");
+  }
+  for (const field of SCALAR_PARAMS) {
+    if (!Object.hasOwn(payload, field)) continue;
+    const value = payload[field];
+    if (typeof value !== "string" || !NON_NEGATIVE_NUMBER_STRING.test(value)) {
+      add(
+        field,
+        'Provider 侧为单值 float，不是区间：只允许单个非负数值字符串，如 "10000" 或 "0.6"；不能传 "[min,max]"、数组或百分号文本，无法用单值表达时省略该字段',
+      );
+      continue;
+    }
+    if (RATE_SHARE_PARAMS.has(field) && Number(value) > 1) {
+      add(field, "比例单值必须位于 0–1");
     }
   }
 
@@ -1770,11 +1821,15 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
           : name === "followercount"
             ? normalizedFollowerRange(normalized[name])
             : normalizedNumericRange(normalized[name], {
-                rate: RATE_RANGE_PARAMS.has(name),
+                rate: RATE_SHARE_PARAMS.has(name),
                 price: PRICE_RANGE_PARAMS.has(name),
                 maximum: MAXIMUM_METRIC_RANGE_PARAMS.has(name),
               }),
       );
+    }
+    for (const name of SCALAR_PARAMS) {
+      if (!Object.hasOwn(normalized, name)) continue;
+      set(name, normalizedNumericScalar(normalized[name], { rate: RATE_SHARE_PARAMS.has(name) }));
     }
     if (Object.hasOwn(normalized, "submissionDeadlineAt")) {
       const normalizedDeadline = normalizedDateTime(normalized.submissionDeadlineAt, { now });

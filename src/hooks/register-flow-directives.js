@@ -10,6 +10,7 @@ import {
   normalizeToolCallParams,
   resolveFlowToolName,
   VALIDATE_REQUIREMENT_RANGE_PARAMS,
+  VALIDATE_REQUIREMENT_SCALAR_PARAMS,
   validateRequirementPreflight,
 } from "../contract/registry.js";
 import {
@@ -384,7 +385,7 @@ function requirementPreflightBlockReason(issues) {
           "rawMessagesJson 是结构错误，只能靠修结构解决：用对象形式重发 original、parse_outputs 和 business_mode，保留全部已有业务值；不得仅因该结构错误弹窗或新增、改写 clarifications。一次性修正项另列其他字段时，仍按对应原因处理。",
         ]
       : []),
-    `格式契约：rebate、followercount、kolOfficialPriceL1/L2/L3、cpmL1/L2/L3、cpeL1/L2/L3 以及其他数值筛选字段全部使用${REQUIREMENT_RANGE_FORMAT}；返点固定为 "[min,1]"。`,
+    `格式契约：数值区间字段（含 rebate、followercount、报价、CPM/CPE 等）使用${REQUIREMENT_RANGE_FORMAT}；返点固定为 "[min,1]"。以下字段在 Provider 侧是单值而非区间，只能传单个非负数值字符串，不能传区间、数组或百分号文本：${VALIDATE_REQUIREMENT_SCALAR_PARAMS.join("、")}；无法用单值表达时省略该字段，不得自行把区间折算成单值。`,
     "只允许对当前有效用户证据中的唯一明确值做确定性格式归一化。先检查当前对话是否已有该字段的有效弹窗答案：数值字段答案写回 rawMessagesJson.clarifications；同一字段新答案覆盖旧答案，不得再次询问。只有仍缺失、模糊、冲突、多候选或需要选择的业务值才调用 AskUserQuestion。八个可选 Label 有什么原样落库，null 或缺失就省略；contentTag 必须来自本次解析的非空数组，缺失时重新解析。所有标签都不做映射、不推断、不询问。不得自主补值或改变一种类型后继续盲试。",
     NUMERIC_CLARIFICATION_QUESTION_RULE,
   ].join("\n");
@@ -394,7 +395,7 @@ function requirementPreflightBlockedDirective(message) {
   const structureBlocked = messageText(message).includes("rawMessagesJson:");
   return [
     "YPSCAN_FLOW_DIRECTIVE=validate_requirement 已被本地预检阻断，Provider 未执行写入。一次处理工具错误列出的全部字段，不得把阻断说成 Provider 报错。",
-    `REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。禁止数组、对象、单值和百分号文本直接进入数值筛选字段。`,
+    `REQUIREMENT_RANGE_FORMAT=${REQUIREMENT_RANGE_FORMAT}。禁止数组、对象、百分号文本或自然语言进入数值筛选字段；单值字段（${VALIDATE_REQUIREMENT_SCALAR_PARAMS.join("、")}）只接受单个非负数值字符串，传区间会被 Provider 拒绝。`,
     ...(structureBlocked
       ? [
           "rawMessagesJson 结构错误只靠重发对象形式修正：原样保留已有业务值，不得仅因该结构错误弹窗或新增、改写 clarifications；工具另列的其他字段仍按对应原因处理。",
@@ -412,6 +413,28 @@ const MCN_MARKDOWN_TABLE_HEADER = [
 const MCN_MARKDOWN_EMPTY_ROW = "| — | 暂无匹配机构 | — | — | — |";
 
 const FIELD_SELECTION_AUTO_OPEN_FAILED = "浏览器打开请求未成功";
+
+// 字段页链接是否已进入模型正文，Hook 无法观测：生成可轮询字段页时登记待展示链接，
+// before_tool_call 对首次状态查询做一次性阻断，轮询指令再回带一次 URL。
+const FIELD_PAGE_LINK_GATE_CODE = "YPSCAN_FIELD_PAGE_LINK_NOT_SHOWN";
+
+function directiveFieldSelectionUrl(text) {
+  const match = /(?:^|\n)FIELD_SELECTION_URL=(\S+)/u.exec(String(text ?? ""));
+  return match ? match[1] : null;
+}
+
+function fieldPageLinkGateReason(url) {
+  return [
+    FIELD_PAGE_LINK_GATE_CODE,
+    "get_inquiry_form_fields_status 未执行：字段页链接还没有出现在面向用户的正文里，用户无法选择字段。",
+    `先在正文单独一行原样输出该链接并说明提交后继续，再重新调用本工具：${url}`,
+    "不得改用 Browser 打开、不得包装成 Markdown 链接或省略该 URL。",
+  ].join("\n");
+}
+
+function fieldPageLinkReminder(url) {
+  return `字段页链接待展示：若面向用户的正文还没有单独输出过它，先单独一行原样输出 ${url} 再执行本指令其余部分；已输出过则不要重复。`;
+}
 
 function inquiryRecipientNames(mcns) {
   const seen = new Set();
@@ -469,7 +492,7 @@ function fieldSelectionDirective(message, params = {}) {
   const linkReady = result?.success === true || (result?.success === false && autoOpenFailed);
   if (!linkReady || !url) return flowPauseDirective("字段选择", message);
   return [
-    "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。原样输出 URL，并按 Provider 提示说明是否已自动打开；插件没有可验证的宿主外链打开能力，不得改写、包装、用 Browser 替代打开或替用户选择字段；不要求用户回复固定口令，需要用户回应时只说提交完成后告诉我。",
+    "YPSCAN_FLOW_DIRECTIVE=字段选择链接已生成。正文必须单独一行原样输出该 URL；自动打开失败时页面没打开，要让用户自己打开，不得说“页面已打开”。不得改写、包装、用 Browser 替代打开或替用户选择字段；不要求用户回复固定口令，需要用户回应时只说提交完成后告诉我。",
     `FIELD_SELECTION_URL=${url}`,
     ...(params?.force_reselect === true
       ? [
@@ -1824,6 +1847,8 @@ export function registerFlowDirectiveHooks(api) {
   const linksCsvPathsByRequirement = new Map();
   const previewFilesByRequirement = new Map();
   const completionCsvPathsByRequirement = new Map();
+  // requirement → { url, blockedOnce }：字段页链接生成后直到提交/失效前必须先在正文展示。
+  const fieldPageLinkByRequirement = new Map();
   // Source records only; progress is recomputed by the local summarizer.
   const manualScoreSourcesByRequirement = new Map();
   // requirement → 持久化文件路径；hydrated 集合避免同一项目重复读盘。
@@ -1947,7 +1972,7 @@ export function registerFlowDirectiveHooks(api) {
           MANUAL_REQUIREMENT_INPUT_RULE,
           NUMERIC_CLARIFICATION_QUESTION_RULE,
           INQUIRY_RECIPIENT_RESPONSE_RULE,
-          `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 全部使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；rebate 固定为 "[min,1]"；followercount 未明确或“不限”时默认落库 [0,999999999]。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
+          `validate_requirement 数值字段格式锁：${VALIDATE_REQUIREMENT_RANGE_PARAMS.join(",")} 使用${REQUIREMENT_RANGE_FORMAT}，禁止数组、对象、单个数字、百分号文本或自然语言；${VALIDATE_REQUIREMENT_SCALAR_PARAMS.join(",")} 在 Provider 侧是单值 float，只传单个非负数值字符串，禁止区间、数组或百分号文本，无法用单值表达时省略；rebate 固定为 "[min,1]"；followercount 未明确或“不限”时默认落库 [0,999999999]。第一次调用前一次性检查全部必填字段和格式，禁止通过 Provider 报错逐字段、逐类型试探。`,
           "Dify 已给出的唯一数值直接采用，禁止再问；本地只做区间格式与粉丝技术上限截断，粉丝缺失或“不限”默认落库 [0,999999999]、不弹窗。只有解析缺失、null、多候选或与用户明确改口冲突时才阻断。",
           "需求解析复核、结果不足后的二次复核与逐项放宽、用户修改需求后的重建规则，统一按 media-assistant Skill 执行；Hook 只提供当前工具结果和下一步动态参数。",
           "手动拓展启动只传 requirement_id，不传 demand 或 num；状态查询按 live schema 传 num。禁止生成或暗示 size、creator_count、page_url、original_brief 等旧字段。",
@@ -1969,6 +1994,16 @@ export function registerFlowDirectiveHooks(api) {
       const bare =
         resolveFlowToolName(toolName.toLowerCase()) ?? toolName.toLowerCase().split("__").at(-1);
       const params = paramsFromEvent(event);
+      if (bare === "get_inquiry_form_fields_status") {
+        const requirementId = firstString(params?.requirement_id);
+        const pendingLink = requirementId
+          ? fieldPageLinkByRequirement.get(String(requirementId))
+          : null;
+        if (pendingLink && !pendingLink.blockedOnce) {
+          pendingLink.blockedOnce = true;
+          return { block: true, blockReason: fieldPageLinkGateReason(pendingLink.url) };
+        }
+      }
       const key = callKey(event, context);
       const scope = scopeKey(event, context);
       const remember = (values) => {
@@ -2293,24 +2328,49 @@ export function registerFlowDirectiveHooks(api) {
       const requiresRequirementMode =
         bare === "ypscan_save_artifact" && directiveParams.artifact_kind === "manual_score_batch";
       const effectiveMode = requirementMode ?? (requiresRequirementMode ? null : recordedMode);
-      return appendDirective(
+      let directive = flowDirective(
+        toolName,
         event?.message,
-        flowDirective(
-          toolName,
-          event?.message,
-          directiveParams,
-          effectiveMode,
-          recordedPlatform,
-          (requirementId) =>
-            nonemptyString(requirementId)
-              ? (platformByRequirement.get(String(requirementId)) ?? null)
-              : null,
-          (requirementId) =>
-            nonemptyString(requirementId)
-              ? (quantityTotalByRequirement.get(String(requirementId)) ?? null)
-              : null,
-        ),
+        directiveParams,
+        effectiveMode,
+        recordedPlatform,
+        (requirementId) =>
+          nonemptyString(requirementId)
+            ? (platformByRequirement.get(String(requirementId)) ?? null)
+            : null,
+        (requirementId) =>
+          nonemptyString(requirementId)
+            ? (quantityTotalByRequirement.get(String(requirementId)) ?? null)
+            : null,
       );
+      const fieldPageRequirementId = nonemptyString(directiveRequirementId)
+        ? String(directiveRequirementId)
+        : null;
+      if (bare === "select_inquiry_form_fields" && fieldPageRequirementId) {
+        const fieldSelectionUrl = directiveFieldSelectionUrl(directive);
+        const pollEligible =
+          directiveParams?.force_reselect !== true &&
+          !nonemptyString(directiveParams?.source_requirement_id);
+        if (fieldSelectionUrl && pollEligible) {
+          fieldPageLinkByRequirement.set(fieldPageRequirementId, {
+            url: fieldSelectionUrl,
+            blockedOnce: false,
+          });
+        } else {
+          fieldPageLinkByRequirement.delete(fieldPageRequirementId);
+        }
+      } else if (bare === "get_inquiry_form_fields_status" && fieldPageRequirementId) {
+        const status = String(
+          firstString(result?.status, result?.data?.status) ?? "",
+        ).toLowerCase();
+        if (status === "submitted" || status === "invalid") {
+          fieldPageLinkByRequirement.delete(fieldPageRequirementId);
+        } else {
+          const pendingLink = fieldPageLinkByRequirement.get(fieldPageRequirementId);
+          if (pendingLink) directive = `${directive}\n${fieldPageLinkReminder(pendingLink.url)}`;
+        }
+      }
+      return appendDirective(event?.message, directive);
     },
     HOOK_OPTIONS,
   );
@@ -2324,6 +2384,7 @@ export function registerFlowDirectiveHooks(api) {
       platformByRequirement.clear();
       inquiryIdsByRequirement.clear();
       quantityTotalByRequirement.clear();
+      fieldPageLinkByRequirement.clear();
       scoreJobRecoveryByScope.clear();
       requirementIdByIngestJobId.clear();
       currentRequirementIdByScope.clear();

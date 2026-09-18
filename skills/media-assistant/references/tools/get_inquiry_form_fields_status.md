@@ -4,6 +4,7 @@
 
 ## When to call
 
+- 字段页链接必须先原样出现在面向用户的正文里；链接未展示前首次调用会被本地 Hook 阻断一次并回带该 URL：先单独一行输出链接，再重新调用本工具。链接尚未展示时的 `unavailable` 轮询结果也会回带该 URL。
 - 仅当 `select_inquiry_form_fields` 刚返回字段页 URL（`selection_required`/`opened`/旧版有效链接），且本轮是**首次选择**（没有 `force_reselect`，也没有 `source_requirement_id`）时使用。
 - `force_reselect=true` 或继承场景禁止调用：该需求可能已有历史配置，本工具按需求判定，会在用户提交前就返回 `submitted`，导致按旧配置提前继续。
 - 不用于查询历史配置、核对字段内容或替代 `select_inquiry_form_fields`；不读取、缓存或传递 `columns`。本工具响应不回显 `requirement_id`，只使用当前字段页已确认的那个 ID，不得凭成功状态推断其他需求。

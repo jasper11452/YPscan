@@ -37,8 +37,8 @@ Provider precedence: force reselection → retain existing target configuration 
 
 ## Link and persistence
 
-- Output the real URL unchanged once on its own line. Do not wrap it in Markdown, rewrite it, open it with Browser, or select fields for the user.
-- Legacy `success=false` with exact message `浏览器打开请求未成功` and a valid URL means only automatic opening failed; display the link honestly. Explicit `status=error` takes precedence.
+- Output the real URL unchanged once on its own line in the user-visible reply, and say it is the field-selection page to submit. Before that link appears in the reply, the local Hook blocks the first `get_inquiry_form_fields_status` call once and returns the URL again — do not poll first, and never claim the page is already open when `browser_launch_requested=false` or `browser_launch_error` is present; the user must open the link. Do not wrap the URL in Markdown, rewrite it, open it with Browser, or select fields for the user.
+- Legacy `success=false` with exact message `浏览器打开请求未成功` and a valid URL means only automatic opening failed; display the link honestly (the user must open it). Explicit `status=error` takes precedence.
 - After outputting the URL, confirm submission with `get_inquiry_form_fields_status` when it is available and the page is an eligible first selection; a clear user confirmation that the fields were submitted always remains a valid resume signal; never ask the user for a fixed phrase. Never call deprecated `get_selected_inquiry_form_fields` and never poll any other callback or tool.
 - For explicit reselection, submission only updates configuration unless the conversation clearly identifies an unfinished step waiting for fields. Resume only that step. Never restart completed/stopped search, scoring or inquiry confirmation; if no pending step is clear, acknowledge the update and stop.
 - The Provider saves or copies configuration under the target requirement. Agent only passes IDs; never read, reconstruct, cache, or pass `columns`. Existing target configuration is not overwritten by inheritance. A newly submitted selection becomes the source for later requirements in this conversation.

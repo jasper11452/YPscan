@@ -52,7 +52,7 @@ validate_requirement → search_creators → rank_mcns → 输出五列表格
 ## 4. 手动拓展链路
 
 ```text
-validate_requirement → select_inquiry_form_fields（configured/copied 直接继续；字段页 URL 首次选择用 get_inquiry_form_fields_status 自动确认，超时/重选等用户确认已提交）
+validate_requirement → select_inquiry_form_fields（configured/copied 直接继续；字段页 URL 须先在正文单独一行原样展示，未展示前首次状态查询被本地阻断一次并回带链接；首次选择用 get_inquiry_form_fields_status 自动确认，超时/重选等用户确认已提交）
 → manual_source_creators(requirement_id)
 → 同步 links CSV：ypscan_save_artifact(manual_creator_links) → ypscan_save_creator_links 归一化
   → ypscan_summarize_manual_scores 取得当前批 → 原生补全(最多20人) → file_bridge(manual_source，仅当前批)

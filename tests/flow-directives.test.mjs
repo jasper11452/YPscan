@@ -1452,6 +1452,114 @@ test("provider opened status starts the field-status poll loop", () => {
   assert.doesNotMatch(text, /本轮必须结束并等待|ASK_USER_QUESTION_ARGS=/u);
 });
 
+test("field selection gates the first status query until the link is shown", () => {
+  const { hooks } = registeredPlugin();
+  const persist = hooks.get("tool_result_persist");
+  const beforeToolCall = hooks.get("before_tool_call");
+  const url = "https://example.invalid/fields?token=abc";
+  const select = persist({
+    toolName: "mcp__ypscan__select_inquiry_form_fields",
+    params: { requirement_id: "req-link" },
+    message: toolMessage({
+      success: true,
+      status: "opened",
+      requirement_id: "req-link",
+      url,
+    }),
+  });
+  assert.match(
+    directiveText(select),
+    /FIELD_SELECTION_URL=https:\/\/example\.invalid\/fields\?token=abc/u,
+  );
+
+  const blocked = beforeToolCall({
+    toolName: "mcp__ypscan__get_inquiry_form_fields_status",
+    params: { requirement_id: "req-link" },
+  });
+  assert.equal(blocked?.block, true);
+  assert.match(blocked.blockReason, /YPSCAN_FIELD_PAGE_LINK_NOT_SHOWN/u);
+  assert.match(blocked.blockReason, /https:\/\/example\.invalid\/fields\?token=abc/u);
+  assert.match(blocked.blockReason, /正文/u);
+
+  // 只阻断一次：重试放行，Provider 查询次数与预检语义不变。
+  assert.equal(
+    beforeToolCall({
+      toolName: "mcp__ypscan__get_inquiry_form_fields_status",
+      params: { requirement_id: "req-link" },
+    }),
+    undefined,
+  );
+
+  const unavailable = directiveText(
+    persist({
+      toolName: "mcp__ypscan__get_inquiry_form_fields_status",
+      params: { requirement_id: "req-link" },
+      message: toolMessage({ status: "unavailable" }),
+    }),
+  );
+  assert.match(unavailable, /https:\/\/example\.invalid\/fields\?token=abc/u);
+  assert.match(unavailable, /还没有单独输出过它/u);
+
+  const submitted = directiveText(
+    persist({
+      toolName: "mcp__ypscan__get_inquiry_form_fields_status",
+      params: { requirement_id: "req-link" },
+      message: toolMessage({ status: "submitted" }),
+    }),
+  );
+  assert.doesNotMatch(submitted, /还没有单独输出过它/u);
+});
+
+test("field link gate only arms for eligible first selections", () => {
+  const { hooks } = registeredPlugin();
+  const persist = hooks.get("tool_result_persist");
+  const beforeToolCall = hooks.get("before_tool_call");
+  for (const [requirementId, params] of [
+    ["req-reselect", { requirement_id: "req-reselect", force_reselect: true }],
+    ["req-inherit", { requirement_id: "req-inherit", source_requirement_id: "req-old" }],
+  ]) {
+    persist({
+      toolName: "mcp__ypscan__select_inquiry_form_fields",
+      params,
+      message: toolMessage({
+        success: true,
+        status: "opened",
+        requirement_id: requirementId,
+        url: `https://example.invalid/fields?req=${requirementId}`,
+      }),
+    });
+    assert.equal(
+      beforeToolCall({
+        toolName: "mcp__ypscan__get_inquiry_form_fields_status",
+        params: { requirement_id: requirementId },
+      }),
+      undefined,
+    );
+  }
+});
+
+test("gateway restart clears the pending field link gate", () => {
+  const { hooks, transientState } = registeredPlugin();
+  hooks.get("tool_result_persist")({
+    toolName: "mcp__ypscan__select_inquiry_form_fields",
+    params: { requirement_id: "req-reset" },
+    message: toolMessage({
+      success: true,
+      status: "opened",
+      requirement_id: "req-reset",
+      url: "https://example.invalid/fields?req=reset",
+    }),
+  });
+  transientState.resetTransientState();
+  assert.equal(
+    hooks.get("before_tool_call")({
+      toolName: "mcp__ypscan__get_inquiry_form_fields_status",
+      params: { requirement_id: "req-reset" },
+    }),
+    undefined,
+  );
+});
+
 test("forced reselection forbids field-status polling", () => {
   const persist = registeredPlugin().hooks.get("tool_result_persist");
   const text = directiveText(

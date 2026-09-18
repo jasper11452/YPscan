@@ -44,16 +44,23 @@ Provider 仍要求出站 `submissionDeadlineAt`，但手动拓展在原文、有
 - `contentTag` 必须来自本次解析结果、非空字符串数组；缺失或无效时重新解析，禁止询问或自补。
 - `rawMessagesJson` 必须含非空 `original`（原文）、`parse_outputs`（本次契约输出对象）、以及用户侧 `business_mode`（`询价机构` 或 `手动拓展`）；弹窗答案写回 `rawMessagesJson.clarifications`，同字段新答案覆盖旧答案。
 
-### 数值区间字段（31 个，`VALIDATE_REQUIREMENT_RANGE_PARAMS`）
+### 数值区间字段（19 个，`VALIDATE_REQUIREMENT_RANGE_PARAMS`）
 
-`rebate`、`followercount`、`interactionRate`、`clickMedium`、`viewMedium`、`photoView`、`videoInteract`、`photoInteract`、`userlikecount`、`likeIncrement`、`avgview`、`avglike`、`avgcomment`、`avgcollect`、`avginteract`、`femaleRate`、`age1Rate`–`age6Rate`、`cpeL1/L2/L3`、`cpmL1/L2/L3`、`kolOfficialPriceL1/L2/L3`。
+`rebate`、`followercount`、`photoInteract`、`userlikecount`、`likeIncrement`、`avgview`、`avglike`、`avgcomment`、`avgcollect`、`avginteract`、`cpeL1/L2/L3`、`cpmL1/L2/L3`、`kolOfficialPriceL1/L2/L3`。
 
 格式锁：无空格 JSON 区间字符串 `"[min,max]"` 且 `0 ≤ min < max`；禁止数组、对象、单值、百分号文本或自然语言。特例：
 
 - `rebate` 表示最低返点，固定 `"[min,1]"`。
 - CPM/CPE（`cpmL*`、`cpeL*`）表示最大可接受值，固定 `"[0,max]"`。
-- 比例字段（`interactionRate`、`femaleRate`、`age*Rate`）区间必须位于 0–1。
 - `followercount` 上限不得超过 `999999999`；未明确或原文表达“无/不限/无要求”时落库 `"[0,999999999]"`（零到最大值），不省略字段、不弹窗；历史坏值 `[1,999999999]` 归一为 `[0,999999999]`。
+
+### 数值单值字段（12 个，`VALIDATE_REQUIREMENT_SCALAR_PARAMS`）
+
+`interactionRate`、`clickMedium`、`viewMedium`、`photoView`、`videoInteract`、`femaleRate`、`age1Rate`–`age6Rate`。
+
+Provider 后端把这些字段按单值 `float` 读取，收到 `"[min,max]"` 会报 `INVALID_PAYLOAD`（线上 `viewMedium` 已确认）。本地同样只接受单个非负数值字符串（`"10000"`、`"0.6"`），禁止区间、数组、百分号文本或自然语言；`interactionRate`、`femaleRate`、`age*Rate` 的比例单值必须位于 0–1。无法用单值表达时省略该字段并在 `description`/`originalBrief` 保留原文，本地不得把区间自行折算成单值。单值代表的业务语义（下限、精确值还是其他）以 Provider 为准，插件不做推断。
+
+区间白名单依据：2026-09-18 对 test Provider `validate_requirement` 探测，非区间值被拒时返回 `invalid_range_fields`；其余数值字段不在该名单内，不接受区间字符串。该白名单与 `viewMedium` 的线上报错一致，但各单值字段的语义未逐一在线上验证。
 
 ### 平台标签数组
 
@@ -74,7 +81,8 @@ Provider 仍要求出站 `submissionDeadlineAt`，但手动拓展在原文、有
 | `status`               | 缺失/空时补 `"ready"`                                                                                                                                                                                                                                                                                                      |
 | `brandName`            | 单元素字符串数组解包；优先采用当前平台 Dify 唯一合法品牌；若 Dify 当前平台品牌缺失，但 `rawMessagesJson.original` 中存在明确 `品牌：...` / `品牌名称：...` / `合作品牌：...` 标注，则可确定性兜底为该值；`暂无品牌` / `无品牌` 等占位值一律视为无效                                                                        |
 | `quantityTotal`        | 归一化为正整数字符串；非法则删除该字段（交预检报错）                                                                                                                                                                                                                                                                       |
-| 区间字段               | 标量→`[v,v]` 起步；百分号字符串（如 `"20%"`、`"10%-30%"`）解析并换算比例；中文区间 `-~～至到` 解析；`rebate`→`"[min,1]"`；粉丝“无/不限”→`"[0,999999999]"`；粉丝超上限截断到 `999999999`；CPM/CPE 标量→`"[0,v]"`；报价标量→`[floor(v×0.7), ceil(v×1.2)]`（Provider 检索单价只按原价下 30%/上 20% 扩展一次，不回写需求参数） |
+| 区间字段               | 标量→`[v,v]` 起步（退化区间不被修复，交预检拒绝）；中文区间 `-~～至到` 解析；`rebate`→`"[min,1]"`；粉丝“无/不限”→`"[0,999999999]"`；粉丝超上限截断到 `999999999`；CPM/CPE 标量→`"[0,v]"`；报价标量→`[floor(v×0.7), ceil(v×1.2)]`（Provider 检索单价只按原价下 30%/上 20% 扩展一次，不回写需求参数） |
+| 数值单值字段           | 只归一化单个非负数值（`"10000"`、`"0.6"`）；`"60%"`→`"0.6"`，比例字段中 >1 且 ≤100 的数值按百分数换算为 0–1 分数；区间、数组等无法确定成单个非负数值时原样返回，由预检报错，不把区间折算成单值 |
 | `submissionDeadlineAt` | 归一化为 `YYYY-MM-DD HH:mm:ss`，仅当晚于当前时间；兼容中文日期加冒号时钟（如 `2026年9月26日16:00`，含全角冒号）；两位年份固定按 20xx 解释（`26年9月26日 16:00` → `2026-09-26 16:00:00`），与原文/最新澄清做等价比较，保留原始证据；手动拓展完全没有截止时间语境时由插件填建需后 30 天系统默认并在 `description` 标注可覆盖；用户已给出的日期仅有日期、过期、非法或冲突仍阻断                                                                                                                                   |
 | 标签数组               | 字符串化 JSON 数组解包；Dify `parse_outputs` 中仅当前平台标签/品牌/数值唯一值自动补入缺失字段；数值保留无平台前缀的既有兼容结构，另一平台 `dy_`/`xhs_` 片段不参与回填或 parsed 证据（抖音按视频类型对齐 L2/L3）                                                                                                            |
 | `rawMessagesJson`      | `business_mode` 出站映射为 Provider 兼容线值（序列化为字符串在 `before_tool_call` 完成）                                                                                                                                                                                                                                   |

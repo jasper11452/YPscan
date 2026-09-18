@@ -11,6 +11,7 @@ import {
   stripHostPrefix,
   resolveFlowToolName,
   VALIDATE_REQUIREMENT_RANGE_PARAMS,
+  VALIDATE_REQUIREMENT_SCALAR_PARAMS,
   validateRequirementPreflight,
 } from "../src/contract/registry.js";
 
@@ -695,6 +696,52 @@ test("normalizeRequirement reuses a unique parsed brand when the original has no
   const normalized = normalizeToolCallParams("validate_requirement", params);
 
   assert.equal(normalized.brandName, "阿里（千问）");
+});
+
+test("provider scalar numeric fields reject ranges and accept a single value", () => {
+  const now = new Date(2026, 8, 18, 11, 4, 26);
+
+  for (const field of VALIDATE_REQUIREMENT_SCALAR_PARAMS) {
+    const ranged = normalizeToolCallParams(
+      "validate_requirement",
+      { ...completeValidateParams(), [field]: "[1000,999999999]" },
+      { now },
+    );
+    assert.equal(ranged[field], "[1000,999999999]", field);
+    const issues = validateRequirementPreflight(ranged, { now });
+    assert.equal(
+      issues.some((issue) => issue.field === field),
+      true,
+      `${field} 的区间字符串必须在本地被拒`,
+    );
+
+    const singleValue = field.endsWith("Rate") ? "0.6" : "10000";
+    for (const [input, expected] of [
+      [singleValue, singleValue],
+      [Number(singleValue), singleValue],
+    ]) {
+      const single = normalizeToolCallParams(
+        "validate_requirement",
+        { ...completeValidateParams(), [field]: input },
+        { now },
+      );
+      assert.equal(single[field], expected, field);
+      assert.equal(
+        validateRequirementPreflight(single, { now }).some((issue) => issue.field === field),
+        false,
+        `${field} 的单值不应被阻断`,
+      );
+    }
+  }
+});
+
+test("provider range and scalar numeric contracts stay disjoint", () => {
+  const range = new Set(VALIDATE_REQUIREMENT_RANGE_PARAMS);
+  assert.equal(range.size, VALIDATE_REQUIREMENT_RANGE_PARAMS.length);
+  const overlap = VALIDATE_REQUIREMENT_SCALAR_PARAMS.filter((field) => range.has(field));
+  assert.deepEqual(overlap, []);
+  // 已由线上 INVALID_PAYLOAD 证实为单值的字段不得回到区间契约。
+  assert.equal(range.has("viewMedium"), false);
 });
 
 test("validate_requirement rejects degenerate ranges instead of silently repairing them", () => {

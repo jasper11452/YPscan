@@ -1,5 +1,18 @@
 # 更新日志
 
+## 1.0.27 — 2026-09-17
+
+- 手动拓展需求收集精简为“三项必填 + 一次可选补充”：平台、达人方向、人数缺失时一次问齐（复用宿主 AskUserQuestion，不新增 UI、Hook 状态或 Provider 字段）；三项齐全后首次建需前提供一次“直接开始／补充条件”入口，正文列出品牌、报价等可选条件，只收集用户主动选择补充的项目。用户已明确直接开始、补充完成，或本轮为重解析、放宽重建时不重复提示；取消或关闭停止当轮、不代选。品牌与报价未提供时省略（有值仍校验），无报价、CPM、CPE 档位条件不追问抖音视频类型；询价机构的必填、澄清与弹窗规则不变。
+- 手动拓展兼容默认值落在本地 `validate_requirement` 边界：原文、有效澄清与解析结果均无返点时，`rebate` 默认 `[0,1]`（最低 0%，不限制）；完全没有截止时间语境时，填入建需后 30 天的未来绝对 `submissionDeadlineAt`，并在 `description` 追加“提报截止时间由系统默认设置为 …（建需后30天，可覆盖）”。两个默认值都不写回 `original`、`demand`、`parse_outputs` 或 `clarifications`，不生成占位品牌或零报价；用户已提供返点或时间（含模糊、过期、冲突）仍按原规则校验或澄清，`[1,999999999]` 归一为 `[0,999999999]` 等既有归一不变。
+- 预检豁免只覆盖上述默认值自身的来源证据：手动拓展不再强制品牌、报价与截止时间证据，默认标记在用户随后给出真实时间或原文出现截止语境时被清除并重新校验；Hook 出站不再补品牌/报价，改为注入一次补充入口指令。其他字段、粉丝默认与询价分支不放宽。
+- 同步 SKILL、解析/建需/AskUserQuestion 工具卡、contracts/flows/hooks/tools Spec、README、AGENTS、验收清单与回归样本，并新增记录 `docs/verification/2026-09-16-manual-intake.md`、`docs/verification/2026-09-16-manual-rebate-default.md`；manifest 入参、Provider 白名单与工具注册数量未变。
+- 验证：`npm run lint`／`typecheck`／`test`（637 项，新增 `registry` 与 `flow-directives` 样本覆盖默认值、来源豁免与误拦截）／`smoke`（tools=5, hooks=5）通过。真实 Provider 只验证过 `rebate` 默认值可建需与 stored_fields 回读（`requirement_id=ee50e300b2334864a701ead7e415826c`）；30 天截止时间默认值未在真实 Provider 落库核查，未执行模型多轮行为验收与 YP Action 桌面验收，1.0.27 未安装到运行中的应用。
+
+- 修正 Provider 数值字段契约漂移：线上手动拓展在“阅读中位数≥10000”上被 Provider 返回 `INVALID_PAYLOAD`（`could not convert string to float: '[10000,999999999]'`），说明后端把 `viewMedium` 按单值读取；本地却把它列入区间字段，且单值会被归一为 `[v,v]` 后判 `min < max` 失败，该字段在插件内无法产出合法值。现在 `VALIDATE_REQUIREMENT_RANGE_PARAMS` 收敛为 Provider 实际按区间校验的 19 个字段（依据 2026-09-18 对 test Provider `validate_requirement` 探测返回的 `invalid_range_fields`），新增 `VALIDATE_REQUIREMENT_SCALAR_PARAMS`（`interactionRate`、`clickMedium`、`viewMedium`、`photoView`、`videoInteract`、`femaleRate`、`age1Rate`–`age6Rate`）并只接受单个非负数值字符串（比例 0–1）；无法用单值表达时省略该字段并保留原文，本地不把区间折算成单值。预检对单值字段收到区间时直接给出明确原因，不再等到 Provider 报错；区间字段的格式、归一化与证据规则不变。
+- 手动拓展缺少截止时间语境时，工具卡明确要求**省略** `submissionDeadlineAt`，不要自行算时间或写默认说明，否则 `description` 缺少规范标记会被预检判为“没有截止时间证据”；默认值仍由插件填入。同时明确 `refNickname`/`refUrl` 各为单个字符串，多个参考达人只写入 `description` 的标注文本。
+- 同步 `validate_requirement` / `ypscan_parse_requirement` 工具卡、`docs/spec/contracts.md`、`docs/review-checklist.md`、AGENTS 不变量 6 与 Hook 格式锁指令；新增记录 `docs/verification/2026-09-18-numeric-field-contract-split.md`。
+- 验证：`npm run lint`／`typecheck`／`test`（642 项，新增 `registry` 样本覆盖单值字段拒区间、单值/数值归一与区间-单值清单互斥）／`smoke`（tools=5, hooks=5）通过。真实 Provider 未重验证：12 个单值字段中只有 `viewMedium` 有线上报错证据，其余依据同一白名单推断，单值语义（下限/精确值）以 Provider 为准；未执行模型行为与 YP Action 桌面验收。
+
 ## 1.0.26 — 2026-09-14
 
 - 机构回填预览改为行级容错：`read-creator-preview.js` 原先只要有一行非法（ID/主页缺失、平台主页与 ID 不匹配、格式不受支持或含控制字符）就整表报 `YPSCAN_CREATOR_PREVIEW_ROWS`，个别机构回填错误会阻断其余机构的补全与评分。现在逐行排除错误行，正确行继续派生 links CSV；`data.preview.problems` 保留原表行号、所属机构（表内存在“所属机构”列时，缺失只报行号不猜测）与原因，`total_row_count` 改为含排除行并新增 `excluded_row_count`，原始预览表字节不变。全部行无效时仍报 ROWS 且保留原表，不生成空评分表；来源、哈希、唯一工作表、表头歧义校验仍阻断。

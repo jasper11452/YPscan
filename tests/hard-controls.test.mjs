@@ -2612,7 +2612,8 @@ test("field-selection success exposes the raw URL and keeps columns in the Provi
     text,
     /FIELD_SELECTION_URL=https:\/\/agenta\.eshypdata\.com\/demand-field-selector\?token=abc/u,
   );
-  assert.match(text, /原样输出 URL/u);
+  assert.match(text, /正文必须单独一行原样输出该 URL/u);
+  assert.match(text, /不得说“页面已打开”/u);
   assert.match(text, /不得改写、包装、用 Browser 替代打开/u);
   assert.match(text, /按 validate_requirement 返回的 requirement_id/u);
   assert.match(text, /不得使用 demand_id/u);
