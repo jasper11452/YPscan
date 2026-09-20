@@ -82,8 +82,8 @@ validate_requirement → select_inquiry_form_fields（configured/copied 直接�
 - 恢复已确认条件是纠错，不重复索取放宽确认。Agent 参数错误按原意纠正；提交正确但后台执行偏差时报告限制，不承诺盲目重跑可修复。用户明确修改并要求重搜时直接执行，保留未修改澄清；新 requirement 按字段继承规则配置字段。
 - 禁止直接放宽：先对照当时有效需求、本次解析输出、实际落库参数复核；确认正确后才建议替换同主题关键词、减少非核心人设限定。
 - 放宽优先在原有搜索条件上替换同主题关键词、减少非核心人设限定（kolPersonaLabel）；这一阶段报价、CPM、CPE、粉丝范围、返点及其他条件保持原值。用户明确要求放宽即按此优先范围执行，不重复要求逐项确认；未授权时先提出具体关键词和人设调整建议并等待确认。调整后仍不足，复核正确后再按刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → contentFeatureLabel → contentThemeLabel → industryTagLabel 的顺序建议其他可放宽条件，跳过未设置或已无放宽空间的项；每轮说明实际数量、目标数量、缺口及下一项的当前值和建议值，等待用户明确确认该项后才重跑，不自动改动其他条件。
-- 永不自动放宽：平台、模式、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag`、`pgyBloggerTypeLabel`、`xtTalentTypeLabel`、`growBloggerTypeLabel`、`growTalentTypeLabel`。
-- 用户授权后，手动拓展以应用全部已确认放宽的完整需求全文重新解析并整体替换 `rawMessagesJson.original`，`parse_outputs` 全量使用新解析结果；询价机构仍保留未改写原文，累计放宽写 `rawMessagesJson.clarifications` 与本轮 validate 顶层参数，再复核、创建新 requirement 并按原模式重跑；重跑搜索时 `manual_source_creators` 只传 `requirement_id`，由 Provider 从后台读取已保存的完整有效需求，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导；足量后在结果前汇总全部放宽记录。
+- Agent 永不自动放宽：平台、模式、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag`、`pgyBloggerTypeLabel`、`xtTalentTypeLabel`、`growBloggerTypeLabel`、`growTalentTypeLabel`。Provider 搜索执行侧按已保存 `fallback` 计划自动调整内容召回字段（小红书 keyword、contentTag、personalTags；抖音 author_id、tag_level_two、tag），属于执行侧召回策略，不算用户或 Agent 放宽，不据此触发复核或重建。
+- 用户授权后，手动拓展以应用全部已确认放宽的完整需求全文重新解析并整体替换 `rawMessagesJson.original`，`parse_outputs` 全量使用新解析结果；询价机构仍保留未改写原文，累计放宽写 `rawMessagesJson.clarifications` 与本轮 validate 顶层参数，再复核、创建新 requirement 并按原模式重跑；重跑搜索时 `manual_source_creators` 只传 `requirement_id`，由 Provider 从后台读取已保存的完整有效需求，搜索返回后核对实际搜索参数与放宽值一致，不一致时如实报告放宽未传导（差异仅限 fallback 允许的内容召回字段时属于执行侧自动召回，不算未传导）；提出人工放宽建议前先对照 `parse_outputs.fallback`，已覆盖动作不再重复建议；足量后在结果前汇总全部放宽记录。
 - 全部允许项用完仍不足：询价问“手动修改需求 / 改用手动拓展 / 结束”，手动拓展问“手动修改需求 / 改用询价机构 / 结束”。切换功能时撤销本轮全部放宽，恢复用户当前真实需求后重新建需。
 
 ## 6. 续办例外（“暂不询价”）

@@ -25,6 +25,8 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 选定后将用户侧模式传入 `ypscan_parse_requirement.business_mode`，并写入 `validate_requirement.rawMessagesJson.business_mode`。插件在 Provider 边界把 `手动拓展` 规范为兼容线值 `直接手扒`；Agent 不得自行使用或展示该内部值。该模式决定本次新建 requirement 进入的功能。
 
+解析成功后，`data.outputs` 原样写入 `rawMessagesJson.parse_outputs`，含 `fallback`：那是解析 Workflow 为 Provider 搜索执行侧生成的自动召回放宽计划（有序数组，顺序即执行顺序，取消条件用 `value: null`）。Agent 不重排、不去重、不改写、不解释执行，也不把 fallback 当作 Agent 或用户的放宽；触发与执行由 Provider 搜索服务负责。
+
 询价机构：`ypscan_parse_requirement → 复核 → validate_requirement → search_creators → rank_mcns → MCN 排名表 → 选择收件机构 → 选择字段 → 发送确认 → create_with_distributions → 用户说机构已回填 → sync_mcn_inquiry_status(requirement_id, project_id, supplierIds) → 用其返回的 inquiry_ids 直接 ingest_mcn_submissions → get_ingest_job（到 succeeded/partially_succeeded）→ 保存机构达人预览表 → 询问用户是否补全 → ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生达人补全(20/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存打分排序 Excel`
 
 手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields（字段页提交用 get_inquiry_form_fields_status 自动确认，超时回退等用户确认已提交） → manual_source_creators(requirement_id, num) → 同步 links CSV 直接保存，或 manual_source_creators_status(requirement_id, batch_id, num) 轮询 → 保存并归一化 links CSV → ypscan_summarize_manual_scores 取得当前批 → 原生达人补全(最多20人/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，仅合并上传当前批) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存单批 manual_score_batch → 再汇总（达标交付，否则下一批）`
@@ -135,13 +137,13 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 - 询价回收后的达人不足不放宽，按上文交付当前真实结果。
 - 手动拓展在分批汇总终态 `recommended_count` 少于 `quantityTotal` 时；旧 Excel 降级路径只有在当前 Provider 响应明确给出可信实际数量为 0 或少于用户需求人数 `quantityTotal` 时，才在交付当前真实 Excel 后进入同一复核和放宽建议；数量未知时不猜测，当前真实交付物即最终结果。
 
-放宽优先在原有搜索条件上替换同主题关键词、减少非核心人设限定（kolPersonaLabel）；这一阶段报价、CPM、CPE、粉丝范围、返点及其他条件保持原值。用户明确要求放宽即按此优先范围执行，不重复要求逐项确认；未授权时先提出具体关键词和人设调整建议并等待确认。调整后仍不足，复核正确后再按刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → contentFeatureLabel → contentThemeLabel → industryTagLabel 的顺序建议其他可放宽条件，跳过未设置或已无放宽空间的项；每轮说明实际数量、目标数量、缺口及下一项的当前值和建议值，等待用户明确确认该项后才重跑，不自动改动其他条件。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand，复核后通过 validate_requirement 保存，由 Provider 从后台读取，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。询价机构确认放宽后仍以未改写原文重新解析并保存 original，累计放宽写入 clarifications 和本轮顶层参数。此前用户已确认的其他澄清答案（含截止时间）继续复用，不重复询问。随后重新解析、复核、创建新 requirement 并按原模式重跑。不跨 requirement 混合结果。
+放宽优先在原有搜索条件上替换同主题关键词、减少非核心人设限定（kolPersonaLabel）；这一阶段报价、CPM、CPE、粉丝范围、返点及其他条件保持原值。用户明确要求放宽即按此优先范围执行，不重复要求逐项确认；未授权时先提出具体关键词和人设调整建议并等待确认。调整后仍不足，复核正确后再按刊例价 → CPM → CPE → 粉丝范围 → 最低返点 → contentFeatureLabel → contentThemeLabel → industryTagLabel 的顺序建议其他可放宽条件，对照 `parse_outputs.fallback`，执行侧自动召回已覆盖的动作不再重复建议，跳过未设置或已无放宽空间的项；每轮说明实际数量、目标数量、缺口及下一项的当前值和建议值，等待用户明确确认该项后才重跑，不自动改动其他条件。手动拓展确认放宽后，先应用本轮全部已确认放宽值，生成调整后的完整需求全文；整体替换 rawMessagesJson.original，并将同一全文传给 ypscan_parse_requirement.demand，复核后通过 validate_requirement 保存，由 Provider 从后台读取，禁止只追加调整说明或保留冲突的旧条件。rawMessagesJson.parse_outputs 全量替换为本次重解析结果，不拼接旧输出；累计放宽写入 rawMessagesJson.clarifications 对应字段并同步本轮 validate_requirement 顶层参数，其他有效澄清保留。询价机构确认放宽后仍以未改写原文重新解析并保存 original，累计放宽写入 clarifications 和本轮顶层参数。此前用户已确认的其他澄清答案（含截止时间）继续复用，不重复询问。随后重新解析、复核、创建新 requirement 并按原模式重跑。不跨 requirement 混合结果。
 
-放宽必须真实传导到搜索执行。先将应用全部已确认放宽的完整需求、澄清和本次解析结果通过 `validate_requirement` 保存；`manual_source_creators` 传新 `requirement_id`（live schema required `num` 时附同一 `num`，交付目标人数不变，仍取 `MANUAL_SOURCE_NUM`），由 Provider 从后台读取，不传 `demand`。搜索响应若回传实际搜索参数，必须与已确认放宽值逐项核对：不一致时如实报告“放宽未传导到搜索、实际参数仍为 X”，不得把结果归因于放宽或宣称放宽成功。
+放宽必须真实传导到搜索执行。先将应用全部已确认放宽的完整需求、澄清和本次解析结果通过 `validate_requirement` 保存；`manual_source_creators` 传新 `requirement_id`（live schema required `num` 时附同一 `num`，交付目标人数不变，仍取 `MANUAL_SOURCE_NUM`），由 Provider 从后台读取，不传 `demand`。搜索响应若回传实际搜索参数，必须与已确认放宽值逐项核对：不一致时如实报告“放宽未传导到搜索、实际参数仍为 X”，不得把结果归因于放宽或宣称放宽成功。差异若仅涉及 Provider fallback 允许自动调整的内容召回字段（小红书 keyword、contentTag、personalTags；抖音 author_id、tag_level_two、tag），属于搜索执行侧自动召回，不算放宽未传导。
 
 复核新参数时，未调整的搜索条件必须沿用上一轮已确认的值；解析器重新输出不得改变这些条件。
 
-平台、模式、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag`、`pgyBloggerTypeLabel`、`xtTalentTypeLabel`、`growBloggerTypeLabel` 和 `growTalentTypeLabel` 永不自动放宽。
+Agent 永不自动放宽任何条件：平台、模式、品牌、数量、截止时间、内容形式、抖音视频类型、`contentTag`、`pgyBloggerTypeLabel`、`xtTalentTypeLabel`、`growBloggerTypeLabel` 和 `growTalentTypeLabel` 都不因结果不足由 Agent 自动改动。Provider 搜索执行侧按已保存 `fallback` 计划自动调整内容召回字段（小红书 keyword、contentTag、personalTags；抖音 author_id、tag_level_two、tag）属于执行侧召回策略，不是用户或 Agent 放宽，不需确认，也不据此触发复核或重建。
 
 放宽后的每轮结果仍不足时，再次复核本轮有效需求和实际落库参数，确认正确后才建议下一项。足量后，在结果前汇总全部放宽记录。
 

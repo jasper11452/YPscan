@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.0.28 — 2026-09-20
+
+- 解析输出白名单新增 `fallback`：Dify 解析工作流除正常搜索条件外还输出一组自动召回放宽计划（有序数组，顺序即执行顺序；每层 `{ change: [{ field, value }] }`，`value` 为该字段应用本层后的最终值，`value: null` 表示取消该条件）。此前 `contractedOutputs()` 白名单静默丢弃该字段，而 Provider 搜索执行侧读取的是落库的 `parse_outputs.fallback`，导致自动放宽整体失效；现在原样透传进 `rawMessagesJson.parse_outputs`，不重排、不去重、不改写、不执行，也不参与本地归一化回填。允许自动调整的字段仅限小红书 `keyword`、`contentTag`、`personalTags` 与抖音 `author_id`、`tag_level_two`、`tag`。
+- 放宽语义边界同步：Agent 永不自动放宽任何条件；Provider 搜索执行侧按已保存 fallback 计划自动调整内容召回字段属于执行侧召回策略，不算用户或 Agent 放宽，不需确认、不据此触发复核或重建。人工放宽建议前先对照 `parse_outputs.fallback`，执行侧已覆盖的动作不再重复建议；搜索返回后核对实际搜索参数时，差异仅限 fallback 允许字段不算放宽未传导。
+- 同步 SKILL、`ypscan_parse_requirement` 工具卡、`MANUAL_SOURCE_RELAXATION_RULE`／`SEARCH_PARAMETER_REVIEW_RULE`／`RELAXATION_REVIEW_COMPACT_RULE` 三条 Hook 指令、`docs/spec/contracts.md`／`flows.md`、验收清单与 AGENTS 不变量 6；manifest 工具白名单、注册数量与 file_bridge/save_artifact/评分汇总链路未变。
+- 验证：`npm run lint`／`typecheck`／`test`（644 项，新增 fallback 逐字透传回归样本）／`smoke`（tools=5, hooks=5）通过。未验证：真实 Provider 搜索时是否按落库 fallback 应用（无观测字段，需真实搜索 E2E 核实）、询价机构 `search_creators` 是否也消费 fallback（相关规则已写成分支中立）、未执行模型多轮行为验收与 YP Action 桌面验收。
+
 ## 1.0.27 — 2026-09-17
 
 - 手动拓展需求收集精简为“三项必填 + 一次可选补充”：平台、达人方向、人数缺失时一次问齐（复用宿主 AskUserQuestion，不新增 UI、Hook 状态或 Provider 字段）；三项齐全后首次建需前提供一次“直接开始／补充条件”入口，正文列出品牌、报价等可选条件，只收集用户主动选择补充的项目。用户已明确直接开始、补充完成，或本轮为重解析、放宽重建时不重复提示；取消或关闭停止当轮、不代选。品牌与报价未提供时省略（有值仍校验），无报价、CPM、CPE 档位条件不追问抖音视频类型；询价机构的必填、澄清与弹窗规则不变。

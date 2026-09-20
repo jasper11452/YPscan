@@ -10,7 +10,7 @@
 
 这是固定链路的第一步。插件把当前单个平台的完整最新需求直接提交给固定解析 Workflow；插件不再做本地 facts 校验、Provider 参数编译、搜索分组或语义补全。
 
-首次处理一个平台需求时必须调用。成功后，`data.outputs` 只保留当前 Provider 契约消费的 Workflow 字段，字段值不改写、不解包。Workflow 内部字段以及运行 ID、需求指纹不对 Agent 暴露。Agent 使用解析结果，并按本卡补齐其余 `validate_requirement` 参数。
+首次处理一个平台需求时必须调用。成功后，`data.outputs` 只保留当前 Provider 契约消费的 Workflow 字段，字段值不改写、不解包；其中 `fallback` 是解析 Workflow 为 Provider 搜索执行侧生成的自动召回放宽计划，必须原样传递。Workflow 内部字段以及运行 ID、需求指纹不对 Agent 暴露。Agent 使用解析结果，并按本卡补齐其余 `validate_requirement` 参数。
 
 ## 输入
 
@@ -48,6 +48,8 @@
 
 解析 Workflow 已给出的唯一且合法 `followercount`、`rebate`、报价、CPM 或 CPE 候选直接复用；原文精确单价与 Provider 检索区间只是表达格式不同，不得因此再次弹出报价区间选择。粉丝技术上限溢出由本地截断，不弹窗。解析缺失或解析为“不限”/旧哨兵区间时，`followercount` 默认落库全量区间 `[0,999999999]`，不省略字段、不弹窗（原文出现“头部/肩部/腰部/尾部/行业头部”等量级描述时必须先询问具体区间）；历史坏值 `[1,999999999]` 归一为 `[0,999999999]`。
 
+`data.outputs.fallback` 是自动召回放宽计划：有序数组，顺序即执行顺序；每层 `{ change: [{ field, value }] }`，`value` 是该字段应用本层后的最终值，`value: null` 表示取消该条件。Agent 的职责只有保真搬运：把 `fallback` 原样写入 `rawMessagesJson.parse_outputs`，不重排、不去重、不按字段重组、不改写任何 value；不解释、不执行、不预判触发，也不把 fallback 记作 Agent 或用户的放宽。允许自动调整的字段只有小红书 `keyword`、`contentTag`、`personalTags` 和抖音 `author_id`、`tag_level_two`、`tag`；出现其他字段或结构异常时如实报告，不自行修复。
+
 ## `validate_requirement` 数值格式锁
 
 第一次调用 `validate_requirement` 前必须一次性构造完成全部字段，禁止让 Provider 报错后逐字段或逐类型试探。
@@ -83,7 +85,7 @@
 | `quantityTotal`        | 明确的提报达人数量，转成正整数字符串；不能用合作数量、机构覆盖数、推荐补量或默认 `1` 代替。                                                                                                                                                                                                                                                                                            |
 | `submissionDeadlineAt` | 解析为未来绝对时间并精确到秒；询价机构只有日期没有时刻时澄清，不能默认 18:00；已过期时给出未来绝对时间选项。手动拓展若原文、有效澄清和解析结果均无截止时间语境，不追问，由插件在建需边界填入建需后 30 天的系统默认值并标明可覆盖；用户已提供日期、模糊、过期或冲突时间时仍需澄清。                                                                                                                                          |
 | `status`               | 固定传 `"ready"`，本地边界可在缺失时确定性补入；不得询问用户。                                                                                                                                                                                                                                                                                                                         |
-| `rawMessagesJson`      | 必填 JSON 对象：`original` 保存本轮完整有效需求（手动拓展放宽后全文替换），`parse_outputs` 保留本次返回的契约字段，`business_mode` 固定为解析时使用的业务模式，`clarifications` 按字段保存最新有效答案；同一字段新答案覆盖旧答案，重建参数时保留其他字段答案。同平台多个类型只保留一个需求和原始总量，合并全部类型标签与条件。当前平台唯一合法 Dify 品牌候选必须直接采用；解析品牌缺失或不唯一时才读取最新弹窗答案。 |
+| `rawMessagesJson`      | 必填 JSON 对象：`original` 保存本轮完整有效需求（手动拓展放宽后全文替换），`parse_outputs` 保留本次返回的契约字段（含 `fallback`，原样保留，不重排不改写），`business_mode` 固定为解析时使用的业务模式，`clarifications` 按字段保存最新有效答案；同一字段新答案覆盖旧答案，重建参数时保留其他字段答案。同平台多个类型只保留一个需求和原始总量，合并全部类型标签与条件。当前平台唯一合法 Dify 品牌候选必须直接采用；解析品牌缺失或不唯一时才读取最新弹窗答案。 |
 | `description`          | 用当前明确需求写简短中文说明，保留无法映射成 Provider 筛选字段但后续需要人工核验的条件。                                                                                                                                                                                                                                                                                               |
 | `originalBrief`        | 保留用户最初完整原文，不因平台拆分或后续归一化改写。                                                                                                                                                                                                                                                                                                                                   |
 

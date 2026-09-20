@@ -59,6 +59,7 @@ export const DIFY_REQUIREMENT_OUTPUT_FIELDS = Object.freeze([
   "cpeL3",
   "xhs_cpe",
   "dy_cpe",
+  "fallback",
 ]);
 
 export const PARSE_REQUIREMENT_PARAMETERS = Object.freeze({

@@ -42,7 +42,7 @@ Provider 仍要求出站 `submissionDeadlineAt`，但手动拓展在原文、有
 - `status` 固定 `"ready"`；`projectName` 由 Agent 根据需求自行总结生成，不弹窗询问。
 - `platform` 只允许 `xiaohongshu` / `douyin`。
 - `contentTag` 必须来自本次解析结果、非空字符串数组；缺失或无效时重新解析，禁止询问或自补。
-- `rawMessagesJson` 必须含非空 `original`（原文）、`parse_outputs`（本次契约输出对象）、以及用户侧 `business_mode`（`询价机构` 或 `手动拓展`）；弹窗答案写回 `rawMessagesJson.clarifications`，同字段新答案覆盖旧答案。
+- `rawMessagesJson` 必须含非空 `original`（原文）、`parse_outputs`（本次契约输出对象，含 Provider 搜索执行侧消费的 `fallback` 数组，原样保存不重排不改写）、以及用户侧 `business_mode`（`询价机构` 或 `手动拓展`）；弹窗答案写回 `rawMessagesJson.clarifications`，同字段新答案覆盖旧答案。`fallback` 不参与本地归一化回填，只透传。
 
 ### 数值区间字段（19 个，`VALIDATE_REQUIREMENT_RANGE_PARAMS`）
 

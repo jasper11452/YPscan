@@ -339,6 +339,27 @@ test("parser preserves every output field declared by runtime constants", async 
   assert.deepEqual(parsed.data.outputs, expected);
 });
 
+test("parser passes the fallback plan through verbatim for Provider search-side consumption", async () => {
+  const fallback = [
+    { change: [{ field: "keyword", value: "数码科技" }] },
+    {
+      change: [
+        { field: "keyword", value: "数码科技" },
+        { field: "contentTag", value: ["移动数码", "玩机攻略"] },
+      ],
+    },
+    { change: [{ field: "personalTags", value: null }] },
+  ];
+  const parser = createRequirementParser({
+    apiKey: "test-key",
+    fetchImpl: async () =>
+      response({ data: { status: "succeeded", outputs: { fallback } } }),
+  });
+
+  const parsed = payload(await parser({ demand: "小红书数码需求", business_mode: "手动拓展" }));
+  assert.deepEqual(parsed.data.outputs.fallback, fallback);
+});
+
 test("missing parser-owned fields remain missing inside the compact outputs object", async () => {
   const parser = createRequirementParser({
     apiKey: "test-key",
