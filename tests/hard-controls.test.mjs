@@ -2686,7 +2686,7 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
     /sync_mcn_inquiry_status→ingest_mcn_submissions→get_ingest_job→保存机构达人预览表→ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV/u,
   );
   assert.match(startup.prependContext, /score_manual_source_csv→score_manual_source_csv_status/u);
-  assert.match(startup.prependContext, /状态查询按 live schema 传 num/u);
+  assert.match(startup.prependContext, /状态查询按 live schema 传梯度取数 num/u);
   assert.match(startup.prependContext, /手动拓展分支先选择字段，再调用 manual_source_creators/u);
   assert.match(
     startup.prependContext,
@@ -2696,15 +2696,20 @@ test("rank and startup directives keep direct sourcing separate from inquiry", (
   assert.match(startup.prependContext, /不再提供浏览器详细拓展分支，也不追加完成弹窗/u);
   assert.match(
     startup.prependContext,
-    /调用 manual_source_creators 只传 requirement_id/u,
+    /调用 manual_source_creators 传 requirement_id 和 num/u,
   );
-  assert.match(startup.prependContext, /不传 demand、num、解析输出或 rawMessagesJson/u);
-  assert.match(startup.prependContext, /需求文本由 Provider 从后台读取/u);
+  assert.match(startup.prependContext, /num 为用户想要的达人数量/u);
+  assert.match(startup.prependContext, /live schema 将 num 列为 required 时 num 必传/u);
+  assert.match(startup.prependContext, /schema 尚未包含 num 的环境只传 requirement_id/u);
+  assert.match(startup.prependContext, /直接使用 Hook 注入的 MANUAL_SOURCE_NUM/u);
+  assert.match(startup.prependContext, /不传 demand、解析输出或 rawMessagesJson/u);
+  assert.match(startup.prependContext, /需求由 Provider 从后台读取/u);
   assert.match(
     startup.prependContext,
-    /首次搜索及放宽重跑均遵守此规则/u,
+    /首次搜索及放宽重跑均传同一 num（放宽不改变交付目标人数）/u,
   );
-  assert.doesNotMatch(startup.prependContext, /只传 requirement_id 和 num/u);
+  assert.doesNotMatch(startup.prependContext, /只传 requirement_id，不传 demand、num/u);
+  assert.doesNotMatch(startup.prependContext, /不传 demand、num、解析输出/u);
 
   assert.doesNotMatch(startup.prependContext, /ypscan_manual_research|宿主 Browser/u);
 });

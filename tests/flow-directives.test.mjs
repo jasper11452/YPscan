@@ -1341,13 +1341,60 @@ test("failed business or native results cannot change completion provenance", ()
 test("manual source startup only requests requirement_id and delegates demand to Provider", () => {
   const { hooks } = registeredPlugin();
   const { prependContext } = hooks.get("before_prompt_build")({}, { runId: "provider-demand" });
-  assert.match(prependContext, /调用 manual_source_creators 只传 requirement_id/u);
-  assert.match(prependContext, /不传 demand、num、解析输出或 rawMessagesJson/u);
-  assert.match(prependContext, /需求文本由 Provider 从后台读取/u);
+  assert.match(prependContext, /调用 manual_source_creators 传 requirement_id 和 num/u);
+  assert.match(prependContext, /num 为用户想要的达人数量/u);
+  assert.match(prependContext, /不传 demand、解析输出或 rawMessagesJson/u);
+  assert.match(prependContext, /需求由 Provider 从后台读取/u);
+  assert.match(prependContext, /不得把 MANUAL_SOURCE_TARGET_NUM（状态查询的梯度取数数量）当需求人数/u);
+  assert.match(prependContext, /live schema 将 num 列为 required 时 num 必传/u);
   assert.doesNotMatch(
     prependContext,
     /manual_source_creators\.demand|可选需求原文字段|若 schema required 含 num，则 requirement_id 与 num 一并传/u,
   );
+});
+
+test("manual source submit num is injected at validate success and columns recovery", () => {
+  const { hooks } = registeredPlugin();
+  const before = hooks.get("before_tool_call");
+  const persist = hooks.get("tool_result_persist");
+  const validateEvent = { toolName: "mcp__ypscan__validate_requirement" };
+  const requirementId = "4".repeat(32);
+  const context = { sessionKey: "manual-num-injection" };
+
+  // validate 成功：手动拓展注入 MANUAL_SOURCE_NUM，数值为需求人数本身而非梯度取数。
+  assert.equal(
+    before({ ...validateEvent, params: canonicalValidateParams("手动拓展", 20) }, context).block,
+    undefined,
+  );
+  const validateText = directiveText(
+    persist(
+      {
+        ...validateEvent,
+        params: { quantityTotal: 20 },
+        message: toolMessage({ success: true, data: { requirement_id: requirementId } }),
+      },
+      context,
+    ),
+  );
+  assert.match(validateText, /MANUAL_SOURCE_NUM=20(?!\d)/u);
+  assert.doesNotMatch(validateText, /MANUAL_SOURCE_NUM=50/u);
+
+  // 缺字段配置恢复指令：恢复后用同一 requirement_id + num 重试，并附带 MANUAL_SOURCE_NUM。
+  const columnsText = directiveText(
+    persist(
+      {
+        toolName: "manual_source_creators",
+        params: { requirement_id: requirementId, num: 20 },
+        message: toolMessage({
+          success: false,
+          error: { code: "REQUIREMENT_COLUMNS_NOT_CONFIGURED" },
+        }),
+      },
+      context,
+    ),
+  );
+  assert.match(columnsText, /MANUAL_SOURCE_NUM=20(?!\d)/u);
+  assert.match(columnsText, /live schema required num 时附同一 num（用户想要的达人数量，取 MANUAL_SOURCE_NUM）/u);
 });
 
 test("status polling without requirement history preserves the already computed num", () => {

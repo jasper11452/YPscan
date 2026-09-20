@@ -3,7 +3,7 @@
 悦普识星是一个 OpenClaw 客户端集成层：通过 Streamable HTTP 连接 Provider MCP，并在本地用 Hook 把正式链路固定到新的 CSV 中心流程。用户明确表达当前功能时直接采用，未明确或语义冲突时再询问；确定后解析、复核并落库。
 
 - 询价机构：`选择模式 → 解析复核落库 → search_creators → rank_mcns → 选择机构和字段 → 发送确认与企微询价 → sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 Excel → 询问是否补全 → ypscan_save_creator_links 派生 links CSV → 原生补全 → file_bridge 合并上传 → score_manual_source_csv → 保存打分排序 Excel`
-- 手动拓展：`选择模式 → 解析复核落库 → 选择字段 → manual_source_creators → 同步 links CSV 或 manual_source_creators_status 轮询 → 保存并归一化 links CSV → ypscan_summarize_manual_scores 取得当前批 → 原生补全 → file_bridge 仅合并上传当前批 → score_manual_source_csv → 同步 Excel 或 score_manual_source_csv_status 轮询 → 保存 manual_score_batch → 再汇总 → 达标交付或下一批`
+- 手动拓展：`选择模式 → 解析复核落库 → 选择字段 → manual_source_creators(requirement_id, num) → 同步 links CSV 或 manual_source_creators_status 轮询 → 保存并归一化 links CSV → ypscan_summarize_manual_scores 取得当前批 → 原生补全 → file_bridge 仅合并上传当前批 → score_manual_source_csv → 同步 Excel 或 score_manual_source_csv_status 轮询 → 保存 manual_score_batch → 再汇总 → 达标交付或下一批`
 
 当前实现把 `links CSV` 作为达人补全与排序的正式中间产物；两分支按 20 个一批调用当前平台原生达人补全工具（登录态由宿主工具内部处理），再由 `file_bridge(flow=manual_source)` 合并并上传，交给 `score_manual_source_csv` 打分。用户可见的表格只有最终评分表、汇总表、MCN 排名表和机构回填预览表；手动拓展单批 `manual_score_batch`、links CSV、补全 CSV 和 merged CSV 都是内部中间产物，不主动向用户展示表格、路径或链接。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`；遗留 flow 只保留兼容接入。每次真正开始询价或手动拓展都必须重新解析、复核并创建独立的新 requirement，不跨功能复用结果；当前机构列表后的“暂不询价”续办是例外。完整业务规则及例外以 [Skill](skills/media-assistant/SKILL.md) 为准。
 
