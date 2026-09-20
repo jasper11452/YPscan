@@ -3,7 +3,7 @@ import { lstat, mkdir, open, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { nonemptyString } from "../util/value.js";
 
-const FLOW_VALUES = Object.freeze(["manual_source", "mcn_rank", "mcn_complete_only"]);
+const FLOW_VALUES = Object.freeze(["manual_source", "mcn_rank", "mcn_complete_only", "creator_detail"]);
 // 按平台选择与 links creator_id 同源的 ID；仅缺少优先列时兼容旧表头，不按匹配率猜列。
 const COMPLETION_ID_HEADER_CANDIDATES = Object.freeze({
   douyin: [
@@ -150,17 +150,22 @@ function completionDetailHeaders(headers, idHeader) {
  */
 export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl = readFile } = {}) {
   const requirementId = params?.requirement_id;
+  const fieldId = params?.field_id;
   const platform = params?.platform;
   const flow = params?.flow;
   const linksCsvPath = params?.links_csv_path;
   const completionCsvPaths = params?.completion_csv_paths;
+  const isCreatorDetail = flow === "creator_detail";
+  const scopeId = isCreatorDetail ? fieldId : requirementId;
+  const scopeIdText = scopeId == null ? "" : String(scopeId).trim();
   if (
-    !nonemptyString(requirementId) ||
+    !nonemptyString(scopeIdText) ||
     !["xiaohongshu", "douyin"].includes(platform) ||
     !FLOW_VALUES.includes(flow) ||
-    !nonemptyString(linksCsvPath) ||
-    !isAbsolute(linksCsvPath) ||
-    linksCsvPath !== linksCsvPath.trim() ||
+    (!isCreatorDetail &&
+      (!nonemptyString(linksCsvPath) ||
+        !isAbsolute(linksCsvPath) ||
+        linksCsvPath !== linksCsvPath.trim())) ||
     !Array.isArray(completionCsvPaths) ||
     completionCsvPaths.length === 0 ||
     completionCsvPaths.some(
@@ -184,26 +189,32 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
   }
 
   try {
-    const linksCsv = await readFileImpl(linksCsvPath, "utf8");
-    const parsedLinks = parseCsv(linksCsv);
-    const requiredHeaders = findRequiredHeaders(parsedLinks.headers, [
-      "source_record_id",
-      "creator_id",
-      "url",
-    ]);
-    if (!requiredHeaders) {
-      return failure(
-        "YPSCAN_CREATOR_LINKS_CSV_INVALID",
-        "links CSV 缺少 source_record_id、creator_id 或 url 列",
-      );
+    /** @type {Record<string, string>[]} */
+    let linksRows = [];
+    if (!isCreatorDetail) {
+      const linksCsv = await readFileImpl(linksCsvPath, "utf8");
+      const parsedLinks = parseCsv(linksCsv);
+      const requiredHeaders = findRequiredHeaders(parsedLinks.headers, [
+        "source_record_id",
+        "creator_id",
+        "url",
+      ]);
+      if (!requiredHeaders) {
+        return failure(
+          "YPSCAN_CREATOR_LINKS_CSV_INVALID",
+          "links CSV 缺少 source_record_id、creator_id 或 url 列",
+        );
+      }
+      linksRows = rowsToObjects(parsedLinks.headers, parsedLinks.rows).map((row) => ({
+        source_record_id: row[requiredHeaders.get("source_record_id")],
+        creator_id: row[requiredHeaders.get("creator_id")],
+        url: row[requiredHeaders.get("url")],
+      }));
     }
-    const linksRows = rowsToObjects(parsedLinks.headers, parsedLinks.rows).map((row) => ({
-      source_record_id: row[requiredHeaders.get("source_record_id")],
-      creator_id: row[requiredHeaders.get("creator_id")],
-      url: row[requiredHeaders.get("url")],
-    }));
 
     const detailsByCreatorId = new Map();
+    /** @type {string[]} */
+    const orderedCreatorIds = [];
     /** @type {string[]} */
     const detailHeaders = [];
     const seenDetailHeaders = new Set();
@@ -229,6 +240,7 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
         const creatorId = String(row[idHeader] ?? "").trim();
         if (!creatorId || detailsByCreatorId.has(creatorId)) continue;
         detailsByCreatorId.set(creatorId, row);
+        orderedCreatorIds.push(creatorId);
       }
     }
 
@@ -236,27 +248,41 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
     const mergedRows = [];
     const missingCreatorIds = new Set();
     const matchedCreatorIds = new Set();
-    for (const linkRow of linksRows) {
-      const creatorId = String(linkRow.creator_id ?? "").trim();
-      if (!creatorId) continue;
-      const detailRow = detailsByCreatorId.get(creatorId);
-      if (!detailRow) {
-        missingCreatorIds.add(creatorId);
-        continue;
+    if (isCreatorDetail) {
+      for (const creatorId of orderedCreatorIds) {
+        const detailRow = detailsByCreatorId.get(creatorId);
+        const mergedRow = { creator_id: creatorId };
+        for (const header of detailHeaders) {
+          mergedRow[header] = String(detailRow?.[header] ?? "");
+        }
+        mergedRows.push(mergedRow);
+        matchedCreatorIds.add(creatorId);
       }
-      matchedCreatorIds.add(creatorId);
-      const mergedRow = {
-        source_record_id: String(linkRow.source_record_id ?? ""),
-        creator_id: creatorId,
-        url: String(linkRow.url ?? ""),
-      };
-      for (const header of detailHeaders) {
-        mergedRow[header] = String(detailRow[header] ?? "");
+    } else {
+      for (const linkRow of linksRows) {
+        const creatorId = String(linkRow.creator_id ?? "").trim();
+        if (!creatorId) continue;
+        const detailRow = detailsByCreatorId.get(creatorId);
+        if (!detailRow) {
+          missingCreatorIds.add(creatorId);
+          continue;
+        }
+        matchedCreatorIds.add(creatorId);
+        const mergedRow = {
+          source_record_id: String(linkRow.source_record_id ?? ""),
+          creator_id: creatorId,
+          url: String(linkRow.url ?? ""),
+        };
+        for (const header of detailHeaders) {
+          mergedRow[header] = String(detailRow[header] ?? "");
+        }
+        mergedRows.push(mergedRow);
       }
-      mergedRows.push(mergedRow);
     }
 
-    const headers = ["source_record_id", "creator_id", "url", ...detailHeaders];
+    const headers = isCreatorDetail
+      ? ["creator_id", ...detailHeaders]
+      : ["source_record_id", "creator_id", "url", ...detailHeaders];
     const csvText = stringifyCsv(headers, mergedRows);
     const sha256 = createHash("sha256").update(csvText).digest("hex");
     const prefix =
@@ -264,8 +290,10 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
         ? "manual-source"
         : flow === "mcn_rank"
           ? "mcn-rank"
-          : "mcn-complete";
-    const fileName = `${prefix}-${sanitizeSegment(platform, "platform")}-${sanitizeSegment(requirementId, "requirement")}-${sha256.slice(0, 8)}.csv`;
+          : flow === "creator_detail"
+            ? "creator-detail"
+            : "mcn-complete";
+    const fileName = `${prefix}-${sanitizeSegment(platform, "platform")}-${sanitizeSegment(scopeIdText, isCreatorDetail ? "field" : "requirement")}-${sha256.slice(0, 8)}.csv`;
     const filePath = join(workspacePath, fileName);
     const handle = await open(filePath, "wx+", 0o600).catch(async (error) => {
       if (error?.code !== "EEXIST") throw error;
@@ -287,11 +315,31 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
       await handle.close();
     }
 
+    if (isCreatorDetail) {
+      return {
+        ok: true,
+        csvText,
+        details: {
+          requirement_id: scopeIdText,
+          field_id: scopeIdText,
+          platform,
+          flow,
+          file_name: fileName,
+          file_path: filePath,
+          data_row_count: mergedRows.length,
+          matched_creator_ids: [...matchedCreatorIds],
+          missing_creator_ids: [],
+          completion_csv_paths: completionCsvPaths.map(String),
+          completion_id_columns: completionIdColumns,
+          sha256,
+        },
+      };
+    }
     return {
       ok: true,
       csvText,
       details: {
-        requirement_id: String(requirementId),
+        requirement_id: scopeIdText,
         platform,
         flow,
         file_name: fileName,

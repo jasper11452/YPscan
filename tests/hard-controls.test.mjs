@@ -2162,7 +2162,7 @@ test("business mode popup exposes the renamed user-facing option", () => {
 
   assert.deepEqual(
     payload.questions[0].options.map((option) => popupPlainText(option.label)),
-    ["询价机构", "手动拓展"],
+    ["询价机构", "手动拓展", "只扒达人信息"],
   );
   assert.doesNotMatch(JSON.stringify(payload), /直接手扒/u);
 });
@@ -2192,7 +2192,7 @@ test("startup instruction selects and preserves one business mode", () => {
   assert.match(first.prependContext, /用户明确说.*询价机构.*直接使用/u);
   assert.match(first.prependContext, /明确说.*手动拓展.*统一使用用户侧模式“手动拓展”/u);
   assert.match(first.prependContext, /直接手扒\/手扒\/手捞筛选/u);
-  assert.match(first.prependContext, /未明确、同时出现两种模式或语义冲突/u);
+  assert.match(first.prependContext, /未明确、同时出现多种模式或语义冲突/u);
   assert.match(first.prependContext, /BUSINESS_MODE_QUESTION_ARGS=/u);
   assert.match(first.prependContext, /回答前不得解析或落库/u);
   assert.match(first.prependContext, /Provider 边界把“手动拓展”兼容映射为旧线值/u);

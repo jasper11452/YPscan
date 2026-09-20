@@ -146,21 +146,19 @@ export default {
       (context) => ({
         name: "file_bridge",
         description:
-          "将当前 requirement 的 links CSV 与一批或多批达人补全 CSV 合并为本地文件；manual_source、mcn_rank 在不超过 500 行时继续上传 OSS 并返回 csv_file_path，merged CSV 属内部中间产物、不主动向用户展示；仅遗留 mcn_complete_only 只交付本地文件并展示链接。",
+          "将当前 requirement 的 links CSV 与一批或多批达人补全 CSV 合并为本地文件；manual_source、mcn_rank 在不超过 500 行时继续上传 OSS 并返回 csv_file_path，merged CSV 属内部中间产物、不主动向用户展示；仅遗留 mcn_complete_only 只交付本地文件并展示链接。creator_detail（只扒达人信息）不传 requirement_id/links_csv_path，改传 field_id，纯合并补全 CSV 上传 OSS 供 excel_export 使用。",
         parameters: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "requirement_id",
-            "platform",
-            "flow",
-            "links_csv_path",
-            "completion_csv_paths",
-          ],
+          required: ["platform", "flow", "completion_csv_paths"],
           properties: {
             requirement_id: { type: "string", minLength: 1 },
+            field_id: { type: "string", minLength: 1 },
             platform: { type: "string", enum: ["xiaohongshu", "douyin"] },
-            flow: { type: "string", enum: ["manual_source", "mcn_rank", "mcn_complete_only"] },
+            flow: {
+              type: "string",
+              enum: ["manual_source", "mcn_rank", "mcn_complete_only", "creator_detail"],
+            },
             links_csv_path: { type: "string", minLength: 1 },
             completion_csv_paths: {
               type: "array",
@@ -168,6 +166,19 @@ export default {
               items: { type: "string", minLength: 1 },
             },
           },
+          allOf: [
+            {
+              if: { properties: { flow: { const: "creator_detail" } } },
+              then: {
+                required: ["field_id"],
+                not: { required: ["requirement_id", "links_csv_path"] },
+              },
+              else: {
+                required: ["requirement_id", "links_csv_path"],
+                not: { required: ["field_id"] },
+              },
+            },
+          ],
         },
         async execute(_id, params) {
           return fileBridge(params, {

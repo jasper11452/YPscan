@@ -721,3 +721,79 @@ test("ambiguous whitespace CSV paths never upload an unregistered sibling", asyn
   assert.equal(payload(result).success, false);
   assert.equal(uploads, 0);
 });
+
+test("fileBridge creator_detail merges completion CSV without links and uploads under field_id", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-file-bridge-cd-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+  const completionCsvPath = join(workspaceDir, "completion.csv");
+  writeFileSync(
+    completionCsvPath,
+    ["creator_id,nickname,fans", "creator-1,达人1,10", "creator-2,达人2,20"].join("\n"),
+  );
+  const uploads = [];
+  const result = payload(
+    await fileBridge(
+      {
+        field_id: "123",
+        platform: "douyin",
+        flow: "creator_detail",
+        completion_csv_paths: [completionCsvPath],
+      },
+      {
+        workspaceDir,
+        bundled: null,
+        pluginConfig: { fileBridgeOss: { accessKeyId: "ak", accessKeySecret: "sk" } },
+        allowedCompletionCsvPaths: () => [completionCsvPath],
+        createClient: () => ({
+          put: async (key, buffer) => {
+            uploads.push({ key, text: buffer.toString("utf8") });
+            return { res: { statusCode: 200 } };
+          },
+        }),
+        fetchImpl: async () => new Response(null, { status: 200 }),
+        retryDelaysMs: [],
+      },
+    ),
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.data.data_row_count, 2);
+  assert.match(uploads[0].key, /creator_detail\/123\//u);
+  const csv = parseCsv(uploads[0].text);
+  assert.deepEqual(csv.headers, ["creator_id", "nickname", "fans"]);
+  assert.deepEqual(csv.rows, [
+    ["creator-1", "达人1", "10"],
+    ["creator-2", "达人2", "20"],
+  ]);
+  assert.equal(result.data.field_id, "123");
+  assert.equal(typeof result.data.csv_file_path, "string");
+});
+
+test("creator_detail requires field_id and rejects requirement_id/links_csv_path", async (t) => {
+  const workspaceDir = mkdtempSync(join(tmpdir(), "ypscan-file-bridge-cd-args-"));
+  t.after(() => rmSync(workspaceDir, { recursive: true, force: true }));
+  const completionCsvPath = join(workspaceDir, "completion.csv");
+  writeFileSync(completionCsvPath, "creator_id,nickname\ncreator-1,达人1\n");
+
+  const missingFieldId = await mergeCreatorCsvFiles(
+    { platform: "douyin", flow: "creator_detail", completion_csv_paths: [completionCsvPath] },
+    { workspaceDir },
+  );
+  assert.equal(missingFieldId.ok, false);
+  assert.equal(missingFieldId.code, "YPSCAN_CREATOR_CSV_MERGE_INVALID_INPUT");
+
+  const withRequirement = await mergeCreatorCsvFiles(
+    {
+      requirement_id: "req-x",
+      field_id: "123",
+      platform: "douyin",
+      flow: "creator_detail",
+      links_csv_path: join(workspaceDir, "links.csv"),
+      completion_csv_paths: [completionCsvPath],
+    },
+    { workspaceDir },
+  );
+  assert.equal(withRequirement.ok, true);
+  assert.deepEqual(withRequirement.details.missing_creator_ids, []);
+  assert.equal(withRequirement.details.field_id, "123");
+  assert.equal(withRequirement.details.links_csv_path, undefined);
+});

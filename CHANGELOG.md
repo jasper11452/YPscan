@@ -1,5 +1,14 @@
 # 更新日志
 
+## 1.0.29 — 2026-09-20
+
+- 新增第三种业务模式「只扒达人信息」与后端导出工具 `excel_export`：`select_inquiry_form_fields` 的 `requirement_id` 改选填并新增 `creator_ids`/`creator_links`，无需求时返回 `field_id` 和字段选择页 URL；新增 `excel_export(field_id, source_csv_file_link, custom_table_oss_url?)` 按选中 columns 导出达人表（样式与 manual-score-summary 一致、列按 columns 裁剪）。老两种模式（询价机构/手动拓展）不改动，仍用 `ypscan_summarize_manual_scores` 交付。
+- 后端契约新增 `get_creator_detail_run` 表（run_id=field_id、user_id、platform、columns、creator_ids、creator_links、status pending/columns_selected/exported/failed），建表由后端执行，本机数据库只读。
+- 插件侧：registry `BUSINESS_TOOL_NAMES` 与 manifest `toolFilter` 增加 `excel_export`（白名单 14→15）；`businessModeQuestionPayload` 增加「只扒达人信息」选项；Hook 新增无需求字段选择与 `excel_export` 结果指令；SKILL、工具卡（select_inquiry_form_fields 更新 + excel_export 新增）、spec（contracts/flows/hooks/tools/architecture/README + get_creator_detail_run 需求规格）与验收清单同步。
+- 字段提交确认：agent 不轮询 get_inquiry_form_fields_status、不主动停下等口头确认，字段提交后直接调 excel_export，后端查 get_creator_detail_run.columns 校验，未生成则返回「未选择字段」+URL 等用户提交后重试。已确认：excel_export 成功下载链接字段名 `data.file_url`、参数命名 `creator_ids`/`creator_links`/`custom_table_oss_url`、达人数据映射复用现有链路、字段选择页 URL 用新 token 参数携带 field_id；待确认：自定义表格字段匹配规则（后期功能）。
+- `file_bridge` 新增 `flow=creator_detail`：只扒达人信息补全后，用 `field_id`（替代 requirement_id）+ 纯合并补全 CSV（不读 links、不做达人匹配）上传 OSS，返回 `data.csv_file_path` 作为 `excel_export` 的 `source_csv_file_link`；Hook 增加 field_id 维度补全路径门禁（`currentFieldIdByScope` + `completionCsvPathsByFieldId`）与 `EXCEL_EXPORT_ARGS` 下一步指引。字段页指令明确「与需求维度不同，输出 URL 后本轮不结束」；业务模式判别补充「给筛选条件→手动拓展、给达人 ID/链接→只扒达人信息」；`source_requirement_id`/`force_reselect` 明确无需求模式不传。
+- 验证：`npm run lint`／`typecheck`／`test`（659 项）／`smoke`（tools=5, hooks=5）通过。未验证：真实 Provider 端到端（`excel_export` 后端未实现、`get_creator_detail_run` 未建表，`source_csv_file_link` 真实上传链路待后端落地后 E2E 验收）。
+
 ## 1.0.28 — 2026-09-20
 
 - 解析输出白名单新增 `fallback`：Dify 解析工作流除正常搜索条件外还输出一组自动召回放宽计划（有序数组，顺序即执行顺序；每层 `{ change: [{ field, value }] }`，`value` 为该字段应用本层后的最终值，`value: null` 表示取消该条件）。此前 `contractedOutputs()` 白名单静默丢弃该字段，而 Provider 搜索执行侧读取的是落库的 `parse_outputs.fallback`，导致自动放宽整体失效；现在原样透传进 `rawMessagesJson.parse_outputs`，不重排、不去重、不改写、不执行，也不参与本地归一化回填。允许自动调整的字段仅限小红书 `keyword`、`contentTag`、`personalTags` 与抖音 `author_id`、`tag_level_two`、`tag`。

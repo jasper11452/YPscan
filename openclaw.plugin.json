@@ -1,7 +1,7 @@
 {
   "id": "ypscan",
   "name": "悦普识星",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "description": "悦普识星客户端集成层：业务模式前置，支持机构询价与后台手动拓展双分支。",
   "author": {
     "name": "Jasper"
@@ -33,6 +33,7 @@
           "manual_source_creators_status",
           "score_manual_source_csv",
           "score_manual_source_csv_status",
+          "excel_export",
           "rank_creators"
         ]
       }

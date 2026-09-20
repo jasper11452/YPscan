@@ -104,6 +104,11 @@ assert.equal(
   true,
   "manual-source CSV scoring job status polling must be exposed from the Provider MCP",
 );
+assert.equal(
+  manifest.mcpServers.ypscan.toolFilter.include.includes("excel_export"),
+  true,
+  "creator-detail table export must be exposed from the Provider MCP",
+);
 assert.deepEqual(manifest.configSchema.properties.fileBridgeOss.required, [
   "accessKeyId",
   "accessKeySecret",
@@ -191,17 +196,21 @@ try {
   const fileBridgeTool = registered.tools.find((tool) => tool.name === "file_bridge");
   assert.ok(fileBridgeTool);
   assert.deepEqual(fileBridgeTool.parameters.required, [
-    "requirement_id",
     "platform",
     "flow",
-    "links_csv_path",
     "completion_csv_paths",
   ]);
+  assert.equal(fileBridgeTool.parameters.properties.field_id.type, "string");
   assert.deepEqual(fileBridgeTool.parameters.properties.flow.enum, [
     "manual_source",
     "mcn_rank",
     "mcn_complete_only",
+    "creator_detail",
   ]);
+  const flowCondition = fileBridgeTool.parameters.allOf[0];
+  assert.deepEqual(flowCondition.if, { properties: { flow: { const: "creator_detail" } } });
+  assert.deepEqual(flowCondition.then.required, ["field_id"]);
+  assert.deepEqual(flowCondition.else.required, ["requirement_id", "links_csv_path"]);
   assert.equal(toolNames.includes("ypscan__select_inquiry_form_fields"), false);
   assert.equal(toolNames.length, 5);
   assert.ok(toolNames.includes("ypscan_summarize_manual_scores"));

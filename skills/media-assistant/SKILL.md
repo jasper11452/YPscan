@@ -21,7 +21,9 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 
 - 用户明确说“询价机构”“机构询价”或“MCN 询价”时，直接使用 `询价机构`。
 - 用户明确说“手动拓展”“人工拓展”“直接手扒”“手扒”或“手捞筛选”时，统一使用用户侧模式 `手动拓展`；旧说法只作为输入别名。
-- 未明确模式、同时出现两种模式或语义冲突时，调用 `AskUserQuestion`，选项固定为“询价机构”和“手动拓展”。用户回答前不解析、不落库。
+- 用户明确说“只扒达人信息”“只扒达人”“导出达人表”“达人详情表”等只想按达人 ID 或链接导出指定字段、不要需求解析和询价时，使用第三种模式 `只扒达人信息`；不建 requirement，不调 `ypscan_parse_requirement` 和 `validate_requirement`。
+- 判别 `手动拓展` 和 `只扒达人信息`：用户给搜索筛选条件（达人方向/标签/品类，要后台搜索抓取）走手动拓展；用户给具体达人 ID 或主页链接（已知达人，直接补全导出）走只扒达人信息。说“手扒/扒这几个达人”且给了 ID 或链接时按只扒达人信息，只给方向或条件时按手动拓展。
+- 未明确模式、同时出现多种模式或语义冲突时，调用 `AskUserQuestion`，选项固定为“询价机构”“手动拓展”和“只扒达人信息”。用户回答前不解析、不落库。
 
 选定后将用户侧模式传入 `ypscan_parse_requirement.business_mode`，并写入 `validate_requirement.rawMessagesJson.business_mode`。插件在 Provider 边界把 `手动拓展` 规范为兼容线值 `直接手扒`；Agent 不得自行使用或展示该内部值。该模式决定本次新建 requirement 进入的功能。
 
@@ -30,6 +32,8 @@ description: MANDATORY — 只要用户提到悦普识星、YPscan、达人筛�
 询价机构：`ypscan_parse_requirement → 复核 → validate_requirement → search_creators → rank_mcns → MCN 排名表 → 选择收件机构 → 选择字段 → 发送确认 → create_with_distributions → 用户说机构已回填 → sync_mcn_inquiry_status(requirement_id, project_id, supplierIds) → 用其返回的 inquiry_ids 直接 ingest_mcn_submissions → get_ingest_job（到 succeeded/partially_succeeded）→ 保存机构达人预览表 → 询问用户是否补全 → ypscan_save_creator_links 直接读取预览 xlsx 并派生受控 links CSV → 原生达人补全(20/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，内部合并并上传) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存打分排序 Excel`
 
 手动拓展：`ypscan_parse_requirement → 复核 → validate_requirement → select_inquiry_form_fields（字段页提交用 get_inquiry_form_fields_status 自动确认，超时回退等用户确认已提交） → manual_source_creators(requirement_id, num) → 同步 links CSV 直接保存，或 manual_source_creators_status(requirement_id, batch_id, num) 轮询 → 保存并归一化 links CSV → ypscan_summarize_manual_scores 取得当前批 → 原生达人补全(最多20人/批，YP Action 外部宿主工具) → file_bridge(flow=manual_source，仅合并上传当前批) → score_manual_source_csv → score_manual_source_csv_status 轮询 → 保存单批 manual_score_batch → 再汇总（达标交付，否则下一批）`
+
+只扒达人信息：`select_inquiry_form_fields(platform, creator_ids/creator_links，不传 requirement_id / source_requirement_id / force_reselect) → 拿到 field_id 和字段选择页 URL → 正文单独一行原样展示 URL 让用户选字段 → 平台原生达人补全工具补全这批达人 → file_bridge 上传补全 CSV 得到 source_csv_file_link → （用户上传了自定义表格时 file_bridge 上传得到 custom_table_oss_url，可选） → excel_export(field_id, source_csv_file_link, custom_table_oss_url?) → 后端查表：已提交字段则展示达人表下载链接，未提交则返回「未选择字段」+URL 重新展示等用户提交后重试`。不建需求、不评分排序；不轮询 `get_inquiry_form_fields_status`、不主动停下等口头确认，字段是否已提交由 excel_export 后端查表校验。
 
 每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement。即使同一会话、同一平台、业务条件未变，或询价完成/停止后改用手动拓展（反之亦然），也必须重新调用 `ypscan_parse_requirement`、按下文复核并调用 `validate_requirement`；不得跨功能复用 requirement，新 requirement 必须重新调用 `select_inquiry_form_fields` 配置字段。两个功能不得并行执行，也不得复用旧机构、达人、batch、CSV 或 Excel。同一会话首次选择字段；后续新 requirement（含放宽、纠错和跨功能）通过 `select_inquiry_form_fields` 传 `source_requirement_id`，来源只取本会话最近一次用户已提交或 Provider 已确认 `configured`/`copied` 的真实需求，不跨会话、不猜测 ID。用户明确要求重新勾选时才传 `force_reselect=true` 并省略来源。新参数须为当前 live schema 支持，否则说明接口未支持并暂停。`success=true` 且 `status=configured`/`copied`、返回需求 ID 与当前调用一致时直接继续；只有字段页 URL 才展示并按 [get_inquiry_form_fields_status](references/tools/get_inquiry_form_fields_status.md) 自动确认提交：正文单独一行原样输出 URL 后先即时预检一次（链接未输出前首次状态查询会被本地阻断一次并回带链接），`unavailable` 才开始轮询（每 30 秒一次，累计最多 8 次），`submitted` 才恢复原分支；预检就是 `submitted`（说明该需求此前已有配置）、`invalid`、未知状态、调用失败或到达上限时停止轮询并等待用户确认已提交；无法确认预检结果时按预检即 `submitted` 处理，同样等待用户确认已提交。`force_reselect=true` 或继承场景禁止轮询，仍等待用户确认已提交；全程不得要求用户回复固定口令。继承失败或平台不兼容时暂停，不自动重选；不读取、缓存或传递 `columns`。轮询或等待期间禁止同一轮试调搜索、手动拓展或打分。
 

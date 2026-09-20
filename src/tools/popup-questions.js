@@ -131,6 +131,7 @@ export function businessModeQuestionPayload() {
     [
       { label: "询价机构", description: "搜索刊例数据、推荐机构并发起企微询价" },
       { label: "手动拓展", description: "通过后台 API 搜索、抓取并筛选达人" },
+      { label: "只扒达人信息", description: "按达人 ID 或链接导出指定字段的达人表，不建需求不询价" },
     ],
   );
 }

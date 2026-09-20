@@ -2268,6 +2268,8 @@ test("host tool names resolve across namespaces and flattened MCP prefixes", () 
     ["mcp-04b79900_manual_source_creators_status", "manual_source_creators_status"],
     ["mcp-04b79900_get_inquiry_form_fields_status", "get_inquiry_form_fields_status"],
     ["test__get_inquiry_form_fields_status", "get_inquiry_form_fields_status"],
+    ["excel_export", "excel_export"],
+    ["mcp-04b79900_excel_export", "excel_export"],
     ["mcp-04b79900_ypscan_save_artifact", "ypscan_save_artifact"],
     ["ypscan_summarize_manual_scores", "ypscan_summarize_manual_scores"],
     ["mcp-04b79900_ypscan_summarize_manual_scores", "ypscan_summarize_manual_scores"],

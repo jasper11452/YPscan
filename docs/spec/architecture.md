@@ -13,7 +13,7 @@ OpenClaw 宿主
        └─ skills/media-assistant（业务行为权威，随包发布）
 
 远端：
-  ├─ Provider MCP  https://mcp.eshypdata.com/mcp（Streamable HTTP，14 个白名单工具）
+  ├─ Provider MCP  https://mcp.eshypdata.com/mcp（Streamable HTTP，15 个白名单工具）
   └─ Dify Workflow  https://dfi.eshypdata.com/v1/workflows/run（需求解析）
 ```
 
@@ -22,7 +22,7 @@ OpenClaw 宿主
 | 组件                                                                                              | 职责                         | 关键事实                                                                                                                                                                                       |
 | ------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `index.js`                                                                                        | 入口：注册工具与 Hook        | 5 工具、5 Hook；`gateway_start`/`gateway_stop` 调 `resetTransientState()`                                                                                                                      |
-| `openclaw.plugin.json`                                                                            | 插件清单                     | Provider MCP 白名单 13 工具；`connectionTimeoutMs: 5000`、`requestTimeoutMs: 330000`；`configSchema` 含 `testMode` / `testAdapterBaseUrl` / `fileBridgeOss`；`contracts.tools` 列 5 个本地工具 |
+| `openclaw.plugin.json`                                                                            | 插件清单                     | Provider MCP 白名单 15 工具；`connectionTimeoutMs: 5000`、`requestTimeoutMs: 330000`；`configSchema` 含 `testMode` / `testAdapterBaseUrl` / `fileBridgeOss`；`contracts.tools` 列 5 个本地工具 |
 | `src/tools/parse-requirement.js`                                                                  | 需求解析代理                 | 直连 Dify（blocking 模式，60s 超时），`data.outputs` 只返回契约消费字段                                                                                                                        |
 | `src/tools/save-artifact.js`                                                                      | Excel/links CSV 受控保存     | 单一工具、8 种 artifact_kind；kind 决定扩展名，共用主域校验、下载限制、重试、原子发布与幂等逻辑                                                                                                |
 | `src/tools/manual-score-summary.js`                                                               | 手动拓展评分汇总             | 从哈希校验的受控来源重算进度，精确累计推荐人数，返回下一批或生成最终汇总 Excel（沿用 Provider 单表模板）                                                                                             |

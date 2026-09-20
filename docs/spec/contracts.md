@@ -4,20 +4,20 @@
 
 ## 1. 常量
 
-| 常量                               | 值                                                               | 说明                                                                |
-| ---------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `BUSINESS_MODE_VALUES`             | `["询价机构", "手动拓展"]`                                       | 用户侧业务模式                                                      |
-| `PROVIDER_MANUAL_BUSINESS_MODE`    | `直接手扒`                                                       | 手动拓展的 Provider 兼容线值，仅出站边界映射，Agent 不得使用或展示  |
+| 常量                               | 值                                                               | 说明                                                                    |
+| ---------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `BUSINESS_MODE_VALUES`             | `["询价机构", "手动拓展"]`                                       | 需求维度的用户侧业务模式；第三种「只扒达人信息」不建需求，不在此枚举    |
+| `PROVIDER_MANUAL_BUSINESS_MODE`    | `直接手扒`                                                       | 手动拓展的 Provider 兼容线值，仅出站边界映射，Agent 不得使用或展示      |
 | `HOST_PREFIXES`                    | `mcp__ypscan__`、`ypscan__`、`mcp__ypmcn__`、`ypmcn__`、`test__` | 工具名前缀（命名空间）示例，按最后一个 `__` 后段匹配实际工具名          |
-| 平台别名                           | `xhs`/`小红书`→`xiaohongshu`；`dy`/`抖音`→`douyin`               | 归一化规则                                                          |
-| `MAX_FOLLOWER_COUNT`               | `999_999_999`                                                    | 粉丝技术上限                                                        |
-| `UNRESTRICTED_FOLLOWERCOUNT_RANGE` | `"[0,999999999]"`                                                | 粉丝无要求时的落库值                                                |
-| `TOOL_REGISTRY`                    | 20 个业务工具名                                                  | 含已弃用工具名，供 `normalizeToolCallParams` 判定业务工具；不代表白名单 |
-| `LOCAL_TOOL_NAMES`                 | 7 个插件本地工具名                                                 | 仅供 `resolveFlowToolName` 路由本地工具，不进入业务参数归一化 |
+| 平台别名                           | `xhs`/`小红书`→`xiaohongshu`；`dy`/`抖音`→`douyin`               | 归一化规则                                                              |
+| `MAX_FOLLOWER_COUNT`               | `999_999_999`                                                    | 粉丝技术上限                                                            |
+| `UNRESTRICTED_FOLLOWERCOUNT_RANGE` | `"[0,999999999]"`                                                | 粉丝无要求时的落库值                                                    |
+| `TOOL_REGISTRY`                    | 21 个业务工具名                                                  | 含已弃用工具名，供 `normalizeToolCallParams` 判定业务工具；不代表白名单 |
+| `LOCAL_TOOL_NAMES`                 | 7 个插件本地工具名                                               | 仅供 `resolveFlowToolName` 路由本地工具，不进入业务参数归一化           |
 
 ## 2. Provider MCP 白名单（manifest `toolFilter.include`）
 
-`validate_requirement`、`search_creators`、`rank_mcns`、`select_inquiry_form_fields`、`get_inquiry_form_fields_status`、`create_with_distributions`、`sync_mcn_inquiry_status`、`ingest_mcn_submissions`、`get_ingest_job`、`manual_source_creators`、`manual_source_creators_status`、`score_manual_source_csv`、`score_manual_source_csv_status`、`rank_creators`（共 14 个）。
+`validate_requirement`、`search_creators`、`rank_mcns`、`select_inquiry_form_fields`、`get_inquiry_form_fields_status`、`create_with_distributions`、`sync_mcn_inquiry_status`、`ingest_mcn_submissions`、`get_ingest_job`、`manual_source_creators`、`manual_source_creators_status`、`score_manual_source_csv`、`score_manual_source_csv_status`、`excel_export`、`rank_creators`（共 15 个）。
 
 明确不暴露：`get_workflow_state`、`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export`、`get_selected_inquiry_form_fields`（已弃用）。
 
@@ -75,18 +75,18 @@ Provider 后端把这些字段按单值 `float` 读取，收到 `"[min,max]"` �
 
 ## 4. 归一化行为（`normalizeToolCallParams`，仅 validate_requirement）
 
-| 字段                   | 规则                                                                                                                                                                                                                                                                                                                       |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `platform`             | 别名归一化到 `xiaohongshu`/`douyin`                                                                                                                                                                                                                                                                                        |
-| `status`               | 缺失/空时补 `"ready"`                                                                                                                                                                                                                                                                                                      |
-| `brandName`            | 单元素字符串数组解包；优先采用当前平台 Dify 唯一合法品牌；若 Dify 当前平台品牌缺失，但 `rawMessagesJson.original` 中存在明确 `品牌：...` / `品牌名称：...` / `合作品牌：...` 标注，则可确定性兜底为该值；`暂无品牌` / `无品牌` 等占位值一律视为无效                                                                        |
-| `quantityTotal`        | 归一化为正整数字符串；非法则删除该字段（交预检报错）                                                                                                                                                                                                                                                                       |
-| 区间字段               | 标量→`[v,v]` 起步（退化区间不被修复，交预检拒绝）；中文区间 `-~～至到` 解析；`rebate`→`"[min,1]"`；粉丝“无/不限”→`"[0,999999999]"`；粉丝超上限截断到 `999999999`；CPM/CPE 标量→`"[0,v]"`；报价标量→`[floor(v×0.7), ceil(v×1.2)]`（Provider 检索单价只按原价下 30%/上 20% 扩展一次，不回写需求参数） |
-| 数值单值字段           | 只归一化单个非负数值（`"10000"`、`"0.6"`）；`"60%"`→`"0.6"`，比例字段中 >1 且 ≤100 的数值按百分数换算为 0–1 分数；区间、数组等无法确定成单个非负数值时原样返回，由预检报错，不把区间折算成单值 |
-| `submissionDeadlineAt` | 归一化为 `YYYY-MM-DD HH:mm:ss`，仅当晚于当前时间；兼容中文日期加冒号时钟（如 `2026年9月26日16:00`，含全角冒号）；两位年份固定按 20xx 解释（`26年9月26日 16:00` → `2026-09-26 16:00:00`），与原文/最新澄清做等价比较，保留原始证据；手动拓展完全没有截止时间语境时由插件填建需后 30 天系统默认并在 `description` 标注可覆盖；用户已给出的日期仅有日期、过期、非法或冲突仍阻断                                                                                                                                   |
-| 标签数组               | 字符串化 JSON 数组解包；Dify `parse_outputs` 中仅当前平台标签/品牌/数值唯一值自动补入缺失字段；数值保留无平台前缀的既有兼容结构，另一平台 `dy_`/`xhs_` 片段不参与回填或 parsed 证据（抖音按视频类型对齐 L2/L3）                                                                                                            |
-| `rawMessagesJson`      | `business_mode` 出站映射为 Provider 兼容线值（序列化为字符串在 `before_tool_call` 完成）                                                                                                                                                                                                                                   |
-| 空值清洗               | 非必填字段的 `null`/`"null"` 删除                                                                                                                                                                                                                                                                                          |
+| 字段                   | 规则                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `platform`             | 别名归一化到 `xiaohongshu`/`douyin`                                                                                                                                                                                                                                                                                                                                          |
+| `status`               | 缺失/空时补 `"ready"`                                                                                                                                                                                                                                                                                                                                                        |
+| `brandName`            | 单元素字符串数组解包；优先采用当前平台 Dify 唯一合法品牌；若 Dify 当前平台品牌缺失，但 `rawMessagesJson.original` 中存在明确 `品牌：...` / `品牌名称：...` / `合作品牌：...` 标注，则可确定性兜底为该值；`暂无品牌` / `无品牌` 等占位值一律视为无效                                                                                                                          |
+| `quantityTotal`        | 归一化为正整数字符串；非法则删除该字段（交预检报错）                                                                                                                                                                                                                                                                                                                         |
+| 区间字段               | 标量→`[v,v]` 起步（退化区间不被修复，交预检拒绝）；中文区间 `-~～至到` 解析；`rebate`→`"[min,1]"`；粉丝“无/不限”→`"[0,999999999]"`；粉丝超上限截断到 `999999999`；CPM/CPE 标量→`"[0,v]"`；报价标量→`[floor(v×0.7), ceil(v×1.2)]`（Provider 检索单价只按原价下 30%/上 20% 扩展一次，不回写需求参数）                                                                          |
+| 数值单值字段           | 只归一化单个非负数值（`"10000"`、`"0.6"`）；`"60%"`→`"0.6"`，比例字段中 >1 且 ≤100 的数值按百分数换算为 0–1 分数；区间、数组等无法确定成单个非负数值时原样返回，由预检报错，不把区间折算成单值                                                                                                                                                                               |
+| `submissionDeadlineAt` | 归一化为 `YYYY-MM-DD HH:mm:ss`，仅当晚于当前时间；兼容中文日期加冒号时钟（如 `2026年9月26日16:00`，含全角冒号）；两位年份固定按 20xx 解释（`26年9月26日 16:00` → `2026-09-26 16:00:00`），与原文/最新澄清做等价比较，保留原始证据；手动拓展完全没有截止时间语境时由插件填建需后 30 天系统默认并在 `description` 标注可覆盖；用户已给出的日期仅有日期、过期、非法或冲突仍阻断 |
+| 标签数组               | 字符串化 JSON 数组解包；Dify `parse_outputs` 中仅当前平台标签/品牌/数值唯一值自动补入缺失字段；数值保留无平台前缀的既有兼容结构，另一平台 `dy_`/`xhs_` 片段不参与回填或 parsed 证据（抖音按视频类型对齐 L2/L3）                                                                                                                                                              |
+| `rawMessagesJson`      | `business_mode` 出站映射为 Provider 兼容线值（序列化为字符串在 `before_tool_call` 完成）                                                                                                                                                                                                                                                                                     |
+| 空值清洗               | 非必填字段的 `null`/`"null"` 删除                                                                                                                                                                                                                                                                                                                                            |
 
 截止时间的参数规范化与绝对日期证据比较共享解析：支持 `T`/空格、斜杠日期、中文“点/时、分、秒”。明确截止字段中的“明天16:00”按本地日期加一天，“12点前”按当天12:00；过期不顺延，无关事件不作为截止证据。相对时间证据支持逗号分隔及“请在明天16:00前提交”等后置提交语境。带 `Z` 或时区偏移的绝对时间不作为本地时间证据，不能截去时区后放行。数量证据支持“人”、全角数字及 1–9999 的规范中文整数，不匹配更长数字尾部或金额/比例；“人民币”“人均”不算人数单位。
 
@@ -130,22 +130,23 @@ Hook 使用 `resolveFlowToolName`：业务工具沿用上述识别；本地工�
 
 > 2026-09-09 按当前工作流重写插件可见 13 个 Provider 工具的描述：清除 get_workflow_state 旧链路引用与 type-3/Dify/B CSV 等实现术语，补上 get_ingest_job 缺失的描述，明确“受理≠完成”与遗留工具边界。服务端 tools/list 仍为旧文本，同步部署后才对 Agent 生效；同步前以本表为准。8 个未暴露工具（get_workflow_state、create_submission_batch、get_creator_detail、get_creator_detail_export、get_recommendation_run_detail、dispatch_reference_creator、audit_manual_adjustment、record_client_feedback）描述不改：模型不可见，不影响运行。
 
-| 工具 | 建议描述 |
-| --- | --- |
-| `validate_requirement` | 校验并创建当前单平台需求记录（会写入）。按当前 customer_demands 列契约直接传顶层参数，不用 payload 包装或旧字段名；platform 只接受 xiaohongshu/douyin，需求完整时 status="ready"。成功后取 data.requirement_id 作为需求 ID（缺失时用 data.id；demand_id 不是需求 ID）。 |
-| `search_creators` | 按当前需求的已保存筛选条件检索候选达人并写入候选池，返回实际生效筛选、排除统计与去重候选数。零匹配也是成功结果；本工具不自动切换功能或放宽条件，成功后继续 rank_mcns。 |
-| `rank_mcns` | 按当前需求对候选达人所属机构排序，返回每家机构的排名、独立覆盖达人、返点、综合分与机构 ID，并提供排名 Excel 下载地址。本工具不选择收件机构，也不发送询价。 |
-| `select_inquiry_form_fields` | live schema 已提供 source_requirement_id 继承和 force_reselect 强制重选（2026-09-10 对 app MCP 代理实测）。继承成功返回 `configured`（旧契约名）或 `copied`（现网实际状态名，payload 可无 `configuration_source`），两者都表示当前需求配置成功；selection_required/opened 返回 URL 待提交，error 暂停。不返回字段数组。 |
-| `get_inquiry_form_fields_status` | 查询需求字段配置是否已提交，只传 requirement_id。返回 `unavailable`（尚无已提交配置）/`submitted`（已有配置，含继承）/`invalid`。按需求判定、不区分字段页实例；不返回字段数组。首次选择的字段页可用它自动确认提交，重选/继承场景不得轮询。 |
-| `create_with_distributions` | 按需求已保存的字段配置创建询价项目并向指定机构分发（含企微发送）。成功只代表分发已创建；是否送达以 Provider 回执为准，不要自动重发。 |
-| `sync_mcn_inquiry_status` | 为已分发项目创建或复用机构询价映射。用户报告机构已回填时先调用本工具，用返回的 inquiry_ids 直接调用 ingest_mcn_submissions；同步成功不代表机构已填表。 |
-| `ingest_mcn_submissions` | 对非空询价启动机构回填采集，返回 job_id。用 sync_mcn_inquiry_status 返回的 inquiry_ids 调用；受理后用 get_ingest_job 轮询到 succeeded 或 partially_succeeded。 |
-| `get_ingest_job` | 查询机构回填采集任务的状态、各询价结果与预览 Excel 下载地址。轮询到 succeeded/partially_succeeded 后保存预览表；partially_succeeded 需如实报告未回填或失败的机构。 |
-| `manual_source_creators` | 按指定需求后台保存的完整有效需求启动手动拓展搜索，传 requirement_id，live schema required num 时附 num（用户想要的达人数量，取 Hook 注入的 MANUAL_SOURCE_NUM）。同步返回候选 links CSV；异步返回 batch_id，用 manual_source_creators_status 查询。 |
-| `manual_source_creators_status` | 查询手动拓展任务状态并获取候选 links CSV。未完成时用同一 requirement_id、batch_id、num 继续查询，不要重新提交搜索；num 为本批取候选链接数量，由调用方按目标人数梯度计算并传入（示例：5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，非穷举）。 |
-| `score_manual_source_csv` | 为已补全达人详情的 CSV 启动或恢复评分任务，返回 job_id。csv_file_path 传当前 file_bridge 返回的 CSV URL；受理后用 score_manual_source_csv_status 轮询。 |
-| `score_manual_source_csv_status` | 查询评分任务的行处理进度与最终工作簿下载地址。仅终态且返回可下载地址时保存工作簿；行评分成功不等于工作簿可交付。 |
-| `rank_creators` | 遗留机构提交排序工具：当前询价回收流程不使用（回收走预览表、原生补全与 CSV 评分链路）。仅保留兼容，不要按旧链路调用。 |
+| 工具                             | 建议描述                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validate_requirement`           | 校验并创建当前单平台需求记录（会写入）。按当前 customer_demands 列契约直接传顶层参数，不用 payload 包装或旧字段名；platform 只接受 xiaohongshu/douyin，需求完整时 status="ready"。成功后取 data.requirement_id 作为需求 ID（缺失时用 data.id；demand_id 不是需求 ID）。                                                                                                                                                                                                                                                                                          |
+| `search_creators`                | 按当前需求的已保存筛选条件检索候选达人并写入候选池，返回实际生效筛选、排除统计与去重候选数。零匹配也是成功结果；本工具不自动切换功能或放宽条件，成功后继续 rank_mcns。                                                                                                                                                                                                                                                                                                                                                                                           |
+| `rank_mcns`                      | 按当前需求对候选达人所属机构排序，返回每家机构的排名、独立覆盖达人、返点、综合分与机构 ID，并提供排名 Excel 下载地址。本工具不选择收件机构，也不发送询价。                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `select_inquiry_form_fields`     | 两种用途：①需求维度（传 requirement_id）live schema 已提供 source_requirement_id 继承和 force_reselect 强制重选（2026-09-10 对 app MCP 代理实测）。继承成功返回 `configured`（旧契约名）或 `copied`（现网实际状态名，payload 可无 `configuration_source`），两者都表示当前需求配置成功；selection_required/opened 返回 URL 待提交，error 暂停。不返回字段数组。②只扒达人信息（不传 requirement_id）传 platform+creator_ids/creator_links（至少其一），后端建 `get_creator_detail_run`（status=pending）返回 `field_id`+URL；字段提交后 columns 写入该 field_id。 |
+| `get_inquiry_form_fields_status` | 查询需求字段配置是否已提交，只传 requirement_id。返回 `unavailable`（尚无已提交配置）/`submitted`（已有配置，含继承）/`invalid`。按需求判定、不区分字段页实例；不返回字段数组。首次选择的字段页可用它自动确认提交，重选/继承场景不得轮询。                                                                                                                                                                                                                                                                                                                       |
+| `create_with_distributions`      | 按需求已保存的字段配置创建询价项目并向指定机构分发（含企微发送）。成功只代表分发已创建；是否送达以 Provider 回执为准，不要自动重发。                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `sync_mcn_inquiry_status`        | 为已分发项目创建或复用机构询价映射。用户报告机构已回填时先调用本工具，用返回的 inquiry_ids 直接调用 ingest_mcn_submissions；同步成功不代表机构已填表。                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `ingest_mcn_submissions`         | 对非空询价启动机构回填采集，返回 job_id。用 sync_mcn_inquiry_status 返回的 inquiry_ids 调用；受理后用 get_ingest_job 轮询到 succeeded 或 partially_succeeded。                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `get_ingest_job`                 | 查询机构回填采集任务的状态、各询价结果与预览 Excel 下载地址。轮询到 succeeded/partially_succeeded 后保存预览表；partially_succeeded 需如实报告未回填或失败的机构。                                                                                                                                                                                                                                                                                                                                                                                               |
+| `manual_source_creators`         | 按指定需求后台保存的完整有效需求启动手动拓展搜索，传 requirement_id，live schema required num 时附 num（用户想要的达人数量，取 Hook 注入的 MANUAL_SOURCE_NUM）。同步返回候选 links CSV；异步返回 batch_id，用 manual_source_creators_status 查询。                                                                                                                                                                                                                                                                                                               |
+| `manual_source_creators_status`  | 查询手动拓展任务状态并获取候选 links CSV。未完成时用同一 requirement_id、batch_id、num 继续查询，不要重新提交搜索；num 为本批取候选链接数量，由调用方按目标人数梯度计算并传入（示例：5 人→15、10 人→30、20 人→50、30 人→60、50 人→100，非穷举）。                                                                                                                                                                                                                                                                                                                |
+| `score_manual_source_csv`        | 为已补全达人详情的 CSV 启动或恢复评分任务，返回 job_id。csv_file_path 传当前 file_bridge 返回的 CSV URL；受理后用 score_manual_source_csv_status 轮询。                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `score_manual_source_csv_status` | 查询评分任务的行处理进度与最终工作簿下载地址。仅终态且返回可下载地址时保存工作簿；行评分成功不等于工作簿可交付。                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `excel_export`                   | 只扒达人信息导出：传 field_id+source_csv_file_link（补全 CSV 经 file_bridge 上传的 OSS 链接）+可选 custom_table_oss_url。后端查 `get_creator_detail_run.columns`：已生成则按选中 columns 导出（样式与 manual-score-summary 一致、列按 columns 裁剪），返回 `data.file_url`；未生成则返回「未选择字段」+字段选择 URL，agent 重新展示 URL 等用户提交后重试。                                                                                                                                                                                                       |
+| `rank_creators`                  | 遗留机构提交排序工具：当前询价回收流程不使用（回收走预览表、原生补全与 CSV 评分链路）。仅保留兼容，不要按旧链路调用。                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ## 9. Provider 输出实测与修剪清单（2026-09-09 测试环境）
 
@@ -168,18 +169,18 @@ Hook 使用 `resolveFlowToolName`：业务工具沿用上述识别；本地工�
 
 ### 实测响应体积（字节，含 JSON-RPC 信封）
 
-| 工具 | 路径 | 体积 |
-| --- | --- | --- |
-| `validate_requirement` | 成功（简/全需求） | 4061 / 4961 |
-| `search_creators` | 成功 | 2005 |
-| `rank_mcns` | 成功（20 家机构） | 7197 |
-| `manual_source_creators` | 异步受理 | 3146 |
-| `manual_source_creators_status` | 运行态 / 完成态 | 494 / 1077 |
-| `score_manual_source_csv` | 受理 | 789 |
-| `score_manual_source_csv_status` | 运行态 / 失败终态 | 788 / 973 |
-| `get_ingest_job` | 失败终态 | 965 |
-| `ingest_mcn_submissions` | 受理 | 747 |
-| `sync_mcn_inquiry_status` | 错误路径 | 580 |
+| 工具                             | 路径              | 体积        |
+| -------------------------------- | ----------------- | ----------- |
+| `validate_requirement`           | 成功（简/全需求） | 4061 / 4961 |
+| `search_creators`                | 成功              | 2005        |
+| `rank_mcns`                      | 成功（20 家机构） | 7197        |
+| `manual_source_creators`         | 异步受理          | 3146        |
+| `manual_source_creators_status`  | 运行态 / 完成态   | 494 / 1077  |
+| `score_manual_source_csv`        | 受理              | 789         |
+| `score_manual_source_csv_status` | 运行态 / 失败终态 | 788 / 973   |
+| `get_ingest_job`                 | 失败终态          | 965         |
+| `ingest_mcn_submissions`         | 受理              | 747         |
+| `sync_mcn_inquiry_status`        | 错误路径          | 580         |
 
 ### 未测路径
 

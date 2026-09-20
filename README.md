@@ -4,6 +4,7 @@
 
 - 询价机构：`选择模式 → 解析复核落库 → search_creators → rank_mcns → 选择机构和字段 → 发送确认与企微询价 → sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 Excel → 询问是否补全 → ypscan_save_creator_links 派生 links CSV → 原生补全 → file_bridge 合并上传 → score_manual_source_csv → 保存打分排序 Excel`
 - 手动拓展：`选择模式 → 解析复核落库 → 选择字段 → manual_source_creators(requirement_id, num) → 同步 links CSV 或 manual_source_creators_status 轮询 → 保存并归一化 links CSV → ypscan_summarize_manual_scores 取得当前批 → 原生补全 → file_bridge 仅合并上传当前批 → score_manual_source_csv → 同步 Excel 或 score_manual_source_csv_status 轮询 → 保存 manual_score_batch → 再汇总 → 达标交付或下一批`
+- 只扒达人信息：`选择模式 → select_inquiry_form_fields(platform, creator_ids/creator_links，不传 requirement_id) → 拿到 field_id 和字段选择页 URL → 用户提交字段 → 原生补全 → file_bridge 上传补全 CSV → excel_export(field_id, source_csv_file_link, custom_table_oss_url?) → 展示达人表下载链接`
 
 当前实现把 `links CSV` 作为达人补全与排序的正式中间产物；两分支按 20 个一批调用当前平台原生达人补全工具（登录态由宿主工具内部处理），再由 `file_bridge(flow=manual_source)` 合并并上传，交给 `score_manual_source_csv` 打分。用户可见的表格只有最终评分表、汇总表、MCN 排名表和机构回填预览表；手动拓展单批 `manual_score_batch`、links CSV、补全 CSV 和 merged CSV 都是内部中间产物，不主动向用户展示表格、路径或链接。正式链路不再调用 `get_workflow_state`、`rank_creators`、`create_submission_batch`、`get_creator_detail` 或 `get_creator_detail_export`；遗留 flow 只保留兼容接入。每次真正开始询价或手动拓展都必须重新解析、复核并创建独立的新 requirement，不跨功能复用结果；当前机构列表后的“暂不询价”续办是例外。完整业务规则及例外以 [Skill](skills/media-assistant/SKILL.md) 为准。
 
@@ -41,7 +42,7 @@ npm run smoke
 npm pack --dry-run --cache /tmp/ypscan-npm-cache
 ```
 
-Smoke 断言本地工具为 5 个、Hook 为 5 个，并校验 package、manifest 和 lock 两处根包版本一致；远端 MCP 暴露 `score_manual_source_csv` / `score_manual_source_csv_status` 且不再暴露已移除工具（`rank_creators` 仍保留兼容白名单，不用于正式链路）。字段选择由远端 MCP 直接暴露；`before_tool_call` 仅做需求落库预检，不包含功能互斥或企微发送确认门禁。代码检查不等于模型或桌面交互验收。
+Smoke 断言本地工具为 5 个、Hook 为 5 个，并校验 package、manifest 和 lock 两处根包版本一致；远端 MCP 暴露 `score_manual_source_csv` / `score_manual_source_csv_status` / `excel_export` 且不再暴露已移除工具（`rank_creators` 仍保留兼容白名单，不用于正式链路）。字段选择由远端 MCP 直接暴露；`before_tool_call` 仅做需求落库预检，不包含功能互斥或企微发送确认门禁。代码检查不等于模型或桌面交互验收。
 
 `npm pack --dry-run` 也会触发 prepack，可能生成或删除凭据 bundle，只在需要打包核对时执行。安装包接收者可提取内置凭据；不入 Git 不等于分发安全，发布前需确认权限、有效期和分发范围。
 

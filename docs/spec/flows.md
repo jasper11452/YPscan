@@ -4,9 +4,9 @@
 
 ## 1. 业务模式确定
 
-- 用户明确表达 → 直接采用（`询价机构`：询价机构/机构询价/MCN 询价；`手动拓展`：手动拓展/人工拓展/直接手扒/手扒/手捞筛选）。
-- 未明确、同时出现两种或语义冲突 → `AskUserQuestion`（选项固定两模式），回答前不解析、不落库。
-- 模式决定本次新建 requirement 进入的功能；`手动拓展` 在 Provider 出站边界映射为兼容线值，Agent 不得改写。
+- 用户明确表达 → 直接采用（`询价机构`：询价机构/机构询价/MCN 询价；`手动拓展`：手动拓展/人工拓展/直接手扒/手扒/手捞筛选；`只扒达人信息`：只扒达人信息/只扒达人/导出达人表/达人详情表）。
+- 未明确、同时出现多种或语义冲突 → `AskUserQuestion`（选项固定三模式），回答前不解析、不落库。
+- 前两种模式决定本次新建 requirement 进入的功能；`手动拓展` 在 Provider 出站边界映射为兼容线值，Agent 不得改写。`只扒达人信息` 不建 requirement，不调 `ypscan_parse_requirement` 和 `validate_requirement`。
 
 ## 2. 建需与复核（两功能共用）
 
@@ -75,6 +75,23 @@ validate_requirement → select_inquiry_form_fields（configured/copied 直接�
 - `file_bridge` 成功后返回未签名 OSS URL；若对象虽已上传但匿名不可读，则返回 `YPSCAN_FILE_BRIDGE_PUBLIC_URL_UNREADABLE`，不得继续把该 URL 传给 `score_manual_source_csv`。
 - 降级路径：旧 Provider 同步/异步返回 Excel 时，仅保存并交付当前 Excel，不进 CSV 补全/打分链路，不调 `manual_source_creators_status`、`rank_creators` 或 `create_submission_batch`，也不得通过 Bash、Python、Node、PowerShell 或其他临时脚本解析 `xlsx` 强行补链路。
 - 单批评分表是内部中间产物，不向用户展示表格、路径或链接；汇总终态才交付。只计精确“推荐”，不计“不推荐”或处理成功数；未知结论和来源冲突停止。综合分为 0 的评分行不写入最终表（0 分通常来自评分失败、资料无效或数据不足，也可能是有效评估但内容/类型相关度均为 0 级），不计数推荐、不算缺行，按 `excluded_zero_score_count` 说明。当前批任一补全成功达人缺评分行时先返回 `await_scores` 与明确标注的阶段性 `progress`（单批表不是最终表），即使推荐已达标或候选已耗尽也不得提前交付。候选耗尽不足时先交付再复核并建议放宽。机构回收不启用分批早停。
+
+## 4.1 只扒达人信息链路
+
+```text
+select_inquiry_form_fields(platform, creator_ids/creator_links，不传 requirement_id)
+→ 拿到 field_id 和字段选择页 URL，正文单独一行原样展示 URL 让用户选字段
+→ 平台原生达人补全工具补全这批达人 → file_bridge 上传补全 CSV 得到 source_csv_file_link
+→ （用户上传了自定义表格时 file_bridge 上传得到 custom_table_oss_url，可选）
+→ excel_export(field_id, source_csv_file_link, custom_table_oss_url?) → 后端查表：已提交字段则展示下载链接，未提交则返回「未选择字段」+URL 重新展示等提交后重试
+```
+
+关键约束：
+
+- 不建 requirement、不评分排序、不调 `score_manual_source_csv`。不轮询 `get_inquiry_form_fields_status`、不主动停下等口头确认；字段是否已提交由 `excel_export` 后端查 `get_creator_detail_run.columns` 校验。
+- `select_inquiry_form_fields` 无需求时返回 `field_id`（`get_creator_detail_run.run_id`）+ URL，两者缺一不可。
+- agent 展示 URL 后继续补全上传，直接调 `excel_export`；未选择字段时重新展示字段选择 URL 等用户提交后用同一 `field_id` 重试，`source_csv_file_link` 无效时重新上传补全 CSV 再重试。
+- 无 `custom_table_oss_url` 时按选中 columns 生成固定格式表格（样式与 manual-score-summary 一致、列按 columns 裁剪）；有则解析自定义表格字段插值。
 
 ## 5. 结果不足：先复核，再放宽
 

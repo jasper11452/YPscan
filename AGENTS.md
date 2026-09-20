@@ -17,7 +17,7 @@
 ## 这是什么
 
 - `ypscan`（悦普识星）是 OpenClaw 插件（`id: ypscan`，`private: true`）：客户端集成层，注册 5 个本地工具，通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`）。
-- 当前主线形态（`feat/rank_creators`）支持**双业务功能**：`询价机构` + `手动拓展`（由 Provider 后端 `manual_source_creators` 完成）。手动拓展固定链路为 `links CSV → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全 → file_bridge 只上传当前批 → score_manual_source_csv → 保存 manual_score_batch → 再汇总`（梯度候选池 10 人→30、20 人→50、50 人→100、20/批，去重推荐人数达标或候选耗尽后交付最终汇总表）；机构回填固定 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 → ypscan_save_creator_links → 原生补全 → file_bridge → score_manual_source_csv`；`mcn_rank` 仅保留兼容接入。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
+- 当前主线形态（`feat/rank_creators`）支持**三种业务模式**：`询价机构`、`手动拓展`（由 Provider 后端 `manual_source_creators` 完成）和 `只扒达人信息`（不建需求：`select_inquiry_form_fields` 无需求时传 `platform`+`creator_ids`/`creator_links` 返回 `field_id`，补全后 `excel_export` 导出达人表）。手动拓展固定链路为 `links CSV → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全 → file_bridge 只上传当前批 → score_manual_source_csv → 保存 manual_score_batch → 再汇总`（梯度候选池 10 人→30、20 人→50、50 人→100、20/批，去重推荐人数达标或候选耗尽后交付最终汇总表）；机构回填固定 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 → ypscan_save_creator_links → 原生补全 → file_bridge → score_manual_source_csv`；`mcn_rank` 仅保留兼容接入。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
 - 技术栈：Node.js `>=22.22.2`、ESM（`"type": "module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。运行时依赖为 `ali-oss`、`read-excel-file`、`write-excel-file`、`fflate`、`xml2js` 与 `playwright-core`（后者仅为遗留 browser 工具保留，当前插件未注册任何 browser 工具）。
 
 ## 常用命令（仓库根执行）
@@ -34,7 +34,7 @@
 ## 架构地图（当前形态）
 
 - `index.js` — 入口：注册 5 个本地工具 `ypscan_parse_requirement`、`ypscan_save_artifact`、`ypscan_save_creator_links`、`file_bridge`、`ypscan_summarize_manual_scores`；注册 5 个 Hook：`before_prompt_build`、`before_tool_call`、`tool_result_persist`、`gateway_start`、`gateway_stop`（后两个只重置瞬态状态）。
-- `openclaw.plugin.json` — 清单：Provider MCP 白名单 14 个（含 `manual_source_creators`/`manual_source_creators_status`、`rank_mcns`、`select_inquiry_form_fields`/`get_inquiry_form_fields_status`、`score_manual_source_csv`/`score_manual_source_csv_status`、`rank_creators`；不再暴露 `get_workflow_state`）、测试 adapter、`contracts.tools`、`skills`。`configSchema` 包含 `testMode`/`testAdapterBaseUrl` 与 `fileBridgeOss`；后者是 `file_bridge` 的安装级 OSS 上传配置，`testAdapterBaseUrl` 仅 `testMode=true` 时使用且必须是无凭据 loopback origin。
+- `openclaw.plugin.json` — 清单：Provider MCP 白名单 15 个（含 `manual_source_creators`/`manual_source_creators_status`、`rank_mcns`、`select_inquiry_form_fields`/`get_inquiry_form_fields_status`、`score_manual_source_csv`/`score_manual_source_csv_status`、`excel_export`、`rank_creators`；不再暴露 `get_workflow_state`）、测试 adapter、`contracts.tools`、`skills`。`configSchema` 包含 `testMode`/`testAdapterBaseUrl` 与 `fileBridgeOss`；后者是 `file_bridge` 的安装级 OSS 上传配置，`testAdapterBaseUrl` 仅 `testMode=true` 时使用且必须是无凭据 loopback origin。
 - `src/tools/` — 本地工具与辅助：
   - `parse-requirement.js` — 直连 Dify 的需求解析代理；`data.outputs` 只返回当前 Provider 契约消费的字段，缺失字段省略；八个 Dify Label 解析契约保持不变，`talentTypeLabel` 不是 Dify 字段。
   - `manual-score-summary.js` — 读取受控评分表，精确累计推荐人数，返回下一批或最终汇总 Excel；仅手动拓展使用。
@@ -43,7 +43,7 @@
   - `test-adapter.js`、`tool-result.js`、`popup-questions.js` — 测试下载、结果适配与统一弹窗载荷。
   - `manual-browser-*`、`manual-research-*`、`select-cascade.js`、`set-filter-range.js` — **遗留 native Browser 手扒工具**：保留在仓库但不在 `index.js` 注册、不在发布包 `files` 内。不要重新注册。
 - `src/contract/registry.js` — 参数归一化、平台别名、`business_mode` 常量与 `validate_requirement` 预检。
-- `src/hooks/register-flow-directives.js` — 注入双功能链路、独立建需与交付指令；`before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或企微发送确认门禁。
+- `src/hooks/register-flow-directives.js` — 注入三种业务模式链路（询价机构/手动拓展/只扒达人信息）、独立建需与交付指令；`before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或企微发送确认门禁。
 - `skills/media-assistant/` — **业务行为权威**：`SKILL.md`（固定链路、复核、放宽顺序、Provider 幂等规则）+ `references/`（工具卡）。涉及达人/询价/手扒/提报的任务，首次相关操作前必须完整读一遍。宿主 YP Action 提供原生达人补全（`get_xhs_author_business_card`/`get_douyin_author_business_card`），不在插件白名单；登录窗口与 Cookie 由宿主工具内部处理。
 - `docs/review-checklist.md` — 用户维护的验收清单；改业务链路后核对相关条目。
 - `docs/wiki/` — 工程资料入口、开发验证方法、文档同步矩阵与发布流程；不重复业务 Skill。
@@ -52,7 +52,7 @@
 ## 关键不变量
 
 1. **SKILL.md 优先**：业务行为（模式判定、复核、放宽、交付）一律以 `skills/media-assistant/SKILL.md` 及其 references 为准，本文件只补充工程约束。
-2. **双功能独立建需**：询价机构与手动拓展不得并行或在功能处理中切换；每次真正开始任一新功能都必须重新解析、复核并创建 requirement。即使同会话、同平台、业务条件未变且前一功能完成或明确停止，也不得跨功能复用 requirement；不得复用旧机构、达人、batch 或 Excel。例外仅限当前 `rank_mcns` 列表后的“暂不询价”续办：需求、平台未变且没有更新的功能或 requirement 时，继续原 requirement 和当前机构映射，不重新解析、落库、搜索或排名。
+2. **双功能独立建需**：询价机构与手动拓展不得并行或在功能处理中切换；每次真正开始任一新功能都必须重新解析、复核并创建 requirement。即使同会话、同平台、业务条件未变且前一功能完成或明确停止，也不得跨功能复用 requirement；不得复用旧机构、达人、batch 或 Excel。例外仅限当前 `rank_mcns` 列表后的“暂不询价”续办：需求、平台未变且没有更新的功能或 requirement 时，继续原 requirement 和当前机构映射，不重新解析、落库、搜索或排名。只扒达人信息不建 requirement、不适用本不变量，其字段选择会话用 field_id（`get_creator_detail_run.run_id`）关联，不与 requirement 混用。
 3. **复核先于放宽**：不足结果的触发条件、复核、逐项建议与确认、重新建需及禁止放宽项，统一按 SKILL 的“结果不足：先复核，再放宽”执行。手动拓展可信数量不足时可在交付当前真实 Excel 后提出放宽建议，须等待用户确认；机构回收不足只交付真实结果，不自动再询价。
 4. **Provider 边界**：企微发送确认、机构名匹配、合并去重、同 requirement/机构幂等全部由 Provider 负责；插件不预检发送、不缓存发送状态、不暴露已弃用的查询工具。
 5. **结果归属**：所有结果、链接、文件只用当前 requirement、当前平台、本轮真实 Provider 证据；不跨需求/平台/账号/历史 run 混用或补齐。

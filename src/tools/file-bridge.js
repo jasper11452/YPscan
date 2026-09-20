@@ -195,11 +195,11 @@ function publicObjectUrl({ bucket, region }, objectKey) {
   return `https://${bucket}.${region}.aliyuncs.com/${encodedObjectKey}`;
 }
 
-function buildObjectKey(objectPrefix, flow, requirementId, sha256) {
-  if (!isSafeObjectSegment(requirementId)) {
-    throw new TypeError("requirement_id 不能包含路径分隔符或控制字符");
+function buildObjectKey(objectPrefix, flow, scopeId, sha256) {
+  if (!isSafeObjectSegment(scopeId)) {
+    throw new TypeError("requirement_id/field_id 不能包含路径分隔符或控制字符");
   }
-  return `${objectPrefix}${flow}/${requirementId}/${sha256}.csv`;
+  return `${objectPrefix}${flow}/${scopeId}/${sha256}.csv`;
 }
 
 function isSafeObjectSegment(value) {
@@ -306,7 +306,7 @@ export function normalizeLocalFilePath(value, workspaceDir) {
 
 function csvPathProblems(params) {
   const problems = [];
-  if (!isCsvFilePath(params?.links_csv_path)) {
+  if (params?.flow !== "creator_detail" && !isCsvFilePath(params?.links_csv_path)) {
     problems.push({ field: "links_csv_path", path: String(params?.links_csv_path ?? "") });
   }
   for (const path of params?.completion_csv_paths ?? []) {
@@ -334,20 +334,24 @@ function blockedUploadSources(
   { workspaceDir, allowedLinksCsvPaths, allowedCompletionCsvPaths },
 ) {
   const blocked = [];
-  const linksAllowed = allowedUploadPathSet(
-    allowedLinksCsvPaths,
-    params?.requirement_id,
-    workspaceDir,
-  );
-  if (
-    linksAllowed &&
-    !linksAllowed.has(normalizeLocalFilePath(params?.links_csv_path, workspaceDir))
-  ) {
-    blocked.push({ field: "links_csv_path", path: String(params?.links_csv_path ?? "") });
+  const isCreatorDetail = params?.flow === "creator_detail";
+  const scopeId = isCreatorDetail ? params?.field_id : params?.requirement_id;
+  if (!isCreatorDetail) {
+    const linksAllowed = allowedUploadPathSet(
+      allowedLinksCsvPaths,
+      params?.requirement_id,
+      workspaceDir,
+    );
+    if (
+      linksAllowed &&
+      !linksAllowed.has(normalizeLocalFilePath(params?.links_csv_path, workspaceDir))
+    ) {
+      blocked.push({ field: "links_csv_path", path: String(params?.links_csv_path ?? "") });
+    }
   }
   const completionsAllowed = allowedUploadPathSet(
     allowedCompletionCsvPaths,
-    params?.requirement_id,
+    scopeId,
     workspaceDir,
   );
   if (completionsAllowed) {
@@ -370,10 +374,11 @@ function hasCsvControlCharacter(text) {
   return false;
 }
 
-function mergedCsvContentProblems(csvText) {
+function mergedCsvContentProblems(csvText, flow) {
   const problems = [];
-  if (!nonemptyString(csvText) || !csvText.startsWith("source_record_id,creator_id,url")) {
-    problems.push("merged CSV 表头必须以 source_record_id,creator_id,url 开头");
+  const headerPrefix = flow === "creator_detail" ? "creator_id" : "source_record_id,creator_id,url";
+  if (!nonemptyString(csvText) || !csvText.startsWith(headerPrefix)) {
+    problems.push(`merged CSV 表头必须以 ${headerPrefix} 开头`);
   }
   if (typeof csvText === "string" && hasCsvControlCharacter(csvText)) {
     problems.push("merged CSV 内容包含控制字符");
@@ -446,7 +451,7 @@ export async function fileBridge(
     });
   }
 
-  const contentProblems = mergedCsvContentProblems(csvText);
+  const contentProblems = mergedCsvContentProblems(csvText, flow);
   if (contentProblems.length > 0) {
     return failure(
       "YPSCAN_FILE_BRIDGE_INVALID_CSV",
@@ -494,7 +499,7 @@ export async function fileBridge(
   } catch (error) {
     return failure(
       "YPSCAN_FILE_BRIDGE_INVALID_INPUT",
-      "requirement_id 不能用于构造 OSS 对象路径",
+      "requirement_id/field_id 不能用于构造 OSS 对象路径",
       error instanceof Error ? { reason: error.message } : {},
       false,
       filePath,

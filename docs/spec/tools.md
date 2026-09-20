@@ -17,7 +17,7 @@
 | 字段            | 类型   | 必填 | 约束                                                                                                                                           |
 | --------------- | ------ | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `demand`        | string | 是   | `minLength: 1`；当前单个平台完整最新需求原文；首次解析及用户修改业务条件后必传；手动拓展首次澄清改变有效需求或确认放宽后，传应用全部当前有效答案的无冲突完整需求全文，与 rawMessagesJson.original 一致；全文和最近成功解析输入相同且结果有效时不重调；其余重传只合并原始表述与人工改口，禁止回填历史解析输出或未确认放宽值 |
-| `business_mode` | string | 是   | enum：`询价机构` / `手动拓展`；来自用户明确表达，未明确或语义冲突时经模式选择确定                                                              |
+| `business_mode` | string | 是   | enum：`询价机构` / `手动拓展`；来自用户明确表达，未明确或语义冲突时经模式选择确定；第三种「只扒达人信息」不建需求，不调用本工具                |
 
 ### 实现事实
 
@@ -181,4 +181,4 @@
 
 `src/tools/popup-questions.js` 构造 `AskUserQuestion` 载荷：`{ questions: [...] }`，1–4 题；每题 `header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符（语义换行优先），选项 2–4 个且标签去重（忽略换行）。固定载荷：业务模式选择、流程重试/结束、入库恢复、Browser 验证、MCN 收件机构选择（单选快捷项 + 宿主自定义输入，内置 `询价全部机构` / `暂不询价`，必要时补少量当前机构快捷项）、回填后续分叉（`补全并打分排序`/`暂不补全`）。
 
-远端字段选择工具的继承/重选入参与结果处理见 [字段工具卡](../../skills/media-assistant/references/tools/select_inquiry_form_fields.md)，字段页提交状态查询见 [字段状态工具卡](../../skills/media-assistant/references/tools/get_inquiry_form_fields_status.md)。本地工具注册不变。
+远端字段选择工具的继承/重选入参与结果处理见 [字段工具卡](../../skills/media-assistant/references/tools/select_inquiry_form_fields.md)，字段页提交状态查询见 [字段状态工具卡](../../skills/media-assistant/references/tools/get_inquiry_form_fields_status.md)。只扒达人信息的导出见 [excel_export 工具卡](../../skills/media-assistant/references/tools/excel_export.md)。本地工具注册不变。

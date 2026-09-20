@@ -6,7 +6,7 @@
 
 ## 一句话结论
 
-ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`），在本地注册 5 个工具与 5 个 Hook，把「询价机构」和「手动拓展」两条业务链路固定为确定的步骤序列，并在 `validate_requirement` 写入前做本地完整性预检，通过单一 artifact 工具把 Excel/CSV 交付物受控保存到当前项目。
+ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`），在本地注册 5 个工具与 5 个 Hook，把「询价机构」「手动拓展」和「只扒达人信息」三条业务链路固定为确定的步骤序列，并在 `validate_requirement` 写入前做本地完整性预检，通过单一 artifact 工具把 Excel/CSV 交付物受控保存到当前项目。
 
 ## 文档地图
 
@@ -18,14 +18,15 @@ ypscan 是 OpenClaw 客户端集成层插件：通过 Streamable HTTP 连接远�
 | [tools.md](./tools.md)               | 5 个本地工具的接口契约（参数、返回、错误码、安全约束）   | `src/tools/*.js`                                            |
 | [hooks.md](./hooks.md)               | 5 个 Hook 的行为契约与瞬态状态语义                       | `src/hooks/register-flow-directives.js`                     |
 | [contracts.md](./contracts.md)       | 参数归一化、预检规则、平台/模式常量、Provider 工具白名单 | `src/contract/registry.js`、manifest `toolFilter`           |
-| [flows.md](./flows.md)               | 两条固定业务链路、放宽、续办、回收与降级规则             | Hook 指令 + `skills/media-assistant/SKILL.md`               |
+| [flows.md](./flows.md)               | 三条固定业务链路、放宽、续办、回收与降级规则             | Hook 指令 + `skills/media-assistant/SKILL.md`               |
+| [get_creator_detail_run.md](./get_creator_detail_run.md) | 「只扒达人信息」需求规格：数据库表、后端工具改动、插件侧改动 | 后端契约 + 工具卡/Hook                                       |
 | [config.md](./config.md)             | 配置项、测试 adapter、运行与发布约束                     | `configSchema`、`src/tools/test-adapter.js`、`package.json` |
 
 ## 1. 背景与问题定义
 
 ### 当前现状
 
-- Provider MCP 提供达人搜索、机构排名、询价发送、手动拓展、异步入库等后端能力，插件侧只做白名单接入（manifest `toolFilter` 暴露 14 个 Provider 工具）。
+- Provider MCP 提供达人搜索、机构排名、询价发送、手动拓展、异步入库等后端能力，插件侧只做白名单接入（manifest `toolFilter` 暴露 15 个 Provider 工具）。
 - 需求解析由固定 Dify Workflow 完成（`ypscan_parse_requirement` 直连代理，不落本地库）。
 - 交付物（Excel、CSV）由 Provider 返回下载 URL，插件负责受控下载与本地保存。
 
@@ -47,7 +48,7 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 
 ### 主要目标
 
-1. **链路固定**：两条业务链路每一步的下一步由 Hook 按真实工具结果动态给出（`*_ARGS` 指令），Agent 不被允许自由发散。
+1. **链路固定**：三条业务链路每一步的下一步由 Hook 按真实工具结果动态给出（`*_ARGS` 指令），Agent 不被允许自由发散。
 2. **写入前预检**：`validate_requirement` 在本地完成完整性、格式与证据校验，不通过则阻断，Provider 不收到写入。
 3. **交付受控**：Excel/CSV 只从 `eshypdata.com` 主域 HTTPS 下载、禁止重定向、限量限时、原子发布、同内容幂等；Excel 结果始终附带可点击的 `local_file_link`，links CSV/补全 CSV/merged CSV 是内部中间产物，不主动向用户展示。
 4. **CSV 中心链路**：手动拓展 links CSV → 归一化及汇总取得下一批 → 原生补全 → `file_bridge` 仅合并上传当前批 → 打分（`score_manual_source_csv_status` 轮询 job 终态）→ 保存单批表再汇总，推荐人数达标停止；询价回收链 links CSV 由 `ypscan_save_creator_links` 直接读取已受控保存的预览 Excel 派生，之后同样走原生补全 → `file_bridge(manual_source)` → 打分；超过 500 行时跳过上传并停止打分，merged CSV 不主动向用户展示。

@@ -60,7 +60,7 @@ const INQUIRY_RECIPIENT_RESPONSE_RULE =
 const INQUIRY_RECIPIENT_RESUME_RULE =
   "当前 rank_mcns 列表后，若用户选择“暂不询价”、关闭/取消弹窗或当轮未回答，之后在同一会话明确要求给该列表机构发询价（包括“前 5 家”等可按当前排名唯一确定的表达），且期间未修改业务条件或平台、未开始其他功能、未创建更新的 requirement，属于恢复当前询价分支。继续使用该列表所属 requirement、平台和 rank_mcns 机构映射；不得重新调用 ypscan_parse_requirement、validate_requirement、search_creators 或 rank_mcns。已提交字段配置则复用，否则再调用 select_inquiry_form_fields。“暂不询价”只暂停发送，不算明确停止整个询价功能。";
 const REQUIREMENT_CREATION_RULE =
-  "每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement：即使同一会话、同一平台、业务条件未变，或刚完成/停止另一功能，也必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement。不得跨功能复用 requirement；新 requirement 必须重新调用 select_inquiry_form_fields，按字段继承规则配置。两个功能不得并行执行，也不得复用旧机构、达人、batch 或 Excel。当前 rank_mcns 列表后的暂不发送再续办按询价恢复规则处理，不属于新功能开始。";
+  "每次真正开始新的询价机构或手动拓展都必须先创建独立的新 requirement：即使同一会话、同一平台、业务条件未变，或刚完成/停止另一功能，也必须重新调用 ypscan_parse_requirement、复核并调用 validate_requirement。不得跨功能复用 requirement；新 requirement 必须重新调用 select_inquiry_form_fields，按字段继承规则配置。三种业务模式（询价机构/手动拓展/只扒达人信息）不得并行执行，也不得复用旧机构、达人、batch 或 Excel。只扒达人信息不建 requirement、不碰任何已有 requirement：只用 select_inquiry_form_fields 返回的 field_id 关联本次字段选择，不与询价/手扒的 requirement、达人列表或 CSV 混用；用户明确给出的达人 ID 或链接是新业务输入，可以正常传入，不算复用旧达人。当前 rank_mcns 列表后的暂不发送再续办按询价恢复规则处理，不属于新功能开始。";
 const FIELD_SELECTION_REUSE_RULE =
   "字段继承：同一会话新 requirement（含放宽、纠错和跨功能）调用 select_inquiry_form_fields 时，以 SELECT_INQUIRY_FORM_FIELDS_ARGS 为基础，追加 source_requirement_id，来源只取本会话最近一次用户已提交或 Provider 已返回 configured/copied 的真实 requirement；无来源时首次选字段。用户明确要求重新勾选才传 force_reselect=true 并省略来源。来源 ID 不得猜测或跨会话取用，不读取、缓存或传递 columns。继承和重选分别要求 live schema 支持对应新参数；不支持时说明接口未支持并暂停，不盲传、不退回重复勾选。继承失败、平台不兼容或 status=error 时暂停，不自动重选。";
 const FIELD_SELECTION_GATE_RULE =
@@ -100,6 +100,7 @@ const MANUAL_SCORE_SOURCES_FILE = "manual-score-sources.json";
 const MANUAL_SCORE_SOURCES_VERSION = 1;
 const MCN_COMPLETE_ONLY_FLOW = "mcn_complete_only";
 const MCN_RANK_FLOW = "mcn_rank";
+const CREATOR_DETAIL_FLOW = "creator_detail";
 
 const [BUSINESS_MODE_INQUIRY, BUSINESS_MODE_MANUAL] = BUSINESS_MODE_VALUES;
 const FAILED_ASYNC_STATUSES = new Set(["failed", "cancelled", "canceled", "error"]);
@@ -451,10 +452,23 @@ function inquiryRecipientNames(mcns) {
   });
 }
 
+// field_id 来自 get_creator_detail_run.run_id（bigint），后端可能返回数字或字符串。
+function idString(value) {
+  if (nonemptyString(value)) return value.trim();
+  return Number.isSafeInteger(value) && value > 0 ? String(value) : undefined;
+}
+
 function fieldSelectionDirective(message, params = {}) {
   const result = parsedToolResult(message);
   const status = firstString(result?.status, result?.data?.status);
   const requirementId = firstString(result?.requirement_id, result?.data?.requirement_id);
+  const fieldId = idString(result?.field_id ?? result?.data?.field_id);
+  const noRequirementCall =
+    !nonemptyString(params?.requirement_id) &&
+    (params?.creator_ids || params?.creator_links || fieldId);
+  if (noRequirementCall) {
+    return fieldSelectionWithoutRequirementDirective(message, result, status, fieldId);
+  }
   if (status === "error") {
     return "YPSCAN_FLOW_DIRECTIVE=字段配置失败。说明 Provider 返回的错误原因并暂停，不自动重试、生成字段页或继续下游。";
   }
@@ -508,6 +522,24 @@ function fieldSelectionDirective(message, params = {}) {
   ].join("\n");
 }
 
+function fieldSelectionWithoutRequirementDirective(message, result, status, fieldId) {
+  if (status === "error") {
+    return "YPSCAN_FLOW_DIRECTIVE=只扒达人信息的字段选择失败。说明 Provider 返回的错误原因并暂停，不自动重试、生成字段页或继续下游。";
+  }
+  if (status !== "selection_required" && status !== "opened") {
+    return flowPauseDirective("字段选择", message);
+  }
+  const url = firstString(result?.url, result?.data?.url);
+  if (result?.success !== true || !fieldId || !url) {
+    return "YPSCAN_FLOW_DIRECTIVE=只扒达人信息的字段选择缺少 field_id 或 URL。暂停，不展示字段页、不继续下游。";
+  }
+  return [
+    "YPSCAN_FLOW_DIRECTIVE=只扒达人信息的字段选择链接已生成。正文必须单独一行原样输出该 URL 并说明这是字段选择页；不得改写、包装、用 Browser 替代打开或替用户选择字段。与需求维度不同：输出 URL 后本轮不结束，继续用平台原生工具补全这批达人，再 file_bridge(flow=creator_detail, field_id) 上传补全 CSV 得到 source_csv_file_link，然后调 excel_export(field_id, source_csv_file_link)；后端会查表校验字段是否已提交，未提交会返回「未选择字段」+URL，届时再展示 URL 等用户提交后重试。",
+    `FIELD_SELECTION_FIELD_ID=${fieldId}`,
+    `FIELD_SELECTION_URL=${url}`,
+  ].join("\n");
+}
+
 function fieldStatusDirective(message, params = {}) {
   const result = parsedToolResult(message);
   const status = firstString(result?.status, result?.data?.status);
@@ -530,6 +562,54 @@ function fieldStatusDirective(message, params = {}) {
     ].join("\n");
   }
   return "YPSCAN_FLOW_DIRECTIVE=get_inquiry_form_fields_status 未返回可识别的终态。停止自动轮询，如实说明尚未确认提交并等待用户确认已提交；不得按已提交继续、不得重开字段页或更换 requirement_id。";
+}
+
+function excelExportDirective(message, params = {}) {
+  const result = parsedToolResult(message);
+  const fieldId = idString(params?.field_id);
+  if (result?.success === true) {
+    const url = providerArtifactUrl(result, [
+      "file_url",
+      "excel_file_url",
+      "excel_export_url",
+      "download_url",
+      "export_path",
+      "excel_export_path",
+      "url",
+    ]);
+    if (!url) return flowPauseDirective("excel_export", message);
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=excel_export 成功，达人表已生成。把下载链接作为最终交付单独展示给用户；不展示 field_id，不把补全 CSV 或字段页 URL 当成交付物。",
+      `EXCEL_EXPORT_FILE_URL=${url}`,
+    ].join("\n");
+  }
+  const text = messageText(message);
+  const code = firstString(result?.error?.code, result?.data?.error?.code);
+  const columnsMissing =
+    code === "EXCEL_EXPORT_COLUMNS_NOT_CONFIGURED" ||
+    /未选择字段|尚未选择|没有选择字段/.test(text);
+  if (columnsMissing) {
+    const url = firstString(
+      result?.url,
+      result?.data?.url,
+      result?.field_selection_url,
+      result?.data?.field_selection_url,
+      result?.error?.details?.url,
+      result?.error?.url,
+    );
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=excel_export 因未选择字段失败（后端查表 columns 仍为空）。单独一行原样展示字段选择 URL，等用户提交字段后用同一 field_id 重试 excel_export；不得替用户选字段、不得跳过达人补全、不得重开字段选择。",
+      ...(fieldId ? [`FIELD_SELECTION_FIELD_ID=${fieldId}`] : []),
+      ...(url ? [`FIELD_SELECTION_URL=${url}`] : []),
+    ].join("\n");
+  }
+  if (
+    code === "EXCEL_EXPORT_SOURCE_CSV_INVALID" ||
+    /source_csv_file_link.*(?:无效|invalid)|source_csv.*(?:无法|解析失败)/iu.test(text)
+  ) {
+    return "YPSCAN_FLOW_DIRECTIVE=excel_export 的 source_csv_file_link 无效。用 file_bridge 重新上传补全后的达人 CSV 得到新链接，再用同一 field_id 重试；不得复用旧链接、不得跳过补全或重新勾选字段。";
+  }
+  return flowPauseDirective("excel_export", message);
 }
 
 function providerArtifactUrl(result, nestedFields, rootFields = nestedFields) {
@@ -1067,6 +1147,19 @@ function fileBridgeDirective(message, params = {}) {
       `MERGED_CSV_LOCAL_PATH=${mergedCsvPath}`,
       `MERGED_CSV_LOCAL_LINK=${localFileLink}`,
       `MERGED_DATA_ROW_COUNT=${Number.isFinite(dataRowCount) ? dataRowCount : "unknown"}`,
+    ].join("\n");
+  }
+  if (flow === CREATOR_DETAIL_FLOW) {
+    const fieldId = firstString(params?.field_id, result?.data?.field_id);
+    if (!fieldId || !csvFilePath) {
+      return flowPauseDirective("file_bridge 缺少 field_id 或 csv_file_path", message);
+    }
+    return [
+      "YPSCAN_FLOW_DIRECTIVE=补全 CSV 已合并上传。不要复述 csv_file_path、OSS 地址、对象路径或下方工具参数；用同一 field_id 原样调 excel_export 导出达人表。",
+      `EXCEL_EXPORT_ARGS=${JSON.stringify({
+        field_id: fieldId,
+        source_csv_file_link: csvFilePath,
+      })}`,
     ].join("\n");
   }
   if (Number.isFinite(dataRowCount) && dataRowCount > CREATOR_CSV_LIMIT) {
@@ -1718,6 +1811,7 @@ function flowDirective(
     return manualSourceCompletionDirective(message, params, recordedMode);
   }
   if (bare === "rank_creators") return rankCreatorsDirective(message, params);
+  if (bare === "excel_export") return excelExportDirective(message, params);
   if (result?.success !== true) {
     if (
       bare === "ypscan_parse_requirement" ||
@@ -1853,9 +1947,11 @@ export function registerFlowDirectiveHooks(api) {
   const scoreJobRecoveryByScope = new Map();
   const requirementIdByIngestJobId = new Map();
   const currentRequirementIdByScope = new Map();
+  const currentFieldIdByScope = new Map();
   const linksCsvPathsByRequirement = new Map();
   const previewFilesByRequirement = new Map();
   const completionCsvPathsByRequirement = new Map();
+  const completionCsvPathsByFieldId = new Map();
   // requirement → { url, blockedOnce }：字段页链接生成后直到提交/失效前必须先在正文展示。
   const fieldPageLinkByRequirement = new Map();
   // Source records only; progress is recomputed by the local summarizer.
@@ -1948,7 +2044,7 @@ export function registerFlowDirectiveHooks(api) {
       const lines = [
         "[YPSCAN 业务模式指令]",
         `业务规则文件：${BUSINESS_SKILL_PATH}。首次相关操作前必须完整读取；本会话已读则不重复。即使宿主技能目录未列出 media-assistant，也使用此实际安装路径读取，不把 Hook 摘要当完整 Skill。`,
-        "业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”。未明确、同时出现两种模式或语义冲突时，必须先逐字调用下方 AskUserQuestion；回答前不得解析或落库。",
+        "业务模式识别：用户明确说“询价机构/机构询价/MCN 询价”时直接使用“询价机构”；明确说“手动拓展/人工拓展/直接手扒/手扒/手捞筛选”时统一使用用户侧模式“手动拓展”；明确说“只扒达人信息/只扒达人/导出达人表/达人详情表”等只想按达人 ID 或链接导出指定字段、不要需求解析和询价的，走第三种业务模式“只扒达人信息”，不建 requirement、不调 ypscan_parse_requirement 和 validate_requirement。手动拓展与只扒达人信息的判别：用户给的是搜索筛选条件（达人方向、标签、品类等，需要后台搜索抓取）走手动拓展；用户给的是具体达人 ID 或主页链接（已知达人，直接补全导出）走只扒达人信息。用户说“手扒/扒这几个达人”且给了具体 ID 或链接时按只扒达人信息处理，只给方向或条件时按手动拓展处理。未明确、同时出现多种模式或语义冲突时，必须先逐字调用下方 AskUserQuestion；回答前不得解析或落库。",
         `BUSINESS_MODE_QUESTION_ARGS=${JSON.stringify(businessModeQuestionPayload())}`,
       ];
 
@@ -1973,6 +2069,7 @@ export function registerFlowDirectiveHooks(api) {
           MANUAL_SOURCE_SHORTFALL_RULE,
           MANUAL_SOURCE_ARGUMENT_RULE,
           "手动拓展最终汇总 Excel 或旧版兼容 Excel 保存成功后原样展示 delivery.local_file_link；手动拓展的 manual_score_batch 单批中间表不展示表格、路径或链接，不再提供浏览器详细拓展分支，也不追加完成弹窗。",
+          "只扒达人信息链路（不建需求）：用户缺平台或达人 ID/链接时先问清（不猜测、不默认平台），拿到后调 select_inquiry_form_fields 传 platform 和 creator_ids/creator_links（不传 requirement_id、source_requirement_id、force_reselect；无来源需求可继承，每次都是首次选字段），拿到 field_id 和字段选择页 URL，单独一行原样展示 URL 让用户选字段；与需求维度不同，展示 URL 后本轮不结束：按当前平台原生达人补全工具补全这批达人（沿用现有批量与参数约束，超上限分批补全；部分成功保留成功达人继续，全部失败停止并如实告知不编造），补全 CSV 用 file_bridge(flow=creator_detail, field_id) 上传得到 source_csv_file_link（用户上传了自定义表格时再用 file_bridge 上传得到 custom_table_oss_url，可选）；然后用同一 field_id 调 excel_export(field_id, source_csv_file_link, custom_table_oss_url?)，后端查 get_creator_detail_run.columns 校验字段是否已提交：已提交则导出达人表并原样展示下载链接，未提交则返回「未选择字段」+URL，重新展示 URL 等用户提交后重试 excel_export。不轮询 get_inquiry_form_fields_status、不主动停下等口头确认、不调用 score_manual_source_csv、不评分排序、不建 requirement。source_csv_file_link 无效时重新上传补全 CSV 再重试。",
           "需求澄清规则：解析返回的八个可选 Label 数组是纯解析结果，有什么就原样落库什么，保留元素与顺序，不要求原文逐项举证，不调用 AskUserQuestion 确认、不询问任何标签内容；可选 Label（包括主达人类型 pgyBloggerTypeLabel/xtTalentTypeLabel）为 null 或缺失时直接省略，不做映射、不推断、不弹窗。contentTag 必须是本次解析结果中的非空数组；缺失或无效时重新解析，禁止询问用户或自行补值。数值字段先采用 Dify 唯一解析值，再与最新非空 clarification 合并；同一字段新答案覆盖旧答案，其他已确认且未修改的数值继续复用。Dify 已给出唯一 followercount、rebate、报价、CPM、CPE 时禁止再问。只有这些必填数值仍缺失、null、多候选或与用户明确改口冲突时才调用 AskUserQuestion。当前平台 Dify 品牌候选唯一、合法且非空时必须原样作为 brandName，不得询问、改写或被原文与 clarification 覆盖；解析品牌缺失、多候选或为 null、未知等占位值时才询问。项目名由 Agent 根据当前需求自行总结生成，不弹窗确认；调用 validate_requirement 前用一句可见正文告知用户取的项目名。禁止编造标签、默认补数值或普通文本追问。解析 Workflow 唯一合法报价、CPM、CPE 候选直接复用，不因原文单值与 Provider 区间格式差异询问；同平台多个达人类型只保留一个 requirement，总量不变并合并条件，不拆分或追问每类人数。正常成功交付不追加完成弹窗。",
           REQUIREMENT_COMPLETENESS_RULE,
           "询价机构这些业务值缺失、无效或需要选择时，必须在调用前一次性通过 AskUserQuestion 收集；手动拓展只对三项业务必填这样处理。",
@@ -2024,6 +2121,10 @@ export function registerFlowDirectiveHooks(api) {
           // 字段选择的这两个参数决定工具结果指令走重选/继承分支，必须在 pending 记录里保留。
           "source_requirement_id",
           "force_reselect",
+          // 只扒达人信息：无需求时传达人，导出时定位字段选择会话。
+          "creator_ids",
+          "creator_links",
+          "field_id",
           "id",
           "artifact_id",
           "artifact_kind",
@@ -2069,6 +2170,7 @@ export function registerFlowDirectiveHooks(api) {
           bare,
           params: minimal,
           requirementId: currentRequirementIdByScope.get(scope),
+          fieldId: currentFieldIdByScope.get(scope),
           mode: businessModeFromParams(values),
         });
       };
@@ -2084,6 +2186,7 @@ export function registerFlowDirectiveHooks(api) {
             "score_manual_source_csv_status",
             "get_xhs_author_business_card",
             "get_douyin_author_business_card",
+            "excel_export",
           ].includes(bare)
         )
           remember(params);
@@ -2137,20 +2240,34 @@ export function registerFlowDirectiveHooks(api) {
         }
       }
       const seenRequirementId = trustedRequirementId(bare, params, result);
-      if (seenRequirementId) currentRequirementIdByScope.set(scope, String(seenRequirementId));
+      if (seenRequirementId) {
+        currentRequirementIdByScope.set(scope, String(seenRequirementId));
+        currentFieldIdByScope.delete(scope);
+      }
+      const seenFieldId =
+        bare === "select_inquiry_form_fields"
+          ? idString(result?.field_id ?? result?.data?.field_id)
+          : null;
+      if (seenFieldId) currentFieldIdByScope.set(scope, String(seenFieldId));
       if (isNativeCompletion && result?.success !== false && !event?.isSynthetic) {
         // 宿主原生补全返回没有 success 字段；与 directive 共用 csv_file 解析链，
         // 显式 success=false 的结果不登记上传来源。
         const csvFile = completionCsvFilePath(result);
+        const fieldId = matched?.fieldId;
         const requirementId = matched?.requirementId;
         const path = normalizeLocalFilePath(csvFile, context?.workspaceDir);
-        if (path && requirementId) {
+        if (path && fieldId) {
+          const set = completionCsvPathsByFieldId.get(fieldId) ?? new Set();
+          set.add(path);
+          completionCsvPathsByFieldId.set(fieldId, set);
+        } else if (path && requirementId) {
           const set = completionCsvPathsByRequirement.get(requirementId) ?? new Set();
           set.add(path);
           completionCsvPathsByRequirement.set(requirementId, set);
         }
         // 全失败批次（csv_file=null）同样登记失败名单，避免汇总把失败达人重新排批。
-        if (requirementId) {
+        // 只扒达人信息（fieldId 维度）不登记需求维度的打分来源。
+        if (requirementId && !fieldId) {
           const sources = manualScoreSourcesByRequirement.get(requirementId);
           if (sources) {
             const successfulIds = completionAuthorIds(result, "successful_author_ids") ?? [];
@@ -2397,9 +2514,11 @@ export function registerFlowDirectiveHooks(api) {
       scoreJobRecoveryByScope.clear();
       requirementIdByIngestJobId.clear();
       currentRequirementIdByScope.clear();
+      currentFieldIdByScope.clear();
       linksCsvPathsByRequirement.clear();
       previewFilesByRequirement.clear();
       completionCsvPathsByRequirement.clear();
+      completionCsvPathsByFieldId.clear();
       manualScoreSourcesByRequirement.clear();
       manualScoreSourcesStoreByRequirement.clear();
       hydratedManualScoreStores.clear();
@@ -2486,9 +2605,13 @@ export function registerFlowDirectiveHooks(api) {
         ([file_path, sha256]) => ({ file_path, sha256 }),
       );
     },
-    completionCsvPathsFor(requirementId) {
-      if (!nonemptyString(requirementId)) return [];
-      return [...(completionCsvPathsByRequirement.get(String(requirementId)) ?? [])];
+    completionCsvPathsFor(id) {
+      const key = id == null ? "" : String(id).trim();
+      if (!key) return [];
+      return [
+        ...(completionCsvPathsByRequirement.get(key) ?? []),
+        ...(completionCsvPathsByFieldId.get(key) ?? []),
+      ];
     },
   };
 }

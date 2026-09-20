@@ -2,15 +2,16 @@
 
 Risk tier: local merge with conditional network upload.
 
-For manual sourcing, call after each native completion batch with only that batch’s CSV, then score and summarize before starting another batch. For inquiry retrieval, call once after all completion batches finish with all their CSVs. The existing merge outputs only matched creators, saves the CSV locally, and decides from `flow` whether to upload it.
+For manual sourcing, call after each native completion batch with only that batch's CSV, then score and summarize before starting another batch. For inquiry retrieval, call once after all completion batches finish with all their CSVs. For creator-detail export (只扒达人信息), call once after all completion batches finish, passing `flow=creator_detail` + `field_id` without `requirement_id`/`links_csv_path`; it uploads the merged completion CSV and returns `data.csv_file_path` as the `source_csv_file_link` for `excel_export`. The existing merge outputs only matched creators, saves the CSV locally, and decides from `flow` whether to upload it.
 
 ## Arguments
 
-- `requirement_id`: current requirement only.
+- `requirement_id`: current requirement only; omit for `creator_detail`.
+- `field_id`: creator-detail run id; only for `flow=creator_detail` (returned by `select_inquiry_form_fields` without a requirement).
 - `platform`: `xiaohongshu` or `douyin`.
-- `flow`: `manual_source`, `mcn_rank`, or `mcn_complete_only`.
-- `links_csv_path`: absolute local path of the current links CSV. In both chains this is the path returned by `ypscan_save_creator_links` (the normalized three-column links CSV derived from the saved Provider links CSV or the read preview Excel). Never pass the raw Provider CSV saved by `ypscan_save_artifact`.
-- `completion_csv_paths`: non-empty list containing only the current batch CSV for manual sourcing, or all successful batch CSVs for inquiry retrieval. Never resubmit previously scored batches.
+- `flow`: `manual_source`, `mcn_rank`, `mcn_complete_only`, or `creator_detail`.
+- `links_csv_path`: absolute local path of the current links CSV. In both chains this is the path returned by `ypscan_save_creator_links` (the normalized three-column links CSV derived from the saved Provider links CSV or the read preview Excel). Never pass the raw Provider CSV saved by `ypscan_save_artifact`. Omit for `creator_detail` (no links CSV; creators come from user-supplied IDs).
+- `completion_csv_paths`: non-empty list containing only the current batch CSV for manual sourcing, or all successful batch CSVs for inquiry retrieval; for `creator_detail`, all completion batch CSVs. Never resubmit previously scored batches.
 
 Input CSV paths must be absolute and have no leading or trailing whitespace; ambiguous whitespace paths are rejected before reading or uploading.
 
@@ -31,5 +32,6 @@ The merged CSV is an internal input for scoring or ranking: do not show its tabl
 - `manual_source`: when `data_row_count` is 1–500, use only the returned `data.csv_file_path` in `score_manual_source_csv`. Above 500, `upload_skipped="row_limit_exceeded"`; report the row count and stop without showing the CSV. This flow is the generic merge-and-upload step for scoring in both chains.
 - `mcn_complete_only`: the local merged CSV is the final result. Do not upload, score, rank, or save an Excel. This legacy flow is the only one that shows the local link.
 - `mcn_rank`: use the uploaded `data.csv_file_path` only if the live `rank_creators` schema explicitly accepts it. The current test Provider still uses `requirement_id` plus `inquiry_ids` instead.
+- `creator_detail`: use the returned `data.csv_file_path` as `excel_export`'s `source_csv_file_link`. The merged CSV keeps only `creator_id` plus the completion detail columns (no `source_record_id`/`url`). Do not show the CSV; it is an internal input for the export.
 
 If merging succeeds but configuration, upload, or anonymous-read verification fails, the error still carries the local merged file info for diagnostics. Report the failure and offer retry or stop without showing the CSV. Never construct a remote path or substitute the local path for `csv_file_path`.

@@ -66,6 +66,7 @@ const BUSINESS_TOOL_NAMES = Object.freeze([
   "manual_source_creators_status",
   "score_manual_source_csv",
   "score_manual_source_csv_status",
+  "excel_export",
   "rank_creators",
   "get_xhs_author_business_card",
   "get_douyin_author_business_card",
