@@ -589,6 +589,9 @@ function parseLocalDateTime(value) {
 const DEADLINE_CLOCK = String.raw`(?:\d{1,2}[:：]\d{2}(?:[:：]\d{2})?|\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分)?(?:\s*\d{1,2}\s*秒)?)`;
 const DEADLINE_DATE = String.raw`(?:(?:\d{4}|\d{2})年\s*\d{1,2}月\s*\d{1,2}日\s*|\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T])`;
 const MANUAL_DEFAULT_DEADLINE_MARKER = "提报截止时间由系统默认设置为";
+// 模型自写的“系统默认”说明句：默认截止说明只由插件负责，避免与规范标记重复或与默认值冲突。
+const MANUAL_DEFAULT_DEADLINE_NOTICE_PATTERN =
+  /(?:提报|提交)?截止(?:时间|日期)?[^；。\n]{0,12}系统默认[^；。\n]*[；。]?/gu;
 const MANUAL_DEFAULT_DEADLINE_DESCRIPTION_PATTERN =
   /提报截止时间由系统默认设置为 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}（建需后30天，可覆盖）/gu;
 
@@ -1780,20 +1783,20 @@ export function normalizeToolCallParams(toolName, params, { now = new Date() } =
             }
           }
         }
-        if (
-          isManualRequirement(rawMessages) &&
-          !usableMetricValue(normalized.submissionDeadlineAt) &&
-          !hasSubmissionDeadlineMention(rawMessages)
-        ) {
+        if (isManualRequirement(rawMessages) && !hasSubmissionDeadlineMention(rawMessages)) {
+          // 原文没有截止语境时，默认值只能由插件负责：模型自算的时间、自写说明、甚至自写的规范标记一律覆盖。
+          // 标记是纯文本，无法证明写入方，因此不能用它放行模型自填值（否则模型写一个自洽标记就能绕过默认值）。
           const deadline = manualDefaultSubmissionDeadline(now);
           set("submissionDeadlineAt", deadline);
           if (!Object.hasOwn(normalized, "description") || typeof normalized.description === "string") {
             const marker = manualDefaultDeadlineDescription(deadline);
             const description =
               typeof normalized.description === "string" ? normalized.description.trim() : "";
-            if (!description.includes(marker)) {
-              set("description", description ? `${description}；${marker}` : marker);
-            }
+            // 已有规范标记（可能是模型填的其它默认时间）和模型自写说明都先摘掉，再统一追加。
+            const cleaned = withoutManualDefaultDeadlineDescription(
+              description.replace(MANUAL_DEFAULT_DEADLINE_NOTICE_PATTERN, ""),
+            );
+            set("description", cleaned ? `${cleaned}；${marker}` : marker);
           }
         }
       }

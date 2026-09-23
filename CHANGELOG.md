@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.0.30 — 2026-09-23
+
+- 修复手动拓展默认截止时间被模型自填值绕过的问题：此前默认值只在 `submissionDeadlineAt` 缺失时注入，证据豁免又依赖 `description` 里由插件写入的字面标记，模型一旦自算时间并自写说明就会被预检以“没有截止时间证据”阻断（`YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED`）。现在原文没有截止语境时该字段由插件独占：模型自算的时间、自写说明以及自写的规范标记一律被覆盖为建需后 30 天默认值，`description` 统一重建为单条规范标记，值始终与标记一致。标记是纯文本、无法证明写入方，因此不再用它放行模型自填值。原文或澄清真的写了截止时间时仍只做证据校验，不用默认值覆盖模型值；日期仅有日期、过期、非法或冲突仍阻断并要求澄清；询价机构规则不变。
+- 副作用：同一份已归一参数在不同时刻重复规范化时，默认值按当次调用时间重算，可能相差数秒（值、标记同步更新，不产生不一致）；`description` 中模型自写的“系统默认”说明句会被移除，只保留规范标记。
+- 同步 SKILL、`validate_requirement` 工具卡、`MANUAL_DEFAULT_DEADLINE_RULE` Hook 指令、contracts/flows/hooks/tools Spec、README、AGENTS 与验收清单；新增 `registry` 与 `flow-directives` 回归样本（自填被修复、错值与自洽标记不被采信、原文有截止交代不被覆盖、原文/澄清/解析输出不被改写）。manifest、Provider 白名单与工具注册数量未变；本次只升版到 1.0.30（三个文件的四处版本位置）并重新打包。
+- 验证：`npm run lint`／`typecheck`／`test`（661 项）／`smoke`（tools=5, hooks=5）通过，`npm pack` 产物 `ypscan-1.0.30.tgz` 只含 `files` 白名单内容。未验证：真实 Provider 端到端建需（未安装到运行中的应用），未执行模型多轮行为验收与 YP Action 桌面验收。
+
 ## 1.0.29 — 2026-09-20
 
 - 新增第三种业务模式「只扒达人信息」与后端导出工具 `excel_export`：`select_inquiry_form_fields` 的 `requirement_id` 改选填并新增 `creator_ids`/`creator_links`，无需求时返回 `field_id` 和字段选择页 URL；新增 `excel_export(field_id, source_csv_file_link, custom_table_oss_url?)` 按选中 columns 导出达人表（样式与 manual-score-summary 一致、列按 columns 裁剪）。老两种模式（询价机构/手动拓展）不改动，仍用 `ypscan_summarize_manual_scores` 交付。

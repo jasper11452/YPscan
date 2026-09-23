@@ -22,7 +22,7 @@ Pass published production fields directly at the tool's top level. Never wrap in
 
 下表的 User-required 是出站字段基线，不等于手动拓展用户逐项必填：手动拓展只要求平台、达人方向对应的 `contentTag` 和目标人数由用户明确；品牌、报价缺失时省略，截止时间缺失按上方 30 天系统默认处理，返点缺失按 `[0,1]` 处理。询价机构仍按完整基线校验。
 
-手动拓展原文、有效澄清和解析结果均无截止时间语境时，**不要传 `submissionDeadlineAt`**，也不要自己算时间、写“系统默认”之类的说明文字：省略该字段后由插件填入建需后 30 天并在 `description` 追加规范标记（`提报截止时间由系统默认设置为 <时间>（建需后30天，可覆盖）`）。自己填了时间但 `description` 没有这段规范标记时，本地预检会以“没有截止时间证据”阻断。
+手动拓展原文、有效澄清和解析结果均无截止时间语境时，**不要传 `submissionDeadlineAt`**，也不要自己算时间、写“系统默认”之类的说明文字：该字段由插件独占——原文没有截止语境时，插件按当前建需时间 + 30 天填入默认值，并在 `description` 统一写入规范标记（`提报截止时间由系统默认设置为 <时间>（建需后30天，可覆盖）`）。模型自算的时间、自写说明和自写标记都会被覆盖，因此自填值不会导致预检阻断，也没有必要自填。只有原文或澄清真的写了截止时间（含模糊、过期、冲突）时才由模型传值，并继续按证据校验，不一致仍阻断并要求澄清。
 
 | Class                      | Fields                                                                                                                                                                                    | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -39,7 +39,7 @@ Pass published production fields directly at the tool's top level. Never wrap in
 
 Do not ask the user for `status`. Do not pass `id`, `demandId`, `demandVersion`, `createdAt`, or `updatedAt` for a new requirement.
 
-手动拓展缺少截止时间时由插件默认填入当前建需时间后 30 天的未来绝对时间，并在 `description` 标明“系统默认、建需后 30 天、可覆盖”；用户给出具体时间时覆盖默认，日期仅有日期、过期、非法或冲突仍需澄清。该默认值不写回 `original`、`demand`、`parse_outputs` 或 `clarifications`。询价机构仍必须提供与用户证据一致的真实截止时间。
+手动拓展缺少截止时间时由插件默认填入当前建需时间后 30 天的未来绝对时间，并在 `description` 标明“系统默认、建需后 30 天、可覆盖”；用户给出具体时间时覆盖默认，日期仅有日期、过期、非法或冲突仍需澄清。原文没有截止语境时该字段由插件独占：模型自算的时间、自写说明或自写标记都会被覆盖为默认值。该默认值不写回 `original`、`demand`、`parse_outputs` 或 `clarifications`。询价机构仍必须提供与用户证据一致的真实截止时间。
 
 默认判定针对提报期限：明确“不用填截止时间”、仅有产品优惠截止日期时允许默认；最新截止时间澄清优先，优惠日期不免除同文中真实提报期限的校验。
 
@@ -116,7 +116,7 @@ The local preflight verifies every supplied Douyin price, CPM, and CPE field aga
 - `submissionDeadlineAt` is required and precise to the second, and must be later than the current local time. There is no minimum lead time: a same-day deadline minutes or hours later is valid and urgency alone must never block the call. When the user gives a clock time that is still ahead on the current local day (for example, at 10:30 says `12点前` or `今天18:00`), it resolves uniquely to today. Store the latest answer under `clarifications.submissionDeadlineAt`; an expired absolute time blocks the summary and requires one future-time question. `下周三前` does not imply `18:00` or another clock time. 等价表述视为同一值：`今晚8点前`/`今晚20:00`/`当天20:00:00` 同指当天 20:00:00，归一后不重复询问；同一会话内已确认的 `clarifications.submissionDeadlineAt` 在后续轮次与 requirement 重建时原样带入并直接复用。
 - A deadline clarification must offer exactly 3 concrete future absolute datetimes and explicitly set `multiSelect: false`, preserving the host's custom-input entry. `确认并补充截止时间` / `返回补充` is not an answer and is forbidden.
 
-手动拓展缺少任何截止时间语境时不弹出截止时间澄清，由插件写入建需后 30 天的系统默认值；如果用户已经写了日期、模糊时间或冲突时间，仍按上面的澄清规则处理，不以默认值覆盖用户条件。
+手动拓展缺少任何截止时间语境时不弹出截止时间澄清，由插件写入建需后 30 天的系统默认值；如果用户已经写了日期、模糊时间或冲突时间，仍按上面的澄清规则处理，不以默认值覆盖用户条件（模型自填值不是用户条件，会被覆盖为默认值）。
 - `projectStartStart` and `projectStartEnd` are optional and may use ISO datetime or `YYYY-MM-DD`. Pass them only when the same explicit dates exist in `original` or `clarifications`; a year-less Chinese date in an explicit project/档期 context can support the resolved same-year date (for example, `档期9月10日-9月20日` supports `2026-09-10` and `2026-09-20` when the canonical year is 2026). If the evidence includes a year, it must match the submitted year. Do not turn `月底`, `下月`, or another vague schedule into concrete dates. When both exist, start must not be later than end.
 
 ### Text, tags, and Boolean values

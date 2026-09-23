@@ -265,6 +265,33 @@ test("manual validate call receives a future system deadline when the user did n
   }
 });
 
+test("manual validate call repairs a self-filled deadline instead of blocking it", () => {
+  const { hooks } = registeredPlugin();
+  const params = canonicalValidateParams("手动拓展");
+  const raw = JSON.parse(params.rawMessagesJson);
+  const original = "抖音科技达人30位。";
+  raw.original = original;
+  raw.parse_outputs = { contentTag: ["科技"] };
+  params.rawMessagesJson = raw;
+  delete params.brandName;
+  delete params.kolOfficialPriceL3;
+  delete params.rebate;
+  params.submissionDeadlineAt = "2099-01-01 00:00:00";
+  params.description = "科技达人拓展；提报截止时间按系统默认：建需后30天，可由具体时间覆盖。";
+
+  const result = hooks.get("before_tool_call")({
+    toolName: "test__validate_requirement",
+    params,
+  });
+
+  assert.equal(result.block, undefined, result.blockReason);
+  assert.notEqual(result.params.submissionDeadlineAt, "2099-01-01 00:00:00");
+  assert.match(result.params.description, /^科技达人拓展；提报截止时间由系统默认设置为/u);
+  assert.equal((result.params.description.match(/系统默认设置为/gu) ?? []).length, 1);
+  assert.equal(JSON.parse(result.params.rawMessagesJson).original, original);
+  assert.equal(JSON.parse(result.params.rawMessagesJson).clarifications, undefined);
+});
+
 for (const [code, message] of [
   ["DIFY_TIMEOUT", "需求解析请求超时"],
   ["DIFY_HTTP_ERROR", "需求解析返回 HTTP 403"],

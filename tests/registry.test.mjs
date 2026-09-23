@@ -266,6 +266,79 @@ test("manual deadline defaults are idempotent and never replace explicit or inva
   );
 });
 
+test("manual deadline default owns the value even when the model supplies its own", () => {
+  const now = new Date(2026, 8, 23, 11, 43, 52);
+  const original = "抖音科技耳机达人30位。";
+  const params = completeValidateParams();
+  params.rawMessagesJson = {
+    original,
+    business_mode: "手动拓展",
+    parse_outputs: { contentTag: ["科技", "耳机"] },
+  };
+  delete params.brandName;
+  delete params.kolOfficialPriceL3;
+  delete params.rebate;
+  delete params.description;
+  const defaultDeadline = manualDefaultSubmissionDeadline(now);
+  const canonicalDescription = `项目A；提报截止时间由系统默认设置为 ${defaultDeadline}（建需后30天，可覆盖）`;
+
+  // 回归样本：模型自算 30 天并自写“系统默认”说明，曾因缺少规范标记被预检判为“没有截止时间证据”而阻断。
+  const selfFilled = {
+    ...params,
+    submissionDeadlineAt: "2026-10-23 11:43:52",
+    description: "项目A；提报截止时间按系统默认：建需后30天，可由具体时间覆盖。",
+  };
+  const selfFilledNormalized = normalizeToolCallParams("validate_requirement", selfFilled, { now });
+  assert.equal(selfFilledNormalized.submissionDeadlineAt, defaultDeadline);
+  assert.equal(selfFilledNormalized.description, canonicalDescription);
+  assert.deepEqual(validateRequirementPreflight(selfFilledNormalized, { now }), []);
+  assert.equal(selfFilledNormalized.rawMessagesJson.original, original);
+  assert.equal(selfFilledNormalized.rawMessagesJson.clarifications, undefined);
+  assert.deepEqual(
+    selfFilledNormalized.rawMessagesJson.parse_outputs,
+    selfFilled.rawMessagesJson.parse_outputs,
+  );
+
+  // 模型自算错值，以及自写“自洽”的规范标记（值与标记互相一致但都不是插件写的）都不被采信。
+  for (const [input, expectedDescription] of [
+    [
+      { ...params, submissionDeadlineAt: "2026-09-30 11:43:52" },
+      `提报截止时间由系统默认设置为 ${defaultDeadline}（建需后30天，可覆盖）`,
+    ],
+    [
+      {
+        ...params,
+        submissionDeadlineAt: "2026-09-30 11:43:52",
+        description:
+          "项目A；提报截止时间由系统默认设置为 2026-09-30 11:43:52（建需后30天，可覆盖）",
+      },
+      canonicalDescription,
+    ],
+  ]) {
+    const normalized = normalizeToolCallParams("validate_requirement", input, { now });
+    assert.equal(normalized.submissionDeadlineAt, defaultDeadline);
+    assert.equal(normalized.description, expectedDescription);
+    assert.deepEqual(validateRequirementPreflight(normalized, { now }), []);
+  }
+
+  // 用户写明截止时间时，插件只做证据校验，不用默认值覆盖模型值（值不一致仍阻断并要求澄清）。
+  const statedByUser = {
+    ...params,
+    submissionDeadlineAt: "2026-10-23 11:43:52",
+    rawMessagesJson: {
+      ...params.rawMessagesJson,
+      original: "抖音科技耳机达人30位；提报截止2026-10-30 18:00:00。",
+    },
+  };
+  const statedNormalized = normalizeToolCallParams("validate_requirement", statedByUser, { now });
+  assert.equal(statedNormalized.submissionDeadlineAt, "2026-10-23 11:43:52");
+  assert.ok(
+    validateRequirementPreflight(statedNormalized, { now }).some(
+      (issue) => issue.field === "submissionDeadlineAt",
+    ),
+  );
+});
+
 test("manual rebate default never replaces explicit, parsed or unresolved rebate evidence", () => {
   const now = new Date(2026, 7, 24, 10);
   const params = completeValidateParams();
