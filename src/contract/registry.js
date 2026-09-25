@@ -87,8 +87,6 @@ const LOCAL_TOOL_NAMES = Object.freeze([
   "ypscan_save_artifact",
   "ypscan_save_creator_links",
   "ypscan_summarize_manual_scores",
-  "ypscan_select_cascade",
-  "ypscan_set_filter_range",
 ]);
 
 // 双下划线命名空间（`<前缀>__业务名`），以及宿主把 MCP 命名空间扁平化为单分隔符的形态

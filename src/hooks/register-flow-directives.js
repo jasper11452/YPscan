@@ -14,7 +14,6 @@ import {
   validateRequirementPreflight,
 } from "../contract/registry.js";
 import {
-  browserVerificationQuestionPayload,
   businessModeQuestionPayload,
   flowRetryQuestionPayload,
   ingestJobRecoveryQuestionPayload,
@@ -1620,47 +1619,6 @@ function artifactSaveDirective(
   return null;
 }
 
-function cascadeSelectionDirective(message) {
-  const result = parsedToolResult(message);
-  if (result?.status === "needs_user_action") {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=级联菜单操作被${result?.error?.code ?? "登录或全局验证"}阻止。`,
-      `ASK_USER_QUESTION_ARGS=${JSON.stringify(browserVerificationQuestionPayload())}`,
-    ].join("\n");
-  }
-  if (result?.applied === true && result?.verified === true) {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=级联菜单已验证：${result?.field_label ?? "未知筛选"} → ${(result?.selected_path ?? []).join(" / ")}。`,
-      "立即回到 Playwright CLI 同一 session 观察完整筛选区并继续剩余条件；不要重复点击已选路径。",
-    ].join("\n");
-  }
-  return [
-    `YPSCAN_FLOW_DIRECTIVE=级联菜单未提交（${result?.error?.code ?? result?.status ?? "未知"}），但整个手扒任务不得停止。`,
-    result?.recovery_hint ??
-      "重新观察页面实际筛选名、入口文字和菜单层级后最多调整参数再试一次；仍失败则将该条件转入详情硬复核并继续其他筛选。",
-  ].join("\n");
-}
-
-function filterRangeDirective(message) {
-  const result = parsedToolResult(message);
-  if (result?.status === "needs_user_action") {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=范围筛选操作被${result?.error?.code ?? "登录或全局验证"}阻止。`,
-      `ASK_USER_QUESTION_ARGS=${JSON.stringify(browserVerificationQuestionPayload())}`,
-    ].join("\n");
-  }
-  if (result?.applied === true && result?.verified === true) {
-    return [
-      `YPSCAN_FLOW_DIRECTIVE=范围筛选已验证：${result?.field_label ?? "未知筛选"}。`,
-      "立即回到 Playwright CLI 同一 session 重新 snapshot 并继续剩余条件；不要复用输入前的 ref，也不要重复提交已选范围。",
-    ].join("\n");
-  }
-  return [
-    `YPSCAN_FLOW_DIRECTIVE=范围筛选未提交（${result?.error?.code ?? result?.status ?? "未知"}），但整个手扒任务不得停止。`,
-    result?.recovery_hint ??
-      "重新观察页面实际筛选名、入口文字和单位后最多调整参数再试一次；仍失败则将该条件转入详情硬复核并继续其他筛选。",
-  ].join("\n");
-}
 
 function manualScoreSummaryDirective(message) {
   const result = parsedToolResult(message);
@@ -1785,12 +1743,6 @@ function flowDirective(
       requirementPlatform,
       recordedMode,
     );
-  }
-  if (bare === "ypscan_select_cascade") {
-    return cascadeSelectionDirective(message);
-  }
-  if (bare === "ypscan_set_filter_range") {
-    return filterRangeDirective(message);
   }
   if (bare === "create_with_distributions") return distributionDirective(message);
   if (bare === "sync_mcn_inquiry_status") return syncInquiryDirective(message, params);

@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { registerFlowDirectiveHooks } from "../src/hooks/register-flow-directives.js";
 import {
-  browserVerificationQuestionPayload,
   businessModeQuestionPayload,
   flowRetryQuestionPayload,
   ingestJobRecoveryQuestionPayload,
@@ -2170,18 +2169,13 @@ test("business mode popup exposes the renamed user-facing option", () => {
 test("shared recovery popup templates preserve their actions and line limits", () => {
   const retry = flowRetryQuestionPayload("MCN 排名表保存");
   const ingest = ingestJobRecoveryQuestionPayload();
-  const browser = browserVerificationQuestionPayload();
 
-  for (const payload of [retry, ingest, browser]) assertPopupLines(payload);
+  for (const payload of [retry, ingest]) assertPopupLines(payload);
   assert.deepEqual(
     retry.questions[0].options.map((option) => popupPlainText(option.label)),
     ["重试", "结束本次"],
   );
   assert.match(popupPlainText(ingest.questions[0].question), /缺少任务 ID/u);
-  assert.deepEqual(
-    browser.questions[0].options.map((option) => popupPlainText(option.label)),
-    ["已处理，继续", "结束本次"],
-  );
 });
 
 test("startup instruction selects and preserves one business mode", () => {
@@ -2567,24 +2561,6 @@ test("rawMessagesJson structure errors block alone and ask for the object form, 
   assert.equal(mixed.block, true);
   assert.match(mixed.blockReason, /submissionDeadlineAt: 缺失或为空/u);
   assert.match(mixed.blockReason, /一次性修正项另列其他字段时，仍按对应原因处理/u);
-});
-
-test("verified range fallback returns control to Playwright without stale refs", () => {
-  const persist = registeredHooks().get("tool_result_persist");
-  const result = persist({
-    toolName: "ypscan_set_filter_range",
-    message: toolMessage({
-      success: true,
-      status: "applied",
-      applied: true,
-      verified: true,
-      field_label: "粉丝数量",
-    }),
-  });
-  const text = directiveText(result);
-
-  assert.match(text, /范围筛选已验证：粉丝数量/u);
-  assert.match(text, /不要复用输入前的 ref/u);
 });
 
 test("ordinary successful delivery is not rewritten by the hook", () => {

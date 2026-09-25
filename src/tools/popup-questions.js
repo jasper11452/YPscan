@@ -151,17 +151,6 @@ export function ingestJobRecoveryQuestionPayload() {
   ]);
 }
 
-export function browserVerificationQuestionPayload() {
-  return popupQuestionPayload(
-    "Browser 验证",
-    "当前平台需要登录或完成全局安全验证，请处理后继续。",
-    [
-      { label: "已处理，继续", description: "重新观察页面后继续当前手扒任务" },
-      { label: "结束本次", description: "保留当前 checkpoint 并结束" },
-    ],
-  );
-}
-
 const RESERVED_RECIPIENT_LABELS = new Set(["询价全部机构", "暂不询价"]);
 
 /** @param {unknown} names */
