@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.0.31 — 2026-09-28
+
+- 修复 CSV 中文乱码：`file_bridge` 上传到 OSS 的对象字节，以及遗留 `mcn_complete_only` 分支作为唯一产物交付给用户的本地 merged CSV，统一改为 UTF-8 with BOM（`EF BB BF` 前缀），避免 Excel 类客户端按本地 ANSI/GBK 猜测编码。BOM 不进入规范 `csvText`：`data.sha256`、对象键 `<Object 前缀>/<flow>/<requirement_id>/<sha256>.csv`、文件名、同名幂等判断与 `manual_source`/`mcn_rank`/`creator_detail` 的内部 merged CSV 字节均保持原语义。
+- `mcn_complete_only` 本地写入改为显式偏移循环写入并按字节截断：旧版本生成的无 BOM 同名文件按规范内容原地升级为 BOM 文件（内容不同仍报 `YPSCAN_CREATOR_CSV_MERGE_CONFLICT`），避免短写残留旧尾部或 NUL 字节。
+- 清理遗留 native Browser 手扒分支：删除 `manual-browser-*`、`manual-research*`、`select-cascade.js`、`set-filter-range.js` 源文件与对应测试，并从依赖和发布包 `files` 中移除 `playwright-core` 与 `src/tools/manual-research/platform-cascade-routes.json`；AGENTS 与 `docs/spec`（architecture/config/README/hooks/tools）同步为“已删除、不重新引入”。
+- 同步 `docs/spec/tools.md` 与 `file_bridge` 工具卡的编码契约，新增本地交付首字节、旧文件原地升级与哈希/文件名不变的回归样本。
+- 验证：`npm run lint`／`typecheck`／`test`（447 项）／`smoke`（tools=5, hooks=5）通过，`npm pack` 产物只含 `files` 白名单内容。未验证：真实 Provider 对 BOM 首列 CSV 的解析（`score_manual_source_csv`／`excel_export` 未做真实上传 E2E）、Excel/桌面端打开交付 CSV 的真实效果、真实安装加载验收。
+
 ## 1.0.30 — 2026-09-23
 
 - 修复手动拓展默认截止时间被模型自填值绕过的问题：此前默认值只在 `submissionDeadlineAt` 缺失时注入，证据豁免又依赖 `description` 里由插件写入的字面标记，模型一旦自算时间并自写说明就会被预检以“没有截止时间证据”阻断（`YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED`）。现在原文没有截止语境时该字段由插件独占：模型自算的时间、自写说明以及自写的规范标记一律被覆盖为建需后 30 天默认值，`description` 统一重建为单条规范标记，值始终与标记一致。标记是纯文本、无法证明写入方，因此不再用它放行模型自填值。原文或澄清真的写了截止时间时仍只做证据校验，不用默认值覆盖模型值；日期仅有日期、过期、非法或冲突仍阻断并要求澄清；询价机构规则不变。

@@ -17,8 +17,8 @@
 ## 这是什么
 
 - `ypscan`（悦普识星）是 OpenClaw 插件（`id: ypscan`，`private: true`）：客户端集成层，注册 5 个本地工具，通过 Streamable HTTP 连接远端 Provider MCP（`https://mcp.eshypdata.com/mcp`）。
-- 当前主线形态（`feat/rank_creators`）支持**三种业务模式**：`询价机构`、`手动拓展`（由 Provider 后端 `manual_source_creators` 完成）和 `只扒达人信息`（不建需求：`select_inquiry_form_fields` 无需求时传 `platform`+`creator_ids`/`creator_links` 返回 `field_id`，补全后 `excel_export` 导出达人表）。手动拓展固定链路为 `links CSV → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全 → file_bridge 只上传当前批 → score_manual_source_csv → 保存 manual_score_batch → 再汇总`（梯度候选池 10 人→30、20 人→50、50 人→100、20/批，去重推荐人数达标或候选耗尽后交付最终汇总表）；机构回填固定 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 → ypscan_save_creator_links → 原生补全 → file_bridge → score_manual_source_csv`；`mcn_rank` 仅保留兼容接入。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。native Browser 拓展分支已废弃。
-- 技术栈：Node.js `>=22.22.2`、ESM（`"type": "module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。运行时依赖为 `ali-oss`、`read-excel-file`、`write-excel-file`、`fflate`、`xml2js` 与 `playwright-core`（后者仅为遗留 browser 工具保留，当前插件未注册任何 browser 工具）。
+- 当前主线支持**三种业务模式**：`询价机构`、`手动拓展`（由 Provider 后端 `manual_source_creators` 完成）和 `只扒达人信息`（不建需求：`select_inquiry_form_fields` 无需求时传 `platform`+`creator_ids`/`creator_links` 返回 `field_id`，补全后 `excel_export` 导出达人表）。手动拓展固定链路为 `links CSV → 归一化 → ypscan_summarize_manual_scores → 当前批原生补全 → file_bridge 只上传当前批 → score_manual_source_csv → 保存 manual_score_batch → 再汇总`（梯度候选池 10 人→30、20 人→50、50 人→100、20/批，去重推荐人数达标或候选耗尽后交付最终汇总表）；机构回填固定 `sync_mcn_inquiry_status → ingest_mcn_submissions → get_ingest_job → 保存预览 → ypscan_save_creator_links → 原生补全 → file_bridge → score_manual_source_csv`；`mcn_rank` 仅保留兼容接入。每次真正开始任一新功能都重新解析、复核并创建独立的新 requirement；即使同会话需求未变、前一功能刚完成或明确停止，也不跨功能复用 requirement。当前机构列表后的“暂不询价”再续办仍属于原询价分支，不重建 requirement。
+- 技术栈：Node.js `>=22.22.2`、ESM（`"type": "module"`）。**没有 TypeScript 源文件**，类型安全靠 JSDoc + `tsc --checkJs`。运行时依赖为 `ali-oss`、`read-excel-file`、`write-excel-file`、`fflate`、`xml2js`。
 
 ## 常用命令（仓库根执行）
 
@@ -41,7 +41,6 @@
   - `save-artifact.js` — 以单一工具受控保存 Provider 返回的 Excel 或 links CSV；`artifact_kind` 唯一决定格式，并产出可点击的本地文件链接。
   - `merge-creator-csv.js`、`file-bridge.js` — CSV 解析与 `file_bridge` 内部合并实现；`file_bridge` 按 flow 仅本地交付或读取 OSS 凭据（插件配置 → 打包内置；内部测试/集成可显式注入环境变量）上传到 `Object/<flow>/<requirement_id>/<sha256>.csv`，上传前校验 `.csv` 格式与 links/补全文件来源，并校验返回的未签名 OSS URL 可匿名读取。
   - `test-adapter.js`、`tool-result.js`、`popup-questions.js` — 测试下载、结果适配与统一弹窗载荷。
-  - `manual-browser-*`、`manual-research-*`、`select-cascade.js`、`set-filter-range.js` — **遗留 native Browser 手扒工具**：保留在仓库但不在 `index.js` 注册、不在发布包 `files` 内。不要重新注册。
 - `src/contract/registry.js` — 参数归一化、平台别名、`business_mode` 常量与 `validate_requirement` 预检。
 - `src/hooks/register-flow-directives.js` — 注入三种业务模式链路（询价机构/手动拓展/只扒达人信息）、独立建需与交付指令；`before_tool_call` 只做 `validate_requirement` 预检，不做功能互斥或企微发送确认门禁。
 - `skills/media-assistant/` — **业务行为权威**：`SKILL.md`（固定链路、复核、放宽顺序、Provider 幂等规则）+ `references/`（工具卡）。涉及达人/询价/手扒/提报的任务，首次相关操作前必须完整读一遍。宿主 YP Action 提供原生达人补全（`get_xhs_author_business_card`/`get_douyin_author_business_card`），不在插件白名单；登录窗口与 Cookie 由宿主工具内部处理。
@@ -71,7 +70,7 @@
 2. **契约对齐自动化**：工具卡、Hook 预检、Provider MCP schema 三处手工对齐是反复出 bug 的根源（字符串化 JSON、未知字段、类型不符）。遇到契约漂移类问题，优先建议 schema 校验/对齐方向，而不是叠加手工修补。
 3. **上下文按需注入**：Hook directive 持续瘦身；新增指令优先按流程阶段注入片段，避免整条链路每轮全量注入。
 4. **数据回流**：涉及 rank/询价回收链路时，可提示"回收结果反哺排序"的数据回流机会（Provider 侧实现，仅作建议，不在插件内自建账本）。
-5. **遗留清理**：发现遗留 browser 工具、`playwright-core`、worktree、`*.tgz` 被误用时，建议归档/清理方向，不重新启用。
+5. **遗留清理**：发现遗留代码、worktree、`*.tgz` 被误用时，建议归档/清理方向，不重新启用。
 
 ## 常见坑
 
@@ -80,7 +79,6 @@
 - **`*.tgz` 是发布产物**：已被 `.gitignore` 忽略，不要提交；发布用 `npm pack`（`files` 已裁剪），产物命名沿用 `ypscan-<version>.tgz`。
 - **版本同步**：三个文件、四个位置必须一致：`package.json.version`、`openclaw.plugin.json.version`、`package-lock.json.version` 与 `package-lock.json.packages[""].version`；smoke 自动校验，任一漂移都会失败。
 - **typecheck 靠 JSDoc**：新增解构参数/对象字面量时若 tsc 报 Property/excess property，先补 `@param` 类型，不要关 `checkJs`。
-- **playwright-core 别误用**：它是遗留依赖，当前插件不注册任何 browser 工具；勿把 `manual-browser-*` 工具加回 `index.js`。
 - **工程资料**：`docs/review-checklist.md` 是用户验收清单，勿擅自删除；文档入口只引用当前实际存在的路径，历史或待建评测不得写成现有能力。
 - **`src/tools/file-bridge-oss-defaults.json` 是密钥载体**：由 `npm pack` 自动触发的 prepack 脚本生成、被 `.gitignore` 忽略，只随安装包发布，勿提交、勿在日志/补丁中打印其内容；本机没有凭据时 prepack 跳过注入并警告，打包仍继续。
 

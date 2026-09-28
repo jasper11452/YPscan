@@ -520,7 +520,9 @@ export async function fileBridge(
   }
 
   try {
-    const response = await client.put(objectKey, Buffer.from(csvText, "utf8"), {
+    // UTF-8 BOM 让 Excel 等下载端按 UTF-8 解码中文，而不是按本地 ANSI 编码猜测。
+    const uploadBody = Buffer.from(`\uFEFF${csvText}`, "utf8");
+    const response = await client.put(objectKey, uploadBody, {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
         "x-oss-object-acl": "public-read",

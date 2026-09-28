@@ -35,3 +35,5 @@ The merged CSV is an internal input for scoring or ranking: do not show its tabl
 - `creator_detail`: use the returned `data.csv_file_path` as `excel_export`'s `source_csv_file_link`. The merged CSV keeps only `creator_id` plus the completion detail columns (no `source_record_id`/`url`). Do not show the CSV; it is an internal input for the export.
 
 If merging succeeds but configuration, upload, or anonymous-read verification fails, the error still carries the local merged file info for diagnostics. Report the failure and offer retry or stop without showing the CSV. Never construct a remote path or substitute the local path for `csv_file_path`.
+
+Uploaded CSV bytes are UTF-8 with a BOM so Excel-like download clients recognize Chinese text correctly. The legacy `mcn_complete_only` local merged CSV delivered to the user is also written with a UTF-8 BOM. The BOM is not part of canonical `csvText`, `sha256`, or the object key; other internal merged CSVs remain BOM-free.

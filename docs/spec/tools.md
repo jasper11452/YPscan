@@ -114,7 +114,7 @@
 - 精确配置键：插件配置与打包内置凭据使用 `accessKeyId`、`accessKeySecret`、`region`、`bucket`、`objectPrefix`（插件配置嵌套在 `fileBridgeOss` 下）；显式注入的环境变量使用 `AccessKeyId`、`AccessKeySecret`、`Region`、`Bucket`、`Object`。对象前缀规范化后参与对象键拼接。
 - 上传前强制来源与格式校验：links 与补全路径必须都是 `.csv`（否则 `YPSCAN_FILE_BRIDGE_INVALID_INPUT`）；merged CSV 内容必须以 `source_record_id,creator_id,url` 开头且不含控制字符（否则 `YPSCAN_FILE_BRIDGE_INVALID_CSV`）；links CSV 必须是当前 requirement 受控保存的产物（`ypscan_save_artifact` 保存的 `manual_creator_links`/`mcn_creator_links` 原始下载物，或 `ypscan_save_creator_links` 归一化生成并登记的 links CSV），补全 CSV 必须来自当前 requirement 的 YP Action 原生补全工具返回的 `csv_file`（否则 `YPSCAN_FILE_BRIDGE_SOURCE_NOT_ALLOWED`，保留本地交付，不上传）。只有 url 列等不合三列契约的原始下载物会在 merge 阶段被 `YPSCAN_CREATOR_LINKS_CSV_INVALID` 拒绝；正式流程必须经 `ypscan_save_creator_links` 归一化。
 - 对象键固定为 `<Object 前缀>/<flow>/<requirement_id>/<sha256>.csv`；当前用户要求下默认形态为 `action/<flow>/<requirement_id>/<sha256>.csv`，不依赖时间戳，同内容幂等落到同一路径。
-- 上传时设置 `Content-Type: text/csv; charset=utf-8` 与 `x-oss-object-acl: public-read`。
+- 上传时设置 `Content-Type: text/csv; charset=utf-8` 与 `x-oss-object-acl: public-read`；上传字节以 UTF-8 BOM 开头，确保下载后由 Excel 等客户端打开时正确识别中文编码。对外交付的遗留 `mcn_complete_only` 本地 merged CSV 同样以 UTF-8 BOM 写入；BOM 不计入规范 `csvText`、`sha256` 或对象键，其他内部 merged CSV 仍保持无 BOM。
 - 成功后构造未签名公网 URL `https://<bucket>.<region>.aliyuncs.com/<encoded object key>`，并以有限次匿名 `HEAD/GET` 校验确认 URL 可读；不可读则返回专门错误，不把坏链接交给下游。
 
 ### 输出（成功）
@@ -179,6 +179,6 @@
 
 ## 6. 弹窗载荷（供工具与 Hook 共用）
 
-`src/tools/popup-questions.js` 构造 `AskUserQuestion` 载荷：`{ questions: [...] }`，1–4 题；每题 `header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符（语义换行优先），选项 2–4 个且标签去重（忽略换行）。固定载荷：业务模式选择、流程重试/结束、入库恢复、Browser 验证、MCN 收件机构选择（单选快捷项 + 宿主自定义输入，内置 `询价全部机构` / `暂不询价`，必要时补少量当前机构快捷项）、回填后续分叉（`补全并打分排序`/`暂不补全`）。
+`src/tools/popup-questions.js` 构造 `AskUserQuestion` 载荷：`{ questions: [...] }`，1–4 题；每题 `header`/`question`/`label`/`description` 每行最多 20 个 Unicode 字符（语义换行优先），选项 2–4 个且标签去重（忽略换行）。固定载荷：业务模式选择、流程重试/结束、入库恢复、MCN 收件机构选择（单选快捷项 + 宿主自定义输入，内置 `询价全部机构` / `暂不询价`，必要时补少量当前机构快捷项）、回填后续分叉（`补全并打分排序`/`暂不补全`）。
 
 远端字段选择工具的继承/重选入参与结果处理见 [字段工具卡](../../skills/media-assistant/references/tools/select_inquiry_form_fields.md)，字段页提交状态查询见 [字段状态工具卡](../../skills/media-assistant/references/tools/get_inquiry_form_fields_status.md)。只扒达人信息的导出见 [excel_export 工具卡](../../skills/media-assistant/references/tools/excel_export.md)。本地工具注册不变。

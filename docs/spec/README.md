@@ -66,7 +66,7 @@ Provider 侧已落地手动拓展 CSV 打分链路（`score_manual_source_csv` �
 - **不做 Provider 后端业务逻辑**：搜索、排序、打分、入库、企微发送匹配/去重/幂等全部由 Provider 负责；插件不预检发送内容，`before_tool_call` 只做 `validate_requirement` 预检，不含功能互斥或发送确认门禁。
 - **不持久化 workflow 状态**：Hook 只保留会话内的瞬态路由映射（模式/平台/CSV URL/inquiry_ids/job_id→requirement_id），gateway 启停即清空，不落盘、不跨 run。
 - **不暴露已弃用工具**：`create_submission_batch`、`get_creator_detail`、`get_creator_detail_export`、`get_selected_inquiry_form_fields` 不在 Provider 白名单。
-- **不重新启用遗留 native Browser 手扒分支**：`src/tools/manual-browser-*`、`manual-research*`、`select-cascade.js`、`set-filter-range.js` 等保留在仓库但不注册、不进发布包（`playwright-core` 仅为该遗留分支保留）。
+- **不重新引入遗留 native Browser 手扒分支**：`manual-browser-*`、`manual-research*`、`select-cascade.js`、`set-filter-range.js` 等源文件与 `playwright-core` 依赖已在 1.0.31 删除；需要该能力时重新设计，不恢复旧实现、不加回依赖。
 - **不替代业务权威文档**：运行时规则以 `skills/media-assistant/SKILL.md` 为准，本 Spec 只描述设计与契约。
 
 ## 4. 相关方与使用场景

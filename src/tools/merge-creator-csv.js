@@ -284,6 +284,7 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
       ? ["creator_id", ...detailHeaders]
       : ["source_record_id", "creator_id", "url", ...detailHeaders];
     const csvText = stringifyCsv(headers, mergedRows);
+    const deliveryCsvText = flow === "mcn_complete_only" ? `\uFEFF${csvText}` : csvText;
     const sha256 = createHash("sha256").update(csvText).digest("hex");
     const prefix =
       flow === "manual_source"
@@ -303,12 +304,23 @@ export async function mergeCreatorCsvFiles(params, { workspaceDir, readFileImpl 
     });
     try {
       const current = await handle.readFile({ encoding: "utf8" });
-      if (current && current !== csvText) {
+      if (current && current !== csvText && current !== deliveryCsvText) {
         return failure("YPSCAN_CREATOR_CSV_MERGE_CONFLICT", "目标 merged CSV 已存在且内容不同");
       }
-      if (!current) {
-        await handle.truncate(0);
-        await handle.writeFile(csvText, { encoding: "utf8" });
+      if (current !== deliveryCsvText) {
+        const deliveryBuffer = Buffer.from(deliveryCsvText, "utf8");
+        let offset = 0;
+        while (offset < deliveryBuffer.length) {
+          const { bytesWritten } = await handle.write(
+            deliveryBuffer,
+            offset,
+            deliveryBuffer.length - offset,
+            offset,
+          );
+          if (bytesWritten <= 0) throw new Error("short_write");
+          offset += bytesWritten;
+        }
+        await handle.truncate(deliveryBuffer.length);
         await handle.sync();
       }
     } finally {

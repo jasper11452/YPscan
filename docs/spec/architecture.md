@@ -2,7 +2,7 @@
 
 ## 1. 系统形态
 
-ypscan 是 OpenClaw 插件（`private: true`，ESM，无 TypeScript 源文件，类型安全靠 JSDoc + `tsc --checkJs`）。运行时依赖为 `ali-oss`、`read-excel-file`（受控预览/评分解析）、`write-excel-file`（保留的 Excel 写入依赖）、`fflate`（ZIP 预检及模板打包）、`xml2js`（评分模板 XML 解析与合并）与 `playwright-core`（仅为遗留 browser 工具保留，当前未注册任何 browser 工具）。
+ypscan 是 OpenClaw 插件（`private: true`，ESM，无 TypeScript 源文件，类型安全靠 JSDoc + `tsc --checkJs`）。运行时依赖为 `ali-oss`、`read-excel-file`（受控预览/评分解析）、`write-excel-file`（保留的 Excel 写入依赖）、`fflate`（ZIP 预检及模板打包）与 `xml2js`（评分模板 XML 解析与合并）。
 
 ```
 OpenClaw 宿主
@@ -34,7 +34,6 @@ OpenClaw 宿主
 | `src/contract/registry.js`                                                                        | 参数归一化 + 预检            | 无状态；`normalizeToolCallParams`、`validateRequirementPreflight`；模式/平台/区间常量                                                                                                          |
 | `src/hooks/register-flow-directives.js`                                                           | 流程指令注入                 | 3 个流程 Hook（priority 90、timeout 5s）；瞬态映射随 gateway 启停清空，手动评分来源按项目持久化并按需恢复                                                                                      |
 | `skills/media-assistant/`                                                                         | 业务行为权威                 | `SKILL.md` 固定链路/复核/放宽/幂等规则 + `references/` 工具卡                                                                                                                                  |
-| 遗留 `src/tools/manual-browser-*`、`manual-research*`、`select-cascade.js`、`set-filter-range.js` | 废弃的 native Browser 手扒   | 保留在仓库，不在 `index.js` 注册、不在发布包 `files` 内；不重新启用                                                                                                                            |
 
 ## 3. 边界划分
 

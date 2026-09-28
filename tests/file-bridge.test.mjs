@@ -156,10 +156,33 @@ test("fileBridge merges completion batches and returns a local result without up
   assert.equal(createClientCalls, 0);
   assert.match(parsed.delivery.local_file_link, /mcn-complete-douyin-req-local-only-/u);
   assert.equal(parsed.delivery.display_required, true);
-  assert.equal(
-    readFileSync(parsed.data.file_path, "utf8"),
-    "source_record_id,creator_id,url,nickname\nsource-2,creator-2,https://example.com/2,达人二\nsource-1,creator-1,https://example.com/1,达人一",
+  const expectedCsv =
+    "source_record_id,creator_id,url,nickname\nsource-2,creator-2,https://example.com/2,达人二\nsource-1,creator-1,https://example.com/1,达人一";
+  const localBytes = readFileSync(parsed.data.file_path);
+  assert.equal(localBytes.subarray(0, 3).toString("hex"), "efbbbf");
+  assert.equal(localBytes.subarray(3).toString("utf8"), expectedCsv);
+
+  // A file created by the pre-BOM implementation is upgraded in place without
+  // changing the canonical CSV hash or resulting filename.
+  writeFileSync(parsed.data.file_path, expectedCsv, "utf8");
+  const upgraded = payload(
+    await fileBridge(
+      {
+        requirement_id: "req-local-only",
+        platform: "douyin",
+        flow: "mcn_complete_only",
+        links_csv_path: linksCsvPath,
+        completion_csv_paths: [firstBatchPath, secondBatchPath],
+      },
+      { workspaceDir },
+    ),
   );
+  assert.equal(upgraded.success, true);
+  assert.equal(upgraded.data.sha256, parsed.data.sha256);
+  assert.equal(upgraded.data.file_name, parsed.data.file_name);
+  const upgradedBytes = readFileSync(upgraded.data.file_path);
+  assert.equal(upgradedBytes.subarray(0, 3).toString("hex"), "efbbbf");
+  assert.equal(upgradedBytes.subarray(3).toString("utf8"), expectedCsv);
 });
 
 test("merge recognizes the host native completion CSV 请求kw_uid id column", async (t) => {
@@ -504,7 +527,8 @@ test("fileBridge uploads the merged CSV and returns an unsigned public URL", asy
   assert.equal(parsed.delivery.user_visible_message, "数据已合并上传。");
   assert.doesNotMatch(parsed.delivery.user_visible_message, /file:\/\//u);
   assert.equal(captured.key, `action/manual_source/req-upload-success/${sha256}.csv`);
-  assert.equal(String(captured.body), csvText);
+  assert.equal(captured.body.subarray(0, 3).toString("hex"), "efbbbf");
+  assert.equal(captured.body.subarray(3).toString("utf8"), csvText);
   assert.deepEqual(captured.options, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
@@ -746,7 +770,7 @@ test("fileBridge creator_detail merges completion CSV without links and uploads 
         allowedCompletionCsvPaths: () => [completionCsvPath],
         createClient: () => ({
           put: async (key, buffer) => {
-            uploads.push({ key, text: buffer.toString("utf8") });
+            uploads.push({ key, body: buffer });
             return { res: { statusCode: 200 } };
           },
         }),
@@ -758,7 +782,8 @@ test("fileBridge creator_detail merges completion CSV without links and uploads 
   assert.equal(result.success, true);
   assert.equal(result.data.data_row_count, 2);
   assert.match(uploads[0].key, /creator_detail\/123\//u);
-  const csv = parseCsv(uploads[0].text);
+  assert.equal(uploads[0].body.subarray(0, 3).toString("hex"), "efbbbf");
+  const csv = parseCsv(uploads[0].body.subarray(3).toString("utf8"));
   assert.deepEqual(csv.headers, ["creator_id", "nickname", "fans"]);
   assert.deepEqual(csv.rows, [
     ["creator-1", "达人1", "10"],
