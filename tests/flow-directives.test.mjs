@@ -889,6 +889,41 @@ test("business mode instruction is injected on every prompt while the full start
   assert.match(first.prependContext, /YPSCAN 业务模式指令/u);
   assert.doesNotMatch(second.prependContext, /\[YPscan startup instruction\]/u);
   assert.match(second.prependContext, /YPSCAN 业务模式指令/u);
+
+  // 时间锚必须每轮都在，落在 startup 作用域之外；只注入首轮等于模型后续轮次又失去时间基准。
+  const timeAnchor = /当前时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} 星期[日一二三四五六]/u;
+  assert.match(first.prependContext, timeAnchor);
+  assert.match(second.prependContext, timeAnchor);
+  assert.match(second.prependContext, /更早轮次注入的时间一律作废/u);
+});
+
+test("expired deadline preflight block hands the model the current time anchor", () => {
+  const { hooks } = registeredPlugin();
+  const params = canonicalValidateParams("询价机构");
+  params.submissionDeadlineAt = "2026-09-01 18:00:00";
+  const raw = JSON.parse(params.rawMessagesJson);
+  raw.original = raw.original.replace("提报截止2099-08-25 12:00:00", "提报截止2026-09-01 18:00:00");
+  params.rawMessagesJson = JSON.stringify(raw);
+
+  const result = hooks.get("before_tool_call")({ toolName: "validate_requirement", params });
+  assert.equal(result?.block, true);
+  assert.match(result.blockReason, /submissionDeadlineAt/u);
+  assert.match(
+    result.blockReason,
+    /当前时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} 星期[日一二三四五六]/u,
+  );
+  assert.match(result.blockReason, /不得顺延到未来/u);
+});
+
+test("non-deadline preflight block stays free of the time anchor noise", () => {
+  const { hooks } = registeredPlugin();
+  const params = canonicalValidateParams("询价机构");
+  params.rawMessagesJson = "{ not json";
+
+  const result = hooks.get("before_tool_call")({ toolName: "validate_requirement", params });
+  assert.equal(result?.block, true);
+  assert.match(result.blockReason, /rawMessagesJson/u);
+  assert.doesNotMatch(result.blockReason, /当前时间/u);
 });
 
 test("YP Action completion CSV paths are recorded per requirement for upload provenance", () => {

@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.0.32 — 2026-09-29
+
+- 修复 Agent 时间错乱：注入给模型的指令此前没有任何具体时间，`before_prompt_build` 每轮只给业务规则，模型只能自行推算"今天/明天/本周/下周"等相对时间，算错后被本地预检阻断，而阻断信息里也没有当前时间，容易反复猜时间。现在 `before_prompt_build` 在 `startupScopes` 分支**之外**、静态指令之后追加一行时间锚 `当前时间：YYYY-MM-DD HH:mm:ss 星期X（时区 <zone> UTC±HH:MM）`，因此每轮都在（放进 startup 块就只在会话首轮生效），并声明更早轮次注入的时间一律作废；放在静态指令之后是为了保住可缓存的稳定前缀。
+- 时间锚取宿主进程的本地时钟（与 `registry` 截止时间归一化同源，不新增 PowerShell/终端子进程，避免平台差异与超时分支）。`before_tool_call` 同一次调用只取一次 `now`，`normalizeToolCallParams` 与 `validateRequirementPreflight` 共用，避免跨秒判定漂移。
+- 预检阻断信息补时间锚：`requirementPreflightBlockReason` 增加 `now` 入参，仅在 issue 命中 `submissionDeadlineAt` 时附当前时间并要求以该时间为锚重新换算、不得沿用更早轮次时间或自行猜测、已过期不得顺延到未来；其他字段阻断不携带该行，避免无关噪声。`MANUAL_DEFAULT_DEADLINE_RULE` 同步声明相对时间以本轮时间锚换算。
+- 同步 SKILL（新增时间锚权威规则）、`docs/spec/hooks.md`（§1/§3/§4）、`docs/review-checklist.md`（两条人工验收）、`AGENTS.md` 不变量 6，并新增记录 `docs/verification/2026-09-29-time-anchor.md`。manifest 工具白名单、Provider 契约、工具注册数量与 Hook 集合未变（仍 `tools=5, hooks=5`）。
+- 验证：`npm run lint`／`typecheck`／`test`（449 项）／`smoke` 通过；真实调用 Hook 确认时间锚每轮存在、过期时间被阻断且阻断信息含当前时间、未来时间不阻断。未验证：模型是否真的"先取时间再换算"属行为验收，需真实宿主多轮对话核实；相对时间（本周/下周/月底）的代码侧归一化仍为第二阶段；Dify 远端解析仍收到未锚定的原文；本机为 OpenClaw 内核 YP Action，未在 Pi 内核宿主验收。
+
 ## 1.0.31 — 2026-09-28
 
 - 修复 CSV 中文乱码：`file_bridge` 上传到 OSS 的对象字节，以及遗留 `mcn_complete_only` 分支作为唯一产物交付给用户的本地 merged CSV，统一改为 UTF-8 with BOM（`EF BB BF` 前缀），避免 Excel 类客户端按本地 ANSI/GBK 猜测编码。BOM 不进入规范 `csvText`：`data.sha256`、对象键 `<Object 前缀>/<flow>/<requirement_id>/<sha256>.csv`、文件名、同名幂等判断与 `manual_source`/`mcn_rank`/`creator_detail` 的内部 merged CSV 字节均保持原语义。

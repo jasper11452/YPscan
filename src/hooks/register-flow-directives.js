@@ -45,7 +45,7 @@ const REBATE_MINIMUM_QUESTION_RULE =
   '询价机构需要澄清返点时只问最低返点：AskUserQuestion 的问题写“最低返点要求是多少”，选项只给单个最低返点百分比（如 20%、25%、30%），禁止给返点区间、上限或“不限”类选项；上限固定按 100% 处理，落库仍为 "[min,1]"。手动拓展未提供返点按手动例外处理。';
 const MANUAL_REBATE_DEFAULT_RULE =
   '手动拓展例外：原文、有效澄清及解析结果均未提供返点时，不询问返点，rebate 默认 "[0,1]"（最低0%，不限制）；不写回 original、demand、parse_outputs 或伪造澄清。已提供的有效返点继续采用，不覆盖明确要求；询价机构仍按原规则澄清。此例外优先于通用必填数值澄清规则。';
-const MANUAL_DEFAULT_DEADLINE_RULE = `手动拓展例外：原文、有效澄清及解析结果均未提供截止时间时，不询问截止时间；在调用 validate_requirement 前用可见正文说明“未提供截止时间，将使用系统默认建需后 ${MANUAL_DEFAULT_DEADLINE_DAYS} 天，之后可补充具体时间覆盖”。该字段由插件独占：不要自己算时间、不要自写“系统默认”说明；插件会按当前建需时间后 ${MANUAL_DEFAULT_DEADLINE_DAYS} 天填入未来绝对时间，并统一写入规范标记“提报截止时间由系统默认设置为 <时间>（建需后${MANUAL_DEFAULT_DEADLINE_DAYS}天，可覆盖）”。模型自填的时间、说明和标记都会被覆盖，自填不会导致预检阻断，但也不必要。这只是 Provider 兼容值，不写回 original、demand、parse_outputs 或伪造澄清；用户补充具体截止时间时优先采用并覆盖默认值。已有截止时间仍按原规则校验；询价机构不适用此例外。`;
+const MANUAL_DEFAULT_DEADLINE_RULE = `手动拓展例外：原文、有效澄清及解析结果均未提供截止时间时，不询问截止时间；在调用 validate_requirement 前用可见正文说明“未提供截止时间，将使用系统默认建需后 ${MANUAL_DEFAULT_DEADLINE_DAYS} 天，之后可补充具体时间覆盖”。该字段由插件独占：不要自己算时间、不要自写“系统默认”说明；插件会按当前建需时间后 ${MANUAL_DEFAULT_DEADLINE_DAYS} 天填入未来绝对时间，并统一写入规范标记“提报截止时间由系统默认设置为 <时间>（建需后${MANUAL_DEFAULT_DEADLINE_DAYS}天，可覆盖）”。模型自填的时间、说明和标记都会被覆盖，自填不会导致预检阻断，但也不必要。这只是 Provider 兼容值，不写回 original、demand、parse_outputs 或伪造澄清；用户补充具体截止时间时优先采用并覆盖默认值。已有截止时间仍按原规则校验；询价机构不适用此例外。相对时间（今天/明天/今晚/本周/下周/月底等）与本轮默认值一律以本轮注入的当前时间（下称时间锚）为基准换算，更早轮次注入的时间一律作废，不得沿用或猜测。`;
 const MANUAL_REQUIREMENT_INPUT_RULE =
   `手动拓展输入规则优先于通用必填澄清：只把平台、达人方向、目标人数作为业务必填；缺失时一次 AskUserQuestion 问齐。三项齐全后、首次建需前，按 Skill 提供一次“直接开始／补充条件”的可选条件入口，正文列出预算、粉丝范围、合作形式、地域、品牌/产品、CPM/CPE、粉丝画像、参考达人、排除条件和截止时间，未填不限或省略；截止时间未提供时由插件默认设置为建需后 ${MANUAL_DEFAULT_DEADLINE_DAYS} 天，并在 description 标明系统默认、可由具体时间覆盖，不因此追问。已选择直接开始、已完成补充或明确说按当前条件直接开始后不得重复提示，重解析/放宽重建不重问。品牌和报价缺失不追问、不造占位值或最大报价；有值仍按原契约校验，用户已写但含糊的预算/粉丝量级等仍需澄清。没有报价/CPM/CPE 档位条件时，不为抖音植入/定制单独追问。contentTag 由解析产生，缺失先重新解析，不让用户填写系统标签。`;
 const NUMERIC_CLARIFICATION_QUESTION_RULE =
@@ -373,13 +373,48 @@ function requirementParseSuccessDirective(message, params = {}, recordedMode = n
   ].join("\n");
 }
 
-function requirementPreflightBlockReason(issues) {
+const REQUEST_TIME_ANCHOR_LABEL = "当前时间";
+
+// 时间锚一律取宿主进程的本地时钟，与 registry 的截止时间归一化同源；不额外起子进程。
+function currentTimeAnchor(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const pick = (type) => parts.find((part) => part.type === type)?.value ?? "";
+  const weekday = new Intl.DateTimeFormat("zh-CN", { weekday: "long" }).format(now);
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const offset =
+    new Intl.DateTimeFormat("en-US", { hour: "2-digit", timeZoneName: "longOffset" })
+      .formatToParts(now)
+      .find((part) => part.type === "timeZoneName")?.value ?? "";
+  const stamp = `${pick("year")}-${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}:${pick("second")} ${weekday}`;
+  return offset
+    ? `${stamp}（时区 ${zone} ${offset.replace("GMT", "UTC")}）`
+    : `${stamp}（时区 ${zone}）`;
+}
+
+function currentTimeDirective(now = new Date()) {
+  return `${REQUEST_TIME_ANCHOR_LABEL}：${currentTimeAnchor(now)}。这是本轮唯一有效的时间锚：今天/明天/今晚/本周/下周/月底等相对时间都必须以它为准换算成绝对时间；更早轮次注入的时间一律作废，不得沿用，也不得凭猜测填时间。`;
+}
+
+function requirementPreflightBlockReason(issues, now = new Date()) {
   const details = issues.map((issue) => `${issue.field}: ${issue.reason}`).join("；");
   const structureBlocked = issues.some((issue) => issue.field === "rawMessagesJson");
   return [
     REQUIREMENT_PREFLIGHT_BLOCKED,
     "validate_requirement 未执行，Provider 没有收到本次写入。",
     `一次性修正项：${details}`,
+    ...(issues.some((issue) => issue.field === "submissionDeadlineAt")
+      ? [
+          `${REQUEST_TIME_ANCHOR_LABEL}：${currentTimeAnchor(now)}。截止时间必须以该时间为锚重新换算，不得沿用更早轮次的时间或自行猜测；已经过期的时间不得顺延到未来。`,
+        ]
+      : []),
     ...(structureBlocked
       ? [
           "rawMessagesJson 是结构错误，只能靠修结构解决：用对象形式重发 original、parse_outputs 和 business_mode，保留全部已有业务值；不得仅因该结构错误弹窗或新增、改写 clarifications。一次性修正项另列其他字段时，仍按对应原因处理。",
@@ -2040,6 +2075,7 @@ export function registerFlowDirectiveHooks(api) {
           MANUAL_EFFECTIVE_DEMAND_REPARSE_RULE,
         );
       }
+      lines.push(currentTimeDirective());
       return { prependContext: lines.join("\n") };
     },
     HOOK_OPTIONS,
@@ -2144,12 +2180,14 @@ export function registerFlowDirectiveHooks(api) {
           remember(params);
         return undefined;
       }
-      const normalized = normalizeToolCallParams(toolName, params);
-      const issues = validateRequirementPreflight(normalized);
+      // 同一次调用只取一次时钟，归一化与预检必须共用同一个 now，避免跨秒判定漂移。
+      const now = new Date();
+      const normalized = normalizeToolCallParams(toolName, params, { now });
+      const issues = validateRequirementPreflight(normalized, { now });
       if (issues.length > 0) {
         return {
           block: true,
-          blockReason: requirementPreflightBlockReason(issues),
+          blockReason: requirementPreflightBlockReason(issues, now),
         };
       }
       const providerParams = serializeProviderRawMessages(normalized);

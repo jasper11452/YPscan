@@ -10,7 +10,7 @@
 
 | Hook                  | 注册位置                 | 作用                                                  |
 | --------------------- | ------------------------ | ----------------------------------------------------- |
-| `before_prompt_build` | register-flow-directives | 每轮注入模式指令；每会话首次另注入静态启动指令块      |
+| `before_prompt_build` | register-flow-directives | 每轮注入模式指令与当前时间锚；每会话首次另注入静态启动指令块 |
 | `before_tool_call`    | register-flow-directives | 仅对 `validate_requirement` 做归一化 + 预检，失败阻断 |
 | `tool_result_persist` | register-flow-directives | 记录瞬态映射并按工具结果追加下一步指令                |
 | `gateway_start`       | index.js                 | 重置瞬态状态                                          |
@@ -48,6 +48,7 @@
 
 每轮都在 `prependContext` 开头注入精简的业务模式指令及固定 `BUSINESS_MODE_QUESTION_ARGS`；每个 scope 只追加一次完整启动指令块。完整启动块的要点：
 
+- 时间锚：每轮在指令末尾追加一行 `当前时间：YYYY-MM-DD HH:mm:ss 星期X（时区 <zone> UTC±HH:MM）`，取自宿主进程的本地时钟（与 `registry` 的截止时间归一化同源，不另起子进程），并声明“更早轮次注入的时间一律作废”。该行在 `startupScopes` 分支之外生成，因此每轮都在；放在静态指令之后以保住可缓存的稳定前缀。
 - 可用工具以宿主实际提供的工具列表为准，插件注册表和 Provider 白名单不代表宿主全部工具。工具名按宿主完整名称解析实际工具名：`<前缀>__<工具名>` 取最后一个 `__` 后段，扁平 MCP 形态 `mcp-<server>_<工具名>` 按所需工具的完整名称后缀识别；前缀（含 `test__`）只是命名空间。
 - 业务模式识别：明确表达直接用；未明确/冲突/同时出现时先弹 `BUSINESS_MODE_QUESTION_ARGS`（选项固定 `询价机构`/`手动拓展`），回答前不解析不落库；`手动拓展` 在 Provider 边界映射为兼容线值，Agent 不得改写。
 - 两条链路总览（见 [flows.md](./flows.md)）。
@@ -63,8 +64,9 @@
 ## 4. before_tool_call
 
 - 仅对 `validate_requirement` 做阻断预检；已知业务工具另保留下一步指令必要的调用关联元数据，不修改外部工具 schema。
-- 流程：`normalizeToolCallParams`（确定性、无损归一化，见 [contracts.md](./contracts.md)）→ `validateRequirementPreflight`。
+- 流程：取一次本地时钟 → `normalizeToolCallParams`（确定性、无损归一化，见 [contracts.md](./contracts.md)）→ `validateRequirementPreflight`。同一次调用只取一次时间，归一化与预检共用同一个 `now`，避免跨秒判定漂移。
 - 预检有 issue 时返回 `{ block: true, blockReason }`，`blockReason` 以 `YPSCAN_REQUIREMENT_PREFLIGHT_BLOCKED` 开头，含「一次性修正项：field: reason…」、区间格式契约与澄清弹窗规则；`rawMessagesJson` 结构错误时额外要求用对象形式重发并保留已有业务值，不得仅因该结构错误弹窗或新增 clarifications，同时列出的其他独立问题仍照常处理；Provider 不收到本次写入。
+- issue 命中 `submissionDeadlineAt` 时，`blockReason` 额外附一行当前时间锚，并要求以该时间为锚重新换算、不得沿用更早轮次时间或自行猜测、已过期不得顺延到未来；其他字段阻断不携带该行，避免无关噪声。
 - 预检通过时：`rawMessagesJson` 序列化为字符串传给 Provider（`serializeProviderRawMessages`）；按 scope 记录 `business_mode` 与 `platform`；参数有变化时返回 `{ params }`，否则不干预。
 - 不做功能互斥、不做企微发送确认门禁（Provider 边界）。
 
